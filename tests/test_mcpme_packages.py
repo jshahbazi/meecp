@@ -72,7 +72,7 @@ def test_validation_static_and_digest_bound(tmp_path, monkeypatch):
     assert validate_package(root).digest != digest
 
 
-@pytest.mark.parametrize("profile", ["mcp-http", "model-service"])
+@pytest.mark.parametrize("profile", ["mcp-http"])
 def test_unsupported_profiles(tmp_path, profile):
     root = make_package(tmp_path / "package")
     edit_manifest(root, profile=profile)

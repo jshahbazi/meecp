@@ -69,10 +69,10 @@ def error_message(request_id, code=-32000, message="The slot request could not b
 @dataclass
 class Session:
     session_id: str
-    pipes: SessionPipes
+    pipes: SessionPipes | None
     gateway: Gateway
-    reader: asyncio.StreamReader
-    read_transport: asyncio.ReadTransport
+    reader: asyncio.StreamReader | None
+    read_transport: asyncio.ReadTransport | None
     initialized: bool = False
     client_ready: bool = False
     closed: bool = False
@@ -120,6 +120,67 @@ class Session:
                     finally:
                         loop.remove_writer(self.pipes.stdin_fd)
 
+    async def accept_message(self, message, message_bytes):
+        JSONRPCMessage.model_validate(message)
+        if "method" in message:
+            method = message["method"]
+            if "id" in message:
+                if method != "ping" or not self.client_ready or len(self.server_pending) >= MAX_PENDING:
+                    raise ValueError("unsupported_server_request")
+                key = (type(message["id"]), message["id"])
+                if key in self.server_pending:
+                    raise ValueError("duplicate_server_request")
+                self.server_pending[key] = asyncio.create_task(self.gateway.server_deadline(self))
+                await self.publish("notifications", encode(message))
+                return
+            if method not in {"notifications/progress", "notifications/tools/list_changed"}:
+                raise ValueError("unsupported_server_message")
+            stream = "notifications"
+            if method == "notifications/progress":
+                ProgressNotificationParams.model_validate(message.get("params"))
+                token = (message.get("params") or {}).get("progressToken")
+                for pending in self.pending.values():
+                    if token is not None and pending.progress_token == token:
+                        stream = pending.stream
+                        pending.output_bytes += message_bytes
+                        if pending.output_bytes > MAX_OPERATION_BYTES:
+                            raise ValueError("operation_limit")
+                        break
+            await self.publish(stream, encode(message))
+            return
+        key = (type(message["id"]), message["id"])
+        pending = self.pending.get(key)
+        if pending is None:
+            raise ValueError("unexpected_response")
+        if pending.method == "initialize" and "result" in message:
+            result = InitializeResult.model_validate(message["result"])
+            caps = message["result"].get("capabilities", {})
+            if result.protocolVersion != PROTOCOL_VERSION or set(caps) - {"tools"}:
+                await self.publish(pending.stream, encode(error_message(pending.request_id,
+                                   message="The package requires unsupported MCP capabilities or version.")), True)
+                raise ValueError("unsupported_profile")
+            self.initialized = True
+        if pending.method == "tools/list" and "result" in message:
+            from mcp.types import ListToolsResult
+            listed = ListToolsResult.model_validate(message["result"])
+            if any(tool.execution and tool.execution.taskSupport not in {None, "forbidden"}
+                   for tool in listed.tools):
+                raise ValueError("unsupported_task_tool")
+            if self.gateway.expected_tools is not None:
+                tools = message["result"].get("tools", [])
+                if tools != self.gateway.expected_tools:
+                    raise ValueError("tool_contract_changed")
+        if pending.method == "tools/call" and "result" in message:
+            CallToolResult.model_validate(message["result"])
+        pending.output_bytes += message_bytes
+        if pending.output_bytes > MAX_OPERATION_BYTES:
+            raise ValueError("operation_limit")
+        await self.publish(pending.stream, encode(message), True)
+        self.pending.pop(key)
+        if pending.deadline:
+            pending.deadline.cancel()
+        self.last_activity = time.monotonic()
+
     async def read_messages(self):
         try:
             while not self.closed:
@@ -127,65 +188,7 @@ class Session:
                 if not line or not line.endswith(b"\n") or len(line) > MAX_MESSAGE_BYTES:
                     raise ValueError("invalid_output")
                 message = load_json(line)
-                JSONRPCMessage.model_validate(message)
-                if "method" in message:
-                    method = message["method"]
-                    if "id" in message:
-                        if method != "ping" or not self.client_ready or len(self.server_pending) >= MAX_PENDING:
-                            raise ValueError("unsupported_server_request")
-                        key = (type(message["id"]), message["id"])
-                        if key in self.server_pending:
-                            raise ValueError("duplicate_server_request")
-                        self.server_pending[key] = asyncio.create_task(self.gateway.server_deadline(self))
-                        await self.publish("notifications", encode(message))
-                        continue
-                    if method not in {"notifications/progress", "notifications/tools/list_changed"}:
-                        raise ValueError("unsupported_server_message")
-                    stream = "notifications"
-                    if method == "notifications/progress":
-                        ProgressNotificationParams.model_validate(message.get("params"))
-                        token = (message.get("params") or {}).get("progressToken")
-                        for pending in self.pending.values():
-                            if token is not None and pending.progress_token == token:
-                                stream = pending.stream
-                                pending.output_bytes += len(line)
-                                if pending.output_bytes > MAX_OPERATION_BYTES:
-                                    raise ValueError("operation_limit")
-                                break
-                    await self.publish(stream, encode(message))
-                    continue
-                key = (type(message["id"]), message["id"])
-                pending = self.pending.get(key)
-                if pending is None:
-                    raise ValueError("unexpected_response")
-                if pending.method == "initialize" and "result" in message:
-                    result = InitializeResult.model_validate(message["result"])
-                    caps = message["result"].get("capabilities", {})
-                    if result.protocolVersion != PROTOCOL_VERSION or set(caps) - {"tools"}:
-                        await self.publish(pending.stream, encode(error_message(pending.request_id,
-                                           message="The package requires unsupported MCP capabilities or version.")), True)
-                        raise ValueError("unsupported_profile")
-                    self.initialized = True
-                if pending.method == "tools/list" and "result" in message:
-                    from mcp.types import ListToolsResult
-                    listed = ListToolsResult.model_validate(message["result"])
-                    if any(tool.execution and tool.execution.taskSupport not in {None, "forbidden"}
-                           for tool in listed.tools):
-                        raise ValueError("unsupported_task_tool")
-                    if self.gateway.expected_tools is not None:
-                        tools = message["result"].get("tools", [])
-                        if tools != self.gateway.expected_tools:
-                            raise ValueError("tool_contract_changed")
-                if pending.method == "tools/call" and "result" in message:
-                    CallToolResult.model_validate(message["result"])
-                pending.output_bytes += len(line)
-                if pending.output_bytes > MAX_OPERATION_BYTES:
-                    raise ValueError("operation_limit")
-                await self.publish(pending.stream, encode(message), True)
-                self.pending.pop(key)
-                if pending.deadline:
-                    pending.deadline.cancel()
-                self.last_activity = time.monotonic()
+                await self.accept_message(message, len(line))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -429,7 +432,7 @@ class Gateway:
         session.last_activity = time.monotonic()
         stream = secrets.token_hex(16)
         pending = Pending(message["id"], method, stream,
-                          (message.get("params") or {}).get("_meta", {}).get("progressToken"))
+                          ((message.get("params") or {}).get("_meta") or {}).get("progressToken"))
         session.pending[key] = pending
         priming = await session.publish(stream)
         pending.deadline = asyncio.create_task(self.deadline(session, pending))

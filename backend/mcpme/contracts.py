@@ -19,8 +19,9 @@ SCHEMA_VERSION = 1
 MANIFEST_NAME = "mcpme.package.json"
 LOCK_NAME = "mcpme.lock.json"
 MAX_METADATA_BYTES = 1024 * 1024
+MAX_LOCK_METADATA_BYTES = 16 * 1024 * 1024
 MAX_ARTIFACTS = 20_000
-MAX_PACKAGE_BYTES = 2 * 1024 * 1024 * 1024
+MAX_PACKAGE_BYTES = 64 * 1024 * 1024 * 1024
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$", strict=True)]
 Label = Annotated[str, Field(min_length=1, max_length=256, strict=True)]
 
@@ -65,11 +66,14 @@ class Tool(StrictModel):
     description: Annotated[str, Field(min_length=1, max_length=4096)]
     input_schema: dict[str, Any]
     output_schema: dict[str, Any] | None = None
+    annotations: dict[str, bool | str] | None = None
 
     def mcp_schema(self) -> dict[str, Any]:
         result = {"name": self.name, "description": self.description, "inputSchema": self.input_schema}
         if self.output_schema is not None:
             result["outputSchema"] = self.output_schema
+        if self.annotations is not None:
+            result["annotations"] = self.annotations
         return result
 
 
@@ -81,8 +85,32 @@ class Access(StrictModel):
 
 
 class Resources(StrictModel):
-    memory_mb: int = Field(ge=1, le=4096)
-    cpu_only: Literal[True]
+    memory_mb: int = Field(ge=1, le=262144)
+    cpu_only: bool
+    gpu: bool = False
+
+
+class Readiness(StrictModel):
+    path: Annotated[str, Field(pattern=r"^/[A-Za-z0-9_/-]{1,127}$")]
+    echo_generation: bool = True
+
+
+class ManagedProcess(StrictModel):
+    id: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
+    role: Literal["engine", "adapter"]
+    entrypoint: Entrypoint
+    depends_on: list[Label] = Field(default_factory=list, max_length=16)
+    readiness: Readiness
+
+
+class ModelArtifact(StrictModel):
+    artifact: Label
+    model_id: Label
+    sha256: Digest
+    profile: Label
+    context_tokens: int = Field(ge=128, le=1048576)
+    engine_identity: dict[Label, Label]
+    parameters: dict[Label, str | int | float | bool] = Field(default_factory=dict)
 
 
 class PackageManifest(StrictModel):
@@ -92,9 +120,12 @@ class PackageManifest(StrictModel):
     version: Annotated[str, Field(pattern=r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$")]
     source_revision: Label
     name: Label
-    profile: Literal["mcp-stdio"]
+    profile: Literal["mcp-stdio", "model-service"]
     platform: Platform
-    entrypoint: Entrypoint
+    entrypoint: Entrypoint | None = None
+    processes: list[ManagedProcess] = Field(default_factory=list, max_length=16)
+    adapter_process: Label | None = None
+    model: ModelArtifact | None = None
     protocol: Protocol
     lifecycle: Lifecycle = Field(default_factory=Lifecycle)
     tools: list[Tool] = Field(min_length=1, max_length=128)
@@ -185,7 +216,7 @@ def _read_file(path: Path, limit: int) -> bytes:
 
 
 def _metadata(root: Path, name: str) -> tuple[bytes, dict[str, Any]]:
-    data = _read_file(root / name, MAX_METADATA_BYTES)
+    data = _read_file(root / name, MAX_LOCK_METADATA_BYTES if name == LOCK_NAME else MAX_METADATA_BYTES)
     try:
         value = json.loads(data, object_pairs_hook=_unique_object,
                            parse_float=_finite_float,
@@ -285,13 +316,54 @@ def validate_package(root: Path) -> ValidatedPackage:
         if (type(manifest_json.get("schema_version")) is not int or manifest_json.get("schema_version") != 1
                 or type(lock_json.get("schema_version")) is not int or lock_json.get("schema_version") != 1):
             raise PackageError("unsupported_package_schema")
-        if manifest_json.get("profile") in ("mcp-http", "model-service"):
+        if manifest_json.get("profile") == "mcp-http":
             raise PackageError("unsupported_execution_profile")
         manifest = PackageManifest.model_validate(manifest_json)
         lock = PackageLock.model_validate(lock_json)
-        if (type(manifest_json.get("host_api_version", 1)) is not int
-                or manifest_json.get("resources", {}).get("cpu_only") is not True):
+        if type(manifest_json.get("host_api_version", 1)) is not int:
             raise PackageError("invalid_package_schema")
+        if manifest.resources.cpu_only and manifest.resources.gpu:
+            raise PackageError("invalid_resource_declaration")
+        if manifest.profile == "mcp-stdio":
+            if (manifest.entrypoint is None or manifest.processes or manifest.model is not None
+                    or manifest.adapter_process is not None or not manifest.resources.cpu_only
+                    or manifest.resources.memory_mb > 4096):
+                raise PackageError("invalid_package_schema")
+        else:
+            if manifest.entrypoint is not None or not manifest.processes or manifest.model is None:
+                raise PackageError("invalid_package_schema")
+            processes = {process.id: process for process in manifest.processes}
+            if len(processes) != len(manifest.processes) or manifest.adapter_process not in processes:
+                raise PackageError("invalid_process_graph")
+            if sum(process.role == "adapter" for process in manifest.processes) != 1:
+                raise PackageError("invalid_process_graph")
+            adapter = processes[manifest.adapter_process]
+            if adapter.role != "adapter" or not adapter.readiness.echo_generation:
+                raise PackageError("invalid_process_graph")
+            visited: set[str] = set()
+            remaining = list(manifest.processes)
+            while remaining:
+                ready = [process for process in remaining if set(process.depends_on) <= visited]
+                if not ready:
+                    raise PackageError("invalid_process_graph")
+                for process in ready:
+                    if len(set(process.depends_on)) != len(process.depends_on) or process.id in process.depends_on:
+                        raise PackageError("invalid_process_graph")
+                    visited.add(process.id)
+                    remaining.remove(process)
+            # The public adapter must depend on all resident engine processes.
+            dependencies = set(adapter.depends_on)
+            pending = list(dependencies)
+            while pending:
+                item = pending.pop()
+                for dependency in processes[item].depends_on:
+                    if dependency not in dependencies:
+                        dependencies.add(dependency)
+                        pending.append(dependency)
+            if set(processes) - {adapter.id} != dependencies:
+                raise PackageError("invalid_process_graph")
+            if any(isinstance(value, float) and not math.isfinite(value) for value in manifest.model.parameters.values()):
+                raise PackageError("invalid_model_profile")
         if not re.fullmatch(r"(?:[0-9a-f]{40}|sha256:[0-9a-f]{64})", manifest.source_revision):
             raise PackageError("source_unresolved")
         if manifest.package_id != lock.package_id or manifest.version != lock.version:
@@ -324,21 +396,36 @@ def validate_package(root: Path) -> ValidatedPackage:
             package_relative_path(license_path)
             if license_path not in artifacts or artifacts[license_path].size == 0:
                 raise PackageError("license_required")
-        entry = manifest.entrypoint
-        package_relative_path(entry.executable)
-        package_relative_path(entry.cwd, allow_dot=True)
-        if entry.executable not in artifacts or not artifacts[entry.executable].executable:
-            raise PackageError("entrypoint_not_executable")
-        if entry.cwd not in directories or any("\x00" in arg for arg in entry.args):
-            raise PackageError("invalid_entrypoint")
+        entries = ([manifest.entrypoint] if manifest.profile == "mcp-stdio"
+                   else [process.entrypoint for process in manifest.processes])
+        for entry in entries:
+            package_relative_path(entry.executable)
+            package_relative_path(entry.cwd, allow_dot=True)
+            if entry.executable not in artifacts or not artifacts[entry.executable].executable:
+                raise PackageError("entrypoint_not_executable")
+            if entry.cwd not in directories or any("\x00" in arg for arg in entry.args):
+                raise PackageError("invalid_entrypoint")
+            if manifest.profile == "model-service" and any(arg == "--mcpme-config-fd" for arg in entry.args):
+                raise PackageError("invalid_entrypoint")
+        if manifest.model is not None:
+            package_relative_path(manifest.model.artifact)
+            model_artifact = artifacts.get(manifest.model.artifact)
+            if model_artifact is None or model_artifact.sha256 != manifest.model.sha256:
+                raise PackageError("model_identity_mismatch")
         if len({tool.name for tool in manifest.tools}) != len(manifest.tools):
             raise PackageError("duplicate_tool")
         for tool in manifest.tools:
+            if tool.annotations is not None:
+                if set(tool.annotations) - {"title", "readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"}:
+                    raise PackageError("invalid_tool_schema")
+                if any((not isinstance(value, str) or not 1 <= len(value) <= 256) if key == "title"
+                       else type(value) is not bool for key, value in tool.annotations.items()):
+                    raise PackageError("invalid_tool_schema")
             _check_tool_schema(tool.input_schema)
             if tool.output_schema is not None:
                 _check_tool_schema(tool.output_schema)
         # Recheck tree and metadata so an artifact added/removed during hashing is rejected.
-        if _tree(root) != (files, directories) or _read_file(root / MANIFEST_NAME, MAX_METADATA_BYTES) != manifest_bytes or _read_file(root / LOCK_NAME, MAX_METADATA_BYTES) != lock_bytes:
+        if _tree(root) != (files, directories) or _read_file(root / MANIFEST_NAME, MAX_METADATA_BYTES) != manifest_bytes or _read_file(root / LOCK_NAME, MAX_LOCK_METADATA_BYTES) != lock_bytes:
             raise PackageError("package_changed")
         # Bind both metadata byte sequences; the lock binds the full artifact closure.
         digest = hashlib.sha256(manifest_bytes + b"\x00" + lock_bytes).hexdigest()

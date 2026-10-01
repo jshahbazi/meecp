@@ -9,7 +9,7 @@ import stat
 from pathlib import Path
 from typing import Any
 
-from .contracts import (LOCK_NAME, MANIFEST_NAME, MAX_METADATA_BYTES, PackageError,
+from .contracts import (LOCK_NAME, MANIFEST_NAME, MAX_METADATA_BYTES, MAX_LOCK_METADATA_BYTES, PackageError,
                         ValidatedPackage, validate_package)
 
 
@@ -129,7 +129,7 @@ def snapshot_package(package: ValidatedPackage | Path, destination: Path,
         return existing
     staged = destination.with_name(destination.name + "." + secrets.token_hex(12) + ".tmp")
     limits = {artifact.path: artifact.size for artifact in source.lock.artifacts}
-    limits.update({MANIFEST_NAME: MAX_METADATA_BYTES, LOCK_NAME: MAX_METADATA_BYTES})
+    limits.update({MANIFEST_NAME: MAX_METADATA_BYTES, LOCK_NAME: MAX_LOCK_METADATA_BYTES})
     try:
         staged.mkdir(mode=0o700)
         for source_dir, directory_names, file_names in os.walk(source.root, followlinks=False):

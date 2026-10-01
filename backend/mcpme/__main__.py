@@ -42,13 +42,43 @@ def endpoint(connection: dict) -> str:
 
 async def call(state_dir: Path, method: str, path: str, body: dict | None = None) -> dict:
     connection = read_private_json(state_dir / "manager-connection.json")
-    async with httpx.AsyncClient(base_url=endpoint(connection), timeout=30, follow_redirects=False, trust_env=False,
+    timeout = 300 if path in {"/v1/install/plan", "/v1/migrations/jevk5/plan"} else 30
+    async with httpx.AsyncClient(base_url=endpoint(connection), timeout=timeout, follow_redirects=False, trust_env=False,
                                  headers={"Authorization": "Bearer " + connection["token"]}) as client:
         response = await client.request(method, path, json=body)
         value = response.json()
         if not isinstance(value, dict):
             raise ValueError()
         return value
+
+
+def bundled_app() -> Path | None:
+    root = Path(__file__).resolve().parents[2]
+    for parent in root.parents:
+        if parent.suffix == ".app" and (parent / "Contents/MacOS/mcpme").is_file():
+            return parent
+    return None
+
+
+async def ensure_host(state: Path):
+    async def available():
+        try:
+            async with asyncio.timeout(2):
+                return "error" not in await call(state, "GET", "/v1/capabilities")
+        except Exception:
+            return False
+    if await available():
+        return
+    app = bundled_app()
+    if app is None or state != DEFAULT_STATE:
+        raise ValueError("host_unavailable")
+    process = await asyncio.create_subprocess_exec("/usr/bin/open", "-g", str(app),
+        stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+    async with asyncio.timeout(35):
+        if await process.wait():
+            raise ValueError("host_unavailable")
+        while not await available():
+            await asyncio.sleep(0.2)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -87,6 +117,18 @@ def parser() -> argparse.ArgumentParser:
     export.add_argument("--json", action="store_true")
     connect = commands.add_parser("connect")
     connect.add_argument("--slot", type=uuid_argument, required=True)
+    migrations = commands.add_parser("migrate-jevk5").add_subparsers(dest="action", required=True)
+    migration_plan = migrations.add_parser("plan")
+    migration_plan.add_argument("--package", type=Path, required=True)
+    migration_plan.add_argument("--legacy-app", type=Path, required=True)
+    migration_plan.add_argument("--legacy-state", type=Path, default=Path.home() / "Library/Application Support/JevK5")
+    migration_plan.add_argument("--legacy-login-disabled", action="store_true",
+                                help="Confirm legacy Start at Login is disabled when macOS cannot identify its moved bundle.")
+    migration_plan.add_argument("--json", action="store_true")
+    for name in ("apply", "inspect", "rollback", "recover"):
+        command = migrations.add_parser(name)
+        command.add_argument("transfer_id", type=uuid_argument)
+        command.add_argument("--json", action="store_true")
     return cli
 
 
@@ -123,16 +165,33 @@ async def execute(args) -> dict | None:
         launcher = Path(__file__).resolve().parents[2] / "scripts" / "mcpme"
         if not launcher.is_file():
             launcher = Path(__file__).resolve().parents[2] / "bin" / "mcpme"
+        if app := bundled_app():
+            launcher = app / "Contents/MacOS/mcpme"
         return {"slot_id": args.slot, "endpoint": f"http://127.0.0.1:{slot['public_port']}/mcp",
                 "configuration": {"mcpServers": {args.slot: {"command": str(launcher),
                     "args": ["--state-dir", str(state), "connect", "--slot", args.slot]}}}}
     if args.command == "connect":
         from .bridge import run_bridge
+        if bundled_app() is not None:
+            await ensure_host(state)
         connection = read_private_json(state / "slots" / args.slot / "connection.json")
         if connection.get("slot_id") != args.slot:
             raise ValueError()
         await run_bridge(endpoint(connection), connection["token"])
         return None
+    if args.command == "migrate-jevk5":
+        if args.action == "plan":
+            payload = {
+                "package": str(args.package.absolute()), "legacy_app": str(args.legacy_app.absolute()),
+                "legacy_state": str(args.legacy_state.absolute())}
+            if args.legacy_login_disabled:
+                payload["legacy_login_disabled"] = True
+            return await call(state, "POST", "/v1/migrations/jevk5/plan", payload)
+        if args.action == "apply":
+            return await call(state, "POST", "/v1/migrations/jevk5/apply", {"transfer_id": args.transfer_id})
+        if args.action == "inspect":
+            return await call(state, "GET", "/v1/migrations/" + args.transfer_id)
+        return await call(state, "POST", "/v1/migrations/" + args.transfer_id + "/" + args.action, {})
     raise ValueError()
 
 

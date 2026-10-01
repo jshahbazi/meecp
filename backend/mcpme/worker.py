@@ -49,11 +49,24 @@ class RemoteLauncher:
             if flags & (socket.MSG_TRUNC | socket.MSG_CTRUNC):
                 raise ValueError()
             result = json.loads(payload)
-            if not isinstance(result, dict) or result.get("error"):
+            if not isinstance(result, dict):
+                raise ValueError()
+            if result.get("error"):
+                if message["action"] == "slot_control" and set(result) == {"error"} and not descriptors:
+                    return result, descriptors
                 raise ValueError()
             if message["action"] == "launch_session":
                 if (set(result) != {"instance_id"} or not isinstance(result["instance_id"], str)
                         or not 1 <= len(result["instance_id"]) <= 128 or len(descriptors) != 2):
+                    raise ValueError()
+            elif message["action"] == "slot_control":
+                if set(result) != {"status", "runtime"} or not isinstance(result["status"], dict) or descriptors:
+                    raise ValueError()
+                runtime = result["runtime"]
+                if runtime is not None and (not isinstance(runtime, dict) or set(runtime) != {"endpoint", "key", "nonce", "generation"}
+                        or any(not isinstance(runtime[key], str) or not 1 <= len(runtime[key]) <= 256
+                               for key in ("endpoint", "key", "nonce"))
+                        or type(runtime["generation"]) is not int or runtime["generation"] < 1):
                     raise ValueError()
             elif result != {"closed": True} or descriptors:
                 raise ValueError()
@@ -115,6 +128,15 @@ class RemoteLauncher:
         for fd in fds:
             os.close(fd)
 
+    async def slot_control(self, action: str) -> dict:
+        if action not in {"status", "pause", "resume"}:
+            raise RuntimeError("invalid_slot_control")
+        async with self.lock:
+            result, _ = await self._exchange_async({"action": "slot_control", "control": action})
+        if "error" in result:
+            raise RuntimeError("slot_control_failed")
+        return result
+
 
 async def run(config_fd: int, listener_fd: int, channel_fd: int):
     with os.fdopen(config_fd, "rb") as stream:
@@ -122,12 +144,40 @@ async def run(config_fd: int, listener_fd: int, channel_fd: int):
     listener = socket.socket(fileno=listener_fd)
     channel = socket.socket(fileno=channel_fd)
     launcher = RemoteLauncher(channel, timeout=config["control_timeout"])
-    app, gateway = make_app(
-        token=config["token"], port=config["port"],
-        launch_session=launcher.launch, close_session=launcher.close,
-        max_sessions=config["max_sessions"], idle_timeout=config["idle_timeout"],
-        request_timeout=config["request_timeout"], active=lambda: config["active"],
-    )
+    if config.get("profile", "mcp-stdio") == "model-service":
+        from .http_gateway import make_http_app
+        legacy_routes = config.get("legacy_routes", [])
+        if legacy_routes and set(legacy_routes) != {"/api/status", "/api/decide", "/api/control"}:
+            raise ValueError("invalid_legacy_routes")
+
+        async def slot_control(action):
+            if action != "status":
+                gateway.runtime_active = False
+            result = await launcher.slot_control(action)
+            runtime = result["runtime"]
+            endpoint, token = (runtime["endpoint"], runtime["key"]) if runtime else (None, None)
+            if endpoint != gateway.upstream_endpoint or token != gateway.upstream_token:
+                await gateway.configure(endpoint, token)
+            else:
+                gateway.runtime_active = endpoint is not None
+            return result["status"]
+
+        app, gateway = make_http_app(
+            token=config["token"], port=config["port"], upstream_endpoint=config.get("upstream_endpoint"),
+            upstream_token=config.get("upstream_key"), max_sessions=config["max_sessions"],
+            idle_timeout=config["idle_timeout"], request_timeout=config["request_timeout"],
+            active=lambda: config["active"], legacy_jev=bool(legacy_routes), control=slot_control,
+            # The scoped RPC has its own startup/cleanup deadline; generation
+            # replacement then permits at most two seconds for private DELETE.
+            control_timeout=config["control_timeout"] + 3,
+        )
+    else:
+        app, gateway = make_app(
+            token=config["token"], port=config["port"],
+            launch_session=launcher.launch, close_session=launcher.close,
+            max_sessions=config["max_sessions"], idle_timeout=config["idle_timeout"],
+            request_timeout=config["request_timeout"], active=lambda: config["active"],
+        )
     server = uvicorn.Server(uvicorn.Config(
         app, access_log=False, log_config=None, log_level="critical",
         timeout_graceful_shutdown=2,

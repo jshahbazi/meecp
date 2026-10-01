@@ -4,7 +4,7 @@ Project repository: [jshahbazi/mcpme](https://github.com/jshahbazi/mcpme).
 
 `mcpme` is being developed as a native macOS menu bar host for independently installed MCP service slots, including models and deterministic tools. The [modular host design](docs/MCPME_DESIGN.md) defines slot management, agent installation, and bringing your own programs or models.
 
-The [first mcpme milestone](docs/MCPME_STATUS.md) implements prepared local package verification, private registry and installation records, a CLI supervisor, and independently controlled deterministic stdio slots. Start there for the new host's build and usage instructions. Native slot UI and JevK5 migration remain pending.
+The [mcpme implementation guide](docs/MCPME_STATUS.md) covers the native Projects window, prepared local packages, independent deterministic slots, and JevK5 as a shared model slot. It includes build instructions, CLI usage, and the explicit legacy import workflow. [Verification evidence](docs/MCPME_VERIFICATION.md) records the tested scope.
 
 The existing JevK5 Menu Bar implementation keeps JevK5-4B available as a local MCP decision tool. Its built app contains the Q8 model, Metal inference runtime, and its own Python server. It requires Apple silicon and macOS 26 or newer. The instructions below apply to that working baseline.
 
@@ -26,7 +26,7 @@ Use **Copy MCP Configuration** in the menu. For a client supporting the common J
 {
   "mcpServers": {
     "jevk5": {
-      "command": "/Users/johnshahbazian/development/jevk5-menubar/dist/JevK5.app/Contents/MacOS/jevk5-mcp",
+      "command": "/Users/johnshahbazian/development/mcpme/dist/JevK5.app/Contents/MacOS/jevk5-mcp",
       "args": []
     }
   }
@@ -71,7 +71,7 @@ To reuse an existing verified GGUF, supply its path to `uv run scripts/build.py 
 
 Builds use the current local llama-server executable (override with `--llama-server`). Packaging recursively copies and relocates its dependencies, including Metal and CPU plugins, verifies no linked Homebrew path remains, and signs the finished app. `runtime-manifest.json` inside Resources records the bundled library hashes. To reproduce the measured local artifact, use llama.cpp 0.5.0/build 11146, ggml 0.25.3, and Python 3.12.13; Python dependencies are pinned in `uv.lock`.
 
-Run focused checks with `uv run pytest`. The app integration script and [verification report](docs/VERIFICATION.md) record synthetic end-to-end tests against the actual packaged model.
+Run the repository checks with `uv run --locked python -m pytest`. The app integration script and [verification report](docs/VERIFICATION.md) record synthetic end-to-end tests against the original packaged model; the modular host has its own [Phase 1 verification](docs/MCPME_VERIFICATION.md).
 
 ## Caching and local data
 

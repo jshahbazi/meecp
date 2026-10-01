@@ -1,4 +1,4 @@
-"""Build the first milestone's relocatable CLI host with a private Python runtime."""
+"""Build the relocatable CLI host with a private Python runtime."""
 from __future__ import annotations
 
 import argparse
@@ -46,13 +46,17 @@ def build(destination: Path):
                         'exec "$MCPME_ROOT/python/bin/python3.12" -m mcpme "$@"\n')
     launcher.chmod(0o755)
     shutil.copyfile(ROOT / "uv.lock", destination / "uv.lock")
-    shutil.copyfile(ROOT / "docs/MCPME_STATUS.md", destination / "README.md")
+    shutil.copyfile(ROOT / "README.md", destination / "README.md")
+    (destination / "docs").mkdir()
+    for document in sorted((ROOT / "docs").glob("*.md")):
+        shutil.copyfile(document, destination / "docs" / document.name)
     licenses = destination / "licenses"
     licenses.mkdir()
     shutil.copyfile(runtime / "lib/python3.12/LICENSE.txt", licenses / "python-LICENSE.txt")
     shutil.copyfile(ROOT / "THIRD_PARTY_NOTICES.md", licenses / "THIRD_PARTY_NOTICES.md")
     run("/usr/bin/codesign", "--force", "--sign", "-", str(destination / "bin/mcpme-reap"))
-    source_files = [*sorted((destination / "backend/mcpme").glob("*.py")), destination / "uv.lock",
+    source_files = [*[path for path in sorted((destination / "backend/mcpme").rglob("*")) if path.is_file()],
+                    *sorted((destination / "docs").glob("*.md")), destination / "uv.lock",
                     destination / "requirements.txt", destination / "README.md", destination / "bin/mcpme-reap"]
     source_hashes = {str(path.relative_to(destination)): hashlib.sha256(path.read_bytes()).hexdigest()
                      for path in source_files}

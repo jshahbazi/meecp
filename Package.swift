@@ -4,6 +4,7 @@ import PackageDescription
 let package = Package(
     name: "JevK5MenuBar",
     platforms: [.macOS(.v14)],
-    products: [.executable(name: "JevK5MenuBar", targets: ["JevK5MenuBar"])],
-    targets: [.executableTarget(name: "JevK5MenuBar")]
+    products: [.executable(name: "JevK5MenuBar", targets: ["JevK5MenuBar"]),
+               .executable(name: "McpmeMenuBar", targets: ["McpmeMenuBar"])],
+    targets: [.executableTarget(name: "JevK5MenuBar"), .executableTarget(name: "McpmeMenuBar")]
 )

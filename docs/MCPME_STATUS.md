@@ -1,11 +1,12 @@
-# mcpme first implementation milestone
+# mcpme Phase 1 implementation
 
-Implemented on 2026-10-01 against [MCPME_DESIGN.md](MCPME_DESIGN.md). This milestone provides package verification, a durable registry, a CLI supervisor, and independent deterministic MCP slots. The existing JevK5 app and its model behavior remain available through their original entrypoints.
+Implemented against [MCPME_DESIGN.md](MCPME_DESIGN.md). The host has a native Projects window, package verification, durable registry, CLI, independent deterministic services, and a JevK5 model package with one shared engine. The backend API calls these installations slots. The original JevK5 app remains separately buildable. See [Phase 1 verification](MCPME_VERIFICATION.md) for measured acceptance evidence and limitations.
 
 ## Supported scope
 
 - Apple silicon, macOS 26 or later.
 - Prepared local `mcp-stdio` packages with one foreground CPU-only executable per client session.
+- Prepared local `model-service` packages with a declared singleton dependency graph, authenticated private HTTP adapter, and supervisor-owned engine processes.
 - MCP revision `2025-11-25`, tools, structured results, progress and tool-list notifications, cancellation, and bidirectional ping.
 - Stable UUIDs and bound public loopback ports; default allocation prefers 19386–19485.
 - Independent invocation credentials, with a separate owner-only management credential.
@@ -13,7 +14,15 @@ Implemented on 2026-10-01 against [MCPME_DESIGN.md](MCPME_DESIGN.md). This miles
 - Static package planning, snapshotted artifacts, idempotent apply, candidate initialization/schema checks, and asynchronous operation records.
 - Native reapers for gateways and package processes, session deadlines and leases, and durable ownership-loss blocking.
 
-The supplied JSON Utilities package exposes `validate_json(document)` and returns a validity flag and top-level type. It is compiled with Swift Foundation into a standalone executable. Two installations have separate identities, public ports, credentials, and session processes. No model is loaded by this example.
+The supplied JSON Utilities package exposes `validate_json(document)` and returns a validity flag and top-level type. JevK5 exposes its original `jevk5_decide` and `jevk5_status` tools. Every connected JevK5 client shares one adapter, inference lock, and engine for that slot generation. The adapter never launches or kills the engine. The supervisor starts dependencies, checks authenticated readiness, and stops them in reverse order.
+
+## Native app
+
+Open `dist/mcpme.app`. The menu bar lists projects and offers independent Start/Stop, Restart, connection copy, details, Stop All, and Quit. **Manage Projects** opens the native management window. **Add Project** accepts a prepared local package folder, displays its exact installation plan, and applies that saved plan. Installation and lifecycle operations remain visible after closing and reopening the window. Copying connection configuration is a separate action and never edits a client's settings.
+
+Closing the window leaves the host running. Quit waits for owned processes to drain and exit. The UI starts one supervisor and checks that private discovery identifies that exact process. An already running external supervisor produces a visible ownership conflict. **Start at Login** uses ServiceManagement for this app; each project's manual or start-with-host policy remains separate.
+
+Raw source intake, external-agent preparation drafts, downloads, and model selection wizards belong to Phase 2. This version's Add Project flow accepts an already prepared package.
 
 ## Build and run
 
@@ -37,7 +46,19 @@ dist/mcpme-host/bin/mcpme serve --reaper "$PWD/dist/mcpme-host/bin/mcpme-reap"
 
 Move the complete `mcpme-host` directory to relocate it. Its `bin/mcpme` launcher computes its runtime paths from its own location. Runtime use does not require uv, Homebrew, or the checkout. Build scripts require uv and Xcode command-line tools. Builders refuse to overwrite an existing output; choose a new `--output` directory for another build.
 
-This distribution is a development CLI host. The native menu bar UI, `mcpme.app`, login-item integration, Developer ID signing, and notarization are subsequent work.
+Build the native app around a fresh copy of that private host:
+
+```sh
+uv run --locked python scripts/build_mcpme_app.py
+```
+
+To prepare JevK5, first build or retain the verified original `dist/JevK5.app` using the [legacy build instructions](../README.md). The preparer verifies its recorded relocated engine hashes and the pinned model before copying them:
+
+```sh
+uv run --locked python scripts/prepare_jevk5_package.py
+```
+
+The package contains its own interpreter, locked dependencies, adapter, engine and licenses. Installation never follows the editable preparation directory. The generated app and packages are development artifacts with ad hoc signatures. Developer ID signing and notarization are pending.
 
 ## Install and connect
 
@@ -55,7 +76,7 @@ scripts/mcpme connections export --slot SLOT_UUID --json
 
 Replace the uppercase UUID placeholders with values returned by preceding commands. `--start` belongs to **plan** in this milestone so the plan includes the activation effect. Omit it to install a stopped slot. Apply accepts the exact saved plan; repeated or concurrent applies return the same operation and slot. A failed operation requires a new plan. Planning performs no package execution; apply starts the candidate to verify its protocol and tool schemas.
 
-`connections export` emits a stdio client configuration using the launcher's actual absolute path. It never emits the invocation credential or changes a client's settings. Client configurations after relocation should be exported again. The supervisor must already be running; automatic app launch is pending.
+`connections export` emits a stdio client configuration using the launcher's actual absolute path. In the app bundle it selects `Contents/MacOS/mcpme`. It never emits the invocation credential or changes a client's settings. Export again after relocating the app. A bundled `connect` command can open the app when its default installation is offline; a standalone CLI distribution or custom state directory requires an already running supervisor. Manual Stop still suppresses execution until Start.
 
 ```sh
 scripts/mcpme slots start SLOT_UUID --json
@@ -69,11 +90,15 @@ Lifecycle commands return operation IDs. Poll `operations get` for completion. `
 
 ## Package contract
 
-The authoritative initial schema is in `backend/mcpme/contracts.py`; `scripts/prepare_json_package.py` produces a complete example. Each package contains `mcpme.package.json`, `mcpme.lock.json`, every declared artifact, and referenced license files. The lock records exact sizes, hashes, source identity, provenance, executable status, and build/toolchain information.
+The authoritative schema is in `backend/mcpme/contracts.py`; `scripts/prepare_json_package.py` and `scripts/prepare_jevk5_package.py` produce complete examples. Each package contains `mcpme.package.json`, `mcpme.lock.json`, every declared artifact, and referenced license files. The lock records exact sizes, hashes, source identity, provenance, executable status, and build/toolchain information.
 
-The validator rejects unresolved source revisions, unknown fields, incompatible versions/profiles, missing or extra artifacts, unsafe paths, links, special files, mismatched executable modes, invalid tool schemas, external schema references, and changed content. All package-relative executable/cwd paths must remain within the verified tree. Source identity is a full commit hash or a SHA-256 snapshot identity. The initial package limit is 2 GiB; models use a future profile.
+The validator rejects unresolved source revisions, unknown fields, incompatible versions/profiles, missing or extra artifacts, unsafe paths, links, special files, mismatched executable modes, invalid tool schemas, external schema references, and changed content. All package-relative executable/cwd paths must remain within the verified tree. Source identity is a full commit hash or a SHA-256 snapshot identity. Metadata and total artifact sizes are bounded; the model-capable package limit is 64 GiB.
 
-The manifest declares only the supported one-process-per-session topology. Package programs must stay foreground and must not spawn persistent workers or daemons. Access declarations are descriptive. Trusted package code runs with the account's permissions; this is not an OS sandbox. Hash verification proves agreement with the saved package identity. It does not establish publisher trust or independently prove that an arbitrary native program has no undeclared dynamic dependencies. Candidate execution verifies the actual protocol and declared tool contracts on this machine.
+Stdio packages declare one process per session. Model packages declare a bounded acyclic graph of singleton engine and adapter processes. Each receives generation-specific configuration through an inherited descriptor. Credentials never enter arguments. JevK5's bootstrap replaces itself with the real engine using `exec`, preserving the native reaper's owned child identity. The adapter receives its declared dependencies' private endpoints and credentials. It echoes a fresh nonce and generation on its authenticated readiness route; the unmodified engine requires an authenticated response and a live owned process, with anonymous access rejected.
+
+Package programs must stay foreground and must not spawn undeclared persistent workers or daemons. Access declarations are descriptive. Trusted package code runs with the account's permissions; this is not an OS sandbox. Hash verification establishes agreement with the saved package identity and does not establish publisher trust. Candidate execution verifies the actual protocol and declared tool contracts on this machine.
+
+Model admission reserves the declared memory estimate plus headroom. The private `resource-policy.json` defaults to 75% of physical memory with 1 GiB headroom per model. The initial GPU policy permits one resident managed GPU package at a time. A second is visibly `resource_blocked`; deterministic services remain available. Estimates are not measured RSS or GPU attribution. This policy covers mcpme-owned services; other applications can still consume memory and GPU resources.
 
 The example's full artifact tree is copied into private host storage during planning and verified again before activation. Editing the preparation directory later does not change the accepted package. Package processes receive a minimal environment, private data/temp locations, stdio, and no management credential or launch-control descriptor.
 
@@ -91,7 +116,34 @@ Any unfinished ownership record after host restart conservatively requires recon
 
 Interrupted installations become `recovery_required` and cannot be controlled into exposure. Controls are also rejected while an install is active. Once the durable exposure marker permits calls, later failures preserve the selected slot and its data. They cannot trigger automatic discard or rollback to older data. Automated recovery, upgrades, uninstall, and retention cleanup are pending; preserve the private state directory when investigating a blocked operation.
 
-Management uses the local owner's credential in this milestone. Plan-scoped grants, the management MCP facade, import drafts, pinned downloads, first-call start, HTTP/model execution profiles, GPU/memory admission, and JevK5 migration remain unsupported and are reported by `capabilities`.
+Management uses the local owner's credential. Plan-scoped grants, the management MCP facade, import drafts, pinned downloads, first-call start, standalone `mcp-http` packages, upgrades, and removal remain unsupported and are reported by `capabilities`.
+
+## Import the existing JevK5 installation
+
+Migration is an explicit CLI operation. Ordinary installation creates a new slot and does not take over port 19385. The import preserves 19385 and the old invocation credential, adds only the JevK5 compatibility routes `/api/status`, `/api/control`, `/api/decide`, and retains the old `backend.lock` while mcpme owns the imported installation. The old credential can pause/resume only this slot and cannot manage the host or other slots.
+
+Build a recoverable copy with the supported native handoff commands, preserving the original bundle, then build mcpme with its exact executable identity recorded:
+
+```sh
+uv run --locked python scripts/build_jevk5_recovery.py
+uv run --locked python scripts/build_mcpme_app.py --output dist/mcpme-with-migration.app --legacy-recovery-app dist/JevK5-recovery.app
+```
+
+Use that app's CLI while it is running:
+
+```sh
+dist/mcpme-with-migration.app/Contents/MacOS/mcpme migrate-jevk5 plan --package "$PWD/dist/jevk5-package" --legacy-app "$PWD/dist/JevK5-recovery.app" --json
+dist/mcpme-with-migration.app/Contents/MacOS/mcpme migrate-jevk5 apply TRANSFER_UUID --json
+dist/mcpme-with-migration.app/Contents/MacOS/mcpme migrate-jevk5 inspect TRANSFER_UUID --json
+```
+
+Planning snapshots and verifies the package, records the recovery locations and old login/pause preferences, and presents the transfer effects. Apply requests the old application's supported termination, retires its login item, acquires its lock and port without evicting another owner, installs and verifies a synthetic decision, then commits the transfer. Login preference transfer can require macOS approval; an unavailable or unverified setting is surfaced rather than assumed. The old bundle, state, and migration record are retained.
+
+If macOS reports `not_found` for a moved legacy bundle, planning normally blocks. After confirming that the old app's Start at Login is disabled, add `--legacy-login-disabled` to the plan command. The record labels that fact as owner-confirmed, not an observed ServiceManagement setting. This flag does not bypass a known enabled or approval-required login item.
+
+Transfer stages are `staged`, `old_stopped`, `endpoint_acquired`, and `committed`. Duplicate applies recover the same transfer. A failure closes candidate admission and preserves recovery artifacts. Restart reacquires the legacy lock before binding a committed slot's endpoint. Interrupted transfers and ownership loss cannot be bypassed with Start. `migrate-jevk5 rollback TRANSFER_UUID` is available before candidate exposure and restores the recorded old app only after both lock and port are free. After exposure, `migrate-jevk5 recover TRANSFER_UUID` can restart and verify the selected generation using its existing data, once ownership is known and installation completed. It never restores older data. Unresolved ownership or an unfinished installation still requires reconciliation.
+
+The old stdio registration still points to the old launcher. Export a replacement with `connections export --slot SLOT_UUID` and update the specific client entry you intend to change. Migration does not rewrite client configuration.
 
 ## Verification
 
@@ -102,4 +154,4 @@ uv run --locked python scripts/verify_mcpme.py --host dist/mcpme-host --package 
 
 The tests include the original JevK5 regressions, package/path/hash and private-state rejection cases, idempotency and recovery races, native parent/reaper failures, cancellation during descriptor transfer, and real SDK clients over HTTP and stdio. The two-slot integration checks independent controls and credentials, stable ports, structured output, and private snapshot installation. The separate bundle verifier copies the host to a relocated path and runs CLI installation and real clients with a minimal environment.
 
-These establish this deterministic milestone. Full Phase 1 acceptance still requires JevK5 extraction/migration, its model and cache parity checks through slots, the native management UI, and the final app build.
+The model and native acceptance commands and their results are recorded in [MCPME_VERIFICATION.md](MCPME_VERIFICATION.md). Model transport parity verifies this integration; it does not establish decision quality or confidence thresholds for a new task.

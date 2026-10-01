@@ -9,6 +9,7 @@ dependencies = ["mcp>=1.26,<2", "uvicorn>=0.35,<1", "httpx>=0.28,<1", "jsonschem
 dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2"]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 pythonpath = ["backend", "vendor"]
 asyncio_mode = "auto"
 

@@ -1,0 +1,220 @@
+{
+  "model": {
+    "context_tokens": 8192,
+    "model_id": "JevK5-4B-v0.3-Q8_0",
+    "profile": "m5-benchmark-v1",
+    "sha256": "aea433883bc7ed399f2fbd539e53d2eac7caf71a946fe6650995a413979d4a30"
+  },
+  "package_id": "local.jevk5",
+  "parameters": {
+    "knockout_temperature": 0.93,
+    "temperature": 1.22
+  },
+  "schema_version": 1,
+  "tools": [
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Score supplied evidence against a declared criterion with the local JevK5 decision model. Use for boolean propositions (noul), 2\u201316 named choices, or score levels. The model has no retrieval or external knowledge source and generates no explanation. Return calibrated option probabilities and model/cache metadata. Evidence may be a JSON string, object, or list. Choice criteria are an ordered object or distinct labels; score criteria must be an ordered array of descriptions for levels 0 through N\u22121, from lowest to highest. Confidence thresholds require task-specific validation.",
+      "inputSchema": {
+        "$defs": {
+          "ChoiceQuestion": {
+            "additionalProperties": false,
+            "properties": {
+              "criteria": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 16,
+                    "minItems": 2,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "maxProperties": 16,
+                    "minProperties": 2,
+                    "type": "object"
+                  }
+                ],
+                "title": "Criteria"
+              },
+              "instructions": {
+                "maxLength": 65536,
+                "minLength": 1,
+                "title": "Instructions",
+                "type": "string"
+              },
+              "type": {
+                "const": "choice",
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "instructions",
+              "type",
+              "criteria"
+            ],
+            "title": "ChoiceQuestion",
+            "type": "object"
+          },
+          "NoulQuestion": {
+            "additionalProperties": false,
+            "properties": {
+              "criteria": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "propertyNames": {
+                      "enum": [
+                        "true",
+                        "false"
+                      ]
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Criteria"
+              },
+              "instructions": {
+                "maxLength": 65536,
+                "minLength": 1,
+                "title": "Instructions",
+                "type": "string"
+              },
+              "type": {
+                "const": "noul",
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "instructions",
+              "type"
+            ],
+            "title": "NoulQuestion",
+            "type": "object"
+          },
+          "ScoreQuestion": {
+            "additionalProperties": false,
+            "properties": {
+              "criteria": {
+                "description": "Ordered descriptions for score levels 0 through N\u22121, from lowest to highest.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "minItems": 2,
+                "title": "Criteria",
+                "type": "array"
+              },
+              "instructions": {
+                "maxLength": 65536,
+                "minLength": 1,
+                "title": "Instructions",
+                "type": "string"
+              },
+              "type": {
+                "const": "score",
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "instructions",
+              "type",
+              "criteria"
+            ],
+            "title": "ScoreQuestion",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "question": {
+            "discriminator": {
+              "mapping": {
+                "choice": "#/$defs/ChoiceQuestion",
+                "noul": "#/$defs/NoulQuestion",
+                "score": "#/$defs/ScoreQuestion"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/NoulQuestion"
+              },
+              {
+                "$ref": "#/$defs/ChoiceQuestion"
+              },
+              {
+                "$ref": "#/$defs/ScoreQuestion"
+              }
+            ],
+            "title": "Question"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "items": {},
+                "type": "array"
+              }
+            ],
+            "title": "State"
+          }
+        },
+        "required": [
+          "state",
+          "question"
+        ],
+        "title": "jevk5_decideArguments",
+        "type": "object"
+      },
+      "name": "jevk5_decide",
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "jevk5_decideDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Report local model readiness, pause state, model identity, aggregate counts, and MCP endpoint. Contains no evidence or decisions.",
+      "inputSchema": {
+        "properties": {},
+        "title": "jevk5_statusArguments",
+        "type": "object"
+      },
+      "name": "jevk5_status",
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "jevk5_statusDictOutput",
+        "type": "object"
+      }
+    }
+  ]
+}

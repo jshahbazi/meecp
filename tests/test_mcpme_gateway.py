@@ -232,6 +232,97 @@ async def test_capacity_reserved_before_launch_and_idle_expiry_reaps():
         assert owner.launched == 2
 
 
+async def test_repeated_abrupt_client_exits_reclaim_children_and_preserve_survivor():
+    # os._exit closes the client socket without HTTP DELETE or context cleanup.
+    # Alternate idle sessions with abandoned calls whose children remain blocked.
+    program = "\n".join([
+        "import asyncio,json,os,sys,httpx",
+        "endpoint,mode=sys.argv[1:]",
+        "headers=" + repr(HEADERS),
+        "initial=" + repr(INIT),
+        "async def run():",
+        " async with httpx.AsyncClient(trust_env=False,timeout=3) as http:",
+        "  response=await http.post(endpoint,json=initial,headers=headers)",
+        "  assert response.status_code==200",
+        "  sid=response.headers['mcp-session-id']; headers['mcp-session-id']=sid",
+        "  response=await http.post(endpoint,json={'jsonrpc':'2.0','method':'notifications/initialized'},headers=headers)",
+        "  assert response.status_code==202",
+        "  if mode=='deadline':",
+        "   payload={'jsonrpc':'2.0','id':'abandoned','method':'tools/call','params':{'name':'echo','arguments':{'value':'hang'}}}",
+        "   async with http.stream('POST',endpoint,json=payload,headers=headers) as response:",
+        "    assert response.status_code==200",
+        "    async for line in response.aiter_lines():",
+        "     if line.startswith('id:'): break",
+        "    print(sid,flush=True); os._exit(0)",
+        "  print(sid,flush=True); os._exit(0)",
+        "asyncio.run(run())",
+    ])
+    capacity = 2
+    async with live_gateway(max_sessions=capacity, idle_timeout=0.6, request_timeout=0.2) as (endpoint, owner, gateway), client(endpoint) as http:
+        survivor_id, survivor_headers = await initialize_raw(http, endpoint)
+        survivor_child = owner.processes[survivor_id]
+
+        async def keep_survivor_alive():
+            sequence = 0
+            while True:
+                sequence += 1
+                response = await http.post(endpoint, headers=survivor_headers,
+                    json={"jsonrpc": "2.0", "id": f"keepalive-{sequence}", "method": "ping"})
+                assert response.status_code == 200
+                await asyncio.sleep(0.1)
+
+        heartbeat = asyncio.create_task(keep_survivor_alive())
+        abandoned_children = []
+        try:
+            for cycle in range(capacity * 3):
+                process = await asyncio.create_subprocess_exec(sys.executable, "-u", "-c", program,
+                    endpoint, "idle" if cycle % 2 == 0 else "deadline",
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+                try:
+                    stdout, _ = await asyncio.wait_for(process.communicate(), 5)
+                    assert process.returncode == 0
+                finally:
+                    if process.returncode is None:
+                        process.kill()
+                        await process.wait()
+                sid = stdout.decode().strip()
+                abandoned = owner.processes[sid]
+                abandoned_children.append(abandoned)
+                assert sid != survivor_id
+                assert len(owner.processes) == capacity
+                # Capacity is truly occupied until the lease/deadline reaps it.
+                assert (await http.post(endpoint, json=INIT, headers=HEADERS)).status_code == 429
+                await asyncio.wait_for(abandoned.wait(), 3)
+                for _ in range(100):
+                    if sid not in gateway.sessions and sid in owner.closed:
+                        break
+                    await asyncio.sleep(0.01)
+                assert abandoned.returncode is not None
+                assert sid not in gateway.sessions
+                assert sid in owner.closed
+                assert (await http.get(endpoint, headers={**HEADERS, "mcp-session-id": sid})).status_code == 404
+                assert owner.processes == {survivor_id: survivor_child}
+                assert survivor_child.returncode is None
+                assert not heartbeat.done()
+
+            response = await http.post(endpoint, headers=survivor_headers, json={
+                "jsonrpc": "2.0", "id": "survived-churn", "method": "tools/call",
+                "params": {"name": "echo", "arguments": {"value": "still-responsive"}}})
+            values = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ") and line[6:]]
+            assert values[-1]["result"]["structuredContent"] == {"value": "still-responsive"}
+            assert owner.launched == capacity * 3 + 1
+            assert len(owner.closed) == capacity * 3
+        finally:
+            heartbeat.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat
+        assert (await http.delete(endpoint, headers=survivor_headers)).status_code == 200
+        assert survivor_child.returncode is not None
+        assert all(process.returncode is not None for process in abandoned_children)
+        assert owner.processes == {}
+        assert gateway.sessions == {}
+
+
 async def test_rejected_requests_do_not_renew_idle_lease():
     async with live_gateway(idle_timeout=0.3) as (endpoint, owner, gateway), client(endpoint) as http:
         sid, headers = await initialize_raw(http, endpoint)

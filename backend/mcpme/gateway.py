@@ -335,12 +335,17 @@ class Gateway:
             params = message.get("params") or {}
             caps = params.get("capabilities", {})
             if (sid or "id" not in message or params.get("protocolVersion") != PROTOCOL_VERSION or
-                    not isinstance(caps, dict) or set(caps) - {"experimental"} or any(caps.values())):
+                    not isinstance(caps, dict)):
                 return JSONResponse({"error": {"code": "unsupported_profile"}}, status_code=400)
             try:
                 InitializeRequestParams.model_validate(params)
             except Exception:
                 return JSONResponse({"error": {"code": "invalid_initialize"}}, status_code=400)
+            # Client capabilities advertise optional services the client offers.
+            # They do not require this tools-only server to use those services.
+            # The private package must never be promised capabilities that this
+            # gateway cannot forward, so its client side advertises none.
+            message = {**message, "params": {**params, "capabilities": {}}}
             try:
                 session = await self.new_session()
             except RuntimeError as error:

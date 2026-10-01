@@ -21,6 +21,14 @@ TOOL = {"name": "echo", "description": "Return synthetic data", "inputSchema": {
     "type": "object", "properties": {"value": {}}, "required": ["value"]},
     "outputSchema": {"type": "object", "properties": {"value": {}}, "required": ["value"]}}
 
+# Installed VS Code Insiders 1.141.0 advertises these optional client services.
+VSCODE_CLIENT_CAPABILITIES = {
+    "roots": {"listChanged": True}, "sampling": {}, "elicitation": {"form": {}, "url": {}},
+    "tasks": {"list": {}, "cancel": {}, "requests": {
+        "sampling": {"createMessage": {}}, "elicitation": {"create": {}}}},
+    "extensions": {"io.modelcontextprotocol/ui": {"mimeTypes": ["text/html;profile=mcp-app"]}},
+}
+
 CHILD = "\n".join([
     "import sys,json,time",
     "tool=" + repr(TOOL),
@@ -434,12 +442,46 @@ async def test_integer_and_string_ids_are_distinct_and_duplicate_rejected():
         assert (await http.post(endpoint, headers=headers, json={"jsonrpc": "2.0", "id": 1, "method": "ping"})).status_code == 429
 
 
-@pytest.mark.parametrize("change", [{"protocolVersion": "2025-03-26"}, {"capabilities": {"sampling": {}}}])
+@pytest.mark.parametrize("change", [{"protocolVersion": "2025-03-26"}, {"capabilities": {"sampling": []}}])
 async def test_unsupported_profile_never_launches(change):
     async with live_gateway() as (endpoint, owner, gateway), client(endpoint) as http:
         payload = {**INIT, "params": {**INIT["params"], **change}}
         assert (await http.post(endpoint, json=payload, headers=HEADERS)).status_code == 400
         assert owner.launched == 0
+
+
+async def test_vscode_capability_offers_initialize_over_stdio_bridge_without_private_promises(monkeypatch):
+    monkeypatch.setitem(globals(), "CHILD", CHILD.replace(
+        "if method=='initialize': result=", "if method=='initialize':\n  assert m['params']['capabilities']=={}\n  result="))
+    async with live_gateway() as (endpoint, owner, gateway):
+        stdin = asyncio.StreamReader()
+        stdout = asyncio.Queue()
+        bridge = Bridge(endpoint, "secret")
+        async def write(data):
+            await stdout.put(load_line(data))
+        task = asyncio.create_task(bridge.run(stdin, write))
+        try:
+            payload = {**INIT, "params": {**INIT["params"], "capabilities": VSCODE_CLIENT_CAPABILITIES,
+                        "clientInfo": {"name": "Visual Studio Code - Insiders", "version": "1.141.0-insider"}}}
+            stdin.feed_data(encode(payload) + b"\n")
+            response = await asyncio.wait_for(stdout.get(), 3)
+            assert response["id"] == payload["id"]
+            assert response["result"]["protocolVersion"] == PROTOCOL_VERSION
+            assert set(response["result"]["capabilities"]) == {"tools"}
+            stdin.feed_data(encode({"jsonrpc": "2.0", "method": "notifications/initialized"}) + b"\n")
+            stdin.feed_data(encode({"jsonrpc": "2.0", "id": "vscode-tools", "method": "tools/list"}) + b"\n")
+            response = await asyncio.wait_for(stdout.get(), 3)
+            assert response["id"] == "vscode-tools" and response["result"]["tools"] == [TOOL]
+            async with client(endpoint) as http:
+                for method in ("roots/list", "sampling/createMessage", "elicitation/create", "tasks/list"):
+                    response = await http.post(endpoint, headers={**HEADERS, "mcp-session-id": bridge.session_id},
+                        json={"jsonrpc": "2.0", "id": method, "method": method})
+                    assert response.status_code == 400
+            assert owner.launched == 1
+        finally:
+            stdin.feed_eof()
+            await asyncio.wait_for(task, 3)
+        assert not owner.processes and not gateway.sessions
 
 
 async def test_bridge_forwarding_and_eof_delete():

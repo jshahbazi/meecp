@@ -16,7 +16,7 @@ The model verifier copies the packaged host to a temporary directory and runs it
 
 ## Verified on 2026-10-01
 
-The complete automated suite passed: **219 tests in 37.90 seconds**. These include the original decision contract, probability/cache behavior, HTTP authentication and policy, independent controls, client/session cleanup, native ownership/reaper failure, bounded graph startup, resource reservation, and migration interruption/recovery cases. `git diff --check` also passed.
+The complete automated suite passed after the VS Code interoperability correction: **221 tests in 38.72 seconds**. These include the original decision contract, probability/cache behavior, HTTP authentication and policy, independent controls, client/session cleanup, native ownership/reaper failure, bounded graph startup, resource reservation, and migration interruption/recovery cases. `git diff --check` also passed.
 
 The abrupt-client regression starts real client subprocesses that exit without DELETE. Six clients repeatedly exceed a two-session capacity alongside a surviving client; idle/request deadlines reclaim their actual target processes, expired sessions return 404, capacity becomes reusable, and the survivor remains responsive. All seven target children are cleaned up. Legacy pause/resume has a separate finite lifecycle deadline covering declared startup and cleanup; ordinary tool deadlines and the short status deadline remain independent.
 
@@ -39,6 +39,16 @@ A subsequent native Quit and relaunch verified the committed transfer across a r
 The post-restart probe passed **13 of 13 continuity checks**, including the committed record, preserved port and credential, held legacy lock, original schemas/model identity, shared engine through real HTTP and stdio clients, access restrictions, and a JSON Utilities call. It made no model decisions or lifecycle changes and left both projects Ready. Its metadata report is `test-artifacts/mcpme-live-migration-restart-verification.json`.
 
 No login item was registered or unregistered during this owner-confirmed disabled transfer. The new development bundle also reports `not_found` through ServiceManagement, so automatic login registration has not been verified. Inspect the durable transfer record with `migrate-jevk5 inspect TRANSFER_UUID` for its current outcome. Client registrations are not rewritten automatically.
+
+## VS Code initialization regression
+
+VS Code Insiders 1.141.0 advertised roots, sampling, elicitation, tasks, and MCP app extensions while requesting the supported `2025-11-25` revision. The gateway incorrectly treated these optional client offers as package requirements, rejected initialization with HTTP 400 `unsupported_profile`, and the stdio bridge returned `-32000`. The earlier SDK checks used empty client capabilities and did not expose this interoperability defect.
+
+The gateway now validates the client's initialization and supplies an empty client-capability object to the private package, reflecting the gateway's implemented callbacks. It still rejects unsupported package capabilities, malformed offers, and operations outside the tools-only profile. Regression tests cover the installed VS Code advertisement through both the stdio bridge and private HTTP transport, assert that no unsupported callback is promised upstream, and verify tool discovery and cleanup. The focused transport/policy suite passed 46 tests; the complete suite result appears above.
+
+The corrected app was rebuilt, signed, and deployed at the existing canonical path. The packaged stdio probe passed **14 of 14 checks** with the full installed VS Code capability advertisement: initialization, original tool schemas, ready pinned-model status, and the prior continuity/authentication checks succeeded. It made no model decisions and one deterministic call, leaving both projects Ready. All thirteen bundled host Python files matched the tested source. The metadata report is `test-artifacts/mcpme-vscode-handshake-verification.json`.
+
+Actual VS Code Insiders 1.141.0-insider verification used a new empty window with the same global `jevk5` configuration. Start reached **Running** and **Discovered 2 tools**; a server-only Restart reached Running again with a new discovery of both tools and no error metadata. No model calls were made. Only the verification window was closed; the original working window and configuration were preserved. Its existing MCP connection may need its own server restart to load the correction. Both projects remained Ready afterward.
 
 ## Claim boundaries
 

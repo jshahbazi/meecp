@@ -17,7 +17,7 @@ from starlette.routing import Route
 from mcpme.gateway import PROTOCOL_VERSION
 from mcpme.http_gateway import make_http_app
 from mcpme.policy import LocalPolicy
-from test_mcpme_gateway import CHILD, HEADERS, INIT, TOOL, live_gateway
+from test_mcpme_gateway import CHILD, HEADERS, INIT, TOOL, VSCODE_CLIENT_CAPABILITIES, live_gateway
 
 
 @asynccontextmanager
@@ -66,7 +66,7 @@ async def initialize(http, endpoint):
 
 @asynccontextmanager
 async def stateless_runtime():
-    stats = {"calls": 0, "active": 0, "max_active": 0, "legacy_calls": 0}
+    stats = {"calls": 0, "active": 0, "max_active": 0, "legacy_calls": 0, "client_capabilities": []}
     lock = asyncio.Lock()
     async def handle(request):
         if request.url.path == "/api/status":
@@ -81,6 +81,7 @@ async def stateless_runtime():
         if "id" not in message:
             return Response(status_code=202)
         if method == "initialize":
+            stats["client_capabilities"].append(message["params"]["capabilities"])
             result = {"protocolVersion": PROTOCOL_VERSION, "capabilities": {"tools": {}}, "serverInfo": {"name": "shared", "version": "1"}}
         elif method == "tools/list":
             result = {"tools": [TOOL]}
@@ -131,6 +132,19 @@ async def test_stateless_runtime_two_sdk_clients_share_service_and_private_auth(
             assert (await http.get(public, headers={"authorization": "Bearer secret"})).status_code == 401
             assert (await http.get(public.removesuffix("/mcp") + "/api/status")).status_code == 404
             assert (await http.get(public.removesuffix("/mcp") + "/health")).status_code == 404
+
+
+async def test_vscode_client_offers_do_not_enable_private_http_capabilities():
+    async with stateless_runtime() as (private, stats), public_proxy(private) as (public, gateway), public_client() as http:
+        payload = {**INIT, "params": {**INIT["params"], "capabilities": VSCODE_CLIENT_CAPABILITIES}}
+        response = await http.post(public, json=payload, headers=public_headers())
+        values = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ") and line[6:]]
+        assert response.status_code == 200
+        assert values[-1]["id"] == payload["id"]
+        assert values[-1]["result"]["protocolVersion"] == PROTOCOL_VERSION
+        assert set(values[-1]["result"]["capabilities"]) == {"tools"}
+        assert stats["client_capabilities"] == [{}]
+        assert (await http.delete(public, headers=public_headers(response.headers["mcp-session-id"]))).status_code == 200
 
 
 async def test_stateful_session_mapping_progress_ping_notification_and_delete():

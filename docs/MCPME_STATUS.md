@@ -8,6 +8,7 @@ Implemented against [MCPME_DESIGN.md](MCPME_DESIGN.md). The host has a native Pr
 - Prepared local `mcp-stdio` packages with one foreground CPU-only executable per client session.
 - Prepared local `model-service` packages with a declared singleton dependency graph, authenticated private HTTP adapter, and supervisor-owned engine processes.
 - MCP revision `2025-11-25`, tools, structured results, progress and tool-list notifications, cancellation, and bidirectional ping.
+- Clients may advertise additional optional capabilities during initialization. The tools-only gateway advertises no unsupported client callbacks to packages; those extra features remain unavailable.
 - Stable UUIDs and bound public loopback ports; default allocation prefers 19386–19485.
 - Independent invocation credentials, with a separate owner-only management credential.
 - Manual or start-with-host policy. New slots default to manual. Explicit Stop persists suppression across host restarts.

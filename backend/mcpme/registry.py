@@ -115,12 +115,18 @@ def _slot_values(values: dict[str, Any]) -> None:
 
 def _operation_details(details: dict[str, Any]) -> None:
     # Explicit metadata allowlist: never persist arbitrary package/client inputs.
-    if not isinstance(details, dict) or set(details) - {"plan_id", "package_digest", "package_path", "result_slot_id"}:
+    if not isinstance(details, dict) or set(details) - {"plan_id", "package_digest", "package_path", "result_slot_id",
+                                                    "import_id", "import_revision", "import_digest"}:
         raise RegistryError("invalid_operation_details")
-    for key in ("plan_id", "result_slot_id"):
+    for key in ("plan_id", "result_slot_id", "import_id"):
         if key in details:
             _uuid(details[key])
     _slot_values({key: value for key, value in details.items() if key in ("package_digest", "package_path")})
+    import_fields = {"import_id", "import_revision", "import_digest"}
+    if import_fields & details.keys():
+        if not import_fields <= details.keys() or type(details["import_revision"]) is not int or details["import_revision"] < 1:
+            raise RegistryError("invalid_operation_details")
+        _slot_values({"package_digest": details["import_digest"]})
 
 
 class Registry:
@@ -364,6 +370,15 @@ class Registry:
         """Recovery must inspect every unfinished operation, independent of display pagination."""
         return [self._operation(row) for row in self._connection.execute(
             "SELECT * FROM operations WHERE status IN ('pending','running','recovery_required') ORDER BY created_at")]
+
+    def list_import_operations(self) -> list[Operation]:
+        """Import recovery must not depend on the recent-operation display limit."""
+        result = []
+        for row in self._connection.execute("SELECT * FROM operations WHERE action='install' ORDER BY created_at"):
+            operation = self._operation(row)
+            if "import_id" in operation.details:
+                result.append(operation)
+        return result
 
     def update_operation(self, operation_id: str, status: str, *, error_code: str | None = None,
                          details: dict[str, Any] | None = None) -> Operation:

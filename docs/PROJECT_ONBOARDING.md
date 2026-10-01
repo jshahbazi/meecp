@@ -1,6 +1,6 @@
 # Adding a project to mcpme
 
-Status: accepted product direction, 2026-10-01. Implementation is pending. The current application remains the single-service JevK5 menu bar app described in [DESIGN.md](DESIGN.md).
+Status: accepted product direction, 2026-10-01. Prepared packages, source-folder and Markdown/text intake, resumable drafts, and external preparation are implemented in the first [Phase 2 milestone](PHASE2_ONBOARDING.md). Reference-document services and integrated preparation remain pending. This document describes the complete intended journey; consult the milestone record for verified scope.
 
 This document defines the add-project experience. It refines the user-facing flow in [MCPME_DESIGN.md](MCPME_DESIGN.md), which remains the technical reference for packages, import drafts, authorization, installation, and lifecycle management.
 

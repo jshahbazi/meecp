@@ -1,0 +1,17 @@
+{
+  "name": "add_numbers",
+  "description": "Add two synthetic integers.",
+  "input_schema": {
+    "type": "object",
+    "properties": {"left": {"type": "integer"}, "right": {"type": "integer"}},
+    "required": ["left", "right"],
+    "additionalProperties": false
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {"total": {"type": "integer"}},
+    "required": ["total"],
+    "additionalProperties": false
+  },
+  "annotations": {"readOnlyHint": true, "idempotentHint": true, "openWorldHint": false}
+}

@@ -46,6 +46,9 @@ def build(destination: Path):
                         'exec "$MCPME_ROOT/python/bin/python3.12" -m mcpme "$@"\n')
     launcher.chmod(0o755)
     shutil.copyfile(ROOT / "uv.lock", destination / "uv.lock")
+    shutil.copyfile(ROOT / "pyproject.toml", destination / "pyproject.toml")
+    shutil.copytree(ROOT / "templates", destination / "templates",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copyfile(ROOT / "README.md", destination / "README.md")
     (destination / "docs").mkdir()
     for document in sorted((ROOT / "docs").glob("*.md")):
@@ -57,6 +60,7 @@ def build(destination: Path):
     run("/usr/bin/codesign", "--force", "--sign", "-", str(destination / "bin/mcpme-reap"))
     source_files = [*[path for path in sorted((destination / "backend/mcpme").rglob("*")) if path.is_file()],
                     *sorted((destination / "docs").glob("*.md")), destination / "uv.lock",
+                    destination / "pyproject.toml", *[path for path in sorted((destination / "templates").rglob("*")) if path.is_file()],
                     destination / "requirements.txt", destination / "README.md", destination / "bin/mcpme-reap"]
     source_hashes = {str(path.relative_to(destination)): hashlib.sha256(path.read_bytes()).hexdigest()
                      for path in source_files}

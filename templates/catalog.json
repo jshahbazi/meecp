@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "templates": [
+    {"id": "python-function-v1", "version": 1, "profile": "mcp-stdio", "instructions": "python-function-v1/README.md", "generator": "prepare.py"},
+    {"id": "existing-mcp-v1", "version": 1, "profile": "mcp-stdio", "instructions": "existing-mcp-v1/README.md", "generator": "prepare.py"},
+    {"id": "jevk5-llamacpp-v1", "version": 1, "profile": "model-service", "instructions": "jevk5-llamacpp-v1/README.md", "generator": null}
+  ]
+}

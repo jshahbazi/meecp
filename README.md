@@ -6,6 +6,9 @@ Project repository: [jshahbazi/mcpme](https://github.com/jshahbazi/mcpme).
 
 The [mcpme implementation guide](docs/MCPME_STATUS.md) covers the native Projects window, prepared local packages, independent deterministic slots, and JevK5 as a shared model slot. It includes build instructions, CLI usage, and the explicit legacy import workflow. [Verification evidence](docs/MCPME_VERIFICATION.md) records the tested scope.
 
+Phase 2 has begun with [resumable source imports and external preparation](docs/PHASE2_ONBOARDING.md). The [package-authoring guide](docs/PACKAGE_AUTHORING.md) and versioned templates support agent preparation in a separate workspace. Downloads, scoped management MCP, upgrade/rollback, and removal remain pending.
+
+
 The existing JevK5 Menu Bar implementation keeps JevK5-4B available as a local MCP decision tool. Its built app contains the Q8 model, Metal inference runtime, and its own Python server. It requires Apple silicon and macOS 26 or newer. The instructions below apply to that working baseline.
 
 JevK5 applies a supplied criterion to supplied evidence and scores declared alternatives. It supports boolean probability (`noul`), categorical choice (`choice`), and expected score (`score`). It has no retrieval or general chat interface. An MCP client chooses when to call it.

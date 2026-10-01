@@ -2,7 +2,7 @@
 
 Project repository: [jshahbazi/mcpme](https://github.com/jshahbazi/mcpme).
 
-`mcpme` is being developed as a native macOS menu bar host for independently installed MCP service slots, including models and deterministic tools. The [modular host design](docs/MCPME_DESIGN.md) defines slot management, agent installation, and bringing your own programs or models.
+`mcpme` is being developed as a native macOS menu bar host for independently installed MCP service slots, including models and deterministic tools. The [modular host design](docs/MCPME_DESIGN.md) defines slot management, agent installation, and bringing your own programs or models. The [project onboarding design](docs/PROJECT_ONBOARDING.md) defines the accepted drop, review, and add workflow, external-agent handoff, and delivery order. The design documents cover both implemented and planned functionality.
 
 The [mcpme implementation guide](docs/MCPME_STATUS.md) covers the native Projects window, prepared local packages, independent deterministic slots, and JevK5 as a shared model slot. It includes build instructions, CLI usage, and the explicit legacy import workflow. [Verification evidence](docs/MCPME_VERIFICATION.md) records the tested scope.
 

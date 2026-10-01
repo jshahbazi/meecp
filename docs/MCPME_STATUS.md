@@ -2,6 +2,14 @@
 
 Implemented against [MCPME_DESIGN.md](MCPME_DESIGN.md). The host has a native Projects window, package verification, durable registry, CLI, independent deterministic services, and a JevK5 model package with one shared engine. The backend API calls these installations slots. The original JevK5 app remains separately buildable. See [Phase 1 verification](MCPME_VERIFICATION.md) for measured acceptance evidence and limitations.
 
+## Milestone scope
+
+Phase 1's **two working slots** acceptance is complete for prepared local packages: JevK5 and JSON Utilities have independent controls, stable endpoints, real MCP clients, and verified supervision and cleanup. The native prepared-package setup and deliberate legacy transfer are included in the [recorded verification](MCPME_VERIFICATION.md).
+
+The accepted [project onboarding](PROJECT_ONBOARDING.md) delivery sequence remains broader work. Phase 1 preserves the prepared-package form, reviewed plan, and installation operation. Phase 2 includes drag-and-drop, raw source-folder and Markdown/text document intake, versioned resumable import drafts, and external-agent preparation and package return. The full onboarding journey is pending; reference-document services require a supported template, and integrated provider preparation remains later work.
+
+Automatic Start at Login registration and next-login launch remain unverified for the development bundle. The tested legacy transfer preserved an explicitly owner-confirmed disabled preference; it did not validate enabled login-item transfer.
+
 ## Supported scope
 
 - Apple silicon, macOS 26 or later.

@@ -12,6 +12,8 @@ The generated app is a local ad hoc signed development build. It has no notariza
 
 ## Connect an MCP client
 
+To register this local build with Codex, run `uv run scripts/install_codex.py`. This adds the bundled stdio command to `~/.codex/config.toml`, preserves other servers, and supplies 30-second startup and 180-second tool timeouts if absent. The desktop app and CLI share this configuration. Restart the JevK5 MCP connection in Codex settings to load its tools into an existing session. Setup follows the [official MCP configuration documentation](https://developers.openai.com/codex/mcp). To remove this registration, run `codex mcp remove jevk5`.
+
 Use **Copy MCP Configuration** in the menu. For a client supporting the common JSON `mcpServers` format, the configuration looks like:
 
 ```json

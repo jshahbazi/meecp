@@ -12,7 +12,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import JSONRPCMessage
+from mcp.types import JSONRPCMessage, ToolAnnotations
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -155,11 +155,13 @@ def make_app(manager, token: str):
                       allowed_hosts=[f"127.0.0.1:{PORT}", f"localhost:{PORT}"],
                       allowed_origins=[ENDPOINT, f"http://localhost:{PORT}"]))
 
-    @mcp.tool(description=DECIDE_DESCRIPTION)
+    @mcp.tool(description=DECIDE_DESCRIPTION, annotations=ToolAnnotations(
+        readOnlyHint=True, destructiveHint=False, openWorldHint=False))
     async def jevk5_decide(state: str | dict[str, Any] | list[Any], question: Question) -> dict[str, Any]:
         return await manager.decide(state, question)
 
-    @mcp.tool(description="Report local model readiness, pause state, model identity, aggregate counts, and MCP endpoint. Contains no evidence or decisions.")
+    @mcp.tool(description="Report local model readiness, pause state, model identity, aggregate counts, and MCP endpoint. Contains no evidence or decisions.",
+              annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
     async def jevk5_status() -> dict[str, Any]:
         return manager.status()
 

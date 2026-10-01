@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from mcp.types import ToolAnnotations
 
 from .contracts import Question, ServiceError, validate_decision
 from .server import DECIDE_DESCRIPTION, SafeMCP, preserve_literal_evidence
@@ -79,12 +80,14 @@ async def run_bridge(state_dir: Path, app_path: Path):
     await bridge.ensure_app()
     mcp = SafeMCP("JevK5", instructions=DECIDE_DESCRIPTION, log_level="CRITICAL")
 
-    @mcp.tool(description=DECIDE_DESCRIPTION)
+    @mcp.tool(description=DECIDE_DESCRIPTION, annotations=ToolAnnotations(
+        readOnlyHint=True, destructiveHint=False, openWorldHint=False))
     async def jevk5_decide(state: str | dict[str, Any] | list[Any], question: Question) -> dict[str, Any]:
         evidence, validated = validate_decision(state, question)
         return await bridge.request("/api/decide", {"state": evidence, "question": validated})
 
-    @mcp.tool(description="Report local model readiness, pause state, model identity, aggregate counts, and MCP endpoint. Contains no evidence or decisions.")
+    @mcp.tool(description="Report local model readiness, pause state, model identity, aggregate counts, and MCP endpoint. Contains no evidence or decisions.",
+              annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
     async def jevk5_status() -> dict[str, Any]:
         return await bridge.request("/api/status")
 

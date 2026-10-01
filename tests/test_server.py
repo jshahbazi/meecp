@@ -96,6 +96,10 @@ async def test_real_sdk_http_negotiation_and_typed_tool():
                 assert initialized.serverInfo.name == "JevK5"
                 listed = await client.list_tools()
                 assert {tool.name for tool in listed.tools} == {"jevk5_decide", "jevk5_status"}
+                for tool in listed.tools:
+                    assert tool.annotations.readOnlyHint is True
+                    assert tool.annotations.destructiveHint is False
+                    assert tool.annotations.openWorldHint is False
                 result = await client.call_tool("jevk5_decide", {"state": "Public synthetic evidence", "question": {"type": "noul", "instructions": "Allowed?"}})
                 assert not result.isError
                 assert result.structuredContent["answer"]["noul"] == 0.25

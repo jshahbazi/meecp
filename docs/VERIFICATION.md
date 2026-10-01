@@ -16,7 +16,7 @@ Verified 2026-09-30 on the user's M5 Max (40-core GPU, 128 GB), macOS 26.7.1. Al
 
 The actual packaged model passed 18 integration checks through real Streamable HTTP and stdio SDK clients. The checks covered initialization/tool listing, boolean/choice/score decisions, authentication, invalid Origin/Host, malformed JSON, oversized input, too many criteria, over-context rejection, identical repeats, changed evidence, literal-string parity, concurrent callers sharing one model, pause/unload, paused rejection, and fresh cache after resume.
 
-On the 130-token synthetic example, the final integration run before metadata-only annotations measured 75.8 ms for the fresh service decision and 17.1 ms median over ten identical repeats. The initial bundle run measured 69.6/19.7 ms. Every repeat matched the fresh boolean probability exactly, and logical input-token counts stayed complete. These service timings exclude client transport/JSON-RPC overhead and are descriptive, not a statistically controlled benchmark.
+On the 130-token synthetic example, the delivered bundle's smoke check measured 71.8 ms for the fresh service decision and 17.1 ms median over ten identical repeats. Earlier bundle runs measured 69.6/19.7 ms and 75.8/17.1 ms. Every repeat matched the fresh boolean probability exactly, and logical input-token counts stayed complete. Both transports also exposed the intended read-only tool annotations. These service timings exclude client transport/JSON-RPC overhead and are descriptive, not a statistically controlled benchmark.
 
 Six process/relocation checks passed against the actual bundle:
 

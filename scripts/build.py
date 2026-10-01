@@ -172,7 +172,6 @@ def main() -> int:
         shutil.copytree(ROOT / directory, resources / directory, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     for filename in ("model-manifest.json", "README.md", "THIRD_PARTY_NOTICES.md"):
         copy_file(ROOT / filename, resources / filename)
-    copy_file(ROOT / "README.md", resources / "docs/README.md")
     copy_file(model, resources / "models" / model.name)
     python_base = Path(run("uv", "python", "find", "--managed-python", "3.12", capture=True).strip()).resolve().parent.parent
     shutil.copytree(python_base, resources / "python", symlinks=True)

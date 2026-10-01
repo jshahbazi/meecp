@@ -360,7 +360,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
 
     @objc private func showSetup() {
         guard let resources = Bundle.main.resourceURL else { return }
-        let path = resources.appendingPathComponent("docs/README.md")
+        let path = resources.appendingPathComponent("README.md")
         guard FileManager.default.fileExists(atPath: path.path) else {
             showError("The bundled setup document is unavailable. Rebuild or reinstall the app.")
             return

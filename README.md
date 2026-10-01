@@ -2,7 +2,7 @@
 
 Project repository: [jshahbazi/mcpme](https://github.com/jshahbazi/mcpme).
 
-`mcpme` is being developed as a native macOS menu bar host for independently installed MCP service slots, including models and deterministic tools. The [modular host design](docs/MCPME_DESIGN.md) defines slot management, agent installation, and bringing your own programs or models. That architecture is a design proposal.
+`mcpme` is being developed as a native macOS menu bar host for independently installed MCP service slots, including models and deterministic tools. The [modular host design](docs/MCPME_DESIGN.md) defines slot management, agent installation, and bringing your own programs or models. The [project onboarding design](docs/PROJECT_ONBOARDING.md) defines the accepted drop, review, and add workflow, external-agent handoff, and delivery order. These documents describe planned functionality.
 
 The current implementation is JevK5 Menu Bar, which keeps JevK5-4B available as a local MCP decision tool. The built app contains the Q8 model, Metal inference runtime, and its own Python server. This first local build requires Apple silicon and macOS 26 or newer. The instructions below apply to that working baseline.
 

@@ -25,7 +25,7 @@ A slot is a service instance. Slot identity does not depend on its display order
 
 ## User experience
 
-The menu bar provides quick controls. A native **Manage Slots** window provides installation, configuration, connection details, and diagnostics.
+The menu bar provides quick controls. A native **Manage Projects** window provides installation, configuration, connection details, and diagnostics. The UI calls an installed slot a **Project**; slot remains the internal contract term. [Project onboarding](PROJECT_ONBOARDING.md) defines the accepted add-project flow and delivery order.
 
 ```text
 mcpme                         2 ready / 3 installed
@@ -33,8 +33,8 @@ mcpme                         2 ready / 3 installed
   JSON Utilities              Ready        :19386
   Local Chat                  Stopped      :19387
 
-  Add Slot...
-  Manage Slots...
+  Add Project...
+  Manage Projects...
   Stop All
   Settings...
   Quit mcpme
@@ -42,7 +42,7 @@ mcpme                         2 ready / 3 installed
 
 Each slot submenu offers Start/Stop, Restart, Copy Connection Configuration, and Details. Slots with a model label Stop as **Unload Model** where this is accurate. State text accompanies any color indicator. A click opens details with the package version, endpoint, available tools, runtime/model identity, queue depth, active calls, recent error code, and resource estimates. Initial empty state offers **Install JevK5** and **Install with an agent**.
 
-**Add Slot** offers **Program or script**, **Model with inference engine**, **Existing MCP server**, and **Prepared package**. The first three accept the user's source and guide preparation through an external agent; Prepared package accepts a local package or pinned package URL and goes directly to installation planning. Users do not need to write a manifest before beginning. The bring-your-own workflow below defines the inputs, agent handoff, and return path.
+**Add Project** opens a persistent native setup window with one drop surface and a file/folder chooser. It inspects the selected source without executing code, then asks for missing intent or configuration. A compatible prepared package proceeds through static validation to installation planning; other supported inputs become resumable import drafts for external-agent preparation. Documents require an explicit choice between reference information and setup instructions. The first release prioritizes prepared packages, source folders, and Markdown/text setup briefs; reference documents require a supported document-service template. Models and other profiles are available only as host support is implemented and validated. Users do not need to select a technical source category or write a manifest before beginning. The bring-your-own workflow below defines the technical inputs, agent handoff, and return path; integrated LLM-provider preparation is deferred.
 
 The final installation plan shows exposed tools and their input/output contracts, download size, estimated loaded memory, platform compatibility, source, licenses, executable entrypoints, requested filesystem/network access, and whether code is locally built or publisher signed. Estimates and unverified declarations are labeled as such. Existing user authority can cover installation; the UI does not require another confirmation for the same approved scope.
 
@@ -54,7 +54,7 @@ Installing, downloading, verifying, starting, warming up, and ready are distinct
 
 ```mermaid
 flowchart TB
-    UI[Native menu bar and Manage Slots] --> Control[Authenticated management API]
+    UI[Native menu bar and Manage Projects] --> Control[Authenticated management API]
     Agent[External agent] --> CLI[mcpme CLI or management MCP bridge]
     CLI --> Control
     Control --> Supervisor[Host supervisor and installer]
@@ -336,7 +336,7 @@ A package is executable code. Origin/hash/license verification, publisher identi
 
 | Existing component | Proposed destination |
 | --- | --- |
-| [Native menu app](../Sources/JevK5MenuBar/main.swift) | Keep AppKit/ServiceManagement; replace fixed backend/model status with manager discovery and slot rows. Add Manage Slots. |
+| [Native menu app](../Sources/JevK5MenuBar/main.swift) | Keep AppKit/ServiceManagement; replace fixed backend/model status with manager discovery and slot rows. Add Manage Projects. |
 | [Entry point](../backend/jevk5_app/__main__.py) and [private state](../backend/jevk5_app/state.py) | Split host supervisor/registry/connection discovery from slot execution. Remove fixed-port assumptions from generic host code. |
 | [ModelManager](../backend/jevk5_app/runtime.py) | Keep decision admission, scorer serialization, cache handling, and result formatting in the JevK5 adapter. Move engine launch, port/key allocation, crash recovery, and reaping to the supervisor launch contract. |
 | [Scorer](../backend/jevk5_app/scorer.py), [question contracts](../backend/jevk5_app/contracts.py), and vendored scorer | Keep JevK5-specific; avoid imposing a decision schema on other tools. |

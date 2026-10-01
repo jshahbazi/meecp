@@ -1,5 +1,9 @@
 # mcpme
 
+![mcpme: local MCP services with their own home](assets/brand/mcpme-banner.png)
+
+The [visual identity guide](docs/BRAND.md) includes the artwork, native icon pipeline, and a [menu bar preview](assets/brand/icon-preview.html).
+
 Project repository: [jshahbazi/mcpme](https://github.com/jshahbazi/mcpme).
 
 `mcpme` is being developed as a native macOS menu bar host for independently installed MCP service slots, including models and deterministic tools. The [modular host design](docs/MCPME_DESIGN.md) defines slot management, agent installation, and bringing your own programs or models. The [project onboarding design](docs/PROJECT_ONBOARDING.md) defines the accepted drop, review, and add workflow, external-agent handoff, and delivery order. The design documents cover both implemented and planned functionality.

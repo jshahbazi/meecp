@@ -47,6 +47,7 @@ def build(destination: Path):
     launcher.chmod(0o755)
     shutil.copyfile(ROOT / "uv.lock", destination / "uv.lock")
     shutil.copyfile(ROOT / "README.md", destination / "README.md")
+    shutil.copytree(ROOT / "assets/brand", destination / "assets/brand")
     (destination / "docs").mkdir()
     for document in sorted((ROOT / "docs").glob("*.md")):
         shutil.copyfile(document, destination / "docs" / document.name)
@@ -56,6 +57,7 @@ def build(destination: Path):
     shutil.copyfile(ROOT / "THIRD_PARTY_NOTICES.md", licenses / "THIRD_PARTY_NOTICES.md")
     run("/usr/bin/codesign", "--force", "--sign", "-", str(destination / "bin/mcpme-reap"))
     source_files = [*[path for path in sorted((destination / "backend/mcpme").rglob("*")) if path.is_file()],
+                    *[path for path in sorted((destination / "assets/brand").rglob("*")) if path.is_file()],
                     *sorted((destination / "docs").glob("*.md")), destination / "uv.lock",
                     destination / "requirements.txt", destination / "README.md", destination / "bin/mcpme-reap"]
     source_hashes = {str(path.relative_to(destination)): hashlib.sha256(path.read_bytes()).hexdigest()

@@ -221,8 +221,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSTableViewDataSource, NS
         quit.target = self; applicationMenu.addItem(quit); applicationItem.submenu = applicationMenu
         mainMenu.addItem(applicationItem); NSApp.mainMenu = mainMenu
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "square.stack.3d.up", accessibilityDescription: "mcpme projects")
-        statusItem.button?.image?.isTemplate = true
+        statusItem.button?.image = McpmeBrand.menuBarImage()
+        if statusItem.button?.image == nil { statusItem.button?.title = "m" }
         rebuildMenu(); startHost()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.poll() }
     }
@@ -436,8 +436,18 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSTableViewDataSource, NS
                                      content.topAnchor.constraint(equalTo: window.contentView!.topAnchor),
                                      content.bottomAnchor.constraint(equalTo: window.contentView!.bottomAnchor)])
         let headingRow = NSStackView(); headingRow.orientation = .horizontal; headingRow.spacing = 15
-        let heading = NSTextField(labelWithString: "Your Projects"); heading.font = .boldSystemFont(ofSize: 20); headingRow.addArrangedSubview(heading)
-        let hostText = NSTextField(labelWithString: hostMessage); self.hostText = hostText; headingRow.addArrangedSubview(hostText)
+        let brandIcon = NSImageView(image: McpmeBrand.appIcon(size: 128))
+        brandIcon.setAccessibilityLabel("mcpme")
+        brandIcon.widthAnchor.constraint(equalToConstant: 40).isActive = true
+        brandIcon.heightAnchor.constraint(equalToConstant: 40).isActive = true
+        headingRow.addArrangedSubview(brandIcon)
+        let titles = NSStackView(); titles.orientation = .vertical; titles.alignment = .leading; titles.spacing = 2
+        let heading = NSTextField(labelWithString: "mcpme"); heading.font = .systemFont(ofSize: 20, weight: .semibold)
+        let subtitle = NSTextField(labelWithString: "Your local projects"); subtitle.font = .systemFont(ofSize: 12)
+        subtitle.textColor = .secondaryLabelColor
+        titles.addArrangedSubview(heading); titles.addArrangedSubview(subtitle); headingRow.addArrangedSubview(titles)
+        let hostText = NSTextField(labelWithString: hostMessage); hostText.textColor = .secondaryLabelColor
+        self.hostText = hostText; headingRow.addArrangedSubview(hostText)
         content.addArrangedSubview(headingRow)
         let table = NSTableView(); table.delegate = self; table.dataSource = self; table.rowHeight = 28
         for (name, title, width) in [("name", "Project", 330.0), ("status", "Status", 200.0), ("port", "Port", 90.0), ("policy", "Start", 170.0)] {

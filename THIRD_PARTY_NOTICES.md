@@ -2,6 +2,8 @@
 
 The app bundles public JevK5 model weights and a minimal upstream Python client. Their source, licenses, and attribution remain separate from the application code.
 
+The first mcpme CLI host bundles CPython 3.12.13 and the server dependencies in `uv.lock`. It does not include the JevK5 weights or inference engine. Its build receipt records source-file and launcher hashes plus the compiler identity. The deterministic example uses the macOS system Swift/Foundation runtime and includes its source and MIT license in the prepared package.
+
 | Component | Pinned source / local build | License |
 |---|---|---|
 | JevK5 prompt and GGUF client | allebee/jevk5 `f944fe37ff1d5ed3830aa4c8d88b7189c8c1268a` (v0.3.3) | Apache-2.0; see `vendor/jevk5/LICENSE` and `NOTICE` |

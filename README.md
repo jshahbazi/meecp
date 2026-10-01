@@ -2,6 +2,8 @@
 
 A native macOS menu bar app that keeps JevK5-4B available as a local MCP decision tool. The built app contains the Q8 model, Metal inference runtime, and its own Python server. This first local build requires Apple silicon and macOS 26 or newer.
 
+The proposed [mcpme modular host design](docs/MCPME_DESIGN.md) describes evolving this app into a menu bar manager for independently installed MCP service slots, including models and deterministic tools. It is a design proposal; the application described below remains the current implementation.
+
 JevK5 applies a supplied criterion to supplied evidence and scores declared alternatives. It supports boolean probability (`noul`), categorical choice (`choice`), and expected score (`score`). It has no retrieval or general chat interface. An MCP client chooses when to call it.
 
 ## Run

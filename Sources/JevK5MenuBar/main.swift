@@ -398,6 +398,38 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
     @objc private func quitApp() { NSApp.terminate(nil) }
 }
 
+// Fixed native login-item operations for a verified mcpme recovery bundle.
+// These return before starting AppKit or the legacy backend.
+if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--mcpme-handoff" {
+    let action = CommandLine.arguments[2]
+    var result: [String: Any] = ["api_version": 1]
+    var exitCode: Int32 = 0
+    do {
+        guard Bundle.main.bundleIdentifier == "com.jshahbazi.jevk5" else { throw NSError(domain: "handoff", code: 1) }
+        switch action {
+        case "login-status": break
+        case "login-disable":
+            if SMAppService.mainApp.status == .enabled || SMAppService.mainApp.status == .requiresApproval {
+                try SMAppService.mainApp.unregister()
+            }
+        case "login-enable":
+            if SMAppService.mainApp.status != .enabled { try SMAppService.mainApp.register() }
+        default: throw NSError(domain: "handoff", code: 2)
+        }
+        switch SMAppService.mainApp.status {
+        case .enabled: result["login_status"] = "enabled"
+        case .notRegistered: result["login_status"] = "not_registered"
+        case .requiresApproval: result["login_status"] = "requires_approval"
+        case .notFound: result["login_status"] = "not_found"
+        @unknown default: result["login_status"] = "unknown"
+        }
+    } catch { result["error"] = ["code": "legacy_login_update_failed"]; exitCode = 2 }
+    if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), let text = String(data: data, encoding: .utf8) {
+        print(text)
+    }
+    exit(exitCode)
+}
+
 let application = NSApplication.shared
 let delegate = MenuBarApp()
 application.delegate = delegate

@@ -12,7 +12,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import JSONRPCMessage, ToolAnnotations
+from mcp.types import JSONRPCMessage, ServerCapabilities, ToolAnnotations
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -73,8 +73,9 @@ def preserve_literal_evidence(mcp: FastMCP):
 
 class LocalPolicy:
     """Protect every route, including SDK routes, before reading request content."""
-    def __init__(self, app, token: str, max_bytes: int = 1024 * 1024):
+    def __init__(self, app, token: str, max_bytes: int = 1024 * 1024, *, port: int = PORT):
         self.app, self.token, self.max_bytes = app, token, max_bytes
+        self.port = port
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -88,8 +89,8 @@ class LocalPolicy:
             headers[key] = value.decode("latin1")
         host = headers.get(b"host", "")
         origin = headers.get(b"origin")
-        allowed_hosts = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
-        allowed_origins = {ENDPOINT, f"http://localhost:{PORT}"}
+        allowed_hosts = {f"127.0.0.1:{self.port}", f"localhost:{self.port}"}
+        allowed_origins = {f"http://127.0.0.1:{self.port}", f"http://localhost:{self.port}"}
         if duplicates & {b"host", b"origin", b"authorization", b"content-length"} or host not in allowed_hosts or (origin is not None and origin not in allowed_origins):
             return await self._error(scope, receive, send, 403, "forbidden", "Local origin validation failed.")
         expected = "Bearer " + self.token
@@ -148,13 +149,13 @@ class LocalPolicy:
         await JSONResponse({"error": {"code": code, "message": message}}, status_code=status)(scope, receive, send)
 
 
-def make_app(manager, token: str):
-    mcp = SafeMCP("JevK5", instructions=DECIDE_DESCRIPTION, host="127.0.0.1", port=PORT,
+def make_app(manager, token: str, *, port: int = PORT, readiness=None, tools_only: bool = False):
+    mcp = SafeMCP("JevK5", instructions=DECIDE_DESCRIPTION, host="127.0.0.1", port=port,
                   log_level="CRITICAL", stateless_http=True, json_response=True,
                   max_request_body_size=1024 * 1024,
                   transport_security=TransportSecuritySettings(
-                      allowed_hosts=[f"127.0.0.1:{PORT}", f"localhost:{PORT}"],
-                      allowed_origins=[ENDPOINT, f"http://localhost:{PORT}"]))
+                      allowed_hosts=[f"127.0.0.1:{port}", f"localhost:{port}"],
+                      allowed_origins=[f"http://127.0.0.1:{port}", f"http://localhost:{port}"]))
 
     @mcp.tool(description=DECIDE_DESCRIPTION, annotations=ToolAnnotations(
         readOnlyHint=True, destructiveHint=False, openWorldHint=False))
@@ -167,6 +168,12 @@ def make_app(manager, token: str):
         return manager.status()
 
     preserve_literal_evidence(mcp)
+    if tools_only:
+        original_capabilities = mcp._mcp_server.get_capabilities
+        def tool_capabilities(*args, **kwargs):
+            capabilities = original_capabilities(*args, **kwargs)
+            return ServerCapabilities(tools=capabilities.tools)
+        mcp._mcp_server.get_capabilities = tool_capabilities
 
     async def status(request: Request):
         return JSONResponse(manager.status())
@@ -204,10 +211,18 @@ def make_app(manager, token: str):
         finally:
             await manager.shutdown()
 
-    app = Starlette(routes=[Route("/api/status", status, methods=["GET"]),
+    routes = [Route("/api/status", status, methods=["GET"]),
                             Route("/api/control", control, methods=["POST"]),
-                            Route("/api/decide", decide, methods=["POST"]), Mount("/", app=sdk_app)], lifespan=lifespan)
-    return LocalPolicy(app, token), app
+                            Route("/api/decide", decide, methods=["POST"])]
+    if readiness is not None:
+        async def health(request: Request):
+            value = readiness()
+            return JSONResponse(value, status_code=200 if value.get("ready") else 503)
+        routes.append(Route("/health", health, methods=["GET"]))
+    routes.append(Mount("/", app=sdk_app))
+    app = Starlette(routes=routes, lifespan=lifespan)
+    app.state.mcp = mcp
+    return LocalPolicy(app, token, port=port), app
 
 
 async def parent_watchdog(parent_pid: int, server):

@@ -190,7 +190,9 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "httpx" },
+    { name = "jsonschema" },
     { name = "mcp" },
+    { name = "pydantic" },
     { name = "uvicorn" },
 ]
 
@@ -203,7 +205,9 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "jsonschema", specifier = ">=4.20,<5" },
     { name = "mcp", specifier = ">=1.26,<2" },
+    { name = "pydantic", specifier = ">=2,<3" },
     { name = "uvicorn", specifier = ">=0.35,<1" },
 ]
 

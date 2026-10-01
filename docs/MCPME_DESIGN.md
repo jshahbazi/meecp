@@ -101,6 +101,8 @@ The gateway and generic stdio-to-HTTP bridge require protocol integration tests.
 
 Start with a tested tools-only compatibility profile. Unsupported requirements such as sampling, roots, elicitation, resources, or prompts must be identified during installation and rejected with a compatibility explanation until implemented and tested. Do not silently advertise capabilities the bridge cannot forward. Native HTTP forwarding and stdio adaptation get separate compatibility tests. Within the supported profile, preserve tool-list change notifications and schema refresh behavior described in the [tools specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools).
 
+A client's advertised capabilities are optional offers, not requirements imposed on the package; see the [capability negotiation specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle#capability-negotiation). Accept valid initialization from clients such as VS Code that advertise roots, sampling, elicitation, tasks, or extensions. The tools-only gateway acts as the package's client and forwards an empty client-capability object, because it does not implement those callbacks. Continue rejecting unsupported package requirements and requests outside the negotiated profile.
+
 ### Session lifetime and child reclamation
 
 For `mcp-stdio`, the gateway creates an unpredictable public HTTP session ID bound to the slot UUID, runtime generation, and authenticated client grant. Each session maps to exactly one supervisor-owned stdio process instance. Reserve session/process capacity before launching; an initialization failure tears down that instance. The gateway owns the session lifetime even when the client never sends DELETE.

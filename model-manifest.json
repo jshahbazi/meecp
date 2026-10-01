@@ -1,0 +1,14 @@
+{
+  "model_id": "JevK5-4B-v0.3-Q8_0",
+  "file": "jevk5-4b-v0.3-Q8_0.gguf",
+  "bytes": 4482402720,
+  "sha256": "aea433883bc7ed399f2fbd539e53d2eac7caf71a946fe6650995a413979d4a30",
+  "repository": "alibiserikbay/JevK5-GGUF",
+  "revision": "ec67b0bfce5119a8b11a2cdb430bb43e3fa3e82a",
+  "upstream_commit": "f944fe37ff1d5ed3830aa4c8d88b7189c8c1268a",
+  "profile": "m5-benchmark-v1",
+  "temperature": 1.22,
+  "knockout_temperature": 0.93,
+  "context_tokens": 8192,
+  "license": "Apache-2.0"
+}

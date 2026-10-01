@@ -85,6 +85,7 @@ async def main(args):
                 await session.initialize()
                 tools = await session.list_tools()
                 check({t.name for t in tools.tools} == {"jevk5_decide", "jevk5_status"}, "Unexpected MCP tool surface")
+                check(all(t.annotations and t.annotations.readOnlyHint and not t.annotations.destructiveHint and not t.annotations.openWorldHint for t in tools.tools), "Incorrect local decision tool annotations")
                 first = unpack(await session.call_tool("jevk5_decide", {"state": STATE, "question": QUESTION}))
                 check(first["cache"]["hit"] is False, "First decision reused a changed prompt")
                 repeats = []
@@ -124,7 +125,8 @@ async def main(args):
             async with stdio_client(params, errlog=error_sink) as (read, write):
                 async with ClientSession(read, write, read_timeout_seconds=timedelta(seconds=150)) as session:
                     await session.initialize()
-                    check(len((await session.list_tools()).tools) == 2, "Stdio tools unavailable")
+                    stdio_tools = (await session.list_tools()).tools
+                    check(len(stdio_tools) == 2 and all(t.annotations and t.annotations.readOnlyHint and not t.annotations.openWorldHint for t in stdio_tools), "Stdio tools or annotations unavailable")
                     stdio_status = unpack(await session.call_tool("jevk5_status"))
                     check(stdio_status["backend_pid"] == initial["backend_pid"], "Stdio created another backend")
                     unpack(await session.call_tool("jevk5_decide", {"state": STATE, "question": QUESTION}))

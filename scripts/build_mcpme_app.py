@@ -61,6 +61,13 @@ def build(destination: Path, legacy_recovery_app: Path | None = None) -> Path:
     macos.mkdir(parents=True); resources.mkdir()
     native = macos / "mcpme"
     shutil.copy2(binary_directory / "McpmeMenuBar", native)
+    icon_generator = scratch / "mcpme-icon"
+    iconset = scratch / "McpmeAppIcon.iconset"
+    run("/usr/bin/swiftc", str(ROOT / "Sources/McpmeMenuBar/Brand.swift"),
+        str(ROOT / "scripts/mcpme-icon.swift"), "-o", str(icon_generator))
+    run(str(icon_generator), str(ROOT / "assets/brand"), str(iconset))
+    run("/usr/bin/iconutil", "-c", "icns", str(iconset), "-o", str(resources / "AppIcon.icns"))
+    shutil.copytree(ROOT / "assets/brand", resources / "assets/brand")
     host = build_host(resources / "host")
     shutil.copy2(native, host / "bin/mcpme-handoff")
     (host / "native-app.json").write_text(json.dumps({"schema_version": 1, "bundle_identifier": "com.jshahbazi.mcpme",
@@ -77,7 +84,7 @@ def build(destination: Path, legacy_recovery_app: Path | None = None) -> Path:
     info = {"CFBundleIdentifier": "com.jshahbazi.mcpme", "CFBundleName": "mcpme", "CFBundleDisplayName": "mcpme",
             "CFBundleExecutable": "mcpme", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "0.1.0",
             "CFBundleVersion": "1", "LSUIElement": True, "LSMinimumSystemVersion": "26.0",
-            "NSHighResolutionCapable": True, "NSPrincipalClass": "NSApplication"}
+            "NSHighResolutionCapable": True, "NSPrincipalClass": "NSApplication", "CFBundleIconFile": "AppIcon"}
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
     shutil.copyfile(ROOT / "README.md", resources / "README.md")
     bundled_docs = resources / "docs"
@@ -92,6 +99,8 @@ def build(destination: Path, legacy_recovery_app: Path | None = None) -> Path:
                "source_commit": run("git", "-C", str(ROOT), "rev-parse", "HEAD"),
                "source_tree_dirty": bool(run("git", "-C", str(ROOT), "status", "--porcelain")),
                "native_input_sha256": native_input_hash, "swift_source_sha256": sha256(ROOT / "Sources/McpmeMenuBar/main.swift"),
+               "branding_source_sha256": sha256(ROOT / "Sources/McpmeMenuBar/Brand.swift"),
+               "app_icon_sha256": sha256(resources / "AppIcon.icns"),
                "host_receipt_sha256": sha256(host / "build.json"), "legacy_handoff": legacy_recovery_app is not None}
     # Add the receipt before the final signature seals Resources.
     (resources / "app-build.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")

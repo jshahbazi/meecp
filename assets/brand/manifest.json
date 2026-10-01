@@ -1,0 +1,59 @@
+{
+  "artwork_generator": "built-in ImageGen",
+  "assets": {
+    "app-icon.png": {
+      "bytes": 453224,
+      "has_alpha": true,
+      "height": 1024,
+      "sha256": "866a5245fa8c0293fa8bb619ab6116121c02dddee6490bcd82979a42885614fd",
+      "width": 1024
+    },
+    "local-relay-hero.png": {
+      "bytes": 1360121,
+      "has_alpha": false,
+      "height": 827,
+      "sha256": "cac32556d79a36089f95320b96afe4c32e064f57d4cbc681881ad1d9700ef2bf",
+      "width": 1902
+    },
+    "mcpme-banner.png": {
+      "bytes": 1314369,
+      "has_alpha": false,
+      "height": 827,
+      "sha256": "b0d881c5e53dcab0dce5e50678485342adc08409ccf7ae0f420b01633013d7b1",
+      "width": 1902
+    },
+    "menu-bar-pedestal-master.png": {
+      "bytes": 237506,
+      "has_alpha": true,
+      "height": 1254,
+      "sha256": "54ca7c3a4c7eb598abcacf7b93ff80b83a701e3e37da8c5dc76a85769f5cbad9",
+      "width": 1254
+    },
+    "menu-bar-pedestal.png": {
+      "bytes": 495,
+      "has_alpha": true,
+      "height": 18,
+      "sha256": "3176e215dfc14407c9909ff25246d23afb6fd085c4c6c0cdb3930db660764811",
+      "width": 18
+    },
+    "menu-bar-pedestal@2x.png": {
+      "bytes": 1043,
+      "has_alpha": true,
+      "height": 36,
+      "sha256": "293c25359fc887994f6e1696e4e5a94c0eeef7706ce988ad9a48819030ed4ba1",
+      "width": 36
+    },
+    "pedestal-icon-master.png": {
+      "bytes": 1062162,
+      "has_alpha": true,
+      "height": 1254,
+      "sha256": "8a59cdf6fd96532102b3722071dbc25149e847ed38f56ec68ba094187d563d45",
+      "width": 1254
+    }
+  },
+  "created": "2026-10-01",
+  "generation_briefs": "../../docs/BRAND_PROMPTS.md",
+  "identity": "mcpme angled lowercase m on pedestal",
+  "native_exporter": "AppKit / scripts/mcpme-icon.swift",
+  "schema_version": 1
+}

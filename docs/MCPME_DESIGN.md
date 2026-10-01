@@ -65,10 +65,12 @@ flowchart TB
     Clients --> G2
     Clients --> G3
     G1 --> Jev[JevK5 adapter and scorer]
-    Jev --> Llama[Owned llama.cpp process and GGUF]
+    Jev -->|authenticated inference| Llama[Owned llama.cpp process and GGUF]
+    Supervisor -->|launch and reap| Llama
     G2 --> Code[Deterministic MCP tool process]
     G3 --> Adapter[Model-specific MCP adapter]
-    Adapter --> Engine[Owned inference engine and weights]
+    Adapter -->|authenticated inference| Engine[Owned inference engine and weights]
+    Supervisor -->|launch and reap| Engine
 ```
 
 The Swift app owns one Python supervisor. The supervisor owns one gateway worker per enabled installed slot, plus the slot's registered runtime processes through native reapers. Third-party Python modules never load into the supervisor or Swift process. A slot failure must not take down another slot or the management API.
@@ -81,7 +83,7 @@ The small host bundle contains the native UI, private Python runtime, locked hos
 | --- | --- | --- |
 | `mcp-stdio` | A foreground executable speaking MCP over stdin/stdout. | Give each client session its own child/stdio channel, enforce session/process limits, and expose the slot's HTTP endpoint. |
 | `mcp-http` | A foreground MCP server with configurable loopback address and authentication. | Start it on a private port, verify readiness, and proxy its MCP transport through the stable public gateway. |
-| `model-service` | Engine, weights, profile, and an MCP adapter with a declared child-process topology. | Verify artifacts, admit resource use, and start/stop the adapter and engine together. |
+| `model-service` | Engine, weights, profile, and an MCP adapter with a declared process dependency graph. | Verify artifacts, admit resource use, launch the engine and adapter, and coordinate their lifecycle. |
 
 Heavy model slots use a shared resident service, independent of client count. A generic stdio server is not assumed to support multiple clients on one channel. The safe default is one lightweight subprocess per session; a package that needs shared state or a large model supplies a shared HTTP service/adapter. Limit sessions before spawning children. A package explicitly declaring exclusive stdio access may cap itself at one session.
 
@@ -96,6 +98,18 @@ The current lockfile uses Python MCP SDK `1.30.0`. Use the locked SDK as the mig
 The gateway and generic stdio-to-HTTP bridge require protocol integration tests. They must preserve negotiated capabilities, request/response IDs, tool schemas, structured results, notifications, session ownership, and cancellation semantics. HTTP forwarding must handle JSON and SSE, protocol headers, session lifecycle, and disconnects without buffering a whole stream. Rewrite only transport routing/authentication headers; never forward a caller's public credential to a package or follow arbitrary upstream redirects.
 
 Start with a tested tools-only compatibility profile. Unsupported requirements such as sampling, roots, elicitation, resources, or prompts must be identified during installation and rejected with a compatibility explanation until implemented and tested. Do not silently advertise capabilities the bridge cannot forward. Native HTTP forwarding and stdio adaptation get separate compatibility tests. Within the supported profile, preserve tool-list change notifications and schema refresh behavior described in the [tools specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools).
+
+### Session lifetime and child reclamation
+
+For `mcp-stdio`, the gateway creates an unpredictable public HTTP session ID bound to the slot UUID, runtime generation, and authenticated client grant. Each session maps to exactly one supervisor-owned stdio process instance. Reserve session/process capacity before launching; an initialization failure tears down that instance. The gateway owns the session lifetime even when the client never sends DELETE.
+
+- The default idle lease is five minutes, measured with a monotonic clock. Accepted authenticated MCP POSTs and GET reconnects renew it; an open SSE connection or server-generated events alone do not. Package settings can shorten the lease; longer leases require a visible host-approved limit.
+- Executing requests suspend idle expiration until they complete, but every request retains a finite host-capped operation deadline. Completion starts a fresh idle interval. A request that ignores cancellation cannot retain a child indefinitely: after its deadline and bounded stop grace, terminate/reap the session child and close the session. Side effects may have completed; never replay the call automatically.
+- Closing a GET/SSE connection or losing a POST connection does not itself cancel a request, expire its session, or kill its child. Reconnect within the lease uses the same session and process. Missing result delivery can remain an unknown outcome if the negotiated transport cannot resume it.
+- Authenticated DELETE, idle expiration, slot stop, or generation replacement atomically marks the session Closing and rejects further requests for its ID with HTTP 404. Cleanup cancels queued work, requests cancellation of active work, and asks the supervisor to terminate/reap the child within the configured stop grace and host cap. Hold its process reservation until reaping; then delete its mapping. A closing ID cannot be renewed or reused.
+- The local `connect` bridge detects stdin EOF, client exit, and shutdown signals and makes a bounded best-effort DELETE before exiting. Abrupt bridge termination relies on lease expiration. A gateway crash invalidates its sessions and the supervisor cleans up their process instances before admitting replacements.
+
+Native HTTP packages may be stateless. For stateful upstreams, the gateway keeps per-client public/private session mappings, forwards explicit termination, and applies the same bounded public-session lease. Expiring a mapping does not stop a shared runtime or another client's work. Accept a stateful package only when it supports DELETE or a declared finite upstream-session expiration rule; otherwise reject that profile during installation. Keep mappings and any permitted replay buffers in bounded memory, with no response history written to disk. Disconnect, DELETE, and expired-session HTTP behavior follows the [2025-11-25 transport specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports).
 
 ### Ports and connections
 
@@ -127,10 +141,10 @@ Use a versioned `mcpme.package.json` plus a resolved `mcpme.lock.json`. These ar
 | Identity | Package ID, version, package schema version, host API compatibility range, source revision, license references. |
 | Platform | Supported OS/architecture and minimum OS version for every executable dependency. |
 | Artifacts | Immutable source locator, SHA-256, byte count, destination, provenance, and license. Lock every transitive artifact. |
-| Execution | Profile, package-relative executable and argument array, working directory, allowlisted environment names, declared child processes. No shell command strings or arbitrary install hooks. |
+| Execution | Profile, process IDs, singleton/session scope, acyclic readiness dependencies, package-relative executable and argument array, working directory, endpoint/descriptor injection, and allowlisted environment names. Every managed process uses the host launcher. No shell command strings or arbitrary install hooks. |
 | MCP | Supported protocol/profile, required capabilities, expected tools and schema digest, internal transport/authentication configuration. |
 | Model, if any | Artifact identity, engine/build identity, context/profile parameters, and compatibility requirements. Retain model-specific fields. |
-| Lifecycle | Readiness probe, startup/deadline limits, stop grace period, restart policy, session limits, concurrency and queue limits. |
+| Lifecycle | Readiness probe, startup/operation deadlines, stop grace period, restart policy, session/process limits, idle lease, upstream session termination policy, concurrency and queue limits. |
 | Resources | Download/installed sizes, estimated loaded memory, CPU/GPU use, and whether first-call loading is supported. |
 | Access | Declared filesystem paths, outbound destinations, secret references, and write/side-effect behavior. These declarations describe trusted code; they are not an OS sandbox. |
 | Validation | Side-effect-free health probe and package-specific synthetic smoke fixture, where available. No private user input. |
@@ -189,13 +203,22 @@ The bootstrap is a local owner action through the UI or `mcpme authorize --plan 
 - Apply accepts an idempotency key and records its intent before side effects. Retrying returns the same operation/slot instead of installing duplicates. Serialize mutations per slot and use registry generation checks to reject stale updates.
 - Download to staging with size limits, verify every digest before execution, reject path traversal and links escaping the package root, and seal the resolved execution tree. Local package paths are snapshotted into staging; execution never follows an editable external source tree.
 - An installation is visible as installing but cannot serve ordinary tool calls until verification succeeds. A canceled or failed first install leaves no active slot process or reserved public listener; its bounded diagnostic record remains.
-- An upgrade stages separately, drains the old generation, then starts and verifies the candidate. The gateway returns `updating` during the switch. A single durable registry transaction commits the new generation and operation outcome; only then may the gateway route new sessions to that generation. The registry is authoritative, so routing and database writes need not pretend to be one atomic operation. A model upgrade may unload the old model before loading the candidate to fit memory; zero downtime is not promised.
+- An upgrade stages separately, drains and reaps the old generation, then starts and verifies the candidate behind a closed gateway admission gate. The gateway returns `updating` throughout this interval. A durable registry transaction selects the candidate generation and its data location while the operation remains pending. A separate durable exposure marker is required before ordinary calls may reach it; the operation succeeds only after routing is activated. A model upgrade may unload the old model before loading the candidate to fit memory; zero downtime is not promised.
 - Candidate readiness includes MCP initialization/schema validation and a safe smoke fixture when defined. A running PID is insufficient. An initialization request can execute package code and therefore happens only within apply authority.
-- Preserve the previous package and configuration until rollback is no longer needed. First-release upgrades require unchanged data schemas, or a restorable snapshot/clone and declared migration. Reject automatic in-place irreversible data migrations. Rolling back binaries alone does not undo data changes.
-- On restart, reconcile journaled operations with committed registry state and owned live processes. Discard uncommitted candidates, retain the last committed generation, and report interrupted operations. A corrupt registry does not trigger deletion or guessed process adoption.
+- Preserve the previous package, configuration, and data recovery artifacts until they are no longer needed. Quiesce/reap all old writers before taking a data snapshot. Candidate probes and migrations use a candidate data clone; expose only the selected candidate data directory after commit. Even an unchanged schema does not establish that the old binary can interpret new writes. Reject upgrades requiring automatic irreversible data migrations or external side effects during migration/probes. Rolling back binaries alone does not undo data changes.
+- On restart, reconcile journaled operations with the selected generation and its durable exposure marker using the recovery rules below. A corrupt registry does not trigger deletion or guessed process adoption.
 - Remove stops/drains the slot, revokes credentials, releases its port, and unregisters it. Preserve package-owned data by default; **Remove and delete data** is a separate explicit choice. Shared artifact cleanup follows reference counts and rollback retention.
 
-Persist the old generation, candidate generation, and upgrade stage (`staged`, `switching`, `committed`, or `rolling_back`). Before commit, any probe/start/database failure tears down the candidate, restores the old data snapshot if needed, and restarts the old generation. A host crash before commit follows the same rule on recovery. After a durable commit, a crash recovers the committed generation and reconstructs gateway routing from it. If activation/routing subsequently fails, record a compensating rollback transaction before routing to the retained old generation. If restoration also fails, keep the slot Failed with both artifacts/data snapshots retained and a recoverable operation record; never report a successful rollback without verified old-generation readiness.
+Persist the old/candidate generation, package/configuration/data pointers, operation stage, and whether exposure has been durably recorded. The exposure marker must be committed before the gateway admits the first ordinary MCP or compatibility API request. Treat the marker as proof that candidate writes may have occurred, even if the host crashes before actually forwarding a call. Admission and exposure use the same slot-generation check; a stale gateway cannot open an old generation after a concurrent mutation.
+
+| Recovery boundary | Required behavior |
+| --- | --- |
+| Before candidate selection | Stop/reap the candidate, retain its diagnostic artifacts, and restart the old generation with its untouched old data. |
+| Candidate selected, exposure marker absent | Keep admission closed; on failure or interrupted operation, stop/reap the candidate and commit a compensating transaction selecting the old package/configuration/data before reopening the old generation. |
+| Exposure marker present | Preserve the candidate data and recover the selected candidate generation. If recovery or routing fails, close admission and report `upgrade_recovery_required`. Automatic rollback to a pre-upgrade snapshot or old binary is forbidden in the first release. |
+| Recovery itself fails | Keep the slot Failed, retain both generations and data artifacts, and record a recoverable operation. Report rollback success only after verifying old-generation readiness in an allowed pre-exposure rollback. |
+
+After exposure, a user can authorize a separate forward-repair or restore plan. A restore plan must describe the write-loss risk and any data compatibility constraints before it runs. Filesystem snapshots cannot undo external effects from ordinary tool calls. Upgrade Cancel is supported only before exposure; after exposure, the UI offers Stop or recovery operations instead.
 
 ## Lifecycle, concurrency, and resource policy
 
@@ -220,7 +243,22 @@ Each slot controls its own concurrency, queue length, and deadlines. The host do
 
 Stop first rejects new work, cancels queued requests with a stable availability error, then drains in-flight calls within the package deadline. It terminates only owned children and reaps them before releasing resources. On timeout, force termination is reported as potentially incomplete work. Restart and upgrade terminate MCP sessions; clients reinitialize against the same stable slot identity/port. A service restart resets ephemeral caches and invalidates in-flight session mappings.
 
-The supervisor tracks child identity through direct process ownership and native reapers, adapting the existing [llama supervisor](../scripts/llama-supervisor.c). All managed executables run in the foreground and register their declared descendants through the launcher. Detached daemons and unrelated system services are unsupported in the first release. The current reaper handles one child. Phase 1 requires a tested launcher/reaper at each edge of the declared process tree, with parent-death cleanup and identity held until reaping; reject packages that spawn unmanaged persistent descendants. General-purpose adoption of arbitrary process trees is deferred. Quitting or losing the host must leave no supported owned runtime behind, including grandchildren.
+### Host launch contract
+
+The supervisor launches every declared runtime process directly through one native reaper per executable, adapting the existing [llama supervisor](../scripts/llama-supervisor.c). A package declares a dependency graph rather than creating its own persistent process tree. For example, the host starts the engine, verifies its readiness, then starts the MCP adapter and supplies the engine endpoint/key. The adapter makes inference requests and never launches or kills the engine itself.
+
+Each process declaration has a stable process ID, singleton-per-generation or per-session scope, executable/arguments, readiness dependencies, endpoint requirements, allowed inherited descriptors, and startup/stop deadlines. Singleton processes cannot depend on a per-session instance. Packages that internally spawn persistent workers or engines must supply an adapter that adopts this host launch contract; unsupported process topologies are rejected before activation. Detached daemons and adoption of unrelated processes remain unsupported.
+
+1. The supervisor checks the slot/generation and desired state, reserves resource/process capacity, and assigns an opaque process-instance ID. It resolves only the declared package-relative executable and arguments from the sealed package.
+2. The supervisor starts a bundled generic `mcpme-reap` wrapper with an execution specification on a private inherited descriptor. The wrapper executes one target, holds its child identity until reaping, reports spawn/exit over a separate control descriptor, and terminates its child if the actual parent supervisor dies. This generalizes the current wrapper's fixed `.real` executable convention without adding a shell interpreter.
+3. Only declared descriptors reach the child: stdio pipes where needed, private-key descriptors, and sockets supported by its runtime. Close unrelated descriptors and strip launcher/control capabilities from package environments. Endpoint and nonsecret configuration injection are explicit; private keys never enter argv.
+4. Ready dependencies launch first. Where an engine cannot inherit a listener, the supervisor coordinates allocation/retry and authenticated readiness under the existing private-port rule. A dependency failure tears down dependents in reverse order. The supervisor records process handles, authenticated readiness, and resource reservations before reporting the slot Ready.
+5. A gateway requests per-session stdio instances through an inherited supervisor/worker socketpair, using typed `launch_session(slot_uuid, generation, process_id, session_id)` and `close_session(instance_id)` messages. The channel is restricted to that worker's slot/generation and declared per-session entrypoint. The supervisor creates the pipes and transfers only their required ends after an ownership acknowledgment. A lost worker/channel or failed transfer triggers teardown. No arbitrary executable, arguments, PID, or other-slot selection is accepted through this interface.
+6. Stop or cancellation closes admission before revoking launch requests. Recheck state after spawn/ack so a racing launch is reaped instead of published. Stop dependents before dependencies and release reservations only after exit/reaping acknowledgment. Losing the supervisor triggers each surviving wrapper's parent-death cleanup; losing a gateway tears down its per-session instances through the supervisor.
+
+If a reaper dies before acknowledging target exit, mark the slot `ownership_lost`, close admission, stop other still-owned dependent processes, and retain the missing instance's resource/process reservations. Its target may remain running, because an arbitrary engine does not necessarily monitor parent death. Do not signal a recorded PID, adopt that target, or start a replacement on the assumption that the target died with its wrapper. Clear the blocked instance only after an identity-bound exit observation established while the target was owned proves it exited, or after explicit user-assisted cleanup. Persist unresolved ownership-loss metadata so a host restart cannot silently start a duplicate runtime. If death occurred before target identity was acknowledged, require user-assisted reconciliation.
+
+Phase 1 must test the actual launched process graph, cancellation at each launch boundary, descriptor ownership, and parent/gateway/reaper failures before accepting packages. Host/supervisor-loss cleanup is guaranteed while each target's reaper survives long enough to terminate/reap it. Forced reaper death tests instead verify `ownership_lost`, retained reservations, visible reconciliation, and absence of guessed PID signals or automatic replacement; complete cleanup in that case is not promised. Stronger cleanup would require a separately tested target-side lifetime contract, which is not assumed for arbitrary engines. Trusted packages must have no subprocesses outside the launch contract; manifest declarations alone cannot enforce that against malicious same-user code. Topology inspection and lifecycle tests verify the supported packages rather than claiming general OS containment.
 
 Crash recovery is per slot: proposed default of three attempts in five minutes with exponential backoff, then Failed until user action. Configuration errors, missing artifacts, failed authentication, and port conflicts do not trigger restart loops. Manual Stop never triggers recovery. Repeated inference errors can mark the adapter unhealthy without restarting unrelated slots.
 
@@ -246,7 +284,7 @@ A package is executable code. Origin/hash/license verification, publisher identi
 | --- | --- |
 | [Native menu app](../Sources/JevK5MenuBar/main.swift) | Keep AppKit/ServiceManagement; replace fixed backend/model status with manager discovery and slot rows. Add Manage Slots. |
 | [Entry point](../backend/jevk5_app/__main__.py) and [private state](../backend/jevk5_app/state.py) | Split host supervisor/registry/connection discovery from slot execution. Remove fixed-port assumptions from generic host code. |
-| [ModelManager](../backend/jevk5_app/runtime.py) | Preserve inside the JevK5 package adapter. Extract generic process supervision separately. |
+| [ModelManager](../backend/jevk5_app/runtime.py) | Keep decision admission, scorer serialization, cache handling, and result formatting in the JevK5 adapter. Move engine launch, port/key allocation, crash recovery, and reaping to the supervisor launch contract. |
 | [Scorer](../backend/jevk5_app/scorer.py), [question contracts](../backend/jevk5_app/contracts.py), and vendored scorer | Keep JevK5-specific; avoid imposing a decision schema on other tools. |
 | [HTTP policy and MCP registration](../backend/jevk5_app/server.py) | Extract transport policy for all gateways; keep JevK5 tool registration, evidence handling, and errors inside its adapter. |
 | [Stdio bridge](../backend/jevk5_app/bridge.py) | Add generic slot bridge with explicit protocol tests. The existing bridge knows two JevK5 tools and is not a generic MCP proxy. |
@@ -254,6 +292,8 @@ A package is executable code. Origin/hash/license verification, publisher identi
 | [Existing tests](../tests) and [lifecycle checks](../scripts/verify_lifecycle.py) | Retain JevK5 regressions; add generic slot/install/protocol/process tests. |
 
 Migration creates a `JevK5 Judge` slot from the exact existing artifacts after verification. It preserves `jevk5_decide`, `jevk5_status`, question schemas, literal string handling, probability/model/profile metadata, context rejection, and cache semantics. The slot retains port 19385. The host does not reinterpret JevK5 confidence or add escalation decisions.
+
+The imported adapter receives the supervisor-owned engine endpoint, private credential, generation, and readiness state. Unload/reload controls act through the supervisor; engine loss/unload invalidates the scorer and its remembered tokens before another decision. Status reports supervisor-owned process identities/health without retaining an adapter-owned `Popen`. This is a required extraction from today's `ModelManager`, which currently starts and stops llama-server itself.
 
 Offer a deliberate **Import existing JevK5 installation** operation. Stage and verify first; then ask the old app to stop through its supported lifecycle and release its lock/port. Never run both owners of port 19385. If transfer fails, leave the old installation recoverable. Record migration progress idempotently and keep the old bundle/state until a migrated synthetic decision succeeds.
 
@@ -269,13 +309,13 @@ Those legacy `/api/*` paths are an explicit JevK5-only gateway allowlist on 1938
 
 Build the host registry, per-slot gateways, supervision, slot controls, connection export, and JevK5 package. Add a small deterministic JSON utility package using stdio. Use prepared local packages and a minimal CLI; defer downloads and the management MCP facade. Keep existing JevK5 behavior passing throughout.
 
-Acceptance: JevK5 and the deterministic tool run on distinct stable ports, work from real MCP clients, and can be started/stopped independently. Two clients share exactly one JevK5 engine. Stopping/restarting/killing one slot leaves the other responsive. Host exit and supervisor SIGKILL clean up all supported owned descendants. Unauthorized traffic fails on each port. The host works after relocation and has no dependency on the old checkout, Brekko, or Homebrew.
+Acceptance: JevK5 and the deterministic tool run on distinct stable ports, work from real MCP clients, and can be started/stopped independently. Two clients share exactly one JevK5 engine. Repeated abrupt client exits and reconnects do not exhaust session capacity after the configured leases/cleanup deadlines. SSE disconnect/reconnect retains the same unexpired stdio instance; DELETE and expiration reap it. Stopping/restarting/killing one slot leaves the other responsive. Host exit and supervisor SIGKILL clean up targets with surviving reapers, including a launch interrupted before acknowledgment. Forced reaper loss blocks replacement with `ownership_lost` and retains reservations until reconciled. Unauthorized traffic fails on each port. The host works after relocation and has no dependency on the old checkout, Brekko, or Homebrew.
 
 ### Phase 2: agent installation and recovery
 
 Implement the full package schema/lock, plan/apply CLI, scoped management MCP facade, installer progress UI, pinned downloads, idempotency, upgrades, rollback, and removal. Publish package-authoring instructions and a minimal adapter template in Markdown.
 
-Acceptance: an agent, given a source tool and installation authority, creates and installs a new package without editing host source. Interrupt every install/upgrade stage and verify recovery. Concurrent duplicate applies create one slot. Changed artifacts, traversal paths, port conflicts, unavailable secrets, incompatible MCP capabilities, exhausted disk, and failed smoke probes never activate a broken generation. Rollback preserves data and stable connections; removal preserves data unless explicitly asked to delete it.
+Acceptance: an agent, given a source tool and installation authority, creates and installs a new package without editing host source. Interrupt every install/upgrade stage, including candidate selection and exposure recording, and verify recovery. A write accepted after exposure survives a later routing failure and cannot trigger automatic restoration of the old snapshot. Concurrent duplicate applies create one slot. Changed artifacts, traversal paths, port conflicts, unavailable secrets, incompatible MCP capabilities, exhausted disk, and failed smoke probes never activate a broken generation. Allowed pre-exposure rollback preserves old data and the stable endpoint; removal preserves data unless explicitly asked to delete it.
 
 ### Phase 3: multiple model engines
 
@@ -287,11 +327,11 @@ Acceptance: both models install without changing host code, report exact checkpo
 
 | Area | Required evidence before release |
 | --- | --- |
-| Transport | Real SDK clients over HTTP and stdio; supported-version negotiation, notifications, cancellation, SSE, multiple sessions, structured output, and clean reconnect after restart. |
-| Lifecycle | Pause/stop during load and inference, queue saturation, forced exit, crash loops, stale process identity, multi-child cleanup, sleep/wake reconciliation. |
+| Transport | Real SDK clients over HTTP and stdio; supported-version negotiation, notifications, cancellation, SSE reconnect without child replacement, DELETE/idle expiration/404, abrupt-client reclamation, session saturation, structured output, and clean reconnect after restart. |
+| Lifecycle | Pause/stop during load and inference, queue saturation, forced exit, crash loops, stale process identity, declared dependency order, cancellation around launch acknowledgment, reaper/descriptor ownership, cleanup with surviving reapers, forced reaper loss and blocked replacement, sleep/wake reconciliation. |
 | Isolation | Wrong-slot credentials fail; invocation cannot manage; one slot's failure does not affect another; package code remains out of the supervisor. |
 | Privacy | Malformed inputs and failing packages cannot enter host logs/diagnostic exports; raw stdout/stderr and exceptions are absent. |
-| Installation | Hash/path/schema checks, partial downloads, cancel/retry, full disk, operation recovery, concurrent mutations, rollback with data, safe uninstall. |
+| Installation | Hash/path/schema checks, partial downloads, cancel/retry, full disk, operation recovery, concurrent mutations, pre-exposure rollback, crashes around the durable exposure marker, preservation of post-exposure writes and recovery artifacts, safe uninstall. |
 | Migration | Original tool schemas/results and cache invariants pass; old stdio registrations get explicit replacements; HTTP compatibility and login-item transfer are verified. |
 | Packaging | Host and two packages launch with bundled dependencies from a relocated path; provenance/licenses and platform requirements are complete. |
 

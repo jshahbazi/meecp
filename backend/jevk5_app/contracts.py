@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 
 class ServiceError(Exception):
@@ -13,16 +13,39 @@ class ServiceError(Exception):
         super().__init__(message)
 
 
-class Question(BaseModel):
+class QuestionBase(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    type: Literal["noul", "choice", "score"]
     instructions: str = Field(min_length=1, max_length=65536)
-    criteria: dict[str, str] | list[str] | None = None
+
+
+class NoulQuestion(QuestionBase):
+    type: Literal["noul"]
+    criteria: dict[Literal["true", "false"], str] | None = None
+
+
+class ChoiceQuestion(QuestionBase):
+    type: Literal["choice"]
+    criteria: (
+        Annotated[list[str], Field(min_length=2, max_length=16, json_schema_extra={"uniqueItems": True})]
+        | Annotated[dict[str, str], Field(min_length=2, max_length=16)]
+    )
+
+
+class ScoreQuestion(QuestionBase):
+    type: Literal["score"]
+    criteria: list[str] = Field(
+        min_length=2, max_length=16,
+        description="Ordered descriptions for score levels 0 through N−1, from lowest to highest.",
+    )
+
+
+Question = Annotated[NoulQuestion | ChoiceQuestion | ScoreQuestion, Field(discriminator="type")]
+QUESTION_ADAPTER = TypeAdapter(Question)
 
 
 def validate_decision(state: Any, question: Question | dict) -> tuple[Any, dict]:
     try:
-        q = question if isinstance(question, Question) else Question.model_validate(question)
+        q = QUESTION_ADAPTER.validate_python(question)
         if not isinstance(state, (str, dict, list)):
             raise ValueError()
         # Reject non-JSON values and non-finite numbers before prompt construction.

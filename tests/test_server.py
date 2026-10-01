@@ -1,5 +1,6 @@
 import httpx
 import pytest
+from jsonschema import Draft202012Validator
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
@@ -15,6 +16,7 @@ class Manager:
     def __init__(self):
         self.calls = 0
         self.last_state = None
+        self.last_question = None
 
     def status(self):
         return {"ready": False, "backend_pid": 1}
@@ -30,7 +32,7 @@ class Manager:
         return {"state": action}
 
     async def decide(self, state, question):
-        validate_decision(state, question)
+        _, self.last_question = validate_decision(state, question)
         self.calls += 1
         self.last_state = state
         return {"answer": {"type": "noul", "noul": 0.25}}
@@ -120,3 +122,42 @@ async def test_invalid_mcp_envelope_is_sanitized():
         result = await client.post("/mcp", json={"jsonrpc": "sensitive-envelope", "method": 7, "secret": "private"})
         assert result.status_code == 400
         assert "sensitive" not in result.text and "private" not in result.text
+
+
+@pytest.mark.asyncio
+async def test_published_question_schema_and_validation_agree_on_criteria_shapes():
+    manager = Manager()
+    policy, app = make_app(manager, TOKEN)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(
+        transport=httpx.ASGITransport(policy), headers={"Authorization": "Bearer " + TOKEN}
+    ) as http_client:
+        async with streamable_http_client(ENDPOINT + "/mcp", http_client=http_client) as (read, write, _):
+            async with ClientSession(read, write) as client:
+                await client.initialize()
+                tool = next(t for t in (await client.list_tools()).tools if t.name == "jevk5_decide")
+                validator = Draft202012Validator(tool.inputSchema)
+                questions = [
+                    ({"type": "noul", "instructions": "Allowed?"}, True),
+                    ({"type": "noul", "instructions": "Allowed?", "criteria": {"true": "Allowed", "false": "Denied"}}, True),
+                    ({"type": "choice", "instructions": "Choose", "criteria": ["yes", "no"]}, True),
+                    ({"type": "choice", "instructions": "Choose", "criteria": {"yes": "Allowed", "no": "Denied"}}, True),
+                    ({"type": "score", "instructions": "Rate", "criteria": ["Low", "Medium", "High"]}, True),
+                    ({"type": "score", "instructions": "Rate", "criteria": {"0": "Low", "1": "High"}}, False),
+                    ({"type": "score", "instructions": "Rate"}, False),
+                    ({"type": "score", "instructions": "Rate", "criteria": None}, False),
+                    ({"type": "score", "instructions": "Rate", "criteria": ["Only"]}, False),
+                    ({"type": "score", "instructions": "Rate", "criteria": [str(i) for i in range(17)]}, False),
+                    ({"type": "noul", "instructions": "Allowed?", "criteria": ["yes", "no"]}, False),
+                    ({"type": "noul", "instructions": "Allowed?", "criteria": {"other": "Wrong"}}, False),
+                ]
+                for question, accepted in questions:
+                    arguments = {"state": "Public synthetic evidence", "question": question}
+                    assert validator.is_valid(arguments) is accepted
+                    calls_before = manager.calls
+                    result = await client.call_tool("jevk5_decide", arguments)
+                    assert result.isError is not accepted
+                    assert manager.calls == calls_before + int(accepted)
+                    if accepted:
+                        assert manager.last_question == question
+                    else:
+                        assert all("Public synthetic evidence" not in item.text for item in result.content)

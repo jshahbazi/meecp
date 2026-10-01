@@ -50,7 +50,8 @@ DECIDE_DESCRIPTION = (
     "The model has no retrieval or external knowledge source and generates no explanation. "
     "Return calibrated option probabilities and model/cache metadata. Evidence may be a JSON "
     "string, object, or list. Choice criteria are an ordered object or distinct labels; score "
-    "criteria describe levels 0 through N−1. Confidence thresholds require task-specific validation."
+    "criteria must be an ordered array of descriptions for levels 0 through N−1, from lowest "
+    "to highest. Confidence thresholds require task-specific validation."
 )
 
 

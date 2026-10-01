@@ -1,6 +1,6 @@
 # JevK5 menu bar app
 
-Status: implementation design, 2026-09-30. Target: Apple silicon, macOS 14 or newer. Repository: `/Users/johnshahbazian/development/jevk5-menubar`.
+Status: implementation design, 2026-09-30. First local build: Apple silicon, macOS 26 or newer (the bundled Homebrew runtime targets macOS 26). Repository: `/Users/johnshahbazian/development/jevk5-menubar`.
 
 ## Purpose
 
@@ -18,7 +18,7 @@ flowchart LR
   Llama --> Model[Bundled Q8 model]
 ```
 
-The native AppKit app has no Dock icon. It starts one backend process, polls its status, and exposes readiness, pause/resume, MCP configuration, launch at login, and quit. It owns backend shutdown. A parent-process watchdog also closes the backend if the app exits unexpectedly. The backend owns exactly one llama-server child; shutdown or pause terminates only that child. A process lock prevents a second backend from taking over the same application state.
+The native AppKit app has no Dock icon. It starts one backend process, polls its status, and exposes readiness, pause/resume, MCP configuration, launch at login, and quit. It owns backend shutdown. A parent-process watchdog also closes the backend if the app exits unexpectedly. The backend owns exactly one supervised llama-server child; shutdown or pause terminates only that child. A small native supervisor reaps inference when the backend dies, including SIGKILL. It holds its child's process identity until reaping and watches its actual parent relationship, avoiding signals to a reused discovered PID. A process lock prevents a second backend from taking over the same application state.
 
 The service starts the model in the background while HTTP becomes available. MCP decision calls await readiness. Pausing unloads the model and rejects decisions until resumed. All clients share one scorer and one inference lock. Queued calls are bounded; overload returns a sanitized error. Quit stops both servers and clears in-memory prompt/cache state. The app can be registered as a login item through macOS's native ServiceManagement API; it starts only when the user enables that setting.
 
@@ -51,7 +51,7 @@ Validate Host and Origin for every route and require authentication. Reject exte
 
 ## Packaging and delivery
 
-Build an arm64 `.app` with Swift Package Manager and Python-managed build scripts invoked through `uv`. Copy a standalone CPython runtime and locked server dependencies into Resources. Recursively bundle llama.cpp/ggml/OpenSSL Mach-O dependencies, rewrite their load paths to the bundle, include Metal plugins, and ad hoc sign the resulting bundle. Include model revision, byte count, and SHA-256 in a manifest; verify before packaging and first use. Copy model files using APFS clone copying where available.
+Build an arm64 `.app` with Swift Package Manager and Python-managed build scripts invoked through `uv`. Copy a standalone CPython runtime and locked server dependencies into Resources. Recursively bundle llama.cpp/ggml/OpenSSL Mach-O dependencies, rewrite their load paths to the bundle, include Metal plugins, and ad hoc sign the resulting bundle. The pinned ggml bottle searches its compiled Homebrew plugin directory before the executable/current directory; disable that one directory string in the copied library and launch the server with the bundled plugins directory as its working directory. Preserve string length and file offsets, require exactly one known constant, and record original and packaged hashes. `GGML_BACKEND_PATH` in this version accepts a single plugin file, so do not set it to a directory. Include model revision, byte count, and SHA-256 in a manifest; verify before packaging and first use. Copy model files using APFS clone copying where available.
 
 The default local artifact is `dist/JevK5.app`. This is a local development build. Developer ID signing, notarization, an updater, universal Intel support, and public distribution are later work. The app must not claim these capabilities. Third-party licenses and model provenance ship with the app.
 

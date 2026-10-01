@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+APP="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
+RESOURCES="$APP/Contents/Resources"
+unset PYTHONHOME PYTHONUSERBASE PYTHONSTARTUP PYTHONINSPECT
+export PYTHONPATH="$RESOURCES/backend:$RESOURCES/vendor:$RESOURCES/python/site-packages"
+export PYTHONNOUSERSITE=1
+export PYTHONDONTWRITEBYTECODE=1
+exec "$RESOURCES/python/bin/python3.12" -m jevk5_app bridge --resources "$RESOURCES" --state-dir "$HOME/Library/Application Support/JevK5" --app "$APP"

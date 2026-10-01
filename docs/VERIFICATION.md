@@ -37,12 +37,21 @@ The app is ad hoc signed for local use. Developer ID signing, notarization, publ
 
 Codex's registration is configured and the underlying adapter has been tested. An existing Codex session may need its MCP connection restarted to refresh its tool catalog; the current chat's tool list was loaded before registration. Use Codex Settings → MCP servers → `jevk5` → Restart. The MCP server does not force the LLM to invoke the model.
 
+## Score schema correction — 2026-10-01
+
+Runtime source commit `6935a1d` replaced the shared criteria union with question-specific schemas. Score questions now advertise a required ordered array of 2–16 level descriptions, from lowest to highest. Choice questions continue accepting arrays and objects; boolean questions retain their existing format.
+
+`uv run pytest -q` passed all 35 tests, including a regression comparing the actual exported MCP schema with tool validation across valid and invalid criteria shapes. `uv run scripts/verify_score_contract.py` then passed against the rebuilt bundle and real local model through Streamable HTTP, stdio, and the local API. The checks confirmed score objects are rejected, score arrays preserve level indices and the expected-score calculation, and supported boolean/choice calls still succeed. The app's strict code-signature verification passed. Only synthetic evidence was used; the aggregate receipt is in ignored `test-artifacts/score-contract.json`.
+
+Restart an existing Codex `jevk5` MCP connection to refresh its cached schema. The rebuilt app remains running.
+
 ## Reproduce
 
 ```sh
 uv run pytest -q
 open dist/JevK5.app
 uv run scripts/verify_app.py
+uv run scripts/verify_score_contract.py
 uv run scripts/verify_lifecycle.py
 codex mcp get jevk5 --json
 codesign --verify --deep --strict dist/JevK5.app

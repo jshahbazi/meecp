@@ -87,6 +87,8 @@ async def verify(host_path: Path) -> dict:
                 "--output", str(package)], capture_output=True, text=True, timeout=300)
             if built.returncode or not json.loads(built.stdout).get("prepared"):
                 raise ValueError("phase2_preparation_failed")
+            direct = command("imports", "create", "--source", str(package), "--name", "Prepared Python", "--json")
+            assert direct["state"] == "ready_to_plan" and direct["source"]["file_inventory"] == "mcpme.lock.json"
             attached = command("imports", "attach", draft["draft_id"], "--revision", str(draft["revision"]), "--package", str(package), "--json")
             assert attached["state"] == "ready_to_plan"
             first_plan = command("install", "plan", "--import", draft["draft_id"], "--revision", str(draft["revision"]), "--json")
@@ -127,7 +129,8 @@ async def verify(host_path: Path) -> dict:
             process = await start()
             resumed = command("imports", "inspect", draft["draft_id"], "--json")
             assert resumed["state"] == "installed" and resumed["result_slot_id"] == operation["slot_id"]
-            return {"verified": True, "raw_python_pipeline": True, "duplicate_plans_one_operation": True,
+            return {"verified": True, "raw_python_pipeline": True, "prepared_package_intake": True,
+                    "duplicate_plans_one_operation": True,
                     "relocated_host": True, "http_sdk": True, "stdio_sdk": True, "draft_restart": True}
         finally:
             if process is not None and process.poll() is None:

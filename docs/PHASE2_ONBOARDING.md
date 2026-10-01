@@ -8,7 +8,7 @@ Add Project accepts a prepared package, a local source folder, or a UTF-8 Markdo
 
 Source intake reads metadata and selected content without importing modules or running source/build code. It snapshots an explicit file list and SHA-256 identities in owner-only staging. Folder discovery selects supported source files and excludes hidden paths, credentials, environments, caches, and generated directories. Review the selected file list in the exported specification; use repeated `--file` arguments to narrow CLI intake. Recognized credential content is rejected; authors must still select nonsecret source.
 
-The first source snapshot limits are 2,048 files, 16 MiB per file, 64 MiB total, and 10,000 scanned entries. Draft metadata is capped at 512 KiB. List discovery returns compact summaries; inspect/export returns the full draft, and the native editor fetches it before editing. Raw weight artifacts and binary document parsers are outside this intake milestone. Prepared model packages remain supported through the existing package path.
+The first source snapshot limits are 2,048 files, 16 MiB per file, 64 MiB total, and 10,000 scanned entries. Draft metadata is capped at 512 KiB. List discovery returns compact summaries; inspect/export returns the full draft, and the native editor fetches it before editing. Prepared-package inventories remain in the verified package lock rather than duplicating thousands of runtime files in a draft. Raw weight artifacts and binary document parsers are outside this intake milestone. Prepared model packages remain supported through the existing package path.
 
 ## CLI
 

@@ -394,7 +394,9 @@ class ImportStore:
         draft["updated_at"] = time.time()
         _refresh(draft)
         data = json.dumps(draft, sort_keys=True, separators=(",", ":"), allow_nan=False)
-        if len(data.encode("utf-8")) > MAX_DRAFT_METADATA_BYTES:
+        # Reserve space for durable operation/result identities before apply.
+        metadata_limit = MAX_DRAFT_METADATA_BYTES - (256 if draft["operation_id"] is None else 0)
+        if len(data.encode("utf-8")) > metadata_limit:
             raise ImportError("import_metadata_limit")
         self._connection.execute("INSERT OR REPLACE INTO drafts VALUES (?,?,?)",
                                  (draft["draft_id"], draft["revision"], data))
@@ -434,8 +436,8 @@ class ImportStore:
                     draft["source"] = {"kind": "prepared_package", "locator": str(source),
                                        "snapshot_path": str(sealed.root), "digest": sealed.digest,
                                        "revision": sealed.manifest.source_revision,
-                                       "files": [{"path": item.path, "sha256": item.sha256, "size": item.size}
-                                                 for item in sealed.lock.artifacts],
+                                       "files": [], "file_inventory": LOCK_NAME,
+                                       "artifact_count": len(sealed.lock.artifacts),
                                        "bytes": sum(item.size for item in sealed.lock.artifacts)}
                     draft["attachment"] = _attachment(sealed)
                 else:
@@ -509,6 +511,14 @@ class ImportStore:
                 f"mcpme imports attach {draft_id} --revision {revision} --package /absolute/path/to/package --json. "
                 "Attachment validates the package statically; installation requires a separate authorized plan."
             )
+            if draft["source"]["kind"] == "prepared_package":
+                specification["agent_instructions"] = (
+                    f"Import {draft_id}, revision {revision}, already contains a verified prepared package. "
+                    "Its complete file inventory is the sealed mcpme.lock.json. Review the attached tools, access, "
+                    "resources, and start settings, then request the exact installation plan with "
+                    f"mcpme install plan --import {draft_id} --revision {revision} --json. "
+                    "Apply only within the user's authority for that plan. No additional preparation is required."
+                )
             return specification
 
     def attach(self, draft_id: str, revision: int, package: Path) -> dict[str, Any]:

@@ -22,10 +22,11 @@ Results on Apple silicon macOS 26:
 | --- | --- |
 | Full locked suite, isolated Phase 2 worktree | 274 passed in 39.78 seconds. |
 | Import-specific tests | 41 passed, including interrupted cleanup retry, bounded discovery metadata, and ancestor-symlink replacement. |
+| Follow-up import/host tests after compact prepared-package inventories | 51 passed; prepared inventories reference the verified lock and preserve space for operation identities. |
 | Template-specific tests | 8 passed, including real SDK tools/schema/result/error checks. |
 | Native release build and ad hoc bundle verification | Passed. |
 | Native draft/private-export self-test | `native_contracts_passed`. |
-| Relocated bundled-host verifier | All reported checks passed: raw Python CLI intake/export/preparation/return/install, duplicate plans recovering one operation, HTTP and stdio SDK calls, and installed-draft recovery after host restart. |
+| Relocated bundled-host verifier | All reported checks passed: raw Python CLI intake/export/preparation/return/install, direct private-runtime prepared-package intake, duplicate plans recovering one operation, HTTP and stdio SDK calls, and installed-draft recovery after host restart. |
 | Native visual check in a separate test installation | File chooser accepted a synthetic Python folder; intent editing and Save Draft produced the visible Waiting for prepared package state. Controls remained readable and reachable. |
 
 A separate preparation acceptance run also passed 13 checks, including deleting the original source, moving the generated private-runtime package, attaching it and deleting the agent's package directory, and calling the installed arithmetic tool through a real MCP client. Its package contained 2,906 artifacts and 74,137,296 bytes. The generated adapter omits unsupported `experimental` capability declarations and disables bytecode writes from interpreter startup so candidate execution preserves the sealed artifact tree.

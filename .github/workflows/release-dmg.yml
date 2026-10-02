@@ -12,11 +12,13 @@ concurrency:
 
 jobs:
   sign:
-    name: Sign and notarize DMG
+    name: Sign and notarize installers
     if: github.repository == 'jshahbazi/mcpme' && github.ref == 'refs/heads/main'
     runs-on: macos-26
     timeout-minutes: 60
     environment: macos-release
+    outputs:
+      version: ${{ steps.release.outputs.version }}
     steps:
       - name: Check out protected source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -34,6 +36,11 @@ jobs:
         run: test "$(uname -m)" = arm64
       - name: Install locked dependencies
         run: uv sync --locked
+      - name: Validate release version and availability
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --locked python .github/scripts/publish_release.py prepare
       - name: Scan history before importing credentials
         run: uv run --locked python .github/scripts/scan_secrets.py
       - name: Run tests before importing credentials
@@ -47,24 +54,52 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
         run: uv run --locked python .github/scripts/apple_credentials.py setup
-      - name: Build, sign, notarize, and verify installer
+      - name: Build, sign, notarize, and verify DMG and ZIP
         env:
           MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           uv run --locked python scripts/build_mcpme_dmg.py \
             --sign-identity "$MACOS_SIGNING_IDENTITY" \
             --keychain "$RUNNER_TEMP/mcpme-signing/signing.keychain-db" \
             --notary-profile mcpme-notary \
-            --output dist/mcpme-arm64-notarized.dmg
+            --output "dist/mcpme-$RELEASE_VERSION-arm64.dmg" \
+            --zip-output "dist/mcpme-$RELEASE_VERSION-arm64.zip"
       - name: Remove temporary Apple credentials
         if: always()
         run: uv run --locked python .github/scripts/apple_credentials.py cleanup
-      - name: Upload signed installer
+      - name: Upload verified release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: mcpme-notarized-${{ github.sha }}
+          name: mcpme-release-${{ github.sha }}
           path: |
-            dist/mcpme-arm64-notarized.dmg
-            dist/mcpme-arm64-notarized.dmg.build.json
+            dist/mcpme-${{ steps.release.outputs.version }}-arm64.dmg
+            dist/mcpme-${{ steps.release.outputs.version }}-arm64.dmg.build.json
+            dist/mcpme-${{ steps.release.outputs.version }}-arm64.zip
+            dist/mcpme-${{ steps.release.outputs.version }}-arm64.zip.build.json
           if-no-files-found: error
           retention-days: 30
+
+  publish:
+    name: Publish GitHub Release
+    needs: sign
+    if: github.repository == 'jshahbazi/mcpme' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Check out protected source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download this run's verified assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: mcpme-release-${{ github.sha }}
+          path: dist
+      - name: Publish complete release with verified checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/publish_release.py publish --assets-dir dist

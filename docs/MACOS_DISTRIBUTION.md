@@ -36,7 +36,8 @@ uv run --locked python scripts/build_mcpme_dmg.py \
   --sign-identity 'Developer ID Application: Your Name (TEAMID)' \
   --notary-profile mcpme-release \
   --keychain /path/to/release.keychain-db \
-  --output dist/mcpme-release.dmg
+  --output dist/mcpme-release.dmg \
+  --zip-output dist/mcpme-release.zip
 ```
 
 `--keychain` scopes both signing identity lookup and notarization credentials to
@@ -63,7 +64,17 @@ The builder:
    spaces, ejects the image, verifies the copied signature and ticket, checks
    Gatekeeper again, and executes the bundled CLI with a temporary home and a
    minimal system `PATH`.
-8. Publishes the DMG and receipt only after all checks succeed.
+8. When `--zip-output` is supplied, archives the stapled app with `ditto`,
+   extracts it into an isolated directory, and verifies the extracted app's
+   metadata, signature, ticket, Gatekeeper assessment, and private runtime.
+9. Publishes the DMG, optional ZIP, and their receipts only after all checks
+   succeed. Existing outputs are never replaced; a publication failure removes
+   newly published outputs.
+
+The app's version comes from `[project].version` in `pyproject.toml`. The ZIP
+contains `mcpme.app` at its root; extract it and move the app to Applications.
+The app in both downloads carries the same signature and stapled ticket.
+Apple does not support signing or stapling the ZIP container itself.
 
 The two notarization submissions let both the image and the installed app carry
 their own tickets. A rejected submission, unavailable identity, tool error,
@@ -87,10 +98,13 @@ outer DMG; build a Developer ID app first.
 The app's sealed `Contents/Resources/app-build.json` records the native build and
 its signing mode. The notarization phase occurs after that seal, so its release
 receipt directs readers to the distribution builder for the later result.
-The adjacent DMG `.build.json` is the final distribution record: it includes
+The adjacent DMG `.build.json` is the final disk-image distribution record: it includes
 the actual signing and notarization modes, both accepted submission IDs, ticket
 and Gatekeeper checks, final image SHA-256, and byte count. It embeds an updated
 application record containing the app's notarization result.
+The ZIP has its own adjacent `.build.json`, recording its final hash, size,
+and the verification checks performed on the extracted app. Neither receipt
+changes the sealed app after signing.
 
 The local development build and the contract tests can be exercised without
 Apple credentials. The Developer ID and notarization path requires a successful

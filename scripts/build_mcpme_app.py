@@ -10,7 +10,7 @@ import re
 import shutil
 import subprocess
 
-from build_mcpme_host import ROOT, BuildCommandError, build as build_host, run
+from build_mcpme_host import ROOT, BuildCommandError, build as build_host, project_version, run
 
 MACHO_MAGIC = {b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xce",
                b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca", b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca"}
@@ -132,7 +132,7 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
             "bundle_identifier": "com.jshahbazi.jevk5", "executable_sha256": sha256(legacy),
             "default_bundle_path": str(legacy_recovery_app)}, sort_keys=True) + "\n")
     info = {"CFBundleIdentifier": "com.jshahbazi.mcpme", "CFBundleName": "mcpme", "CFBundleDisplayName": "mcpme",
-            "CFBundleExecutable": "mcpme", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "0.1.0",
+            "CFBundleExecutable": "mcpme", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": project_version(),
             "CFBundleVersion": "1", "LSUIElement": True, "LSMinimumSystemVersion": "26.0",
             "NSHighResolutionCapable": True, "NSPrincipalClass": "NSApplication", "CFBundleIconFile": "AppIcon"}
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))

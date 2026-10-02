@@ -20,11 +20,26 @@ To activate this workflow when migrating from GitHub's default setup, first merg
 
 ## Development installer
 
-The `CI` workflow scans fetched Git history, runs the locked Python tests, and builds and verifies a development DMG on the Apple silicon `macos-26` runner. Its installer uses an ad hoc signature and is not a notarized release. Each successful run retains the DMG and build receipt as an artifact for seven days.
+The `CI` workflow scans fetched Git history, runs the locked Python tests, and builds and verifies a development DMG and app ZIP on the Apple silicon `macos-26` runner. The app uses an ad hoc signature and is not a notarized release. Each successful run retains both downloads and their build receipts as an artifact for seven days.
 
 ## Signed installer
 
-The `Signed installer` workflow is dispatched manually from `main`. It rebuilds the checked-out commit on a fresh Apple silicon runner, scans history, runs tests, imports a Developer ID Application certificate into a temporary keychain, signs the app and disk image, submits both to Apple, staples their accepted tickets, and validates Gatekeeper assessment. It never signs pull-request artifacts. The job has no repository write permission and uploads artifacts without publishing a GitHub release.
+The `Signed installer` workflow is dispatched manually from `main`. It rebuilds the checked-out commit on a fresh Apple silicon runner, scans history, runs tests, imports a Developer ID Application certificate into a temporary keychain, signs the app and disk image, submits both to Apple, staples their accepted tickets, and validates Gatekeeper assessment. It creates the distribution ZIP from the stapled app and verifies the extracted app. It never signs pull-request artifacts.
+
+The signing job retains read-only repository permission. A separate Linux job downloads only this run's verified artifacts and uses `contents: write` to create a GitHub Release. That job has no Apple credentials. It checks each receipt against the source commit, app version, accepted notarization, artifact size, and SHA-256, creates a fresh tag pointing to that exact commit, and uploads all assets to a draft release. It checks the uploaded names, sizes, GitHub SHA-256 digests, and tag target before publishing. Failed uploads or verification before publication leave the draft unpublished.
+
+The release tag is `vVERSION`, where `VERSION` is `[project].version` in `pyproject.toml`. The app's short version, host receipt, filenames, and tag use that version. Use three numeric components, such as `0.1.0`. Existing tags and releases are rejected before signing; published versions are never overwritten. For the next release, run `uv version --bump patch` (or set an explicit version), commit the updated `pyproject.toml` and `uv.lock`, and merge through the normal protected PR process.
+
+Each release offers these direct downloads under [Releases](https://github.com/jshahbazi/mcpme/releases):
+
+| Asset | Purpose |
+| --- | --- |
+| `mcpme-VERSION-arm64.dmg` | Regular disk image: open it and drag `mcpme.app` to Applications. |
+| `mcpme-VERSION-arm64.zip` | App archive: extract it and move `mcpme.app` to Applications. |
+| The two `.build.json` files | Signing, notarization, source, and verification receipts. |
+| `SHA256SUMS.txt` | SHA-256 checksums for both downloads and their receipts. |
+
+Both formats contain the same signed app with a stapled Apple ticket. The DMG also has its own signature and ticket. ZIP containers cannot themselves be signed or stapled; the contained app carries those protections. See [Apple's notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
 
 The `macos-release` environment permits only `main` and requires approval by the repository owner. Self-approval is enabled for the current solo-maintainer setup. Signing requires an Apple Developer Program membership, a valid Developer ID Application certificate with its private key, and an App Store Connect API key that can submit notarization requests.
 
@@ -39,9 +54,11 @@ Add these environment secrets under [Settings > Environments > macos-release](ht
 | `APPLE_API_KEY_ID` | API key identifier. |
 | `APPLE_API_ISSUER_ID` | Issuer identifier for the API key. |
 
-Keep credentials out of Git and build logs. The helper writes credential files with owner-only permissions and captures credential-tool output. It registers the temporary signing keychain alongside the runner's existing user search list and checks signing before the app build. Unconditional cleanup restores the original search list, deletes the temporary keychain, and removes the private files. Missing or rejected credentials fail the release; the workflow does not fall back to an ad hoc signature. A real signed release remains unverified until the credentials are supplied and Apple accepts a workflow run.
+Keep credentials out of Git and build logs. The helper writes credential files with owner-only permissions and captures credential-tool output. It registers the temporary signing keychain alongside the runner's existing user search list and checks signing before the app build. Unconditional cleanup restores the original search list, deletes the temporary keychain, and removes the private files. Missing or rejected credentials fail the release; the workflow does not fall back to an ad hoc signature.
 
-To build a release, open **Actions > Signed installer > Run workflow**, choose `main`, and approve the `macos-release` deployment. Download `mcpme-notarized-COMMIT` after success; it contains the DMG and its build receipt and expires after thirty days. Rejection or timeout from Apple fails the run without publishing an installer artifact.
+To cut a release, open **Actions > Signed installer > Run workflow**, choose `main`, and approve the `macos-release` deployment. After both jobs succeed, download the DMG or ZIP from the GitHub Release. Releases persist independently of the backup Actions artifact `mcpme-release-COMMIT`, which expires after thirty days. Rejection or timeout from Apple fails the run without publishing installer artifacts or a release.
+
+If publication fails after creating a draft, inspect that draft and the failed job. Delete the incomplete draft and any corresponding unpublished tag before rerunning the complete workflow. A published version requires a new version number; reruns do not replace its downloads.
 
 Build-command failures report a fixed tool and operation code plus the numeric exit status, such as `build_command_codesign_verify_failed_exit_3`. Captured output, command arguments, paths, and credential values are omitted. A codesign verification exit status of 3 can indicate that the signature did not satisfy the requested requirement; an `input_unreadable` suffix indicates that codesign could not read an input. Inline requirements must start with `=`. Credential-import failures still report `apple_credentials_setup_failed`.
 

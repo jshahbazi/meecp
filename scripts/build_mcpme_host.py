@@ -6,11 +6,20 @@ import hashlib
 import json
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON_VERSION = "3.12.13"
+
+
+def project_version() -> str:
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    if not isinstance(version, str) or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version):
+        raise SystemExit("release_version_requires_major_minor_patch")
+    return version
 
 
 # Only these fixed labels can enter a build failure diagnostic. Arguments and
@@ -170,7 +179,7 @@ def build(destination: Path):
                     destination / "requirements.txt", destination / "README.md", destination / "bin/mcpme-reap"]
     source_hashes = {str(path.relative_to(destination)): hashlib.sha256(path.read_bytes()).hexdigest()
                      for path in source_files}
-    (destination / "build.json").write_text(json.dumps({"host_version": "0.1.0", "artifact_sha256": source_hashes,
+    (destination / "build.json").write_text(json.dumps({"host_version": project_version(), "artifact_sha256": source_hashes,
         "source_commit": run("git", "-C", str(ROOT), "rev-parse", "HEAD"),
         "source_tree_dirty": bool(run("git", "-C", str(ROOT), "status", "--porcelain")),
         "python": run(str(runtime / "bin/python3.12"), "--version"),

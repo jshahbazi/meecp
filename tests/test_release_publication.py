@@ -11,6 +11,8 @@ COMMIT = "a" * 40
 SUBMISSION = "01234567-89ab-cdef-0123-456789abcdef"
 VERSION = "0.1.0"
 TAG = "v" + VERSION
+RELEASE_ID = 401560592
+DRAFT_TAG = "untagged-ab9043a45ed932b9fad7"
 PRIVATE = "synthetic-authentication-secret"
 
 
@@ -74,22 +76,32 @@ def http_result(status, body=None, *, returncode=None):
     )
 
 
-def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag_change=None):
+def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag_change=None,
+                   existing_draft=False):
     calls = []
-    drafted = False
+    drafted = existing_draft
     public = False
-    tagged = False
+    tagged = existing_draft
+    draft_readback = False
 
     def run(*arguments):
-        nonlocal drafted, public, tagged
+        nonlocal drafted, public, tagged, draft_readback
         calls.append(arguments)
         if arguments[0] == "api":
+            endpoint = next(value for value in arguments if value.startswith("repos/"))
             if "POST" in arguments:
                 assert not tagged
                 assert "ref=refs/tags/" + TAG in arguments and "sha=" + COMMIT in arguments
                 tagged = True
                 return http_result(201)
-            endpoint = arguments[-1]
+            if "PATCH" in arguments:
+                assert endpoint == f"repos/{publisher.REPOSITORY}/releases/{RELEASE_ID}"
+                assert drafted and not public and draft_readback
+                # gh's typed field emits a JSON boolean rather than string "false".
+                assert "draft=false" in arguments
+                assert ("--field" in arguments or "-F" in arguments)
+                public = True
+                return http_result(200)
             if "git/ref/tags/" in endpoint and tagged:
                 value = {"ref": "refs/tags/" + TAG, "object": {"type": "commit", "sha": COMMIT}}
                 if drafted and tag_change:
@@ -97,11 +109,15 @@ def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag
                 return http_result(200, value)
             if not drafted:
                 return http_result(404)
-            assert endpoint == publisher.release_endpoint(TAG)
+            if endpoint == publisher.release_endpoint(TAG) and not public:
+                # GitHub's tag endpoint cannot resolve an unpublished release.
+                return http_result(404)
+            assert endpoint == f"repos/{publisher.REPOSITORY}/releases/{RELEASE_ID}"
             remote = {
+                "id": RELEASE_ID,
                 "tag_name": TAG, "target_commitish": COMMIT,
                 "draft": not public, "prerelease": False,
-                "html_url": f"https://github.com/{publisher.REPOSITORY}/releases/tag/{TAG}",
+                "html_url": f"https://github.com/{publisher.REPOSITORY}/releases/tag/{TAG if public else DRAFT_TAG}",
                 "assets": [
                     {"name": path.name, "size": path.stat().st_size, "state": "uploaded",
                      "digest": "sha256:" + publisher.digest(path)}
@@ -110,6 +126,8 @@ def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag
             }
             if remote_change:
                 remote_change(remote)
+            if not public:
+                draft_readback = True
             return http_result(200, remote)
         assert arguments[0] == "release"
         if arguments[1] == "create":
@@ -126,10 +144,12 @@ def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag
             assert "--clobber" not in arguments
             names = {Path(argument).name for argument in arguments[5:]}
             assert names == {path.name for path in directory.iterdir()}
-        elif arguments[1] == "edit":
-            assert drafted and not public
-            assert arguments[-1] == "--draft=false"
-            public = True
+        elif arguments[1] == "view":
+            assert drafted
+            assert arguments[2] == TAG
+            assert arguments[arguments.index("--repo") + 1] == publisher.GH_REPOSITORY
+            assert arguments[arguments.index("--json") + 1] == "databaseId"
+            return subprocess.CompletedProcess(["gh"], 0, json.dumps({"databaseId": RELEASE_ID}), PRIVATE)
         else:
             pytest.fail("unexpected mutation")
         return subprocess.CompletedProcess(["gh"], 0, PRIVATE, PRIVATE)
@@ -276,12 +296,13 @@ def test_existing_checksum_manifest_cannot_be_overwritten(publisher, assets):
 def test_publish_is_draft_until_exact_assets_and_hashes_are_verified(publisher, assets, monkeypatch, capsys):
     calls = install_github(monkeypatch, publisher, assets)
     assert publisher.publish(assets) == f"https://github.com/{publisher.REPOSITORY}/releases/tag/{TAG}"
-    assert [call[:2] for call in calls] == [
-        ("api", "--hostname"), ("api", "--hostname"), ("api", "--hostname"),
-        ("api", "--hostname"), ("release", "create"), ("release", "upload"),
-        ("api", "--hostname"), ("api", "--hostname"), ("release", "edit"),
-        ("api", "--hostname"), ("api", "--hostname"),
-    ]
+    mutation = next(index for index, call in enumerate(calls) if "PATCH" in call)
+    assert any(call[:2] == ("release", "view") for call in calls[:mutation])
+    assert any(f"repos/{publisher.REPOSITORY}/releases/{RELEASE_ID}" in call
+               for call in calls[:mutation])
+    assert any(f"repos/{publisher.REPOSITORY}/releases/{RELEASE_ID}" in call
+               for call in calls[mutation + 1:])
+    assert not any(call[:2] == ("release", "edit") for call in calls)
     assert capsys.readouterr() == ("", "")
 
 
@@ -298,7 +319,7 @@ def test_failed_remote_verification_keeps_draft_unpublished(publisher, assets, m
     with pytest.raises(publisher.PublicationError, match=diagnostic):
         publisher.publish(assets)
     assert any(call[:2] == ("release", "create") for call in calls)
-    assert not any(call[:2] == ("release", "edit") for call in calls)
+    assert not any("PATCH" in call or call[:2] == ("release", "edit") for call in calls)
     assert not any("--clobber" in call or "delete" in call for call in calls)
 
 
@@ -308,7 +329,74 @@ def test_changed_tag_commit_keeps_draft_unpublished(publisher, assets, monkeypat
     with pytest.raises(publisher.PublicationError, match="release_tag_commit_mismatch"):
         publisher.publish(assets)
     assert any(call[:2] == ("release", "create") for call in calls)
-    assert not any(call[:2] == ("release", "edit") for call in calls)
+    assert not any("PATCH" in call or call[:2] == ("release", "edit") for call in calls)
+
+
+def test_draft_can_have_an_untagged_url_and_unresolvable_tag_endpoint(publisher, assets, monkeypatch):
+    calls = install_github(monkeypatch, publisher, assets, existing_draft=True)
+    assert publisher.api(publisher.release_endpoint(TAG), missing_allowed=True) is None
+    assert publisher.resolve_release_id(TAG) == RELEASE_ID
+    paths = publisher.validated_assets(assets, VERSION, COMMIT)
+    assert publisher.verified_release(TAG, COMMIT, paths, draft=True, release_id=RELEASE_ID) == (
+        f"https://github.com/{publisher.REPOSITORY}/releases/tag/{TAG}"
+    )
+    assert all("POST" not in call and "PATCH" not in call for call in calls)
+
+
+@pytest.mark.parametrize("database_id", [None, 0, -1, True, "401560592"])
+def test_resolved_release_id_must_be_a_positive_integer(publisher, monkeypatch, database_id):
+    monkeypatch.setattr(publisher, "command", lambda *args: subprocess.CompletedProcess(
+        ["gh"], 0, json.dumps({"databaseId": database_id}), PRIVATE,
+    ))
+    with pytest.raises(publisher.PublicationError):
+        publisher.resolve_release_id(TAG)
+
+
+@pytest.mark.parametrize("change", [
+    lambda value: value.update(id=RELEASE_ID + 1),
+    lambda value: value.update(html_url=f"https://github.com/someone-else/mcpme/releases/tag/{DRAFT_TAG}"),
+    lambda value: value.update(html_url="https://github.com/jshahbazi/mcpme/releases/tag/untagged-not-hex"),
+])
+def test_wrong_release_id_or_untrusted_draft_url_blocks_publication(publisher, assets, monkeypatch, change):
+    calls = install_github(monkeypatch, publisher, assets, remote_change=change)
+    with pytest.raises(publisher.PublicationError, match="metadata_invalid"):
+        publisher.publish(assets)
+    assert not any("PATCH" in call for call in calls)
+
+
+def test_resume_validated_draft_publishes_by_id_without_creating_or_uploading(publisher, assets, monkeypatch):
+    calls = install_github(monkeypatch, publisher, assets, existing_draft=True)
+    assert publisher.resume(assets, RELEASE_ID) == f"https://github.com/{publisher.REPOSITORY}/releases/tag/{TAG}"
+    assert sum("PATCH" in call for call in calls) == 1
+    assert not any("POST" in call or call[:2] in (("release", "create"), ("release", "upload")) for call in calls)
+
+
+@pytest.mark.parametrize("change,diagnostic", [
+    (lambda value: value["assets"].pop(), "asset_set_invalid"),
+    (lambda value: value["assets"][0].update(digest="sha256:" + "0" * 64), "digest_mismatch"),
+    (lambda value: value.update(id=RELEASE_ID + 1), "metadata_invalid"),
+    (lambda value: value.update(draft=False), "metadata_invalid"),
+])
+def test_resume_cannot_publish_incomplete_or_mismatched_draft(publisher, assets, monkeypatch, change, diagnostic):
+    calls = install_github(monkeypatch, publisher, assets, existing_draft=True, remote_change=change)
+    with pytest.raises(publisher.PublicationError, match=diagnostic):
+        publisher.resume(assets, RELEASE_ID)
+    assert not any("PATCH" in call or "POST" in call or call[0] == "release" for call in calls)
+
+
+def test_resume_rejects_local_checksum_mismatch_before_github_access(publisher, assets, monkeypatch):
+    (assets / "SHA256SUMS.txt").write_text("invalid downloaded checksum manifest")
+    monkeypatch.setattr(publisher, "command", lambda *args: pytest.fail("unexpected GitHub access"))
+    with pytest.raises(publisher.PublicationError, match="release_checksum_manifest_invalid"):
+        publisher.resume(assets, RELEASE_ID)
+
+
+def test_resume_rejects_wrong_tag_commit_without_mutating_draft(publisher, assets, monkeypatch):
+    calls = install_github(monkeypatch, publisher, assets, existing_draft=True,
+                           tag_change=lambda value: value["object"].update(sha="b" * 40))
+    with pytest.raises(publisher.PublicationError, match="release_tag_commit_mismatch"):
+        publisher.resume(assets, RELEASE_ID)
+    assert not any("PATCH" in call or "POST" in call for call in calls)
 
 
 def test_github_command_capture_never_emits_private_output(publisher, monkeypatch, capsys):

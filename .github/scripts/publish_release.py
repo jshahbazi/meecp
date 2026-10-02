@@ -194,12 +194,38 @@ def validated_assets(directory: Path, version: str, commit: str) -> list[Path]:
     return [*paths, sums]
 
 
-def verified_release(tag: str, commit: str, assets: list[Path], *, draft: bool) -> str:
-    value = api(release_endpoint(tag))
+def resolve_release_id(tag: str) -> int:
+    # gh resolves drafts through GraphQL; REST's tag endpoint only finds
+    # published releases. All subsequent reads and writes use this stable ID.
+    result = command("release", "view", tag, "--repo", GH_REPOSITORY, "--json", "databaseId")
+    if result.returncode != 0:
+        raise PublicationError("release_github_command_failed")
+    try:
+        value = json.loads(result.stdout)
+    except (TypeError, ValueError):
+        raise PublicationError("release_github_release_id_invalid") from None
+    identifier = value.get("databaseId") if isinstance(value, dict) else None
+    if type(identifier) is not int or identifier <= 0:
+        raise PublicationError("release_github_release_id_invalid")
+    return identifier
+
+
+def verified_release(tag: str, commit: str, assets: list[Path], *, draft: bool,
+                     release_id: int) -> str:
+    if type(release_id) is not int or release_id <= 0:
+        raise PublicationError("release_github_release_id_invalid")
+    value = api(f"repos/{REPOSITORY}/releases/{release_id}")
     expected_url = f"https://github.com/{REPOSITORY}/releases/tag/{tag}"
-    if (value.get("tag_name") != tag or value.get("target_commitish") != commit
+    url = value.get("html_url")
+    valid_url = url == expected_url
+    if draft and isinstance(url, str):
+        valid_url = valid_url or re.fullmatch(
+            re.escape(f"https://github.com/{REPOSITORY}/releases/tag/") + r"untagged-[a-f0-9]+", url
+        ) is not None
+    if (value.get("id") != release_id
+            or value.get("tag_name") != tag or value.get("target_commitish") != commit
             or value.get("draft") is not draft or value.get("prerelease") is not False
-            or value.get("html_url") != expected_url):
+            or not valid_url):
         raise PublicationError("release_uploaded_metadata_invalid")
     uploaded = value.get("assets")
     if not isinstance(uploaded, list) or len(uploaded) != len(assets):
@@ -240,6 +266,23 @@ def checked_command(*arguments: str) -> None:
         raise PublicationError("release_github_command_failed")
 
 
+def finish_release(tag: str, commit: str, assets: list[Path], release_id: int) -> str:
+    verify_tag(tag, commit)
+    verified_release(tag, commit, assets, draft=True, release_id=release_id)
+    # Address the verified draft by ID, including the write. No asset is replaced.
+    checked_command("api", "--hostname", "github.com", "--method", "PATCH",
+                    f"repos/{REPOSITORY}/releases/{release_id}", "--field", "draft=false")
+    verify_tag(tag, commit)
+    return verified_release(tag, commit, assets, draft=False, release_id=release_id)
+
+
+def resume(directory: Path, release_id: int) -> str:
+    """Publish an existing complete draft only when all original assets match."""
+    version, tag, commit = context()
+    assets = validated_assets(directory, version, commit)
+    return finish_release(tag, commit, assets, release_id)
+
+
 def publish(directory: Path) -> str:
     version, tag, commit = context()
     assets = validated_assets(directory, version, commit)
@@ -260,11 +303,7 @@ def publish(directory: Path) -> str:
                     *(str(path) for path in assets))
     # No overwrite/delete operations: a failed upload or verification leaves the
     # draft for inspection. Only a complete upload with matching digests is public.
-    verified_release(tag, commit, assets, draft=True)
-    verify_tag(tag, commit)
-    checked_command("release", "edit", tag, "--repo", GH_REPOSITORY, "--draft=false")
-    verify_tag(tag, commit)
-    return verified_release(tag, commit, assets, draft=False)
+    return finish_release(tag, commit, assets, resolve_release_id(tag))
 
 
 def main() -> None:
@@ -273,10 +312,15 @@ def main() -> None:
     subcommands.add_parser("prepare")
     publication = subcommands.add_parser("publish")
     publication.add_argument("--assets-dir", type=Path, default=ROOT / "dist")
+    recovery = subcommands.add_parser("resume")
+    recovery.add_argument("--assets-dir", type=Path, default=ROOT / "dist")
+    recovery.add_argument("--release-id", type=int, required=True)
     arguments = parser.parse_args()
     try:
         if arguments.operation == "prepare":
             prepare()
+        elif arguments.operation == "resume":
+            print(resume(arguments.assets_dir, arguments.release_id))
         else:
             print(publish(arguments.assets_dir))
     except PublicationError as error:

@@ -171,6 +171,24 @@ async def plan_transfer(host, payload):
         return await _plan_transfer(host, payload)
 
 
+def check_removed_predecessors(host, legacy_state):
+    """Require retired generations to finish registry removal before reuse."""
+    directory = host.root / "transfers"
+    if not directory.exists():
+        return
+    removed = {record["slot_id"] for path in directory.glob("*.json")
+               if (record := read_private_json(path)).get("legacy_state") == legacy_state
+               and record.get("stage") == "removed"}
+    if not removed:
+        return
+    # The transfer tombstone precedes registry finalization. A failure between
+    # those writes still reserves the old endpoint and its removal operation.
+    if (any(slot.id in removed for slot in host.registry.list_slots())
+            or any(operation.slot_id in removed and operation.action == "remove"
+                   for operation in host.registry.list_unfinished_operations())):
+        raise failure("removal_recovery_required")
+
+
 async def _plan_transfer(host, payload):
     required = {"package", "legacy_app", "legacy_state"}
     if (set(payload) - {"legacy_login_disabled"} != required
@@ -187,10 +205,14 @@ async def _plan_transfer(host, payload):
     except Exception:
         raise failure("invalid_legacy_app") from None
     legacy_state = ensure_private_directory(Path(payload["legacy_state"]).absolute())
+    check_removed_predecessors(host, str(legacy_state))
     package = await asyncio.to_thread(validate_package, Path(payload["package"]))
     if package.manifest.package_id != "local.jevk5" or package.manifest.profile != "model-service":
         raise failure("invalid_migration_package")
     check_legacy_contract(package, legacy_app)
+    # Validation yields to lifecycle work; removal may have tombstoned a
+    # predecessor without completing its registry transaction in that time.
+    check_removed_predecessors(host, str(legacy_state))
     # Keep terminal removal records as history; a new explicit transfer may
     # migrate the preserved legacy installation again under a fresh identity.
     transfer_directory = ensure_private_directory(host.root / "transfers")
@@ -248,6 +270,7 @@ async def apply_transfer(host, identity):
         return inspect_transfer(host, identity)
     if record["stage"] != "staged":
         raise failure("migration_finalized")
+    check_removed_predecessors(host, record["legacy_state"])
     # No await between durable submission and task registration; duplicate calls
     # observe this intent and recover the same transfer rather than resubmitting.
     record["status"] = "running"

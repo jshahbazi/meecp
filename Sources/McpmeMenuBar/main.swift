@@ -55,6 +55,12 @@ private struct Project: Equatable {
     var blocked: Bool { state == "ownership_lost" || error == "installation_recovery_required" }
 }
 
+private func projectForSelection(row: Int, rendered: [Project]?, current: [Project]) -> Project? {
+    guard let rendered = rendered, rendered.indices.contains(row) else { return nil }
+    let id = rendered[row].id
+    return current.first { $0.id == id }
+}
+
 private struct Operation {
     let id: String
     let projectID: String?
@@ -696,7 +702,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
     func controlTextDidChange(_ notification: Notification) { setupChanged() }
     func textDidChange(_ notification: Notification) { setupChanged() }
     private var selectedProject: Project? {
-        guard let index = table?.selectedRow, projects.indices.contains(index) else { return nil }; return projects[index]
+        projectForSelection(row: table?.selectedRow ?? -1, rendered: renderedProjects, current: projects)
     }
 
     private func refreshActionButtons() {
@@ -722,11 +728,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
         stopAllButton?.isEnabled = !projects.isEmpty && process?.isRunning == true && !stopping && !quitting
         let selection = selectedProject?.id
         if let table = table, renderedProjects != projects {
-            table.reloadData()
             renderedProjects = projects
+            table.reloadData()
             if let selection = selection, let index = projects.firstIndex(where: { $0.id == selection }) {
                 table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-            }
+            } else { table.deselectAll(nil) }
         }
         refreshActionButtons()
         operationText?.stringValue = operations.prefix(3).map(\.label).joined(separator: "   •   ")
@@ -1248,6 +1254,15 @@ private func nativeSelfTest() -> Bool {
     guard Project(good)?.id == id, integer(true) == nil, safeCode("private arbitrary text") == nil,
           ManagerConnection(["api_version": 1, "supervisor_pid": 42, "endpoint": "http://127.0.0.1:19384", "token": String(repeating: "x", count: 32)]) != nil,
           ManagerConnection(["api_version": 1, "supervisor_pid": 42, "endpoint": "http://example.com:19384", "token": String(repeating: "x", count: 32)]) == nil else { return false }
+    var secondRow = good; secondRow["slot_id"] = "22222222-2222-4333-8444-555555555555"
+    var thirdRow = good; thirdRow["slot_id"] = "33333333-2222-4333-8444-555555555555"
+    guard let first = Project(good), let second = Project(secondRow), let third = Project(thirdRow) else { return false }
+    let displayed = [first, second, third]
+    // The selected identity survives removal of a preceding row; deleting the
+    // selected identity clears selection rather than targeting its successor.
+    guard projectForSelection(row: 1, rendered: displayed, current: [second, third]) == second,
+          projectForSelection(row: 1, rendered: displayed, current: [first, third]) == nil,
+          projectForSelection(row: -1, rendered: displayed, current: displayed) == nil else { return false }
     return true
 }
 

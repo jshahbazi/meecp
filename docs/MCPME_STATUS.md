@@ -174,7 +174,7 @@ Transfer stages are `staged`, `old_stopped`, `endpoint_acquired`, and `committed
 
 The old stdio registration still points to the old launcher. Export a replacement with `connections export --slot SLOT_UUID` and update the specific client entry you intend to change. Migration does not rewrite client configuration.
 
-Removing a migrated JevK5 app records a durable completed transfer tombstone before releasing the retained legacy lock. It preserves the original source, bundle, and legacy data. Removal does not restart the legacy app or reenable its login registration. The removed transfer cannot be resumed as an active migration.
+Removing a migrated JevK5 app records a durable completed transfer tombstone before releasing the retained legacy lock. It preserves the original source, bundle, and legacy data. Removal does not restart the legacy app or reenable its login registration. The removed transfer cannot be resumed as an active migration. A new transfer of the retained legacy installation returns `removal_recovery_required` while its predecessor's slot or unfinished removal operation remains; finish removal recovery before planning or applying that transfer.
 
 ## Verification
 

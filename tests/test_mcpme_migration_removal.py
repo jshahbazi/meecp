@@ -3,8 +3,9 @@ import copy
 import os
 from pathlib import Path
 import plistlib
+import threading
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 import uuid
 
 import pytest
@@ -26,6 +27,141 @@ def legacy_alias(value):
 async def drain(host):
     while host.tasks:
         await asyncio.gather(*list(host.tasks))
+
+
+def fresh_transfer_fixture(value, monkeypatch):
+    app = Path(value["legacy_app"])
+    (app / "Contents").mkdir(parents=True)
+    (app / "Contents/Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "com.jshahbazi.jevk5"}))
+    package = SimpleNamespace(digest="a" * 64, manifest=SimpleNamespace(package_id="local.jevk5", profile="model-service",
+                                                                     model_dump=lambda: {"package_id": "local.jevk5"}))
+    validate = Mock(return_value=package)
+    native = AsyncMock(return_value={"running": False, "login_enabled": False})
+    snapshot = Mock(side_effect=lambda _package, destination: SimpleNamespace(root=destination, digest="a" * 64))
+    monkeypatch.setattr(migrations, "validate_package", validate)
+    monkeypatch.setattr(migrations, "check_legacy_contract", lambda *_: None)
+    monkeypatch.setattr(migrations, "native_handoff", native)
+    monkeypatch.setattr(migrations, "snapshot_package", snapshot)
+    payload = {"package": value["package_path"], "legacy_app": str(app), "legacy_state": value["legacy_state"]}
+    return payload, validate, native, snapshot
+
+
+@pytest.mark.parametrize("action", ["plan", "apply"])
+@pytest.mark.parametrize("reservation", ["slot", "operation"])
+async def test_fresh_transfer_requires_predecessor_removal_to_finish(tmp_path, monkeypatch, action, reservation):
+    host = Supervisor(tmp_path / "state", tmp_path / "unused")
+    predecessor = record(host, tmp_path, stage="removed", status="completed")
+    payload, validate, native, snapshot = fresh_transfer_fixture(predecessor, monkeypatch)
+    host.registry.add_slot(slot_id=predecessor["slot_id"], package_digest=predecessor["package_digest"],
+                           package_path=predecessor["package_path"], name="JevK5 Judge", public_port=19385)
+    if reservation == "operation":
+        removal = host.registry.create_operation("remove", slot_id=predecessor["slot_id"])
+        host.registry.update_operation(removal.id, "recovery_required", error_code="registry_unavailable")
+        host.registry.discard_slot(predecessor["slot_id"])
+    execute = AsyncMock()
+    monkeypatch.setattr(migrations, "execute_transfer", execute)
+    if action == "apply":
+        candidate = {**copy.deepcopy(predecessor), "transfer_id": str(uuid.uuid4()), "slot_id": str(uuid.uuid4()),
+                     "stage": "staged", "status": "planned"}
+        migrations.save(host, candidate)
+    try:
+        with pytest.raises(HostError, match="^removal_recovery_required$"):
+            if action == "plan":
+                await migrations.plan_transfer(host, payload)
+            else:
+                await migrations.apply_transfer(host, candidate["transfer_id"])
+        native.assert_not_awaited()
+        execute.assert_not_awaited()
+        validate.assert_not_called()
+        snapshot.assert_not_called()
+        assert not host.tasks and not host.legacy_locks
+        assert migrations.inspect_transfer(host, predecessor["transfer_id"])["stage"] == "removed"
+        if action == "apply":
+            assert migrations.inspect_transfer(host, candidate["transfer_id"])["status"] == "planned"
+        if reservation == "slot":
+            host.registry.discard_slot(predecessor["slot_id"])
+        else:
+            host.registry.update_operation(removal.id, "completed")
+        if action == "plan":
+            result = await migrations.plan_transfer(host, payload)
+            assert result["stage"] == "staged" and result["slot_id"] != predecessor["slot_id"]
+            native.assert_awaited_once()
+        else:
+            result = await migrations.apply_transfer(host, candidate["transfer_id"])
+            await drain(host)
+            assert result["status"] == "running"
+            execute.assert_awaited_once()
+    finally:
+        await host.close()
+
+
+async def test_failed_removal_finalization_blocks_new_migration_until_retry_completes(tmp_path, monkeypatch):
+    host = Supervisor(tmp_path / "state", tmp_path / "unused")
+    value = record(host, tmp_path, stage="committed", status="completed")
+    payload, validate, native, snapshot = fresh_transfer_fixture(value, monkeypatch)
+    await migrations.initialize_transfers(host)
+    complete_removal = host.registry.complete_removal
+    def unavailable(*args, **kwargs):
+        raise RegistryError("registry_unavailable")
+    monkeypatch.setattr(host.registry, "complete_removal", unavailable)
+    try:
+        removal = host.begin_control(value["slot_id"], "remove")
+        await drain(host)
+        assert migrations.inspect_transfer(host, value["transfer_id"])["stage"] == "removed"
+        assert host.registry.get_operation(removal["operation_id"]).status == "recovery_required"
+        assert host.registry.get_slot(value["slot_id"]).public_port == 19385
+        with pytest.raises(HostError, match="^removal_recovery_required$"):
+            await migrations.plan_transfer(host, payload)
+        native.assert_not_awaited()
+        validate.assert_not_called()
+        snapshot.assert_not_called()
+        monkeypatch.setattr(host.registry, "complete_removal", complete_removal)
+        retry = host.begin_control(value["slot_id"], "remove")
+        assert retry["operation_id"] == removal["operation_id"]
+        await drain(host)
+        assert host.registry.get_operation(removal["operation_id"]).status == "completed"
+        assert not host.registry.list_slots()
+        result = await migrations.plan_transfer(host, payload)
+        assert result["stage"] == "staged" and result["slot_id"] != value["slot_id"]
+        native.assert_awaited_once()
+    finally:
+        await host.close()
+
+
+async def test_planning_rechecks_predecessor_after_package_validation_yields(tmp_path, monkeypatch):
+    host = Supervisor(tmp_path / "state", tmp_path / "unused")
+    value = record(host, tmp_path, stage="committed", status="completed")
+    payload, validate, native, snapshot = fresh_transfer_fixture(value, monkeypatch)
+    await migrations.initialize_transfers(host)
+    entered, release = threading.Event(), threading.Event()
+    def validate_after_release(path):
+        entered.set()
+        if not release.wait(3):
+            raise TimeoutError("fixture-validation-wait")
+        return validate(path)
+    monkeypatch.setattr(migrations, "validate_package", validate_after_release)
+    def unavailable(*args, **kwargs):
+        raise RegistryError("registry_unavailable")
+    monkeypatch.setattr(host.registry, "complete_removal", unavailable)
+    planning = asyncio.create_task(migrations.plan_transfer(host, payload))
+    try:
+        async with asyncio.timeout(3):
+            while not entered.is_set():
+                await asyncio.sleep(0.01)
+        removal = host.begin_control(value["slot_id"], "remove")
+        await drain(host)
+        assert migrations.inspect_transfer(host, value["transfer_id"])["stage"] == "removed"
+        assert host.registry.get_operation(removal["operation_id"]).status == "recovery_required"
+        release.set()
+        with pytest.raises(HostError, match="^removal_recovery_required$"):
+            await planning
+        native.assert_not_awaited()
+        snapshot.assert_not_called()
+        assert len(list((host.root / "transfers").glob("*.json"))) == 1
+    finally:
+        release.set()
+        await asyncio.gather(planning, return_exceptions=True)
+        await host.close()
 
 
 async def test_remove_migrated_app_retires_alias_and_preserves_recovery_artifacts(tmp_path, monkeypatch):

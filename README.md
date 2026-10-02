@@ -51,7 +51,7 @@ uv run --locked python scripts/build_mcpme_dmg.py
 
 Open `dist/mcpme-0.1.0-arm64.dmg`, open `mcpme.app` on the image, and choose **Install and Restart**. The installer verifies the new bundle, gracefully quits the current copy, replaces it, and opens the installed app. The prompt shows the destination in `/Applications` or `~/Applications`. Your installed apps and settings are preserved; services follow their saved startup policies after restart.
 
-The installer waits up to 75 seconds for the current app to quit. A refusal or timeout stops replacement. A confirmed launch failure restores the previous bundle; an unconfirmed launch leaves a recovery copy. Manual dragging and ZIP installation require quitting mcpme before copying, then opening the installed app.
+The installer waits up to 75 seconds for the current app to quit. A refusal or timeout stops replacement. A confirmed launch failure restores the previous bundle; an unconfirmed launch leaves a recovery copy. Installing manually by dragging the app from the DMG to Applications requires quitting mcpme before copying, then opening the installed app.
 
 This is an ad hoc development build. See [macOS distribution](docs/MACOS_DISTRIBUTION.md) for signing, installation, and verification, and the [host application update plan](docs/AUTO_UPDATE_PLAN.md) for the proposed automatic updater.
 

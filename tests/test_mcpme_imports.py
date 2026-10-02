@@ -659,6 +659,126 @@ def test_edit_invalidates_binding_and_reclaims_only_inactive_result(tmp_path):
         assert store.attach(draft["draft_id"], 2, package)["state"] == "ready_to_plan"
 
 
+@pytest.mark.parametrize("action", ["revise", "cancel", "expire"])
+def test_startup_recovery_can_win_against_post_commit_cleanup(tmp_path, monkeypatch, action):
+    import mcpme.imports as module
+    state = tmp_path / "state"
+    with ImportStore(state) as first:
+        draft, package = ready(tmp_path, first)
+        target = Path(draft["attachment"]["path"]) if action == "revise" else first.staging / draft["draft_id"]
+        entered, release = threading.Event(), threading.Event()
+        original = module.shutil.rmtree
+
+        def paused(path, *args, **kwargs):
+            if Path(path) == target:
+                entered.set()
+                assert release.wait(5), "post-commit cleanup barrier timed out"
+            return original(path, *args, **kwargs)
+
+        monkeypatch.setattr(module.shutil, "rmtree", paused)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            operation = (lambda: first.revise(draft["draft_id"], 1, intent="Revised synthetic intent")) if action == "revise" else (
+                lambda: getattr(first, action)(draft["draft_id"], 1))
+            pending = pool.submit(operation)
+            try:
+                assert entered.wait(5), "mutation did not commit before cleanup"
+                with ImportStore(state) as reopened:
+                    observed = reopened.inspect(draft["draft_id"])
+                    assert observed["revision"] == (2 if action == "revise" else 1)
+                    assert not target.exists()
+            finally:
+                release.set()
+            assert pending.result(timeout=5) == first.inspect(draft["draft_id"])
+        assert package.exists() and Path(draft["source"]["locator"]).exists()
+        if action == "revise":
+            assert Path(draft["source"]["snapshot_path"]).exists()
+        assert [entry.name for entry in first.attachment_staging.iterdir()] == [".lock"]
+
+
+@pytest.mark.parametrize("action", ["revise", "cancel", "expire"])
+def test_post_commit_cleanup_can_win_before_recovery_quarantine(tmp_path, monkeypatch, action):
+    import mcpme.imports as module
+    state = tmp_path / "state"
+    with ImportStore(state) as first:
+        draft, package = ready(tmp_path, first)
+        target = Path(draft["attachment"]["path"]) if action == "revise" else first.staging / draft["draft_id"]
+        cleanup_entered, release_cleanup = threading.Event(), threading.Event()
+        rename_entered, release_rename = threading.Event(), threading.Event()
+        original_remove, original_rename = module._remove_attachment_tree, module.os.rename
+
+        def paused_remove(path):
+            if Path(path) == target:
+                cleanup_entered.set()
+                assert release_cleanup.wait(5), "cleanup ownership barrier timed out"
+            return original_remove(path)
+
+        def paused_rename(source, destination, *args, **kwargs):
+            if Path(source) == target:
+                rename_entered.set()
+                assert release_rename.wait(5), "recovery quarantine barrier timed out"
+            return original_rename(source, destination, *args, **kwargs)
+
+        monkeypatch.setattr(module, "_remove_attachment_tree", paused_remove)
+        monkeypatch.setattr(module.os, "rename", paused_rename)
+        reopened = None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            operation = (lambda: first.revise(draft["draft_id"], 1, intent="Revised synthetic intent")) if action == "revise" else (
+                lambda: getattr(first, action)(draft["draft_id"], 1))
+            mutation = pool.submit(operation)
+            try:
+                assert cleanup_entered.wait(5)
+                recovery = pool.submit(ImportStore, state)
+                assert rename_entered.wait(5), "recovery did not discover the old tree"
+                release_cleanup.set()
+                result = mutation.result(timeout=5)
+                assert not target.exists()
+                release_rename.set()
+                reopened = recovery.result(timeout=5)
+                assert reopened.inspect(draft["draft_id"]) == result
+            finally:
+                release_cleanup.set()
+                release_rename.set()
+                if reopened is not None:
+                    reopened.close()
+        assert package.exists() and Path(draft["source"]["locator"]).exists()
+        assert [entry.name for entry in first.attachment_staging.iterdir()] == [".lock"]
+
+
+@pytest.mark.parametrize("action", ["revise", "cancel", "expire"])
+def test_real_cleanup_permission_failures_are_not_suppressed(tmp_path, monkeypatch, action):
+    import mcpme.imports as module
+    with ImportStore(tmp_path / "state") as store:
+        draft, package = ready(tmp_path, store)
+        def denied(*args, **kwargs):
+            raise PermissionError("Synthetic cleanup permission failure")
+        monkeypatch.setattr(module.shutil, "rmtree", denied)
+        if action == "revise":
+            with pytest.raises(PermissionError):
+                store.revise(draft["draft_id"], 1, intent="Revised synthetic intent")
+        else:
+            with pytest.raises(ImportError, match="^import_cleanup_failed$"):
+                getattr(store, action)(draft["draft_id"], 1)
+        assert package.exists() and Path(draft["attachment"]["path"]).exists()
+
+
+def test_shared_collector_missing_child_does_not_abort_remaining_cleanup(tmp_path, monkeypatch):
+    import mcpme.imports as module
+    root = tmp_path / "garbage"
+    root.mkdir(mode=0o700)
+    (root / "first").write_text("Synthetic first artifact")
+    (root / "second").write_text("Synthetic second artifact")
+    original = module.os.unlink
+    removed = []
+    def concurrently_removed(path, *args, **kwargs):
+        original(path, *args, **kwargs)
+        removed.append(path)
+        if len(removed) == 1:
+            raise FileNotFoundError("A concurrent collector removed this child")
+    monkeypatch.setattr(module.os, "unlink", concurrently_removed)
+    module._remove_attachment_tree(root)
+    assert len(removed) == 2 and not root.exists()
+
+
 def test_attached_artifacts_are_reverified_before_plan(tmp_path):
     with ImportStore(tmp_path / "state") as store:
         draft, _ = ready(tmp_path, store)

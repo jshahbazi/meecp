@@ -105,7 +105,7 @@ class PreparationStore:
         if draft["requirements"].get("secret_references"):
             raise PreparationError("secret_reference_unavailable")
         required_tools = draft["requirements"].get("tools", [])
-        if not set(required_tools) <= {tool.name for tool in descriptor.interface.tools}:
+        if required_tools and set(required_tools) != {tool.name for tool in descriptor.interface.tools}:
             raise PreparationError("tool_requirement_mismatch")
         memory = draft["requirements"].get("memory_mb")
         if memory is not None and descriptor.resources.memory_mb > memory:

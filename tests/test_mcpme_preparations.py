@@ -19,6 +19,7 @@ from mcpme.preparation_contracts import (
     RecipeManifest, canonical_bytes, check_schema, contract_digest, load_contract, parse_descriptor, schema_accepts,
 )
 from mcpme.preparations import PreparationStore, RECEIPT_NAME
+from mcpme.recipe_sdk import scaffold_recipe
 from mcpme.recipes import RecipeStore
 from test_mcpme_packages import edit_manifest, make_package, relock
 
@@ -197,6 +198,34 @@ def test_plan_never_executes_source_or_promotes_capability(foundation, monkeypat
     assert "preparation_runner_unavailable" in planned["blockers"]
     assert planned["descriptor_digest"] == parse_descriptor(value).digest
     assert recipes.inspect(value["recipe"]["id"], "1.0.0")["runnable"] is False
+
+
+@pytest.mark.parametrize("required_tools,accepted", [
+    ([], True), (["validate_json", "extra_tool"], True),
+    (["extra_tool", "validate_json"], True), (["validate_json"], False), (["missing_tool"], False),
+])
+def test_existing_mcp_plan_and_reservation_match_import_tool_contract(foundation, tmp_path, required_tools, accepted):
+    imports, recipes, jobs, draft, value = foundation
+    bundle = tmp_path / "mcp-bundle"
+    scaffold_recipe(bundle, "test.existing", component="existing-mcp-v1")
+    recipe = recipes.add(bundle)
+    recipe = recipes.enable(recipe["recipe_id"], recipe["version"])
+    value = copy.deepcopy(value)
+    value["recipe"] = {"id": recipe["recipe_id"], "version": recipe["version"], "digest": recipe["digest"]}
+    value["interface"].update(kind="python-mcp")
+    del value["interface"]["function"]
+    value["interface"]["tools"].append({"name": "extra_tool", "description": "Synthetic additional tool",
+                                        "input_schema": {"type": "object"}})
+    draft = imports.revise(draft["draft_id"], 1, requirements={"tools": required_tools})
+    if accepted:
+        assert len(jobs.plan(draft["draft_id"], 2, value)["tools"]) == 2
+        assert jobs.reserve(draft["draft_id"], 2, value, policy(), idempotency_key=str(uuid.uuid4()))["state"] == "queued"
+    else:
+        with pytest.raises(PreparationError, match="tool_requirement_mismatch"):
+            jobs.plan(draft["draft_id"], 2, value)
+        with pytest.raises(PreparationError, match="tool_requirement_mismatch"):
+            jobs.reserve(draft["draft_id"], 2, value, policy(), idempotency_key=str(uuid.uuid4()))
+        assert jobs.list() == []
 
 
 def test_job_start_identity_and_privacy(foundation):

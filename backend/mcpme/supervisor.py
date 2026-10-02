@@ -1364,8 +1364,10 @@ class Supervisor:
         self.closing = True
         if self.static_tasks:
             # Canceling an asyncio wrapper does not stop its underlying thread.
-            # Retain the database and owner lock until file work has settled.
-            await asyncio.gather(*list(self.static_tasks), return_exceptions=True)
+            # Shield each owned task even if shutdown itself is canceled, so a
+            # retry retains the database and owner lock until file work settles.
+            await asyncio.gather(*(asyncio.shield(task) for task in list(self.static_tasks)),
+                                 return_exceptions=True)
         if self.tasks:
             pending = list(self.tasks)
             for task in pending:

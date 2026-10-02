@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .contracts import LOCK_NAME, MANIFEST_NAME, PackageError, package_relative_path, validate_package
-from .private import check_private_file, ensure_private_directory, snapshot_package
+from .private import PrivateStateError, _check_ancestors, check_private_file, ensure_private_directory, snapshot_package
 
 IMPORT_SCHEMA_VERSION = 1
 MAX_SOURCE_FILES = 2048
@@ -59,13 +59,32 @@ def _root_identity(path: Path) -> tuple[int, ...]:
     return (details.st_dev, details.st_ino, details.st_mode, details.st_mtime_ns, details.st_ctime_ns)
 
 
-def _remove_attachment_tree(path: Path) -> None:
-    if path.is_symlink():
+def _existing_private_tree(path: Path) -> bool:
+    """Check a cleanup target without recreating a tree another owner removed."""
+    _check_ancestors(path)
+    try:
+        details = path.lstat()
+    except FileNotFoundError:
+        return False
+    if stat.S_ISLNK(details.st_mode):
         raise ImportError("imports_unavailable")
-    if path.exists():
-        ensure_private_directory(path)
+    if (not stat.S_ISDIR(details.st_mode) or details.st_uid != os.getuid()
+            or stat.S_IMODE(details.st_mode) != 0o700):
+        raise PrivateStateError()
+    return True
+
+
+def _missing_cleanup_entry(function, path, error) -> None:
+    # A collector can remove a child or quarantine its parent after discovery.
+    # Other failures still abort cleanup and retain the existing error contract.
+    if not isinstance(error, FileNotFoundError):
+        raise error
+
+
+def _remove_attachment_tree(path: Path) -> None:
+    if _existing_private_tree(path):
         try:
-            shutil.rmtree(path)
+            shutil.rmtree(path, onexc=_missing_cleanup_entry)
         except FileNotFoundError:
             # A second collector may already be deleting a quarantined tree.
             pass
@@ -416,12 +435,22 @@ class ImportStore:
                 for candidate in candidates:
                     if candidate.absolute() in referenced and directory.name not in inactive:
                         continue
-                    ensure_private_directory(candidate)
+                    if not _existing_private_tree(candidate):
+                        continue
                     quarantine = self.attachment_staging / (".garbage-" + uuid.uuid4().hex)
-                    os.rename(candidate, quarantine)
+                    try:
+                        os.rename(candidate, quarantine)
+                    except FileNotFoundError:
+                        if candidate.exists() or candidate.is_symlink():
+                            raise
+                        continue
                     abandoned.append(quarantine)
                 if directory.exists():
-                    _sync_directory(directory)
+                    try:
+                        _sync_directory(directory)
+                    except FileNotFoundError:
+                        if directory.exists() or directory.is_symlink():
+                            raise
             _sync_directory(self.staging)
         for candidate in abandoned:
             _remove_attachment_tree(candidate)
@@ -608,8 +637,7 @@ class ImportStore:
             self._save(draft)
         if previous_attachment is not None and previous_attachment["path"] != draft["source"]["snapshot_path"]:
             previous_path = Path(previous_attachment["path"])
-            ensure_private_directory(previous_path)
-            shutil.rmtree(previous_path)
+            _remove_attachment_tree(previous_path)
         return draft
 
     def export(self, draft_id: str, revision: int) -> dict[str, Any]:
@@ -887,13 +915,11 @@ class ImportStore:
         # Publication of the inactive state precedes reclamation. Submission
         # always reads that same state inside a write transaction.
         directory = self.staging / draft_id
-        if directory.exists():
-            ensure_private_directory(directory)
-            try:
-                shutil.rmtree(directory)
-                _sync_directory(self.staging)
-            except OSError:
-                raise ImportError("import_cleanup_failed") from None
+        try:
+            _remove_attachment_tree(directory)
+            _sync_directory(self.staging)
+        except OSError:
+            raise ImportError("import_cleanup_failed") from None
         return draft
 
     def cancel(self, draft_id: str, revision: int) -> dict[str, Any]:

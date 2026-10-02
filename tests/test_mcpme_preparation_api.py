@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 from pathlib import Path
 
@@ -97,3 +98,44 @@ async def test_caller_cancellation_does_not_release_owned_thread_or_database(tmp
             await host.close()
         else:
             await asyncio.gather(shutdown, return_exceptions=True)
+
+
+async def test_shutdown_cancellation_retains_thread_database_and_owner_lock(tmp_path):
+    host = Supervisor(tmp_path.resolve() / "state", tmp_path / "unused-reaper")
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+    def work():
+        started.set()
+        assert release.wait(5)
+        try:
+            return host.imports.list()
+        finally:
+            finished.set()
+    caller = asyncio.create_task(host.static_work(work))
+    shutdown = None
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        for _ in range(2):
+            shutdown = asyncio.create_task(host.close())
+            await asyncio.sleep(0)
+            assert not shutdown.done()
+            shutdown.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await shutdown
+            assert host.static_tasks
+            assert not finished.is_set() and not caller.done()
+            assert host.imports.list() == []
+            os.fstat(host.lock_fd)
+        shutdown = asyncio.create_task(host.close())
+        await asyncio.sleep(0)
+        assert not shutdown.done()
+        release.set()
+        assert await caller == []
+        await shutdown
+        assert finished.is_set() and not host.static_tasks
+    finally:
+        release.set()
+        await asyncio.gather(caller, return_exceptions=True)
+        if shutdown is not None:
+            await asyncio.gather(shutdown, return_exceptions=True)
+        if shutdown is None or shutdown.cancelled():
+            await host.close()

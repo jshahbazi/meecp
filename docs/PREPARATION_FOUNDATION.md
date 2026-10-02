@@ -25,7 +25,7 @@ Installation operations and installation grants retain their existing registry d
 
 Preparation receipts are ordinary locked artifacts named `mcpme.preparation.json`. They bind job/source/descriptor/recipe/policy identities, dependency/runtime and fixture identities. The final package digest lives in the job record, avoiding a digest cycle. The internal verifier must also compare the candidate's declared interface/access/resources/lifecycle with the selected descriptor. A receipt by itself establishes no runtime behavior.
 
-Canceling a request awaiting file work does not stop its underlying thread. The supervisor retains that work, its database and owner lock until it settles. Concurrent static file work is bounded. The current attachment copier does not offer immediate byte-level cancellation; draft invalidation closes result admission while copying settles. Job reservation release requires explicit ownership settlement. Interrupted work with unsettled ownership blocks a replacement attempt.
+Canceling a request or shutdown awaiting file work does not stop its underlying thread. The supervisor retains that work, its database and owner lock until it settles, including across repeated canceled shutdown attempts. Concurrent static file work is bounded. The current attachment copier does not offer immediate byte-level cancellation; draft invalidation closes result admission while copying settles. Job reservation release requires explicit ownership settlement. Interrupted work with unsettled ownership blocks a replacement attempt.
 
 Same-user processes remain inside the trust boundary. Cryptographic validation detects changed bytes. Supported services do not delegate installation authority to recipes. Arbitrary same-user code is not isolated by a job descriptor, an advisory lock or a passing fixture.
 
@@ -50,7 +50,7 @@ The management API exposes `GET/POST /v1/recipes`, `POST /v1/recipes/{inspect|en
 
 ## Verification and remaining release gates
 
-Synthetic checks cover strict serialization/schema bounds, static nonexecution, independent recipe authoring, immutable collisions, evidence/lifecycle retention, stale source/lock bindings, cancellation and revocation winners, transaction rollback, process-independent staging leases, management responsiveness and request cancellation. Test packages used for admission are synthetic sealed fixtures; these checks do not represent a newly executed preparation or model workload.
+Synthetic checks cover strict serialization/schema bounds, static nonexecution, independent recipe authoring, immutable collisions, evidence/lifecycle retention, stale source/lock bindings, cancellation and revocation winners, transaction rollback, process-independent staging leases, management responsiveness, request and shutdown cancellation, exact import tool requirements, and concurrent startup/edit/cancel cleanup. Test packages used for admission are synthetic sealed fixtures; these checks do not represent a newly executed preparation or model workload.
 
 Run `uv run --locked python -m pytest -q` for regression coverage. After building a development CLI host, `uv run --locked python scripts/verify_preparation_foundation.py --host /absolute/path/to/host` checks a relocated copy with a minimal PATH, hostile global Python settings, a fresh temporary state directory and a synthetic source that fails if imported. It verifies registry/planning/CLI access, restart retention and zero installed slots.
 

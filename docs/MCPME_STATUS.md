@@ -40,6 +40,8 @@ The supported draft and handoff commands are documented in [Phase 2 onboarding](
 
 ### Manage installed apps
 
+Package lifecycle declarations include `max_request_bytes`, defaulting to 1 MiB and capped at 17 MiB. The reviewed installation plan shows this limit; slot HTTP and stdio input enforce it. This permits an image adapter to receive 12 MiB of base64-encoded image bytes with JSON framing. MCP responses remain limited to 1 MiB per message and 8 MiB per operation, and manager requests remain limited to 1 MiB.
+
 The **Installed Apps** workspace keeps app selection and detail scrolling stable during live refresh. Host disconnects replace live counters with unavailable values and disable changes; model-specific statistics remain adapter-specific. The **Add App** workspace organizes the existing resumable setup into Source, Preparation, and Review sections. Switching workspaces preserves the draft and installation plan. A completed installation offers **Open Installed App** to reach activity and connection controls.
 
 Select an installed app in **Manage Apps** to see its details, choose **Manual** or **Automatic when mcpme opens**, and remove it. Startup changes affect future mcpme launches without starting or stopping the current runtime. An explicit Stop remains suppressed across host restarts; Start clears that suppression. Removal closes the endpoint, stops owned processes, revokes the connection credential, and removes the app from the active list. Its source remains untouched, and the host retains its sealed package, configuration, and data for recovery. Retention cleanup and data deletion are not part of removal.

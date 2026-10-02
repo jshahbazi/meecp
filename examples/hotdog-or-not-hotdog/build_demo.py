@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent
 SOURCES = ["app.py", "detector.py", "run.py", "index.html", "Launch.command", "Setup.command",
            "prepare_model.py", "build_demo.py", "pyproject.toml", "uv.lock", "requirements.txt",
            "LICENSE", "LICENSE-PYTHON", "LICENSE-FLATBUFFERS", "README.md", "THIRD_PARTY_NOTICES.md",
-           "model-provenance.json"]
+           "model-provenance.json", "mcp-tool.json"]
 
 
 def build(destination: Path) -> None:

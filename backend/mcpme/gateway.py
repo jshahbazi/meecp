@@ -26,6 +26,7 @@ from starlette.routing import Route
 
 from .policy import LocalPolicy, load_json
 from .activity import Activity, RequestActivity
+from .limits import DEFAULT_REQUEST_BYTES, MAX_REQUEST_BYTES
 
 PROTOCOL_VERSION = "2025-11-25"
 MAX_MESSAGE_BYTES = 1024 * 1024
@@ -110,9 +111,10 @@ class Session:
             return self.sequence
 
     async def write(self, message):
-        data = encode(message) + b"\n"
-        if len(data) > MAX_MESSAGE_BYTES:
+        body = encode(message)
+        if len(body) > self.gateway.max_request_bytes:
             raise ValueError("message_limit")
+        data = body + b"\n"
         async with self.write_lock, asyncio.timeout(self.gateway.request_timeout):
             view = memoryview(data)
             loop = asyncio.get_running_loop()
@@ -213,12 +215,15 @@ class Gateway:
     def __init__(self, *, launch_session: Callable[[str], Awaitable[SessionPipes]],
                  close_session: Callable[[str], Awaitable[None]], max_sessions=8,
                  idle_timeout=300, request_timeout=60, active=None, expected_tools=None,
-                 activity_report=None):
+                 activity_report=None, max_request_bytes=DEFAULT_REQUEST_BYTES):
         if (not isinstance(max_sessions, int) or isinstance(max_sessions, bool) or max_sessions < 1 or
+                not isinstance(max_request_bytes, int) or isinstance(max_request_bytes, bool) or
+                not 1 <= max_request_bytes <= MAX_REQUEST_BYTES or
                 any(not math.isfinite(v) or v <= 0 for v in (idle_timeout, request_timeout))):
             raise ValueError("invalid_limits")
         self.launch_session, self.close_session = launch_session, close_session
         self.max_sessions, self.idle_timeout, self.request_timeout = max_sessions, idle_timeout, request_timeout
+        self.max_request_bytes = max_request_bytes
         self.active = active or (lambda: True)
         self.expected_tools = expected_tools
         self.activity = Activity()
@@ -550,10 +555,11 @@ class SSE(Response):
 
 def make_app(*, token: str, port: int, launch_session, close_session, max_sessions=8,
              idle_timeout=300, request_timeout=60, active=None, expected_tools=None,
-             activity_report=None):
+             activity_report=None, max_request_bytes=DEFAULT_REQUEST_BYTES):
     gateway = Gateway(launch_session=launch_session, close_session=close_session, max_sessions=max_sessions,
                       idle_timeout=idle_timeout, request_timeout=request_timeout, active=active,
-                      expected_tools=expected_tools, activity_report=activity_report)
+                      expected_tools=expected_tools, activity_report=activity_report,
+                      max_request_bytes=max_request_bytes)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -565,4 +571,4 @@ def make_app(*, token: str, port: int, launch_session, close_session, max_sessio
 
     app = Starlette(routes=[Route("/mcp", gateway.handle, methods=["GET", "POST", "DELETE"])], lifespan=lifespan)
     app.router.redirect_slashes = False
-    return LocalPolicy(app, token, port), gateway
+    return LocalPolicy(app, token, port, max_bytes=max_request_bytes), gateway

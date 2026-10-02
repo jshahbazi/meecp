@@ -13,17 +13,23 @@ import httpx
 from mcp.types import JSONRPCMessage
 from mcpme_local_transport import private_transport
 
-from .gateway import MAX_MESSAGE_BYTES, MAX_OPERATION_BYTES, MAX_PENDING, PROTOCOL_VERSION, encode, error_message
+from .gateway import (DEFAULT_REQUEST_BYTES, MAX_MESSAGE_BYTES, MAX_OPERATION_BYTES, MAX_PENDING,
+                      MAX_REQUEST_BYTES, PROTOCOL_VERSION, encode, error_message)
 from .policy import load_json
 
 
 class Bridge:
-    def __init__(self, endpoint: str, token: str, *, socket_path: Path | None = None, timeout=65, client=None):
+    def __init__(self, endpoint: str, token: str, *, socket_path: Path | None = None, timeout=65, client=None,
+                 max_request_bytes=DEFAULT_REQUEST_BYTES):
         parts = urlsplit(endpoint)
         if (parts.scheme != "http" or parts.hostname != "127.0.0.1" or parts.port is None or
                 parts.username or parts.password or parts.path != "/mcp" or parts.query or parts.fragment):
             raise ValueError("invalid_endpoint")
         self.endpoint, self.token, self.timeout = endpoint, token, timeout
+        if (not isinstance(max_request_bytes, int) or isinstance(max_request_bytes, bool) or
+                not 1 <= max_request_bytes <= MAX_REQUEST_BYTES):
+            raise ValueError("invalid_limits")
+        self.max_request_bytes = max_request_bytes
         self.socket_path = socket_path
         self.session_id = None
         self.protocol_version = None
@@ -101,8 +107,11 @@ class Bridge:
         request_id = message.get("id")
         responded = False
         try:
+            body = encode(message)
+            if len(body) > self.max_request_bytes:
+                raise ValueError("request_limit")
             async with asyncio.timeout(self.timeout):
-                async with self.client.stream("POST", self.endpoint, headers=self.headers(), content=encode(message)) as response:
+                async with self.client.stream("POST", self.endpoint, headers=self.headers(), content=body) as response:
                     if response.status_code not in {200, 202}:
                         raise ValueError("request_rejected")
                     if message.get("method") == "initialize":
@@ -224,7 +233,9 @@ class Bridge:
                 line = read.result()
                 if not line:
                     break
-                if len(line) > MAX_MESSAGE_BYTES or not line.endswith(b"\n"):
+                if len(line) > self.max_request_bytes + 1 or not line.endswith(b"\n"):
+                    break
+                if len(line[:-1]) > self.max_request_bytes:
                     break
                 try:
                     message = load_json(line)
@@ -272,11 +283,13 @@ class Bridge:
             self.stop.set()
 
 
-async def run_bridge(endpoint: str, token: str, *, socket_path: Path, timeout=65):
+async def run_bridge(endpoint: str, token: str, *, socket_path: Path, timeout=65,
+                     max_request_bytes=DEFAULT_REQUEST_BYTES):
     """Bridge stdin/stdout and delete its HTTP session on EOF, SIGINT or SIGTERM."""
-    bridge = Bridge(endpoint, token, socket_path=socket_path, timeout=timeout)
+    bridge = Bridge(endpoint, token, socket_path=socket_path, timeout=timeout,
+                    max_request_bytes=max_request_bytes)
     loop = asyncio.get_running_loop()
-    reader = asyncio.StreamReader(limit=MAX_MESSAGE_BYTES)
+    reader = asyncio.StreamReader(limit=max_request_bytes + 1)
     protocol = asyncio.StreamReaderProtocol(reader)
     read_transport, _ = await loop.connect_read_pipe(lambda: protocol, sys.stdin.buffer)
     stdout_fd = sys.stdout.fileno()

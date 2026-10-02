@@ -29,6 +29,7 @@ from starlette.routing import Route
 
 from .contracts import PackageError, validate_package
 from .connections import connection_names
+from .limits import DEFAULT_REQUEST_BYTES, MAX_REQUEST_BYTES
 from .activity import ACTIVITY_EVENTS, ACTIVITY_FRAME, Activity, timestamp
 from .imports import ImportError as ImportDraftError, ImportStore
 from .private import ensure_private_directory, read_private_json, snapshot_package, write_private_json
@@ -62,7 +63,8 @@ def capabilities() -> dict:
             "profiles": ["mcp-stdio", "model-service"], "protocol_versions": ["2025-11-25"], "capabilities": ["tools"],
             "start_policies": ["manual", "host"], "platform": {"os": "macos", "architecture": "arm64", "minimum_version": "26.0"},
             "slot_actions": ["start", "stop", "restart", "remove"], "slot_settings": ["start_policy"],
-            "limits": {"slots": 16, "request_bytes": 1048576, "idle_seconds": 300},
+            "limits": {"slots": 16, "request_bytes": DEFAULT_REQUEST_BYTES,
+                       "max_request_bytes": MAX_REQUEST_BYTES, "idle_seconds": 300},
             "installation": "prepared_local_packages_and_imports", "management_credentials": "owner_and_scoped_grants",
             "management_grant_modes": ["read", "prepare", "lifecycle", "install"], "management_mcp": "scoped_stdio",
             "import_schema_versions": [1], "import_sources": ["local_folder", "markdown", "text", "prepared_package"],
@@ -598,6 +600,7 @@ class Supervisor:
         config_read, config_write = os.pipe()
         config = {"token": self.connection(slot.id)["token"], "port": slot.public_port, "active": active,
                   "max_sessions": lifecycle.max_sessions, "idle_timeout": lifecycle.idle_timeout_seconds,
+                  "max_request_bytes": lifecycle.max_request_bytes,
                   "request_timeout": lifecycle.operation_timeout_seconds,
                   "control_timeout": lifecycle.startup_timeout_seconds +
                       max(1, len(package.manifest.processes)) * (lifecycle.stop_grace_seconds + 5) + 5}
@@ -1155,7 +1158,8 @@ class Supervisor:
                 if not isinstance(invocation_token, str) or not 32 <= len(invocation_token) <= 512:
                     raise HostError("invalid_invocation_token")
                 write_private_json(self.slot_directory(slot_id) / "connection.json", {
-                    "slot_id": slot_id, "endpoint": f"http://127.0.0.1:{plan['public_port']}/mcp", "token": invocation_token})
+                    "slot_id": slot_id, "endpoint": f"http://127.0.0.1:{plan['public_port']}/mcp", "token": invocation_token,
+                    "max_request_bytes": snapshot.manifest.lifecycle.max_request_bytes})
             write_private_json(self.root / "plans" / (plan_id + ".json"), plan)
         except BaseException:
             listener.close()
@@ -1245,7 +1249,8 @@ class Supervisor:
             connection_path = directory / "connection.json"
             token = read_private_json(connection_path)["token"] if connection_path.exists() else secrets.token_urlsafe(32)
             write_private_json(connection_path, {
-                "slot_id": slot_id, "endpoint": f"http://127.0.0.1:{plan['public_port']}/mcp", "token": token})
+                "slot_id": slot_id, "endpoint": f"http://127.0.0.1:{plan['public_port']}/mcp", "token": token,
+                "max_request_bytes": package.manifest.lifecycle.max_request_bytes})
             slot = self.registry.add_slot(slot_id=slot_id, package_digest=package.digest, package_path=package.root,
                 name=plan["name"], public_port=plan["public_port"], start_policy=plan["start_policy"],
                 credential_ref=directory / "connection.json")

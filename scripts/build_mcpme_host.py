@@ -134,6 +134,17 @@ def run(*args: str) -> str:
     raise BuildCommandError(operation, returncode, category) from None
 
 
+def write_launcher(launcher: Path):
+    launcher.write_text('#!/bin/sh\nset -eu\nBIN=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\n'
+                        'MCPME_ROOT=$(CDPATH= cd -- "$BIN/.." && pwd)\n'
+                        'unset PYTHONHOME PYTHONUSERBASE PYTHONSTARTUP PYTHONINSPECT\n'
+                        'export PYTHONPATH="$MCPME_ROOT/backend:$MCPME_ROOT/python/site-packages"\n'
+                        'export PYTHONNOUSERSITE=1\n'
+                        'export PYTHONDONTWRITEBYTECODE=1\n'
+                        'exec "$MCPME_ROOT/python/bin/python3.12" -P -m mcpme "$@"\n')
+    launcher.chmod(0o755)
+
+
 def build(destination: Path):
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise SystemExit("Build requires Apple silicon macOS")
@@ -145,6 +156,7 @@ def build(destination: Path):
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copytree(ROOT / "backend/mcpme", destination / "backend/mcpme",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copyfile(ROOT / "backend/mcpme_local_transport.py", destination / "backend/mcpme_local_transport.py")
     (destination / "bin").mkdir()
     run("/usr/bin/cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
         str(ROOT / "scripts/mcpme-reap.c"), "-o", str(destination / "bin/mcpme-reap"))
@@ -154,14 +166,7 @@ def build(destination: Path):
     run("uv", "pip", "install", "--python", str(runtime / "bin/python3.12"),
         "--target", str(destination / "python/site-packages"), "--require-hashes", "--requirement", str(requirements))
     launcher = destination / "bin/mcpme"
-    launcher.write_text('#!/bin/sh\nset -eu\nBIN=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\n'
-                        'MCPME_ROOT=$(CDPATH= cd -- "$BIN/.." && pwd)\n'
-                        'unset PYTHONHOME PYTHONUSERBASE PYTHONSTARTUP PYTHONINSPECT\n'
-                        'export PYTHONPATH="$MCPME_ROOT/backend:$MCPME_ROOT/python/site-packages"\n'
-                        'export PYTHONNOUSERSITE=1\n'
-                        'export PYTHONDONTWRITEBYTECODE=1\n'
-                        'exec "$MCPME_ROOT/python/bin/python3.12" -m mcpme "$@"\n')
-    launcher.chmod(0o755)
+    write_launcher(launcher)
     shutil.copyfile(ROOT / "uv.lock", destination / "uv.lock")
     shutil.copyfile(ROOT / "pyproject.toml", destination / "pyproject.toml")
     shutil.copytree(ROOT / "templates", destination / "templates",
@@ -176,7 +181,7 @@ def build(destination: Path):
     shutil.copyfile(runtime / "lib/python3.12/LICENSE.txt", licenses / "python-LICENSE.txt")
     shutil.copyfile(ROOT / "THIRD_PARTY_NOTICES.md", licenses / "THIRD_PARTY_NOTICES.md")
     run("/usr/bin/codesign", "--force", "--sign", "-", str(destination / "bin/mcpme-reap"))
-    source_files = [*[path for path in sorted((destination / "backend/mcpme").rglob("*")) if path.is_file()],
+    source_files = [*[path for path in sorted((destination / "backend").rglob("*")) if path.is_file()],
                     *[path for path in sorted((destination / "assets/brand").rglob("*")) if path.is_file()],
                     *sorted((destination / "docs").glob("*.md")), destination / "uv.lock",
                     destination / "pyproject.toml", *[path for path in sorted((destination / "templates").rglob("*")) if path.is_file()],

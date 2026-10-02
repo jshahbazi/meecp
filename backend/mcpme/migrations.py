@@ -13,6 +13,7 @@ import sys
 import uuid
 
 import httpx
+from mcpme_local_transport import private_transport, socket_path
 
 from .contracts import validate_package
 from .private import check_private_file, ensure_private_directory, read_private_json, snapshot_package, write_private_json
@@ -212,18 +213,25 @@ async def _plan_transfer(host, payload):
               "public_port": 19385, "start_policy": "host", "error_code": None}
     connection = legacy_connection(record)
     record["credential_digest"] = hashlib.sha256(connection["token"].encode()).hexdigest()
-    async with httpx.AsyncClient(timeout=3, trust_env=False, follow_redirects=False) as client:
+    record["legacy_paused"] = False
+    if record["legacy_running"]:
         try:
-            response = await client.get(connection["endpoint"] + "/api/status",
-                headers={"Authorization": "Bearer " + connection["token"]})
-            value = response.json()
-            if record["legacy_running"] and (response.status_code != 200 or type(value.get("paused")) is not bool):
-                raise failure("legacy_status_unavailable")
-            record["legacy_paused"] = response.status_code == 200 and value.get("paused") is True
-        except Exception:
-            if record["legacy_running"]:
+            transport = private_transport(socket_path(legacy_state, "jevk5"))
+        except (OSError, ValueError):
+            # The original bundle has no authenticated server transport. It
+            # must be quit before planning, or replaced by the updated recovery
+            # bundle. Never send its persistent token to an unverified port.
+            raise failure("legacy_transport_upgrade_required") from None
+        async with httpx.AsyncClient(timeout=3, trust_env=False, follow_redirects=False, transport=transport) as client:
+            try:
+                response = await client.get(connection["endpoint"] + "/api/status",
+                    headers={"Authorization": "Bearer " + connection["token"]})
+                value = response.json()
+                if response.status_code != 200 or type(value.get("paused")) is not bool:
+                    raise failure("legacy_status_unavailable")
+                record["legacy_paused"] = value["paused"]
+            except Exception:
                 raise failure("legacy_status_unavailable") from None
-            record["legacy_paused"] = False
     save(host, record)
     return {**inspect_transfer(host, identity), "package": package.manifest.model_dump(),
             "effects": ["stop_legacy_app", "retire_legacy_login", "retain_legacy_lock", "preserve_port_and_invocation_token",
@@ -247,7 +255,8 @@ async def apply_transfer(host, identity):
 
 async def verify_and_commit(host, record, expected_sha256):
     connection = legacy_connection(record)
-    async with httpx.AsyncClient(timeout=150, trust_env=False, follow_redirects=False) as client:
+    async with httpx.AsyncClient(timeout=150, trust_env=False, follow_redirects=False,
+            transport=private_transport(socket_path(host.root, record["slot_id"]))) as client:
         response = await client.post(connection["endpoint"] + "/api/decide",
             headers={"Authorization": "Bearer " + connection["token"]}, json={
                 "state": "Synthetic migration fixture: the switch is on.",
@@ -405,23 +414,25 @@ async def wait_legacy_restored(record, *, timeout=180):
     paused = record.get("legacy_paused") is True
     pause_sent = False
     try:
-        async with asyncio.timeout(timeout), httpx.AsyncClient(timeout=3, trust_env=False,
-                                                               follow_redirects=False) as client:
+        async with asyncio.timeout(timeout):
             while True:
                 try:
-                    response = await client.get(connection["endpoint"] + "/api/status", headers=headers)
-                    if response.status_code == 200:
-                        value = response.json()
-                        if isinstance(value, dict) and type(value.get("paused")) is bool:
-                            if paused and not pause_sent:
-                                response = await client.post(connection["endpoint"] + "/api/control",
-                                                             headers=headers, json={"action": "pause"})
-                                if response.status_code != 200:
-                                    raise failure("legacy_pause_restore_failed")
-                                pause_sent = True
-                            elif value["paused"] == paused and (paused or value.get("ready") is True):
-                                return
-                except (httpx.HTTPError, ValueError):
+                    # The restored app may not have created its socket yet.
+                    transport = private_transport(socket_path(Path(record["legacy_state"]), "jevk5"))
+                    async with httpx.AsyncClient(timeout=3, trust_env=False, follow_redirects=False, transport=transport) as client:
+                        response = await client.get(connection["endpoint"] + "/api/status", headers=headers)
+                        if response.status_code == 200:
+                            value = response.json()
+                            if isinstance(value, dict) and type(value.get("paused")) is bool:
+                                if paused and not pause_sent:
+                                    response = await client.post(connection["endpoint"] + "/api/control",
+                                                                 headers=headers, json={"action": "pause"})
+                                    if response.status_code != 200:
+                                        raise failure("legacy_pause_restore_failed")
+                                    pause_sent = True
+                                elif value["paused"] == paused and (paused or value.get("ready") is True):
+                                    return
+                except (httpx.HTTPError, OSError, ValueError):
                     pass
                 await asyncio.sleep(0.2)
     except TimeoutError:

@@ -52,6 +52,7 @@ def prepare(destination: Path, legacy: Path, host: Path):
     shutil.copytree(host / "python", destination / "python", symlinks=False, ignore=ignore)
     for name in ("jevk5_app", "mcpme_jevk5"):
         shutil.copytree(ROOT / "backend" / name, destination / "backend" / name, ignore=ignore)
+    shutil.copyfile(ROOT / "backend/mcpme_local_transport.py", destination / "backend/mcpme_local_transport.py")
     shutil.copytree(ROOT / "vendor", destination / "vendor", ignore=ignore)
     shutil.copytree(resources / "llama", destination / "llama", ignore=ignore)
     # The old fixed-name reaper is intentionally absent: the host owns the real engine.

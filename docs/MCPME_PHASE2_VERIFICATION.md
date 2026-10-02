@@ -10,11 +10,12 @@ Commands:
 
 ```sh
 uv run --locked python -m pytest -q
+swift test
 swift build -c release --product McpmeMenuBar
 uv run --locked python .github/scripts/scan_secrets.py
-uv run --locked python scripts/build_mcpme_app.py --output dist/mcpme-phase2-pr.app
-dist/mcpme-phase2-pr.app/Contents/MacOS/mcpme --native-self-test
-uv run --locked python scripts/verify_phase2.py --host dist/mcpme-phase2-pr.app/Contents/Resources/host
+uv run --locked python scripts/build_mcpme_app.py --output dist/mcpme-phase2-transport.app
+dist/mcpme-phase2-transport.app/Contents/MacOS/mcpme --native-self-test
+uv run --locked python scripts/verify_phase2.py --host dist/mcpme-phase2-transport.app/Contents/Resources/host
 ```
 
 Results on Apple silicon macOS 26:
@@ -23,7 +24,9 @@ Results on Apple silicon macOS 26:
 | --- | --- |
 | Full locked suite before main integration | 281 passed. |
 | Full locked suite after main integration, 2026-10-02 | 420 passed in 42.13 seconds. |
+| Full locked suite after merging security updates through main `93447d5` | 463 passed in 45.71 seconds. |
 | Repository history credential scan after main integration | `secret_scan_passed`. |
+| Native private-transport suite after security integration | 5 passed. |
 | Import-specific tests | 44 passed, including interrupted cleanup recovery on startup, bounded discovery metadata, and ancestor-symlink replacement. |
 | Import/host tests after the independent audit | 58 passed; import bindings exist at first publication, stale planning reclaims staging, canceled copying completes before reclamation, and inactive cleanup rejects symlink replacements. |
 | Template-specific tests | 8 passed, including real SDK tools/schema/result/error checks. |
@@ -34,7 +37,7 @@ Results on Apple silicon macOS 26:
 
 A separate preparation acceptance run also passed 13 checks, including deleting the original source, moving the generated private-runtime package, attaching it and deleting the agent's package directory, and calling the installed arithmetic tool through a real MCP client. Its package contained 2,906 artifacts and 74,137,296 bytes. The generated adapter omits unsupported `experimental` capability declarations and disables bytecode writes from interpreter startup so candidate execution preserves the sealed artifact tree.
 
-The initial isolated worktree excluded concurrent branding changes. PR preparation on 2026-10-02 integrates the current main branch's branding, CI, and release tooling while preserving bundled preparation templates and their provenance inventory. Development apps use new output paths and native testing uses a separate state directory. Existing installed projects and the default application state were not changed.
+The initial isolated worktree excluded concurrent branding changes. PR preparation on 2026-10-02 integrates the current main branch's branding, CI, release tooling, and private-socket transport while preserving bundled preparation templates and their provenance inventory. Native draft controls retain their delegates and extended import/attachment timeouts. The relocated host ships and hashes the shared transport module and uses safe-path Python launchers. Development apps use new output paths and native testing uses a separate state directory. Existing installed projects and the default application state were not changed.
 
 ## Independent audit corrections
 

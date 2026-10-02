@@ -5,6 +5,8 @@ import json
 import os
 import socket
 import sys
+import tempfile
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 import httpx
@@ -16,6 +18,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from mcpme.bridge import Bridge
 from mcpme.gateway import PROTOCOL_VERSION, SessionPipes, encode, make_app
+from mcpme_local_transport import bind_private_listener, socket_path
 
 TOOL = {"name": "echo", "description": "Return synthetic data", "inputSchema": {
     "type": "object", "properties": {"value": {}}, "required": ["value"]},
@@ -90,13 +93,16 @@ class Owner:
 @asynccontextmanager
 async def live_gateway(**options):
     owner = Owner()
+    state = tempfile.TemporaryDirectory()
+    private = bind_private_listener(Path(state.name), "manager")
+    owner.socket_path = socket_path(Path(state.name), "manager")
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     sock.listen()
     port = sock.getsockname()[1]
     app, gateway = make_app(token="secret", port=port, launch_session=owner.launch, close_session=owner.close, **options)
     server = uvicorn.Server(uvicorn.Config(app, log_config=None, access_log=False, log_level="critical", lifespan="on"))
-    task = asyncio.create_task(server.serve(sockets=[sock]))
+    task = asyncio.create_task(server.serve(sockets=[sock, private]))
     for _ in range(200):
         if server.started:
             break
@@ -107,6 +113,10 @@ async def live_gateway(**options):
         server.should_exit = True
         await asyncio.wait_for(task, 5)
         sock.close()
+        private.close()
+        owner.socket_path.unlink(missing_ok=True)
+        owner.socket_path.parent.rmdir()
+        state.cleanup()
 
 
 def client(endpoint):
@@ -159,7 +169,8 @@ async def test_locked_sdk_bidirectional_ping_preserves_server_id():
 
 async def test_real_sdk_stdio_bridge_initializes_calls_and_reaps():
     async with live_gateway() as (endpoint, owner, gateway):
-        program = "import asyncio; from mcpme.bridge import run_bridge; asyncio.run(run_bridge(" + repr(endpoint) + ",'secret'))"
+        program = ("import asyncio; from pathlib import Path; from mcpme.bridge import run_bridge; asyncio.run(run_bridge("
+                   + repr(endpoint) + ",'secret',socket_path=Path(" + repr(str(owner.socket_path)) + ")))" )
         parameters = StdioServerParameters(command=sys.executable, args=["-c", program],
                     env={"PYTHONPATH": str(__import__("pathlib").Path(__file__).resolve().parents[1] / "backend")})
         with open(os.devnull, "w") as errlog:
@@ -442,6 +453,26 @@ async def test_integer_and_string_ids_are_distinct_and_duplicate_rejected():
         assert (await http.post(endpoint, headers=headers, json={"jsonrpc": "2.0", "id": 1, "method": "ping"})).status_code == 429
 
 
+async def test_large_completed_ids_keep_only_fixed_size_duplicate_markers():
+    async with live_gateway() as (endpoint, owner, gateway), client(endpoint) as http:
+        sid, headers = await initialize_raw(http, endpoint)
+        ids = [str(index) + "x" * 900_000 for index in range(3)]
+        ids.append("unicode/" + "\U0001f512" * 20_000)
+        for rid in ids:
+            result = await http.post(endpoint, headers=headers, json={"jsonrpc": "2.0", "id": rid, "method": "ping"})
+            values = [json.loads(line[6:]) for line in result.text.splitlines() if line.startswith("data: ") and line[6:]]
+            assert values[-1]["id"] == rid
+        session = gateway.sessions[sid]
+        assert not session.pending
+        assert len(session.seen_ids) == len(ids) + 1
+        assert all(type(marker) is bytes and len(marker) == 32 for marker in session.seen_ids)
+        assert sum(map(len, session.seen_ids)) == 160
+        for rid in ids:
+            result = await http.post(endpoint, headers=headers,
+                                     content=json.dumps({"jsonrpc": "2.0", "id": rid, "method": "ping"}, ensure_ascii=True))
+            assert result.status_code == 429
+
+
 @pytest.mark.parametrize("change", [{"protocolVersion": "2025-03-26"}, {"capabilities": {"sampling": []}}])
 async def test_unsupported_profile_never_launches(change):
     async with live_gateway() as (endpoint, owner, gateway), client(endpoint) as http:
@@ -456,7 +487,7 @@ async def test_vscode_capability_offers_initialize_over_stdio_bridge_without_pri
     async with live_gateway() as (endpoint, owner, gateway):
         stdin = asyncio.StreamReader()
         stdout = asyncio.Queue()
-        bridge = Bridge(endpoint, "secret")
+        bridge = Bridge(endpoint, "secret", socket_path=owner.socket_path)
         async def write(data):
             await stdout.put(load_line(data))
         task = asyncio.create_task(bridge.run(stdin, write))
@@ -488,7 +519,7 @@ async def test_bridge_forwarding_and_eof_delete():
     async with live_gateway() as (endpoint, owner, gateway):
         stdin = asyncio.StreamReader()
         stdout = asyncio.Queue()
-        bridge = Bridge(endpoint, "secret")
+        bridge = Bridge(endpoint, "secret", socket_path=owner.socket_path)
         async def write(data):
             await stdout.put(load_line(data))
         task = asyncio.create_task(bridge.run(stdin, write))

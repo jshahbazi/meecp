@@ -1,4 +1,4 @@
-"""Clone an existing JevK5 bundle and add only the trusted native login handoff."""
+"""Clone a legacy JevK5 bundle and refresh its trusted backend transport."""
 from __future__ import annotations
 
 import argparse
@@ -19,6 +19,29 @@ def clone_file(source: str, destination: str) -> str:
     return destination
 
 
+def replace_tree(destination: Path, source: Path, root: Path) -> None:
+    """Replace a copied tree without ever following a legacy symlink outward."""
+    parent = destination.parent.resolve()
+    if not parent.is_relative_to(root.resolve()):
+        raise ValueError("recovery_destination_escape")
+    if destination.is_symlink() or destination.is_file():
+        destination.unlink()
+    elif destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(source, destination, symlinks=True,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+
+
+def replace_file(destination: Path, source: Path, root: Path) -> None:
+    if not destination.parent.resolve().is_relative_to(root.resolve()):
+        raise ValueError("recovery_destination_escape")
+    if destination.is_symlink() or destination.is_file():
+        destination.unlink()
+    elif destination.exists():
+        raise ValueError("recovery_file_collision")
+    shutil.copy2(source, destination)
+
+
 def build(source: Path, destination: Path) -> Path:
     source = source.resolve()
     if destination.exists():
@@ -35,15 +58,23 @@ def build(source: Path, destination: Path) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source, destination, symlinks=True, copy_function=clone_file,
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    resources = destination / "Contents/Resources"
+    replace_tree(resources / "backend/jevk5_app", ROOT / "backend/jevk5_app", destination)
+    helper = resources / "backend/mcpme_local_transport.py"
+    replace_file(helper, ROOT / "backend/mcpme_local_transport.py", destination)
+    launcher = destination / "Contents/MacOS/jevk5-mcp"
+    replace_file(launcher, ROOT / "scripts/jevk5-mcp", destination)
+    launcher.chmod(0o755)
     binary = destination / "Contents/MacOS/JevK5MenuBar"
-    shutil.copy2(binary_dir / "JevK5MenuBar", binary)
+    replace_file(binary, binary_dir / "JevK5MenuBar", destination)
     run("/usr/bin/codesign", "--force", "--deep", "--sign", "-", str(destination))
     run("/usr/bin/codesign", "--verify", "--deep", "--strict", str(destination))
     receipt = {"schema_version": 1, "source_bundle": str(source), "recovery_bundle": str(destination),
                "source_commit": run("git", "-C", str(ROOT), "rev-parse", "HEAD"),
                "bundle_identifier": "com.jshahbazi.jevk5",
                "native_executable_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
-               "changes": ["native_login_handoff_commands"], "signing": "ad_hoc"}
+               "changes": ["native_login_handoff_commands", "updated_backend_private_transport_and_safe_import_proxy_fixes",
+                           "updated_bundled_launcher"], "signing": "ad_hoc"}
     destination.with_name(destination.name + ".build.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     return destination
 

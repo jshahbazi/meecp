@@ -12,6 +12,7 @@ import uuid
 from urllib.parse import urlsplit
 
 import httpx
+from mcpme_local_transport import private_transport, socket_path
 
 from .contracts import PackageError, validate_package
 from .private import read_private_json
@@ -44,6 +45,7 @@ async def call(state_dir: Path, method: str, path: str, body: dict | None = None
     connection = read_private_json(state_dir / "manager-connection.json")
     timeout = 300 if path in {"/v1/install/plan", "/v1/migrations/jevk5/plan", "/v1/imports"} or path.endswith("/attach") else 30
     async with httpx.AsyncClient(base_url=endpoint(connection), timeout=timeout, follow_redirects=False, trust_env=False,
+                                 transport=private_transport(socket_path(state_dir, "manager")),
                                  headers={"Authorization": "Bearer " + connection["token"]}) as client:
         response = await client.request(method, path, json=body)
         value = response.json()
@@ -238,7 +240,7 @@ async def execute(args) -> dict | None:
         connection = read_private_json(state / "slots" / args.slot / "connection.json")
         if connection.get("slot_id") != args.slot:
             raise ValueError()
-        await run_bridge(endpoint(connection), connection["token"])
+        await run_bridge(endpoint(connection), connection["token"], socket_path=socket_path(state, args.slot))
         return None
     if args.command == "migrate-jevk5":
         if args.action == "plan":

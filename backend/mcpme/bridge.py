@@ -6,22 +6,25 @@ import contextlib
 import os
 import signal
 import sys
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
 from mcp.types import JSONRPCMessage
+from mcpme_local_transport import private_transport
 
 from .gateway import MAX_MESSAGE_BYTES, MAX_OPERATION_BYTES, MAX_PENDING, PROTOCOL_VERSION, encode, error_message
 from .policy import load_json
 
 
 class Bridge:
-    def __init__(self, endpoint: str, token: str, *, timeout=65, client=None):
+    def __init__(self, endpoint: str, token: str, *, socket_path: Path | None = None, timeout=65, client=None):
         parts = urlsplit(endpoint)
         if (parts.scheme != "http" or parts.hostname != "127.0.0.1" or parts.port is None or
                 parts.username or parts.password or parts.path != "/mcp" or parts.query or parts.fragment):
             raise ValueError("invalid_endpoint")
         self.endpoint, self.token, self.timeout = endpoint, token, timeout
+        self.socket_path = socket_path
         self.session_id = None
         self.protocol_version = None
         self.client = client
@@ -203,7 +206,12 @@ class Bridge:
         self.writer = writer
         owns_client = self.client is None
         if owns_client:
-            self.client = httpx.AsyncClient(timeout=httpx.Timeout(self.timeout), trust_env=False, follow_redirects=False)
+            # HTTP gateway also uses this class solely as an SSE parser. A
+            # network bridge always requires the private transport explicitly.
+            if self.socket_path is None:
+                raise ValueError("private_transport_required")
+            self.client = httpx.AsyncClient(timeout=httpx.Timeout(self.timeout), trust_env=False,
+                follow_redirects=False, transport=private_transport(self.socket_path))
         stop_waiter = asyncio.create_task(self.stop.wait())
         try:
             while not self.stop.is_set():
@@ -264,9 +272,9 @@ class Bridge:
             self.stop.set()
 
 
-async def run_bridge(endpoint: str, token: str, *, timeout=65):
+async def run_bridge(endpoint: str, token: str, *, socket_path: Path, timeout=65):
     """Bridge stdin/stdout and delete its HTTP session on EOF, SIGINT or SIGTERM."""
-    bridge = Bridge(endpoint, token, timeout=timeout)
+    bridge = Bridge(endpoint, token, socket_path=socket_path, timeout=timeout)
     loop = asyncio.get_running_loop()
     reader = asyncio.StreamReader(limit=MAX_MESSAGE_BYTES)
     protocol = asyncio.StreamReaderProtocol(reader)

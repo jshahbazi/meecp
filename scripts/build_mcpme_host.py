@@ -168,6 +168,9 @@ def build(destination: Path):
     launcher = destination / "bin/mcpme"
     write_launcher(launcher)
     shutil.copyfile(ROOT / "uv.lock", destination / "uv.lock")
+    shutil.copyfile(ROOT / "pyproject.toml", destination / "pyproject.toml")
+    shutil.copytree(ROOT / "templates", destination / "templates",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copyfile(ROOT / "README.md", destination / "README.md")
     shutil.copytree(ROOT / "assets/brand", destination / "assets/brand")
     (destination / "docs").mkdir()
@@ -181,6 +184,7 @@ def build(destination: Path):
     source_files = [*[path for path in sorted((destination / "backend").rglob("*")) if path.is_file()],
                     *[path for path in sorted((destination / "assets/brand").rglob("*")) if path.is_file()],
                     *sorted((destination / "docs").glob("*.md")), destination / "uv.lock",
+                    destination / "pyproject.toml", *[path for path in sorted((destination / "templates").rglob("*")) if path.is_file()],
                     destination / "requirements.txt", destination / "README.md", destination / "bin/mcpme-reap"]
     source_hashes = {str(path.relative_to(destination)): hashlib.sha256(path.read_bytes()).hexdigest()
                      for path in source_files}

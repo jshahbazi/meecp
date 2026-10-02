@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import platform
 import secrets
+import shutil
 import signal
 import socket
 import sys
@@ -26,6 +27,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from .contracts import PackageError, validate_package
+from .imports import ImportError as ImportDraftError, ImportStore
 from .private import ensure_private_directory, read_private_json, snapshot_package, write_private_json
 from .processes import OwnedProcess, ProcessOwner
 from .registry import Registry, RegistryError
@@ -56,8 +58,11 @@ def capabilities() -> dict:
             "profiles": ["mcp-stdio", "model-service"], "protocol_versions": ["2025-11-25"], "capabilities": ["tools"],
             "start_policies": ["manual", "host"], "platform": {"os": "macos", "architecture": "arm64", "minimum_version": "26.0"},
             "limits": {"slots": 16, "request_bytes": 1048576, "idle_seconds": 300},
-            "installation": "prepared_local_packages", "management_credentials": "local_owner",
-            "unsupported": ["mcp-http", "first_call", "upgrades", "downloads", "imports", "scoped_grants"]}
+            "installation": "prepared_local_packages_and_imports", "management_credentials": "local_owner",
+            "import_schema_versions": [1], "import_sources": ["local_folder", "markdown", "text", "prepared_package"],
+            "preparation_templates": ["python-function-v1", "existing-mcp-v1", "jevk5-llamacpp-v1"],
+            "unsupported": ["mcp-http", "first_call", "upgrades", "removal", "downloads", "scoped_grants",
+                            "management_mcp", "reference_document_service", "raw_model_intake", "integrated_preparation"]}
 
 
 def bind_listener(port: int = 0) -> socket.socket:
@@ -135,9 +140,13 @@ class Supervisor:
         self.legacy_locks: dict[str, int] = {}
         self.migration_blocked: set[str] = set()
         self.package_cache: dict[str, tuple[object, tuple]] = {}
+        self.plan_imports: dict[str, tuple[str, int]] = {}
         try:
+            self.imports = ImportStore(self.root)
             self.resource_policy = self.load_resource_policy()
         except BaseException:
+            if hasattr(self, "imports"):
+                self.imports.close()
             self.registry.close()
             os.close(self.lock_fd)
             raise
@@ -810,6 +819,7 @@ class Supervisor:
             return {"status": await self.legacy_status(slot_id), "runtime": self.model_runtime(slot_id)}
 
     async def initialize(self):
+        self.reconcile_imports()
         try:
             from .migrations import initialize_transfers
         except ImportError:
@@ -833,6 +843,7 @@ class Supervisor:
                 self.registry.update_operation(operation.id, "recovery_required", error_code="operation_interrupted")
             if operation.status in {"pending", "running", "recovery_required"} and operation.action == "install":
                 interrupted.add(operation.slot_id)
+        self.reconcile_imports()
         for slot in self.registry.list_slots():
             if slot.id in self.migration_blocked:
                 continue
@@ -853,16 +864,84 @@ class Supervisor:
                 code = error.code if isinstance(error, HostError) else "start_failed"
                 self.registry.update_slot(slot.id, observed_state="failed", error_code=code)
 
-    async def plan_install_async(self, payload: dict, **overrides) -> dict:
+    def reconcile_imports(self):
+        # The durable registry intent is the authority boundary. Recover a crash
+        # between that write and draft submission before any draft mutation.
+        for operation in self.registry.list_import_operations():
+            details = operation.details
+            self.imports.submit(details["import_id"], details["import_revision"], details["import_digest"], operation.id)
+            self.imports.operation_status(details["import_id"], operation.to_dict())
+
+    def invalidate_import_plans(self, draft_id: str):
+        for plan_id, binding in list(self.plan_imports.items()):
+            if binding[0] == draft_id:
+                listener = self.plan_listeners.pop(plan_id, None)
+                if listener is not None:
+                    listener.close()
+                self.plan_imports.pop(plan_id, None)
+
+    def _discard_unpublished_plan(self, plan_id: str):
+        listener = self.plan_listeners.pop(plan_id, None)
+        if listener is not None:
+            listener.close()
+        self.plan_imports.pop(plan_id, None)
+        (self.root / "plans" / (plan_id + ".json")).unlink(missing_ok=True)
+        directory = self.root / "staging" / plan_id
+        if directory.exists() or directory.is_symlink():
+            ensure_private_directory(directory)
+            shutil.rmtree(directory)
+
+    async def plan_install_async(self, payload: dict, *, _import_binding: dict | None = None, **overrides) -> dict:
+        if "import_id" in payload:
+            if set(payload) != {"import_id", "revision"} or overrides or _import_binding is not None:
+                raise HostError("invalid_import_plan")
+            self.reconcile_imports()
+            draft = self.imports.inspect(payload["import_id"])
+            attachment = draft.get("attachment")
+            if attachment is None:
+                raise HostError("package_required")
+            draft = self.imports.validate_binding(draft["draft_id"], payload["revision"], attachment["digest"])
+            binding = {"import_id": draft["draft_id"], "import_revision": payload["revision"],
+                       "import_digest": attachment["digest"]}
+            result = await self.plan_install_async({"package": attachment["path"], "name": draft["name"],
+                                                   "start": draft["start"], "start_policy": draft["start_policy"]},
+                                                  _import_binding=binding)
+            try:
+                self.imports.validate_binding(draft["draft_id"], payload["revision"], attachment["digest"])
+                self.plan_imports[result["plan_id"]] = (draft["draft_id"], payload["revision"])
+                return result
+            except BaseException:
+                self._discard_unpublished_plan(result["plan_id"])
+                raise
         if set(payload) - {"package", "name", "start_policy", "start"} or not isinstance(payload.get("package"), str):
             raise HostError("invalid_install_plan")
         plan_id = str(uuid.uuid4())
-        package = await asyncio.to_thread(validate_package, Path(payload["package"]))
-        snapshot = await asyncio.to_thread(snapshot_package, package, self.root / "staging" / plan_id / "package")
-        return self.plan_install(payload, _prepared=snapshot, _plan_id=plan_id, **overrides)
+        def stage():
+            package = validate_package(Path(payload["package"]))
+            return snapshot_package(package, self.root / "staging" / plan_id / "package")
+        staging = asyncio.create_task(asyncio.to_thread(stage))
+        try:
+            snapshot = await asyncio.shield(staging)
+            return self.plan_install(payload, _prepared=snapshot, _plan_id=plan_id,
+                                     _import_binding=_import_binding, **overrides)
+        except BaseException:
+            # A canceled await does not stop a copying thread. Wait for that
+            # thread before reclaiming its tree so it cannot recreate artifacts.
+            while not staging.done():
+                try:
+                    await asyncio.shield(staging)
+                except asyncio.CancelledError:
+                    continue
+                except BaseException:
+                    break
+            if not staging.cancelled():
+                staging.exception()
+            self._discard_unpublished_plan(plan_id)
+            raise
 
     def plan_install(self, payload: dict, *, slot_id: str | None = None, public_port: int | None = None,
-                     invocation_token: str | None = None, legacy_jev: bool = False, _prepared=None, _plan_id=None) -> dict:
+                     invocation_token: str | None = None, legacy_jev: bool = False, _prepared=None, _plan_id=None,
+                     _import_binding: dict | None = None) -> dict:
         if set(payload) - {"package", "name", "start_policy", "start"} or not isinstance(payload.get("package"), str):
             raise HostError("invalid_install_plan")
         if len(self.registry.list_slots()) >= 16 or len(self.plan_listeners) >= 32:
@@ -880,10 +959,17 @@ class Supervisor:
         if legacy_jev and (package.manifest.profile != "model-service" or {tool.name for tool in package.manifest.tools} != {"jevk5_decide", "jevk5_status"}):
             raise HostError("invalid_legacy_profile")
         snapshot = _prepared or snapshot_package(package, self.root / "staging" / plan_id / "package")
+        if _import_binding is not None:
+            self.imports.validate_binding(_import_binding["import_id"], _import_binding["import_revision"],
+                                          _import_binding["import_digest"])
         listener = bind_listener(public_port) if public_port is not None else preferred_listener()
         plan = {"plan_id": plan_id, "slot_id": slot_id, "package_digest": snapshot.digest,
                 "package_path": str(snapshot.root), "name": name, "start_policy": start_policy,
                 "start": payload.get("start", False), "public_port": listener.getsockname()[1], "legacy_jev": legacy_jev}
+        if _import_binding is not None:
+            # The first durable publication must already enforce draft authority,
+            # including if the host dies before returning the plan to its caller.
+            plan.update(_import_binding)
         try:
             if invocation_token is not None:
                 if not isinstance(invocation_token, str) or not 32 <= len(invocation_token) <= 512:
@@ -904,9 +990,24 @@ class Supervisor:
             raise HostError("invalid_plan")
         async with self.install_lock:
             plan = read_private_json(self.root / "plans" / (plan_id + ".json"))
+            key = plan_id
+            details = {"plan_id": plan_id, "package_digest": plan["package_digest"], "package_path": plan["package_path"]}
+            if "import_id" in plan:
+                self.reconcile_imports()
+                key = str(uuid.uuid5(uuid.UUID(plan["import_id"]), str(plan["import_revision"])))
+                existing = self.registry.get_operation_by_key(key)
+                if existing is not None:
+                    if existing.details["plan_id"] != plan_id:
+                        listener = self.plan_listeners.pop(plan_id, None)
+                        if listener is not None:
+                            listener.close()
+                    return existing.to_dict()
+                self.imports.validate_binding(plan["import_id"], plan["import_revision"], plan["import_digest"])
+                details.update({field: plan[field] for field in ("import_id", "import_revision", "import_digest")})
             operation = self.registry.create_operation("install", slot_id=plan["slot_id"],
-                idempotency_key=plan_id, details={"plan_id": plan_id, "package_digest": plan["package_digest"],
-                                                "package_path": plan["package_path"]})
+                idempotency_key=key, details=details)
+            if "import_id" in plan:
+                self.imports.submit(plan["import_id"], plan["import_revision"], plan["import_digest"], operation.id)
             # A persisted pending operation belongs to this apply; in-process task
             # registration happens before yielding, so concurrent retries coalesce.
             if operation.status == "pending" and not any(getattr(task, "operation_id", None) == operation.id for task in self.tasks):
@@ -974,6 +1075,9 @@ class Supervisor:
                 self.listeners.pop(slot_id, None)
             self.registry.update_operation(operation_id, "recovery_required" if ownership_lost or exposure_permitted else "failed",
                                            error_code="ownership_lost" if ownership_lost else code)
+        finally:
+            if "import_id" in plan:
+                self.imports.operation_status(plan["import_id"], self.registry.get_operation(operation_id).to_dict())
 
     def begin_control(self, slot_id: str, action: str) -> dict:
         slot = self.registry.get_slot(slot_id)
@@ -1015,6 +1119,7 @@ class Supervisor:
         for descriptor in self.legacy_locks.values():
             os.close(descriptor)
         self.legacy_locks.clear()
+        self.imports.close()
         self.registry.close()
         os.close(self.lock_fd)
 
@@ -1035,6 +1140,12 @@ def management_app(host: Supervisor, token: str, port: int):
                               "reservations": {slot_id: dict(value) for slot_id, value in host.reservations.items()}}
                 elif route == "/v1/slots":
                     result = {"slots": [slot.to_dict() for slot in host.registry.list_slots()]}
+                elif route == "/v1/imports":
+                    host.reconcile_imports()
+                    result = {"imports": host.imports.list_summaries()}
+                elif route.startswith("/v1/imports/"):
+                    host.reconcile_imports()
+                    result = host.imports.inspect(request.path_params["draft_id"])
                 elif route.endswith("/details"):
                     slot = host.registry.get_slot(request.path_params["slot_id"])
                     package = await asyncio.to_thread(host.package, slot)
@@ -1055,7 +1166,34 @@ def management_app(host: Supervisor, token: str, port: int):
                 payload = await request.json()
                 if not isinstance(payload, dict):
                     raise HostError("invalid_request")
-                if route == "/v1/install/plan":
+                if route == "/v1/imports":
+                    if set(payload) - {"source", "name", "intent", "document_role", "files", "start", "start_policy"}:
+                        raise HostError("invalid_import_request")
+                    if not isinstance(payload.get("source"), str) or not isinstance(payload.get("name"), str):
+                        raise HostError("invalid_import_request")
+                    settings = {key: value for key, value in payload.items() if key != "source"}
+                    # ImportStore is synchronous so intake cannot race revision,
+                    # cancel, or apply. It never executes the selected source.
+                    result = host.imports.create(Path(payload["source"]), **settings)
+                elif "draft_id" in request.path_params:
+                    host.reconcile_imports()
+                    draft_id = request.path_params["draft_id"]
+                    action = request.path_params["action"]
+                    revision = payload.get("revision")
+                    if action == "revise":
+                        if "revision" not in payload:
+                            raise HostError("invalid_import_request")
+                        result = host.imports.revise(draft_id, revision, **{key: value for key, value in payload.items() if key != "revision"})
+                        host.invalidate_import_plans(draft_id)
+                    elif action == "attach" and set(payload) == {"revision", "package"} and isinstance(payload["package"], str):
+                        result = host.imports.attach(draft_id, revision, Path(payload["package"]))
+                    elif action in {"export", "cancel", "expire"} and set(payload) == {"revision"}:
+                        result = getattr(host.imports, action)(draft_id, revision)
+                        if action in {"cancel", "expire"}:
+                            host.invalidate_import_plans(draft_id)
+                    else:
+                        raise HostError("invalid_import_request")
+                elif route == "/v1/install/plan":
                     result = await host.plan_install_async(payload)
                 elif route == "/v1/migrations/jevk5/plan":
                     from .migrations import plan_transfer
@@ -1079,7 +1217,7 @@ def management_app(host: Supervisor, token: str, port: int):
                 else:
                     raise HostError("invalid_request")
             return JSONResponse({"api_version": 1, **result})
-        except (HostError, PackageError, RegistryError) as error:
+        except (HostError, PackageError, RegistryError, ImportDraftError) as error:
             return JSONResponse({"api_version": 1, "error": {"code": error.code}}, status_code=getattr(error, "status", 400))
         except Exception:
             return JSONResponse({"api_version": 1, "error": {"code": "invalid_request"}}, status_code=400)
@@ -1087,6 +1225,9 @@ def management_app(host: Supervisor, token: str, port: int):
     app = Starlette(routes=[Route("/v1/capabilities", dispatch), Route("/v1/status", dispatch), Route("/v1/slots", dispatch),
         Route("/v1/slots/{slot_id}/details", dispatch),
         Route("/v1/slots/{slot_id}", dispatch), Route("/v1/operations/{operation_id}", dispatch),
+        Route("/v1/imports", dispatch, methods=["GET", "POST"]),
+        Route("/v1/imports/{draft_id}", dispatch),
+        Route("/v1/imports/{draft_id}/{action}", dispatch, methods=["POST"]),
         Route("/v1/install/plan", dispatch, methods=["POST"]), Route("/v1/install/apply", dispatch, methods=["POST"]),
         Route("/v1/migrations/jevk5/plan", dispatch, methods=["POST"]),
         Route("/v1/migrations/jevk5/apply", dispatch, methods=["POST"]), Route("/v1/migrations/{transfer_id}", dispatch),

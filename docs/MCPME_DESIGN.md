@@ -1,6 +1,6 @@
 # mcpme: a menu bar host for local MCP services
 
-Status: proposed design, 2026-10-01. This document describes the next architecture; the current implementation remains [JevK5 Menu Bar](DESIGN.md). Baseline reviewed: commit `7e7e068`.
+Status: architecture and delivery plan, 2026-10-01. Phase 1 is implemented; Phase 2 onboarding has begun. See [implementation status](MCPME_STATUS.md) and [Phase 2 onboarding](PHASE2_ONBOARDING.md) for supported and verified behavior. The original [JevK5 Menu Bar](DESIGN.md) remains separately buildable. Baseline reviewed: commit `7e7e068`.
 
 ## Product
 
@@ -248,7 +248,7 @@ Example user request: “Install JevK5 into mcpme and start it.”
 5. The operation stages and verifies artifacts, starts the candidate under supervision, checks MCP compatibility and health, runs an approved synthetic smoke fixture if available, and commits the slot generation.
 6. The agent polls `mcpme operations get <operation-id> --json`, then returns the slot UUID, readiness, endpoint, and connection command. It adds the client registration only if requested.
 
-Proposed CLI groups are `capabilities`, `imports create/inspect/revise/export/attach/cancel`, `slots list/inspect/start/stop/restart`, `install plan/apply`, `upgrade plan/apply`, `remove plan/apply`, `operations get/cancel`, `connections export`, and `connect`. These commands do not exist yet. Capabilities include versioned preparation-template identifiers. CLI output uses versioned JSON with stable error codes and no credential values. Long mutations return promptly with operation IDs.
+The full CLI design includes `capabilities`, `imports create/inspect/revise/export/attach/cancel`, `slots list/inspect/start/stop/restart`, `install plan/apply`, `upgrade plan/apply`, `remove plan/apply`, `operations get/cancel`, `connections export`, and `connect`. The current supported groups are recorded in [implementation status](MCPME_STATUS.md); upgrades, removal, and operation cancellation remain pending. Capabilities include versioned preparation-template identifiers. CLI output uses versioned JSON with stable error codes and no credential values. Long installation mutations return promptly with operation IDs.
 
 An optional, separately connected **mcpme management MCP server** exposes typed equivalents: `mcpme_capabilities`, `mcpme_create_import`, `mcpme_inspect_import`, `mcpme_revise_import`, `mcpme_export_import`, `mcpme_attach_import_package`, `mcpme_cancel_import`, `mcpme_list_slots`, `mcpme_inspect_slot`, `mcpme_plan_install`, `mcpme_apply_install`, `mcpme_get_operation`, and bounded lifecycle/update/removal tools. It is a host control endpoint, not another installable slot, so installation cannot depend on a slot being healthy. Ordinary slot connections never include these tools.
 

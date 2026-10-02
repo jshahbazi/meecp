@@ -12,6 +12,7 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
 from mcpme.supervisor import HostError, Supervisor, bind_listener, management_app
+from mcpme.imports import ImportError as ImportDraftError
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -66,6 +67,204 @@ async def tool_call(host, slot_id, document='{"synthetic":true}'):
                 assert [tool.name for tool in listed.tools] == ["validate_json"]
                 result = await client.call_tool("validate_json", {"document": document})
                 return result.structuredContent
+
+
+@pytest.mark.asyncio
+async def test_import_plan_return_revision_and_duplicate_apply(tmp_path, prepared):
+    package, reaper = prepared
+    host = Supervisor(tmp_path.resolve() / "host", reaper)
+    try:
+        draft = host.imports.create(package, name="Imported JSON", start=True)
+        assert draft["attachment"] is not None
+        assert not host.workers and not host.owners
+        plans = [await host.plan_install_async({"import_id": draft["draft_id"], "revision": draft["revision"]})
+                 for _ in range(2)]
+        assert not host.workers and not host.owners
+        first, duplicate = await asyncio.gather(*(host.apply_install(plan["plan_id"]) for plan in plans))
+        assert first["operation_id"] == duplicate["operation_id"]
+        operation = await finish(host, first)
+        assert operation.status == "completed", operation.error_code
+        assert len(host.registry.list_slots()) == 1
+        imported = host.imports.inspect(draft["draft_id"])
+        assert imported["state"] == "installed" and imported["result_slot_id"] == operation.slot_id
+        assert await tool_call(host, operation.slot_id) == {"valid": True, "kind": "object"}
+        with pytest.raises(ImportDraftError, match="draft_finalized"):
+            host.imports.revise(draft["draft_id"], draft["revision"], name="Changed")
+    finally:
+        await host.close()
+
+
+@pytest.mark.asyncio
+async def test_import_cancel_and_revise_block_stale_apply(tmp_path, prepared):
+    package, reaper = prepared
+    host = Supervisor(tmp_path.resolve() / "host", reaper)
+    try:
+        canceled = host.imports.create(package, name="Canceled")
+        plan = await host.plan_install_async({"import_id": canceled["draft_id"], "revision": canceled["revision"]})
+        host.imports.cancel(canceled["draft_id"], canceled["revision"])
+        with pytest.raises(ImportDraftError, match="draft_inactive"):
+            await host.apply_install(plan["plan_id"])
+        assert not host.registry.list_operations()
+        changed = host.imports.create(package, name="Changed")
+        plan = await host.plan_install_async({"import_id": changed["draft_id"], "revision": changed["revision"]})
+        host.imports.revise(changed["draft_id"], changed["revision"], name="New name")
+        with pytest.raises(ImportDraftError, match="stale_import_revision"):
+            await host.apply_install(plan["plan_id"])
+        assert not host.registry.list_slots() and not host.registry.list_operations()
+    finally:
+        await host.close()
+
+
+@pytest.mark.asyncio
+async def test_import_plan_initial_publication_is_bound(tmp_path, prepared, monkeypatch):
+    import mcpme.supervisor as supervisor
+    package, reaper = prepared
+    state = tmp_path.resolve() / "host"
+    host = Supervisor(state, reaper)
+    published = []
+    original = supervisor.write_private_json
+    def record_publication(path, value):
+        original(path, value)
+        if path.parent == host.root / "plans":
+            published.append(dict(value))
+    monkeypatch.setattr(supervisor, "write_private_json", record_publication)
+    try:
+        draft = host.imports.create(package, name="Bound at publication")
+        plan = await host.plan_install_async({"import_id": draft["draft_id"], "revision": 1})
+        assert len(published) == 1
+        for key in ("import_id", "import_revision", "import_digest"):
+            assert published[0][key] == plan[key]
+        assert not host.registry.list_operations() and not host.owners
+    finally:
+        await host.close()
+    reopened = Supervisor(state, reaper)
+    try:
+        await reopened.initialize()
+        reopened.imports.cancel(draft["draft_id"], 1)
+        with pytest.raises(ImportDraftError, match="draft_inactive"):
+            await reopened.apply_install(plan["plan_id"])
+        assert not reopened.registry.list_operations() and not reopened.registry.list_slots()
+    finally:
+        await reopened.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["cancel", "revise"])
+async def test_import_changed_during_staging_leaves_no_usable_plan(tmp_path, prepared, monkeypatch, action):
+    import mcpme.supervisor as supervisor
+    package, reaper = prepared
+    host = Supervisor(tmp_path.resolve() / "host", reaper)
+    original = supervisor.snapshot_package
+    try:
+        draft = host.imports.create(package, name="Changed during staging")
+        def change_after_snapshot(*args, **kwargs):
+            result = original(*args, **kwargs)
+            if action == "cancel":
+                host.imports.cancel(draft["draft_id"], 1)
+            else:
+                host.imports.revise(draft["draft_id"], 1, name="Changed")
+            return result
+        monkeypatch.setattr(supervisor, "snapshot_package", change_after_snapshot)
+        code = "draft_inactive" if action == "cancel" else "stale_import_revision"
+        with pytest.raises(ImportDraftError, match=code):
+            await host.plan_install_async({"import_id": draft["draft_id"], "revision": 1})
+        assert not list((host.root / "plans").glob("*.json"))
+        assert not list((host.root / "staging").iterdir())
+        assert not host.plan_listeners and not host.plan_imports
+        assert not host.registry.list_slots() and not host.registry.list_operations() and not host.owners
+    finally:
+        await host.close()
+
+
+@pytest.mark.asyncio
+async def test_canceled_planning_waits_for_staging_before_cleanup(tmp_path, prepared, monkeypatch):
+    import threading
+    import mcpme.supervisor as supervisor
+    package, reaper = prepared
+    host = Supervisor(tmp_path.resolve() / "host", reaper)
+    original = supervisor.snapshot_package
+    entered, release = threading.Event(), threading.Event()
+    plan_task = None
+    def paused_snapshot(*args, **kwargs):
+        entered.set()
+        if not release.wait(10):
+            raise RuntimeError("synthetic staging timeout")
+        return original(*args, **kwargs)
+    monkeypatch.setattr(supervisor, "snapshot_package", paused_snapshot)
+    try:
+        plan_task = asyncio.create_task(host.plan_install_async({"package": str(package)}))
+        async with asyncio.timeout(10):
+            while not entered.is_set():
+                await asyncio.sleep(0.01)
+        plan_task.cancel()
+        await asyncio.sleep(0)
+        assert not plan_task.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await plan_task
+        assert not list((host.root / "plans").glob("*.json"))
+        assert not list((host.root / "staging").iterdir())
+        assert not host.plan_listeners and not host.registry.list_operations()
+    finally:
+        release.set()
+        if plan_task is not None:
+            await asyncio.gather(plan_task, return_exceptions=True)
+        await host.close()
+
+
+@pytest.mark.asyncio
+async def test_import_recovers_intent_before_draft_submission(tmp_path, prepared):
+    package, reaper = prepared
+    state = tmp_path.resolve() / "host"
+    host = Supervisor(state, reaper)
+    try:
+        draft = host.imports.create(package, name="Interrupted")
+        plan = await host.plan_install_async({"import_id": draft["draft_id"], "revision": draft["revision"]})
+        import uuid
+        operation = host.registry.create_operation("install", slot_id=plan["slot_id"],
+            idempotency_key=str(uuid.uuid5(uuid.UUID(draft["draft_id"]), str(draft["revision"]))),
+            details={key: plan[key] for key in ("plan_id", "package_digest", "package_path", "import_id", "import_revision", "import_digest")})
+        assert host.imports.inspect(draft["draft_id"])["operation_id"] is None
+    finally:
+        await host.close()
+    reopened = Supervisor(state, reaper)
+    try:
+        await reopened.initialize()
+        recovered = reopened.imports.inspect(draft["draft_id"])
+        assert recovered["operation_id"] == operation.id
+        assert recovered["operation_status"] == "recovery_required"
+        with pytest.raises(ImportDraftError, match="operation_in_progress"):
+            reopened.imports.cancel(draft["draft_id"], draft["revision"])
+        retry = await reopened.apply_install(plan["plan_id"])
+        assert retry["operation_id"] == operation.id and retry["status"] == "recovery_required"
+    finally:
+        await reopened.close()
+
+
+@pytest.mark.asyncio
+async def test_import_management_routes_auth_revision_and_plan(tmp_path, prepared):
+    package, reaper = prepared
+    host = Supervisor(tmp_path.resolve() / "host", reaper)
+    app = management_app(host, "owner-test-token", 19876)
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:19876") as client:
+            assert (await client.get("/v1/imports")).status_code == 401
+            client.headers["Authorization"] = "Bearer owner-test-token"
+            assert (await client.get("/v1/imports", headers={"Origin": "https://example.com"})).status_code == 403
+            created = await client.post("/v1/imports", json={"source": str(package), "name": "HTTP imported"})
+            assert created.status_code == 200
+            draft = created.json()
+            selected = {"import_id": draft["draft_id"], "revision": draft["revision"]}
+            assert (await client.post("/v1/install/plan", json=selected)).status_code == 200
+            exported = await client.post(f"/v1/imports/{draft['draft_id']}/export", json={"revision": draft["revision"]})
+            assert "agent_instructions" in exported.json()
+            canceled = await client.post(f"/v1/imports/{draft['draft_id']}/cancel", json={"revision": draft["revision"]})
+            assert canceled.json()["state"] == "canceled"
+            assert not host.plan_listeners
+            assert (await client.get("/v1/imports")).json()["imports"][0]["state"] == "canceled"
+        assert not host.registry.list_operations() and not host.owners
+    finally:
+        await host.close()
 
 
 @pytest.mark.asyncio

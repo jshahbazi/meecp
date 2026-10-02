@@ -43,7 +43,7 @@ def endpoint(connection: dict) -> str:
 
 async def call(state_dir: Path, method: str, path: str, body: dict | None = None) -> dict:
     connection = read_private_json(state_dir / "manager-connection.json")
-    timeout = 300 if path in {"/v1/install/plan", "/v1/migrations/jevk5/plan"} else 30
+    timeout = 300 if path in {"/v1/install/plan", "/v1/migrations/jevk5/plan", "/v1/imports"} or path.endswith("/attach") else 30
     async with httpx.AsyncClient(base_url=endpoint(connection), timeout=timeout, follow_redirects=False, trust_env=False,
                                  transport=private_transport(socket_path(state_dir, "manager")),
                                  headers={"Authorization": "Bearer " + connection["token"]}) as client:
@@ -103,7 +103,10 @@ def parser() -> argparse.ArgumentParser:
         item.add_argument("--json", action="store_true")
     install = commands.add_parser("install").add_subparsers(dest="action", required=True)
     plan = install.add_parser("plan")
-    plan.add_argument("--package", type=Path, required=True)
+    source = plan.add_mutually_exclusive_group(required=True)
+    source.add_argument("--package", type=Path)
+    source.add_argument("--import", dest="import_id", type=uuid_argument)
+    plan.add_argument("--revision", type=int)
     plan.add_argument("--name")
     plan.add_argument("--start-policy", choices=["manual", "host"], default="manual")
     plan.add_argument("--start", action="store_true", help="Bind install-and-start authority into this plan.")
@@ -111,6 +114,32 @@ def parser() -> argparse.ArgumentParser:
     apply = install.add_parser("apply")
     apply.add_argument("--plan", type=uuid_argument, required=True)
     apply.add_argument("--json", action="store_true")
+    imports = commands.add_parser("imports").add_subparsers(dest="action", required=True)
+    imports.add_parser("list").add_argument("--json", action="store_true")
+    create = imports.add_parser("create")
+    create.add_argument("--source", type=Path, required=True)
+    create.add_argument("--name", required=True)
+    create.add_argument("--intent", default="")
+    create.add_argument("--document-role", choices=["instructions", "reference"])
+    create.add_argument("--file", dest="files", action="append")
+    create.add_argument("--start", action="store_true")
+    create.add_argument("--start-policy", choices=["manual", "host"], default="manual")
+    create.add_argument("--json", action="store_true")
+    for action in ("inspect", "revise", "export", "attach", "cancel", "expire"):
+        item = imports.add_parser(action)
+        item.add_argument("draft_id", type=uuid_argument)
+        if action != "inspect":
+            item.add_argument("--revision", type=int, required=True)
+        if action == "attach":
+            item.add_argument("--package", type=Path, required=True)
+        if action == "revise":
+            item.add_argument("--name")
+            item.add_argument("--intent")
+            item.add_argument("--document-role", choices=["instructions", "reference"])
+            item.add_argument("--start", action=argparse.BooleanOptionalAction, default=None)
+            item.add_argument("--start-policy", choices=["manual", "host"])
+            item.add_argument("--requirements", type=Path, help="JSON file of nonsecret tool/profile/resource requirements.")
+        item.add_argument("--json", action="store_true")
     operation = commands.add_parser("operations").add_subparsers(dest="action", required=True).add_parser("get")
     operation.add_argument("operation_id", type=uuid_argument)
     operation.add_argument("--json", action="store_true")
@@ -154,10 +183,42 @@ async def execute(args) -> dict | None:
     if args.command == "install":
         if args.action == "apply":
             return await call(state, "POST", "/v1/install/apply", {"plan_id": args.plan})
+        if args.import_id is not None:
+            if args.revision is None or args.name is not None or args.start or args.start_policy != "manual":
+                return {"error": {"code": "invalid_import_plan"}}
+            return await call(state, "POST", "/v1/install/plan", {"import_id": args.import_id, "revision": args.revision})
+        if args.revision is not None:
+            return {"error": {"code": "invalid_install_plan"}}
         body = {"package": str(args.package.absolute()), "start_policy": args.start_policy, "start": args.start}
         if args.name is not None:
             body["name"] = args.name
         return await call(state, "POST", "/v1/install/plan", body)
+    if args.command == "imports":
+        if args.action == "list":
+            return await call(state, "GET", "/v1/imports")
+        if args.action == "create":
+            body = {"source": str(args.source.absolute()), "name": args.name, "intent": args.intent,
+                    "start": args.start, "start_policy": args.start_policy}
+            if args.document_role is not None:
+                body["document_role"] = args.document_role
+            if args.files is not None:
+                body["files"] = args.files
+            return await call(state, "POST", "/v1/imports", body)
+        route = "/v1/imports/" + args.draft_id
+        if args.action == "inspect":
+            return await call(state, "GET", route)
+        body = {"revision": args.revision}
+        if args.action == "attach":
+            body["package"] = str(args.package.absolute())
+        if args.action == "revise":
+            for key in ("name", "intent", "document_role", "start", "start_policy"):
+                if getattr(args, key) is not None:
+                    body[key] = getattr(args, key)
+            if args.requirements is not None:
+                if args.requirements.stat().st_size > 65536:
+                    return {"error": {"code": "requirements_limit"}}
+                body["requirements"] = json.loads(args.requirements.read_text())
+        return await call(state, "POST", route + "/" + args.action, body)
     if args.command == "operations":
         return await call(state, "GET", "/v1/operations/" + args.operation_id)
     if args.command == "connections":

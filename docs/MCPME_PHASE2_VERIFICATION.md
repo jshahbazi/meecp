@@ -11,16 +11,19 @@ Commands:
 ```sh
 uv run --locked python -m pytest -q
 swift build -c release --product McpmeMenuBar
-uv run --locked python scripts/build_mcpme_app.py --output dist/mcpme-phase2-audited.app
-dist/mcpme-phase2-audited.app/Contents/MacOS/mcpme --native-self-test
-uv run --locked python scripts/verify_phase2.py --host dist/mcpme-phase2-audited.app/Contents/Resources/host
+uv run --locked python .github/scripts/scan_secrets.py
+uv run --locked python scripts/build_mcpme_app.py --output dist/mcpme-phase2-pr.app
+dist/mcpme-phase2-pr.app/Contents/MacOS/mcpme --native-self-test
+uv run --locked python scripts/verify_phase2.py --host dist/mcpme-phase2-pr.app/Contents/Resources/host
 ```
 
 Results on Apple silicon macOS 26:
 
 | Check | Result |
 | --- | --- |
-| Full locked suite, isolated Phase 2 worktree | 281 passed. |
+| Full locked suite before main integration | 281 passed. |
+| Full locked suite after main integration, 2026-10-02 | 420 passed in 42.13 seconds. |
+| Repository history credential scan after main integration | `secret_scan_passed`. |
 | Import-specific tests | 44 passed, including interrupted cleanup recovery on startup, bounded discovery metadata, and ancestor-symlink replacement. |
 | Import/host tests after the independent audit | 58 passed; import bindings exist at first publication, stale planning reclaims staging, canceled copying completes before reclamation, and inactive cleanup rejects symlink replacements. |
 | Template-specific tests | 8 passed, including real SDK tools/schema/result/error checks. |
@@ -31,7 +34,7 @@ Results on Apple silicon macOS 26:
 
 A separate preparation acceptance run also passed 13 checks, including deleting the original source, moving the generated private-runtime package, attaching it and deleting the agent's package directory, and calling the installed arithmetic tool through a real MCP client. Its package contained 2,906 artifacts and 74,137,296 bytes. The generated adapter omits unsupported `experimental` capability declarations and disables bytecode writes from interpreter startup so candidate execution preserves the sealed artifact tree.
 
-The isolated worktree excludes concurrent branding changes. Development apps were built into new paths and native testing used a separate state directory. Existing installed projects and the default application state were not changed.
+The initial isolated worktree excluded concurrent branding changes. PR preparation on 2026-10-02 integrates the current main branch's branding, CI, and release tooling while preserving bundled preparation templates and their provenance inventory. Development apps use new output paths and native testing uses a separate state directory. Existing installed projects and the default application state were not changed.
 
 ## Independent audit corrections
 
@@ -43,4 +46,4 @@ The review also reproduced canceled/expired staging surviving an interrupted del
 
 Source intake, attachment, and planning never execute source/build code or package entrypoints. Agent preparation runs separately. Apply performs supervised candidate initialization and exact tool-schema checks. A source identity declaration does not prove semantic fidelity to arbitrary user intent. Synthetic package/client checks do not establish model decision quality or calibration.
 
-Downloads, scoped management grants/MCP, upgrades/data rollback, removal, raw model preparation, reference-document services, and integrated preparation are pending. This milestone does not validate interruption/recovery at every future upgrade stage, enabled login-item transfer, drag-and-drop accessibility on every input device, or public distribution signing/notarization. The build remains a development artifact.
+Downloads, scoped management grants/MCP, upgrades/data rollback, removal, raw model preparation, reference-document services, and integrated preparation are pending. This milestone does not validate interruption/recovery at every future upgrade stage, enabled login-item transfer, or drag-and-drop accessibility on every input device. Public signing/notarization is implemented in the protected-main release workflow and was not exercised by this Phase 2 verification. The tested local bundle remains an ad hoc development artifact.

@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - codex/repo-security-release
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: CI
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install locked build tools
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.13"
+          python-version: "3.12.13"
+          enable-cache: false
+      - name: Verify Apple silicon runner
+        run: test "$(uname -m)" = arm64
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Scan history for generic credentials
+        run: uv run --locked python .github/scripts/scan_secrets.py
+      - name: Run tests
+        run: uv run --locked python -m pytest -q
+      - name: Build and verify development installer
+        run: |
+          uv run --locked python scripts/build_mcpme_dmg.py \
+            --output dist/mcpme-arm64-development.dmg \
+            --zip-output dist/mcpme-arm64-development.zip
+      - name: Upload development installer
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mcpme-development-${{ github.sha }}
+          path: |
+            dist/mcpme-arm64-development.dmg
+            dist/mcpme-arm64-development.dmg.build.json
+            dist/mcpme-arm64-development.zip
+            dist/mcpme-arm64-development.zip.build.json
+          if-no-files-found: error
+          retention-days: 7

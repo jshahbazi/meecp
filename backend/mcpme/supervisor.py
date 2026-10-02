@@ -8,6 +8,7 @@ import ctypes
 from dataclasses import asdict, dataclass
 import fcntl
 import json
+import hmac
 import os
 from pathlib import Path
 import platform
@@ -31,6 +32,7 @@ from .imports import ImportError as ImportDraftError, ImportStore
 from .private import ensure_private_directory, read_private_json, snapshot_package, write_private_json
 from .processes import OwnedProcess, ProcessOwner
 from .registry import Registry, RegistryError
+from .grants import GrantError, GrantStore, plan_digest
 
 
 class HostError(ValueError):
@@ -59,11 +61,12 @@ def capabilities() -> dict:
             "start_policies": ["manual", "host"], "platform": {"os": "macos", "architecture": "arm64", "minimum_version": "26.0"},
             "slot_actions": ["start", "stop", "restart", "remove"], "slot_settings": ["start_policy"],
             "limits": {"slots": 16, "request_bytes": 1048576, "idle_seconds": 300},
-            "installation": "prepared_local_packages_and_imports", "management_credentials": "local_owner",
+            "installation": "prepared_local_packages_and_imports", "management_credentials": "owner_and_scoped_grants",
+            "management_grant_modes": ["read", "prepare", "lifecycle", "install"], "management_mcp": "scoped_stdio",
             "import_schema_versions": [1], "import_sources": ["local_folder", "markdown", "text", "prepared_package"],
             "preparation_templates": ["python-function-v1", "existing-mcp-v1", "jevk5-llamacpp-v1"],
-            "unsupported": ["mcp-http", "first_call", "upgrades", "downloads", "scoped_grants",
-                            "management_mcp", "reference_document_service", "raw_model_intake", "integrated_preparation"]}
+            "unsupported": ["mcp-http", "first_call", "upgrades", "downloads",
+                            "reference_document_service", "raw_model_intake", "integrated_preparation"]}
 
 
 def bind_listener(port: int = 0) -> socket.socket:
@@ -144,6 +147,7 @@ class Supervisor:
         self.plan_imports: dict[str, tuple[str, int]] = {}
         try:
             self.imports = ImportStore(self.root)
+            self.grants = GrantStore(self.registry)
             self.resource_policy = self.load_resource_policy()
         except BaseException:
             if hasattr(self, "imports"):
@@ -1066,15 +1070,28 @@ class Supervisor:
             listener.close()
             raise
         self.plan_listeners[plan_id] = listener
-        return {**plan, "package": package.manifest.model_dump(),
+        return {**plan, "plan_digest": plan_digest(plan), "package": package.manifest.model_dump(),
                 "installed_bytes": sum(artifact.size for artifact in package.lock.artifacts),
                 "publisher_trust": "local_owner", "access_enforcement": "declarations_only"}
 
-    async def apply_install(self, plan_id: str) -> dict:
+    def inspect_plan(self, plan_id: str) -> dict:
+        if not isinstance(plan_id, str) or str(uuid.UUID(plan_id)) != plan_id:
+            raise HostError("invalid_plan")
+        plan = read_private_json(self.root / "plans" / (plan_id + ".json"))
+        package = validate_package(Path(plan["package_path"]))
+        if package.digest != plan["package_digest"]:
+            raise HostError("package_digest_mismatch", 409)
+        return {**plan, "plan_digest": plan_digest(plan), "package": package.manifest.model_dump(),
+                "installed_bytes": sum(artifact.size for artifact in package.lock.artifacts),
+                "publisher_trust": "local_owner", "access_enforcement": "declarations_only"}
+
+    async def apply_install(self, plan_id: str, *, grant_id: str | None = None) -> dict:
         if str(uuid.UUID(plan_id)) != plan_id:
             raise HostError("invalid_plan")
         async with self.install_lock:
             plan = read_private_json(self.root / "plans" / (plan_id + ".json"))
+            if grant_id is not None:
+                self.grants.validate_apply(grant_id, plan)
             key = plan_id
             details = {"plan_id": plan_id, "package_digest": plan["package_digest"], "package_path": plan["package_path"]}
             if "import_id" in plan:
@@ -1082,24 +1099,40 @@ class Supervisor:
                 key = str(uuid.uuid5(uuid.UUID(plan["import_id"]), str(plan["import_revision"])))
                 existing = self.registry.get_operation_by_key(key)
                 if existing is not None:
+                    if grant_id is not None:
+                        with self.registry.transaction():
+                            self.grants.bind_operation(grant_id, plan, existing)
                     if existing.details["plan_id"] != plan_id:
                         listener = self.plan_listeners.pop(plan_id, None)
                         if listener is not None:
                             listener.close()
+                    # A transient draft-submission failure can leave a durable
+                    # pending intent without its in-process execution task. Retry
+                    # the originally authorized plan, even through another plan
+                    # for the same import revision; never execute the alternate.
+                    if existing.status == "pending":
+                        original = read_private_json(self.root / "plans" / (existing.details["plan_id"] + ".json"))
+                        self.schedule_install(existing, original)
                     return existing.to_dict()
                 self.imports.validate_binding(plan["import_id"], plan["import_revision"], plan["import_digest"])
                 details.update({field: plan[field] for field in ("import_id", "import_revision", "import_digest")})
-            operation = self.registry.create_operation("install", slot_id=plan["slot_id"],
-                idempotency_key=key, details=details)
+            with self.registry.transaction():
+                operation = self.registry.create_operation("install", slot_id=plan["slot_id"],
+                    idempotency_key=key, details=details)
+                if grant_id is not None:
+                    self.grants.bind_operation(grant_id, plan, operation)
             if "import_id" in plan:
                 self.imports.submit(plan["import_id"], plan["import_revision"], plan["import_digest"], operation.id)
             # A persisted pending operation belongs to this apply; in-process task
             # registration happens before yielding, so concurrent retries coalesce.
-            if operation.status == "pending" and not any(getattr(task, "operation_id", None) == operation.id for task in self.tasks):
-                task = asyncio.create_task(self.install(operation.id, plan))
-                task.operation_id = operation.id
-                self.track(task)
+            self.schedule_install(operation, plan)
             return operation.to_dict()
+
+    def schedule_install(self, operation, plan: dict):
+        if operation.status == "pending" and not any(getattr(task, "operation_id", None) == operation.id for task in self.tasks):
+            task = asyncio.create_task(self.install(operation.id, plan))
+            task.operation_id = operation.id
+            self.track(task)
 
     async def install(self, operation_id: str, plan: dict):
         slot_id = plan["slot_id"]
@@ -1236,11 +1269,29 @@ class Supervisor:
 
 
 def management_app(host: Supervisor, token: str, port: int):
-    from .policy import LocalPolicy
+    from .policy import AuthenticationError, LocalPolicy, load_json
+
+    def authenticate(authorization: str):
+        if hmac.compare_digest(authorization.encode(), ("Bearer " + token).encode()):
+            return {"owner": True}
+        if not authorization.startswith("Bearer ") or len(authorization) > 128:
+            raise AuthenticationError("unauthorized")
+        try:
+            return host.grants.authenticate(authorization[7:])
+        except GrantError as error:
+            raise AuthenticationError(error.code) from None
 
     async def dispatch(request: Request):
         try:
             route = request.url.path
+            grant_id = request.scope["mcpme.principal"].get("grant_id")
+            payload = None
+            if request.method != "GET":
+                payload = load_json(await request.body())
+                if not isinstance(payload, dict):
+                    raise HostError("invalid_request")
+            if grant_id is not None:
+                host.grants.authorize_route(grant_id, request.method, route, payload)
             if request.method == "GET":
                 if route == "/v1/capabilities":
                     result = capabilities()
@@ -1251,6 +1302,14 @@ def management_app(host: Supervisor, token: str, port: int):
                               "reservations": {slot_id: dict(value) for slot_id, value in host.reservations.items()}}
                 elif route == "/v1/slots":
                     result = {"slots": [slot.to_dict() for slot in host.registry.list_slots()]}
+                    if grant_id is not None:
+                        result["slots"] = host.grants.filter_slots(grant_id, result["slots"])
+                elif route == "/v1/grants":
+                    result = host.grants.list()
+                elif route.startswith("/v1/grants/"):
+                    result = host.grants.inspect(request.path_params["grant_id"])
+                elif route.startswith("/v1/plans/"):
+                    result = await asyncio.to_thread(host.inspect_plan, request.path_params["plan_id"])
                 elif route == "/v1/imports":
                     host.reconcile_imports()
                     result = {"imports": host.imports.list_summaries()}
@@ -1274,10 +1333,20 @@ def management_app(host: Supervisor, token: str, port: int):
                 else:
                     result = host.registry.get_operation(request.path_params["operation_id"]).to_dict()
             else:
-                payload = await request.json()
-                if not isinstance(payload, dict):
-                    raise HostError("invalid_request")
-                if request.method == "PATCH" and "slot_id" in request.path_params:
+                if route == "/v1/grants":
+                    plan = None
+                    if payload.get("mode") == "install":
+                        plan_id = payload.get("plan_id")
+                        if not isinstance(plan_id, str) or str(uuid.UUID(plan_id)) != plan_id:
+                            raise HostError("invalid_plan")
+                        plan = read_private_json(host.root / "plans" / (plan_id + ".json"))
+                        if "import_id" in plan:
+                            host.reconcile_imports()
+                            host.imports.validate_binding(plan["import_id"], plan["import_revision"], plan["import_digest"])
+                    result = host.grants.issue(payload, plan=plan)
+                elif route.endswith("/revoke") and "grant_id" in request.path_params and not payload:
+                    result = host.grants.revoke(request.path_params["grant_id"])
+                elif request.method == "PATCH" and "slot_id" in request.path_params:
                     result = await host.update_settings(request.path_params["slot_id"], payload)
                 elif route == "/v1/imports":
                     if set(payload) - {"source", "name", "intent", "document_role", "files", "start", "start_policy"}:
@@ -1321,7 +1390,7 @@ def management_app(host: Supervisor, token: str, port: int):
                     from .migrations import recover_transfer
                     result = await recover_transfer(host, request.path_params["transfer_id"])
                 elif route == "/v1/install/apply" and set(payload) == {"plan_id"}:
-                    result = await host.apply_install(payload["plan_id"])
+                    result = await host.apply_install(payload["plan_id"], grant_id=grant_id)
                 elif "slot_id" in request.path_params and not payload:
                     action = request.path_params["action"]
                     if action not in {"start", "stop", "restart", "remove"}:
@@ -1330,12 +1399,15 @@ def management_app(host: Supervisor, token: str, port: int):
                 else:
                     raise HostError("invalid_request")
             return JSONResponse({"api_version": 1, **result})
-        except (HostError, PackageError, RegistryError, ImportDraftError) as error:
+        except (HostError, PackageError, RegistryError, ImportDraftError, GrantError) as error:
             return JSONResponse({"api_version": 1, "error": {"code": error.code}}, status_code=getattr(error, "status", 400))
         except Exception:
             return JSONResponse({"api_version": 1, "error": {"code": "invalid_request"}}, status_code=400)
 
     app = Starlette(routes=[Route("/v1/capabilities", dispatch), Route("/v1/status", dispatch), Route("/v1/slots", dispatch),
+        Route("/v1/grants", dispatch, methods=["GET", "POST"]),
+        Route("/v1/grants/{grant_id}", dispatch), Route("/v1/grants/{grant_id}/revoke", dispatch, methods=["POST"]),
+        Route("/v1/plans/{plan_id}", dispatch),
         Route("/v1/slots/{slot_id}/details", dispatch),
         Route("/v1/slots/{slot_id}", dispatch, methods=["GET", "PATCH"]), Route("/v1/operations/{operation_id}", dispatch),
         Route("/v1/imports", dispatch, methods=["GET", "POST"]),
@@ -1347,7 +1419,7 @@ def management_app(host: Supervisor, token: str, port: int):
         Route("/v1/migrations/{transfer_id}/rollback", dispatch, methods=["POST"]),
         Route("/v1/migrations/{transfer_id}/recover", dispatch, methods=["POST"]),
         Route("/v1/slots/{slot_id}/{action}", dispatch, methods=["POST"])])
-    return LocalPolicy(app, token=token, port=port)
+    return LocalPolicy(app, token=token, port=port, authenticate=authenticate)
 
 
 async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None):

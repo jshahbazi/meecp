@@ -15,6 +15,7 @@ import httpx
 from mcpme_local_transport import private_transport, socket_path
 
 from .contracts import PackageError, validate_package
+from .grants import GrantError
 from .private import read_private_json
 
 DEFAULT_STATE = Path.home() / "Library/Application Support/mcpme"
@@ -41,14 +42,27 @@ def endpoint(connection: dict) -> str:
     return address
 
 
-async def call(state_dir: Path, method: str, path: str, body: dict | None = None) -> dict:
+async def call(state_dir: Path, method: str, path: str, body: dict | None = None, *,
+               credential_file: Path | None = None) -> dict:
     connection = read_private_json(state_dir / "manager-connection.json")
+    if credential_file is None:
+        token = connection["token"]
+    else:
+        from .grants import read_credential
+        # Reopen for every call; a removed or unsafe file never selects owner authority.
+        token = read_credential(credential_file)["token"]
     timeout = 300 if path in {"/v1/install/plan", "/v1/migrations/jevk5/plan", "/v1/imports"} or path.endswith("/attach") else 30
     async with httpx.AsyncClient(base_url=endpoint(connection), timeout=timeout, follow_redirects=False, trust_env=False,
                                  transport=private_transport(socket_path(state_dir, "manager")),
-                                 headers={"Authorization": "Bearer " + connection["token"]}) as client:
-        response = await client.request(method, path, json=body)
-        value = response.json()
+                                 headers={"Authorization": "Bearer " + token}) as client:
+        async with client.stream(method, path, json=body) as response:
+            data = bytearray()
+            async for chunk in response.aiter_bytes(chunk_size=16384):
+                data.extend(chunk)
+                if len(data) > 1024 * 1024:
+                    raise ValueError("response_limit")
+            from .policy import load_json
+            value = load_json(bytes(data))
         if not isinstance(value, dict):
             raise ValueError()
         return value
@@ -61,6 +75,13 @@ def bundled_app() -> Path | None:
             return parent
     return None
 
+
+def cli_launcher() -> Path:
+    if app := bundled_app():
+        return app / "Contents/MacOS/mcpme"
+    root = Path(__file__).resolve().parents[2]
+    source = root / "scripts/mcpme"
+    return source if source.is_file() else root / "bin/mcpme"
 
 async def ensure_host(state: Path):
     async def available():
@@ -86,6 +107,8 @@ async def ensure_host(state: Path):
 def parser() -> argparse.ArgumentParser:
     cli = argparse.ArgumentParser(prog="mcpme")
     cli.add_argument("--state-dir", type=Path, default=DEFAULT_STATE)
+    cli.add_argument("--credential-file", type=Path,
+                     help="Use this scoped management credential, without owner fallback.")
     commands = cli.add_subparsers(dest="command", required=True)
     service = commands.add_parser("serve")
     service.add_argument("--reaper", type=Path, required=True)
@@ -118,6 +141,27 @@ def parser() -> argparse.ArgumentParser:
     apply = install.add_parser("apply")
     apply.add_argument("--plan", type=uuid_argument, required=True)
     apply.add_argument("--json", action="store_true")
+    inspect = install.add_parser("inspect")
+    inspect.add_argument("--plan", type=uuid_argument, required=True)
+    inspect.add_argument("--json", action="store_true")
+    authorize = commands.add_parser("authorize")
+    scope = authorize.add_mutually_exclusive_group(required=True)
+    scope.add_argument("--plan", type=uuid_argument)
+    scope.add_argument("--read-only", action="store_true")
+    scope.add_argument("--prepare", action="store_true")
+    scope.add_argument("--slot", type=uuid_argument, action="append", dest="slot_ids")
+    authorize.add_argument("--action", choices=["start", "stop", "restart"], action="append", dest="actions")
+    authorize.add_argument("--ttl-seconds", type=int)
+    authorize.add_argument("--json", action="store_true")
+    grants = commands.add_parser("grants").add_subparsers(dest="action", required=True)
+    grants.add_parser("list").add_argument("--json", action="store_true")
+    for name in ("inspect", "revoke"):
+        item = grants.add_parser(name)
+        item.add_argument("grant_id", type=uuid_argument)
+        item.add_argument("--json", action="store_true")
+    management = commands.add_parser("management").add_subparsers(dest="action", required=True)
+    management.add_parser("connect")
+    management.add_parser("export").add_argument("--json", action="store_true")
     imports = commands.add_parser("imports").add_subparsers(dest="action", required=True)
     imports.add_parser("list").add_argument("--json", action="store_true")
     create = imports.add_parser("create")
@@ -169,6 +213,49 @@ def parser() -> argparse.ArgumentParser:
 
 async def execute(args) -> dict | None:
     state = args.state_dir.absolute()
+    credential = getattr(args, "credential_file", None)
+    if credential is not None:
+        credential = credential.absolute()
+    async def api(method, path, body=None):
+        if credential is None:
+            return await call(state, method, path, body)
+        return await call(state, method, path, body, credential_file=credential)
+
+    if credential is not None and args.command in {"serve", "connect", "connections"}:
+        return {"error": {"code": "management_credential_not_invocation"}}
+    if args.command == "management":
+        if credential is None:
+            return {"error": {"code": "management_credential_required"}}
+        from .grants import read_credential
+        grant = read_credential(credential)
+        if args.action == "connect":
+            from .management import run_management
+            await run_management(state, credential)
+            return None
+        return {"grant_id": grant["grant_id"], "configuration": {"mcpServers": {
+            "mcpme-management": {"command": str(cli_launcher()), "args": ["--state-dir", str(state),
+                "--credential-file", str(credential), "management", "connect"]}}}}
+    if args.command == "authorize":
+        if args.plan is not None:
+            if args.actions or args.ttl_seconds not in {None, 900}:
+                return {"error": {"code": "invalid_grant_request"}}
+            body = {"mode": "install", "plan_id": args.plan, "ttl_seconds": 900}
+        elif args.slot_ids is not None:
+            if not args.actions:
+                return {"error": {"code": "invalid_grant_request"}}
+            body = {"mode": "lifecycle", "slot_ids": args.slot_ids, "actions": args.actions,
+                    "ttl_seconds": args.ttl_seconds if args.ttl_seconds is not None else 3600}
+        else:
+            if args.actions:
+                return {"error": {"code": "invalid_grant_request"}}
+            body = {"mode": "read" if args.read_only else "prepare",
+                    "ttl_seconds": args.ttl_seconds if args.ttl_seconds is not None else 3600}
+        return await api("POST", "/v1/grants", body)
+    if args.command == "grants":
+        if args.action == "list":
+            return await api("GET", "/v1/grants")
+        route = "/v1/grants/" + args.grant_id
+        return await api("GET", route) if args.action == "inspect" else await api("POST", route + "/revoke", {})
     if args.command == "serve":
         from .supervisor import serve
         await serve(state, args.reaper, args.parent_pid)
@@ -177,31 +264,33 @@ async def execute(args) -> dict | None:
         package = validate_package(args.package.absolute())
         return {"valid": True, "package_digest": package.digest, "package": package.manifest.model_dump()}
     if args.command == "capabilities":
-        return await call(state, "GET", "/v1/capabilities")
+        return await api("GET", "/v1/capabilities")
     if args.command == "slots":
         if args.action == "list":
-            return await call(state, "GET", "/v1/slots")
+            return await api("GET", "/v1/slots")
         if args.action == "inspect":
-            return await call(state, "GET", "/v1/slots/" + args.slot_id)
+            return await api("GET", "/v1/slots/" + args.slot_id)
         if args.action == "configure":
-            return await call(state, "PATCH", "/v1/slots/" + args.slot_id, {"start_policy": args.start_policy})
-        return await call(state, "POST", f"/v1/slots/{args.slot_id}/{args.action}", {})
+            return await api("PATCH", "/v1/slots/" + args.slot_id, {"start_policy": args.start_policy})
+        return await api("POST", f"/v1/slots/{args.slot_id}/{args.action}", {})
     if args.command == "install":
+        if args.action == "inspect":
+            return await api("GET", "/v1/plans/" + args.plan)
         if args.action == "apply":
-            return await call(state, "POST", "/v1/install/apply", {"plan_id": args.plan})
+            return await api("POST", "/v1/install/apply", {"plan_id": args.plan})
         if args.import_id is not None:
             if args.revision is None or args.name is not None or args.start or args.start_policy != "manual":
                 return {"error": {"code": "invalid_import_plan"}}
-            return await call(state, "POST", "/v1/install/plan", {"import_id": args.import_id, "revision": args.revision})
+            return await api("POST", "/v1/install/plan", {"import_id": args.import_id, "revision": args.revision})
         if args.revision is not None:
             return {"error": {"code": "invalid_install_plan"}}
         body = {"package": str(args.package.absolute()), "start_policy": args.start_policy, "start": args.start}
         if args.name is not None:
             body["name"] = args.name
-        return await call(state, "POST", "/v1/install/plan", body)
+        return await api("POST", "/v1/install/plan", body)
     if args.command == "imports":
         if args.action == "list":
-            return await call(state, "GET", "/v1/imports")
+            return await api("GET", "/v1/imports")
         if args.action == "create":
             body = {"source": str(args.source.absolute()), "name": args.name, "intent": args.intent,
                     "start": args.start, "start_policy": args.start_policy}
@@ -209,10 +298,10 @@ async def execute(args) -> dict | None:
                 body["document_role"] = args.document_role
             if args.files is not None:
                 body["files"] = args.files
-            return await call(state, "POST", "/v1/imports", body)
+            return await api("POST", "/v1/imports", body)
         route = "/v1/imports/" + args.draft_id
         if args.action == "inspect":
-            return await call(state, "GET", route)
+            return await api("GET", route)
         body = {"revision": args.revision}
         if args.action == "attach":
             body["package"] = str(args.package.absolute())
@@ -224,18 +313,14 @@ async def execute(args) -> dict | None:
                 if args.requirements.stat().st_size > 65536:
                     return {"error": {"code": "requirements_limit"}}
                 body["requirements"] = json.loads(args.requirements.read_text())
-        return await call(state, "POST", route + "/" + args.action, body)
+        return await api("POST", route + "/" + args.action, body)
     if args.command == "operations":
-        return await call(state, "GET", "/v1/operations/" + args.operation_id)
+        return await api("GET", "/v1/operations/" + args.operation_id)
     if args.command == "connections":
-        slot = await call(state, "GET", "/v1/slots/" + args.slot)
+        slot = await api("GET", "/v1/slots/" + args.slot)
         if "error" in slot:
             return slot
-        launcher = Path(__file__).resolve().parents[2] / "scripts" / "mcpme"
-        if not launcher.is_file():
-            launcher = Path(__file__).resolve().parents[2] / "bin" / "mcpme"
-        if app := bundled_app():
-            launcher = app / "Contents/MacOS/mcpme"
+        launcher = cli_launcher()
         return {"slot_id": args.slot, "endpoint": f"http://127.0.0.1:{slot['public_port']}/mcp",
                 "configuration": {"mcpServers": {args.slot: {"command": str(launcher),
                     "args": ["--state-dir", str(state), "connect", "--slot", args.slot]}}}}
@@ -255,12 +340,12 @@ async def execute(args) -> dict | None:
                 "legacy_state": str(args.legacy_state.absolute())}
             if args.legacy_login_disabled:
                 payload["legacy_login_disabled"] = True
-            return await call(state, "POST", "/v1/migrations/jevk5/plan", payload)
+            return await api("POST", "/v1/migrations/jevk5/plan", payload)
         if args.action == "apply":
-            return await call(state, "POST", "/v1/migrations/jevk5/apply", {"transfer_id": args.transfer_id})
+            return await api("POST", "/v1/migrations/jevk5/apply", {"transfer_id": args.transfer_id})
         if args.action == "inspect":
-            return await call(state, "GET", "/v1/migrations/" + args.transfer_id)
-        return await call(state, "POST", "/v1/migrations/" + args.transfer_id + "/" + args.action, {})
+            return await api("GET", "/v1/migrations/" + args.transfer_id)
+        return await api("POST", "/v1/migrations/" + args.transfer_id + "/" + args.action, {})
     raise ValueError()
 
 
@@ -275,8 +360,8 @@ def main(argv=None) -> int:
             return 1 if "error" in result else 0
     except (Exception, KeyboardInterrupt) as error:
         # No error text is exposed: dependencies may include caller data in it.
-        if args.command != "connect":
-            emit({"error": {"code": error.code if isinstance(error, PackageError) else "host_unavailable"}})
+        if args.command != "connect" and not (args.command == "management" and args.action == "connect"):
+            emit({"error": {"code": error.code if isinstance(error, (PackageError, GrantError)) else "host_unavailable"}})
         return 2
     return 0
 

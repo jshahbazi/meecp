@@ -44,6 +44,7 @@ jobs:
         run: |
           swift test
           .build/debug/McpmeMenuBar --native-self-test
+          .build/debug/McpmeMenuBar --dashboard-ui-self-test
           .build/debug/McpmeMenuBar --management-ui-self-test
       - name: Build and verify development DMG
         run: |

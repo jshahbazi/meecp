@@ -241,9 +241,60 @@ async def test_partial_lock_registration_failure_closes_acquisition(tmp_path, mo
 
 
 def fake_http(monkeypatch, responder):
-    client = httpx.AsyncClient
     transport = httpx.MockTransport(responder)
-    monkeypatch.setattr(migrations.httpx, "AsyncClient", lambda **kwargs: client(transport=transport, **kwargs))
+    # These lifecycle fixtures model a private transport; live ownership/socket
+    # rejection and TCP impersonation checks are in test_local_transport.py.
+    monkeypatch.setattr(migrations, "socket_path", lambda *_: None)
+    monkeypatch.setattr(migrations, "private_transport", lambda _: transport)
+
+
+@pytest.mark.parametrize("running", [False, True])
+async def test_migration_planning_never_probes_unverified_legacy_tcp(tmp_path, monkeypatch, running):
+    host = Supervisor(tmp_path / "state", tmp_path / "unused")
+    app = tmp_path / "legacy.app"
+    (app / "Contents").mkdir(parents=True)
+    (app / "Contents/Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "com.jshahbazi.jevk5"}))
+    legacy = ensure_private_directory(tmp_path / "legacy")
+    write_private_json(legacy / "connection.json", {"endpoint": "http://127.0.0.1:19385", "token": "x" * 48})
+    package = SimpleNamespace(digest="a" * 64, manifest=SimpleNamespace(package_id="local.jevk5", profile="model-service",
+                                                                     model_dump=lambda: {"package_id": "local.jevk5"}))
+    monkeypatch.setattr(migrations, "validate_package", lambda _: package)
+    monkeypatch.setattr(migrations, "check_legacy_contract", lambda *_: None)
+    monkeypatch.setattr(migrations, "native_handoff", AsyncMock(return_value={"running": running, "login_enabled": False}))
+    monkeypatch.setattr(migrations, "snapshot_package", lambda _package, destination: SimpleNamespace(root=destination, digest="a" * 64))
+    contacted = []
+    def unverified_client(**kwargs):
+        contacted.append(kwargs)
+        raise AssertionError("unverified TCP client constructed")
+    monkeypatch.setattr(migrations.httpx, "AsyncClient", unverified_client)
+    try:
+        payload = {"package": str(tmp_path / "package"), "legacy_app": str(app), "legacy_state": str(legacy)}
+        if running:
+            with pytest.raises(HostError, match="legacy_transport_upgrade_required"):
+                await migrations.plan_transfer(host, payload)
+        else:
+            assert (await migrations.plan_transfer(host, payload))["legacy_paused"] is False
+        assert contacted == []
+    finally:
+        await host.close()
+
+
+async def test_migration_restore_and_smoke_do_not_fall_back_to_tcp(tmp_path, monkeypatch):
+    host = Supervisor(tmp_path / "state", tmp_path / "unused")
+    value = record(host, tmp_path, stage="old_stopped", status="recovery_required")
+    contacted = []
+    def unverified_client(**kwargs):
+        contacted.append(kwargs)
+        raise AssertionError("unverified TCP client constructed")
+    monkeypatch.setattr(migrations.httpx, "AsyncClient", unverified_client)
+    try:
+        with pytest.raises(HostError, match="legacy_restore_timeout"):
+            await migrations.wait_legacy_restored(value, timeout=0.03)
+        with pytest.raises(OSError):
+            await migrations.verify_and_commit(host, value, "a" * 64)
+        assert contacted == []
+    finally:
+        await host.close()
 
 
 @pytest.mark.parametrize("paused", [False, True])

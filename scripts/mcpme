@@ -6,4 +6,4 @@ unset PYTHONHOME PYTHONUSERBASE PYTHONSTARTUP PYTHONINSPECT
 export PYTHONPATH="$ROOT/backend"
 export PYTHONNOUSERSITE=1
 export PYTHONDONTWRITEBYTECODE=1
-exec "$ROOT/.venv/bin/python3" -m mcpme "$@"
+exec "$ROOT/.venv/bin/python3" -P -m mcpme "$@"

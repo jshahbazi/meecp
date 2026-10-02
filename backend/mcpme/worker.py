@@ -138,10 +138,11 @@ class RemoteLauncher:
         return result
 
 
-async def run(config_fd: int, listener_fd: int, channel_fd: int):
+async def run(config_fd: int, listener_fd: int, channel_fd: int, private_listener_fds=()):
     with os.fdopen(config_fd, "rb") as stream:
         config = json.loads(stream.read(65537))
     listener = socket.socket(fileno=listener_fd)
+    private_listeners = [socket.socket(fileno=fd) for fd in private_listener_fds]
     channel = socket.socket(fileno=channel_fd)
     launcher = RemoteLauncher(channel, timeout=config["control_timeout"])
     if config.get("profile", "mcp-stdio") == "model-service":
@@ -188,13 +189,15 @@ async def run(config_fd: int, listener_fd: int, channel_fd: int):
         server.should_exit = True
     launcher.on_failure = lambda: loop.call_soon_threadsafe(fail_control_channel)
     try:
-        await server.serve(sockets=[listener])
+        await server.serve(sockets=[listener, *private_listeners])
     finally:
         try:
             await gateway.shutdown()
         finally:
             channel.close()
             listener.close()
+            for private in private_listeners:
+                private.close()
 
 
 def main():
@@ -204,9 +207,10 @@ def main():
     parser.add_argument("--config-fd", type=int, required=True)
     parser.add_argument("--listener-fd", type=int, required=True)
     parser.add_argument("--channel-fd", type=int, required=True)
+    parser.add_argument("--private-listener-fd", type=int, action="append", required=True)
     args = parser.parse_args()
     try:
-        asyncio.run(run(args.config_fd, args.listener_fd, args.channel_fd))
+        asyncio.run(run(args.config_fd, args.listener_fd, args.channel_fd, args.private_listener_fd))
     except (Exception, KeyboardInterrupt):
         return 2
     return 0

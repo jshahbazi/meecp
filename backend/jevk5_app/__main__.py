@@ -13,21 +13,40 @@ from .bridge import run_bridge
 from .runtime import ModelManager
 from .server import make_app, parent_watchdog
 from .state import HOST, PORT, PrivateState
+from mcpme_local_transport import bind_private_listener
 
 
 async def serve(resources: Path, state_dir: Path, parent_pid: int):
     private = PrivateState(state_dir)
-    manager = ModelManager(resources, state_dir)
-    app, _ = make_app(manager, private.token)
-    server = uvicorn.Server(uvicorn.Config(app, host=HOST, port=PORT, access_log=False,
-                                         log_config=None, log_level="critical", timeout_graceful_shutdown=130))
-    watchdog = asyncio.create_task(parent_watchdog(parent_pid, server))
+    listener = None
+    manager = None
+    watchdog = None
     try:
-        await server.serve()
+        # Reserve TCP before advertising the private socket. Both share policy.
+        import socket
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind((HOST, PORT))
+        listener.listen(128)
+        listener.setblocking(False)
+        private_listener = bind_private_listener(state_dir, "jevk5")
+        try:
+            manager = ModelManager(resources, state_dir)
+            app, _ = make_app(manager, private.token)
+            server = uvicorn.Server(uvicorn.Config(app, access_log=False,
+                log_config=None, log_level="critical", timeout_graceful_shutdown=130))
+            watchdog = asyncio.create_task(parent_watchdog(parent_pid, server))
+            await server.serve(sockets=[listener, private_listener])
+        finally:
+            private_listener.close()
     finally:
-        watchdog.cancel()
-        await asyncio.gather(watchdog, return_exceptions=True)
-        await manager.shutdown()
+        if watchdog:
+            watchdog.cancel()
+            await asyncio.gather(watchdog, return_exceptions=True)
+        if manager:
+            await manager.shutdown()
+        if listener:
+            listener.close()
         private.close()
 
 

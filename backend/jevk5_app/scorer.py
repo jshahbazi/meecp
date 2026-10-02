@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import urllib.parse
 import urllib.request
 
 from jevk5.gguf import JevK5GGUF
@@ -13,24 +14,38 @@ from .contracts import ServiceError
 
 class LocalScorer(JevK5GGUF):
     def __init__(self, url: str, api_key: str, context_tokens: int, **kwargs):
+        parsed = urllib.parse.urlsplit(url)
+        if (parsed.scheme != "http" or parsed.hostname != "127.0.0.1"
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment or parsed.path not in ("", "/")
+                or parsed.port is None or not (1 <= parsed.port <= 65535)):
+            raise ValueError("The local model endpoint must be an http loopback URL.")
+        url = url.rstrip("/")
         super().__init__(url=url, top_k=40, timeout_s=120, **kwargs)
         self.api_key = api_key
         self.context_tokens = context_tokens
         self.previous_ids: tuple[int, ...] | None = None
         self.cache_hit = False
         self.expected_letters = ""
+        class _NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+        self._opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), _NoRedirect())
 
     def clear(self):
         self.previous_ids = None
         self.cache_hit = False
 
     def _transport(self, path, payload):
+        if path not in ("/tokenize", "/completion"):
+            raise ValueError("Unsupported local model path")
         request = urllib.request.Request(
             self.url + path,
             data=json.dumps(payload, allow_nan=False).encode(),
             headers={"Content-Type": "application/json", "Authorization": "Bearer " + self.api_key},
         )
-        with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
+        with self._opener.open(request, timeout=self.timeout_s) as response:
             return json.loads(response.read(4 * 1024 * 1024))
 
     def _post(self, path, payload):

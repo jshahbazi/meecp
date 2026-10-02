@@ -6,5 +6,8 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [.executable(name: "JevK5MenuBar", targets: ["JevK5MenuBar"]),
                .executable(name: "McpmeMenuBar", targets: ["McpmeMenuBar"])],
-    targets: [.executableTarget(name: "JevK5MenuBar"), .executableTarget(name: "McpmeMenuBar")]
+    targets: [.target(name: "PrivateTransport"),
+              .executableTarget(name: "JevK5MenuBar", dependencies: ["PrivateTransport"]),
+              .executableTarget(name: "McpmeMenuBar", dependencies: ["PrivateTransport"]),
+              .testTarget(name: "PrivateTransportTests", dependencies: ["PrivateTransport"], path: "tests/PrivateTransportTests")]
 )

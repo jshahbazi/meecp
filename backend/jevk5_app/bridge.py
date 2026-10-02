@@ -14,6 +14,7 @@ from mcp.types import ToolAnnotations
 from .contracts import Question, ServiceError, validate_decision
 from .server import DECIDE_DESCRIPTION, SafeMCP, preserve_literal_evidence
 from .state import ENDPOINT
+from mcpme_local_transport import private_transport, socket_path
 
 
 class Bridge:
@@ -36,7 +37,8 @@ class Bridge:
     async def request(self, path: str, payload: dict | None = None):
         self.connection()
         try:
-            async with httpx.AsyncClient(timeout=180 if path == "/api/decide" else 2, trust_env=False) as client:
+            async with httpx.AsyncClient(timeout=180 if path == "/api/decide" else 2, trust_env=False,
+                    follow_redirects=False, transport=private_transport(socket_path(self.state_dir, "jevk5"))) as client:
                 headers = {"Authorization": "Bearer " + self.token}
                 response = await (client.get(ENDPOINT + path, headers=headers) if payload is None else
                                   client.post(ENDPOINT + path, headers=headers, json=payload))

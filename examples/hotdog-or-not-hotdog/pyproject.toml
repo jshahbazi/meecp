@@ -6,7 +6,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = ["numpy>=2.2,<3", "onnxruntime>=1.22,<2", "Pillow>=11,<13"]
 
 [dependency-groups]
-build = ["ultralytics==8.3.221", "torch==2.8.0", "torchvision==0.23.0", "onnx==1.19.1"]
+build = ["ultralytics==8.3.221", "torch==2.8.0", "torchvision==0.23.0", "onnx==1.22.0"]
 dev = ["pytest>=8,<10"]
 
 [tool.uv]

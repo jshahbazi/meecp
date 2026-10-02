@@ -71,18 +71,19 @@ def change_receipt(directory, kind, change):
 def http_result(status, body=None, *, returncode=None):
     return subprocess.CompletedProcess(
         ["gh"], (0 if 200 <= status < 300 else 1) if returncode is None else returncode,
-        stdout=f"HTTP/2.0 {status} Status\nContent-Type: application/json\n\n{json.dumps(body or {})}",
+        stdout=f"HTTP/2.0 {status} Status\nContent-Type: application/json\n\n{json.dumps(body if body is not None else {})}",
         stderr=PRIVATE,
     )
 
 
 def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag_change=None,
-                   existing_draft=False):
+                   existing_draft=False, version=VERSION):
     calls = []
     drafted = existing_draft
     public = False
     tagged = existing_draft
     draft_readback = False
+    tag = "v" + version
 
     def run(*arguments):
         nonlocal drafted, public, tagged, draft_readback
@@ -91,7 +92,7 @@ def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag
             endpoint = next(value for value in arguments if value.startswith("repos/"))
             if "POST" in arguments:
                 assert not tagged
-                assert "ref=refs/tags/" + TAG in arguments and "sha=" + COMMIT in arguments
+                assert "ref=refs/tags/" + tag in arguments and "sha=" + COMMIT in arguments
                 tagged = True
                 return http_result(201)
             if "PATCH" in arguments:
@@ -103,21 +104,21 @@ def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag
                 public = True
                 return http_result(200)
             if "git/ref/tags/" in endpoint and tagged:
-                value = {"ref": "refs/tags/" + TAG, "object": {"type": "commit", "sha": COMMIT}}
+                value = {"ref": "refs/tags/" + tag, "object": {"type": "commit", "sha": COMMIT}}
                 if drafted and tag_change:
                     tag_change(value)
                 return http_result(200, value)
             if not drafted:
                 return http_result(404)
-            if endpoint == publisher.release_endpoint(TAG) and not public:
+            if endpoint == publisher.release_endpoint(tag) and not public:
                 # GitHub's tag endpoint cannot resolve an unpublished release.
                 return http_result(404)
             assert endpoint == f"repos/{publisher.REPOSITORY}/releases/{RELEASE_ID}"
             remote = {
                 "id": RELEASE_ID,
-                "tag_name": TAG, "target_commitish": COMMIT,
+                "tag_name": tag, "target_commitish": COMMIT,
                 "draft": not public, "prerelease": False,
-                "html_url": f"https://github.com/{publisher.REPOSITORY}/releases/tag/{TAG if public else DRAFT_TAG}",
+                "html_url": f"https://github.com/{publisher.REPOSITORY}/releases/tag/{tag if public else DRAFT_TAG}",
                 "assets": [
                     {"name": path.name, "size": path.stat().st_size, "state": "uploaded",
                      "digest": "sha256:" + publisher.digest(path)}
@@ -135,7 +136,7 @@ def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag
             assert "--draft" in arguments
             assert "--verify-tag" in arguments
             assert arguments[arguments.index("--target") + 1] == COMMIT
-            assert arguments[arguments.index("--title") + 1] == "mcpme " + VERSION
+            assert arguments[arguments.index("--title") + 1] == "mcpme " + version
             notes = Path(arguments[arguments.index("--notes-file") + 1]).read_text()
             assert "DMG:" in notes and "ZIP:" in notes and COMMIT in notes
             drafted = True
@@ -146,7 +147,7 @@ def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag
             assert names == {path.name for path in directory.iterdir()}
         elif arguments[1] == "view":
             assert drafted
-            assert arguments[2] == TAG
+            assert arguments[2] == tag
             assert arguments[arguments.index("--repo") + 1] == publisher.GH_REPOSITORY
             assert arguments[arguments.index("--json") + 1] == "databaseId"
             return subprocess.CompletedProcess(["gh"], 0, json.dumps({"databaseId": RELEASE_ID}), PRIVATE)
@@ -156,6 +157,162 @@ def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag
 
     monkeypatch.setattr(publisher, "command", run)
     return calls
+
+
+def stable_release(version):
+    return {"tag_name": "v" + version, "draft": False, "prerelease": False}
+
+
+@pytest.mark.parametrize("bump,expected", [
+    ("major", "1.0.0"), ("minor", "0.2.0"), ("patch", "0.1.1"),
+])
+def test_prepare_bumps_published_version_without_changing_source(
+        publisher, monkeypatch, tmp_path, capsys, bump, expected):
+    source = publisher.ROOT / "pyproject.toml"
+    original = source.read_bytes()
+    output = tmp_path / "github-output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    calls = []
+
+    def run(*arguments):
+        calls.append(arguments)
+        if "/releases?" in arguments[-1]:
+            return http_result(200, [stable_release(VERSION)])
+        assert arguments[-1].endswith("v" + expected)
+        return http_result(404)
+
+    monkeypatch.setattr(publisher, "command", run)
+    publisher.prepare(bump)
+    assert output.read_text() == f"version={expected}\ntag=v{expected}\n"
+    assert source.read_bytes() == original
+    assert all("GET" in call for call in calls)
+    assert capsys.readouterr() == ("release_preflight_ready\n", "")
+
+
+@pytest.mark.parametrize("baseline,published,bump,expected", [
+    ("0.1.0", [], "minor", "0.2.0"),
+    ("3.4.5", ["1.2.3"], "patch", "3.4.6"),
+    ("0.1.0", ["2.9.9", "2.10.2", "1.99.99"], "minor", "2.11.0"),
+    ("9.9.9", [], "major", "10.0.0"),
+    ("9.9.9", [], "minor", "9.10.0"),
+    ("9.9.9", [], "patch", "9.9.10"),
+])
+def test_bump_uses_highest_numeric_source_or_published_version(
+        publisher, monkeypatch, baseline, published, bump, expected):
+    monkeypatch.setattr(publisher, "command", lambda *args: http_result(
+        200, [stable_release(version) for version in published],
+    ))
+    assert publisher.bumped_version(baseline, bump) == expected
+
+
+def test_release_selection_reads_all_pages_and_ignores_non_stable_tags(publisher, monkeypatch):
+    first = [stable_release(f"0.0.{patch}") for patch in range(100)]
+    second = [stable_release("12.3.4"),
+              {**stable_release("99.0.0"), "draft": True},
+              {**stable_release("99.0.0"), "prerelease": True},
+              stable_release("99.0.0-alpha"), stable_release("01.0.0"),
+              {"tag_name": "unrelated-tag", "draft": False, "prerelease": False}]
+    calls = []
+
+    def run(*arguments):
+        calls.append(arguments)
+        endpoint = arguments[-1]
+        if endpoint.endswith("page=1"):
+            return http_result(200, first)
+        assert endpoint.endswith("page=2")
+        return http_result(200, second)
+
+    monkeypatch.setattr(publisher, "command", run)
+    assert publisher.bumped_version(VERSION, "minor") == "12.4.0"
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("bump", ["", "Major", "other", "minor\nunsafe"])
+def test_invalid_bump_fails_before_github_or_output_writes(publisher, monkeypatch, tmp_path, bump):
+    output = tmp_path / "github-output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setattr(publisher, "command", lambda *args: pytest.fail("unexpected GitHub access"))
+    with pytest.raises(publisher.PublicationError, match="release_bump_invalid"):
+        publisher.prepare(bump)
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("response", [{}, [None], [{"tag_name": "v0.2.0"}],
+                                      [{**stable_release("0.2.0"), "draft": "false"}]])
+def test_invalid_release_list_fails_closed(publisher, monkeypatch, response):
+    monkeypatch.setattr(publisher, "command", lambda *args: http_result(200, response))
+    with pytest.raises(publisher.PublicationError, match="release_github_release_list_invalid"):
+        publisher.prepare("minor")
+
+
+@pytest.mark.parametrize("status", [401, 403, 429, 500])
+def test_release_selection_does_not_treat_api_failures_as_no_releases(publisher, monkeypatch, status):
+    monkeypatch.setattr(publisher, "command", lambda *args: http_result(status))
+    with pytest.raises(publisher.PublicationError, match="release_github_api_failed"):
+        publisher.prepare("minor")
+
+
+@pytest.mark.parametrize("existing", ["release", "tag"])
+def test_selected_version_collision_prevents_output(publisher, monkeypatch, tmp_path, existing):
+    output = tmp_path / "github-output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+
+    def run(*arguments):
+        if "/releases?" in arguments[-1]:
+            return http_result(200, [stable_release(VERSION)])
+        assert arguments[-1].endswith("v0.2.0")
+        present = existing == "release" or "/git/ref/" in arguments[-1]
+        return http_result(200, {"existing": True}) if present else http_result(404)
+
+    monkeypatch.setattr(publisher, "command", run)
+    with pytest.raises(publisher.PublicationError, match="already_exists"):
+        publisher.prepare("minor")
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("version", ["0.2", "v0.2.0", "0.2.0-alpha", "00.2.0", "0.2.0\nunsafe"])
+def test_invalid_explicit_release_version_blocks_before_github(publisher, assets, monkeypatch, version):
+    monkeypatch.setattr(publisher, "command", lambda *args: pytest.fail("unexpected GitHub access"))
+    with pytest.raises(publisher.PublicationError, match="release_version_invalid"):
+        publisher.publish(assets, version)
+
+
+@pytest.mark.parametrize("operation", ["publish", "resume"])
+def test_explicit_version_is_used_for_asset_and_release_verification(
+        publisher, assets, monkeypatch, operation):
+    selected = "0.2.0"
+    for kind in ("dmg", "zip"):
+        binary = assets / f"mcpme-{VERSION}-arm64.{kind}"
+        receipt = binary.with_name(binary.name + ".build.json")
+        value = json.loads(receipt.read_text())
+        value["version"] = selected
+        destination = assets / f"mcpme-{selected}-arm64.{kind}"
+        binary.rename(destination)
+        receipt.unlink()
+        destination.with_name(destination.name + ".build.json").write_text(json.dumps(value))
+    calls = install_github(monkeypatch, publisher, assets, version=selected,
+                           existing_draft=operation == "resume")
+    if operation == "publish":
+        result = publisher.publish(assets, selected)
+    else:
+        result = publisher.resume(assets, RELEASE_ID, selected)
+    assert result.endswith("/v" + selected)
+    assert (publisher.ROOT / "pyproject.toml").read_text() == '[project]\nversion = "0.1.0"\n'
+    assert sum("PATCH" in call for call in calls) == 1
+
+
+def test_racing_tag_creation_cannot_publish(publisher, assets, monkeypatch):
+    calls = []
+
+    def run(*arguments):
+        calls.append(arguments)
+        return http_result(422 if "POST" in arguments else 404)
+
+    monkeypatch.setattr(publisher, "command", run)
+    with pytest.raises(publisher.PublicationError, match="release_github_command_failed"):
+        publisher.publish(assets)
+    assert sum("POST" in call for call in calls) == 1
+    assert not any(call[0] == "release" or "PATCH" in call for call in calls)
 
 
 def test_prepare_outputs_canonical_version_only_after_preflight(publisher, monkeypatch, tmp_path, capsys):
@@ -229,6 +386,7 @@ def test_transport_failure_without_http_response_fails_closed(publisher, monkeyp
     ("zip", lambda receipt: receipt["app_build"].update(notarization_ticket_stapled=False)),
     ("dmg", lambda receipt: receipt["app_build"].update(hardened_runtime=False)),
     ("zip", lambda receipt: receipt["app_build"].update(secure_timestamp=False)),
+    ("dmg", lambda receipt: receipt["app_build"].update(version="9.9.9")),
     ("dmg", lambda receipt: receipt["checks"].update(copied_app_gatekeeper_assessment=False)),
     ("zip", lambda receipt: receipt["checks"].update(extracted_app_signature=False)),
     ("dmg", lambda receipt: receipt.update(disk_image_signed=False)),

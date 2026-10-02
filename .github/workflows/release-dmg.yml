@@ -2,6 +2,16 @@ name: Signed installer
 
 on:
   workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump
+        type: choice
+        required: true
+        default: minor
+        options:
+          - major
+          - minor
+          - patch
 
 permissions:
   contents: read
@@ -36,11 +46,12 @@ jobs:
         run: test "$(uname -m)" = arm64
       - name: Install locked dependencies
         run: uv sync --locked
-      - name: Validate release version and availability
+      - name: Select next release version and check availability
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: uv run --locked python .github/scripts/publish_release.py prepare
+          VERSION_BUMP: ${{ inputs.bump }}
+        run: uv run --locked python .github/scripts/publish_release.py prepare --bump "$VERSION_BUMP"
       - name: Scan history before importing credentials
         run: uv run --locked python .github/scripts/scan_secrets.py
       - name: Run tests before importing credentials
@@ -60,6 +71,7 @@ jobs:
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           uv run --locked python scripts/build_mcpme_dmg.py \
+            --version "$RELEASE_VERSION" \
             --sign-identity "$MACOS_SIGNING_IDENTITY" \
             --keychain "$RUNNER_TEMP/mcpme-signing/signing.keychain-db" \
             --notary-profile mcpme-notary \
@@ -102,4 +114,5 @@ jobs:
       - name: Publish complete release with verified checksums
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 .github/scripts/publish_release.py publish --assets-dir dist
+          RELEASE_VERSION: ${{ needs.sign.outputs.version }}
+        run: python3 .github/scripts/publish_release.py publish --assets-dir dist --version "$RELEASE_VERSION"

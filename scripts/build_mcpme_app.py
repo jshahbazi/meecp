@@ -92,7 +92,10 @@ def sign_runtime(root: Path, identity: str = "-", release: bool = False,
 
 
 def build(destination: Path, legacy_recovery_app: Path | None = None,
-          sign_identity: str | None = None, keychain: Path | None = None) -> Path:
+          sign_identity: str | None = None, keychain: Path | None = None,
+          version: str | None = None) -> Path:
+    # Validate before invoking any tool or signing operation.
+    effective_version = project_version(version)
     if keychain is not None and sign_identity is None:
         raise SystemExit("keychain_requires_signing_identity")
     identity = developer_identity(sign_identity, keychain) if sign_identity is not None else "-"
@@ -118,7 +121,8 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
     run(str(icon_generator), str(ROOT / "assets/brand"), str(iconset))
     run("/usr/bin/iconutil", "-c", "icns", str(iconset), "-o", str(resources / "AppIcon.icns"))
     shutil.copytree(ROOT / "assets/brand", resources / "assets/brand")
-    host = build_host(resources / "host")
+    host = (build_host(resources / "host", version=version) if version is not None
+            else build_host(resources / "host"))
     shutil.copy2(native, host / "bin/mcpme-handoff")
     (host / "native-app.json").write_text(json.dumps({"schema_version": 1, "bundle_identifier": "com.jshahbazi.mcpme",
                                                      "native_executable": "../../MacOS/mcpme"}, sort_keys=True) + "\n")
@@ -132,7 +136,7 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
             "bundle_identifier": "com.jshahbazi.jevk5", "executable_sha256": sha256(legacy),
             "default_bundle_path": str(legacy_recovery_app)}, sort_keys=True) + "\n")
     info = {"CFBundleIdentifier": "com.jshahbazi.mcpme", "CFBundleName": "mcpme", "CFBundleDisplayName": "mcpme",
-            "CFBundleExecutable": "mcpme", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": project_version(),
+            "CFBundleExecutable": "mcpme", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": effective_version,
             "CFBundleVersion": "1", "LSUIElement": True, "LSMinimumSystemVersion": "26.0",
             "NSHighResolutionCapable": True, "NSPrincipalClass": "NSApplication", "CFBundleIconFile": "AppIcon"}
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
@@ -154,7 +158,7 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
     host_receipt["signing"] = "developer_id" if release else "ad_hoc"
     host_receipt["distribution"] = "bundled_native_app_host"
     host_receipt_path.write_text(json.dumps(host_receipt, indent=2, sort_keys=True) + "\n")
-    receipt = {"schema_version": 1,
+    receipt = {"schema_version": 1, "version": effective_version,
                "distribution": "developer_id_native_app" if release else "development_native_app",
                "signing": "developer_id" if release else "ad_hoc",
                "hardened_runtime": release, "secure_timestamp": release,
@@ -185,10 +189,11 @@ if __name__ == "__main__":
     parser.add_argument("--legacy-recovery-app", type=Path)
     parser.add_argument("--sign-identity", help="Developer ID Application name or certificate SHA-1")
     parser.add_argument("--keychain", type=Path, help="Keychain containing the signing certificate")
+    parser.add_argument("--version", help="Override the application version (major.minor.patch)")
     arguments = parser.parse_args()
     try:
         print(build(arguments.output.absolute(), arguments.legacy_recovery_app,
-                    arguments.sign_identity, arguments.keychain))
+                    arguments.sign_identity, arguments.keychain, arguments.version))
     except KeyboardInterrupt:
         raise SystemExit("app_build_interrupted") from None
     except BuildCommandError as error:

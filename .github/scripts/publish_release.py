@@ -35,15 +35,19 @@ class PublicationError(RuntimeError):
     """A fixed diagnostic with no captured command output or credential values."""
 
 
-def context() -> tuple[str, str, str]:
+def context(version: str | None = None) -> tuple[str, str, str]:
     if os.environ.get("GITHUB_REPOSITORY") != REPOSITORY:
         raise PublicationError("release_repository_invalid")
     commit = os.environ.get("GITHUB_SHA", "")
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise PublicationError("release_source_commit_invalid")
-    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
-    if not isinstance(version, str) or not re.fullmatch(VERSION_PATTERN, version):
+    project_version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    if not isinstance(project_version, str) or not re.fullmatch(VERSION_PATTERN, project_version):
         raise PublicationError("release_project_version_invalid")
+    if version is None:
+        version = project_version
+    if not isinstance(version, str) or not re.fullmatch(VERSION_PATTERN, version):
+        raise PublicationError("release_version_invalid")
     return version, "v" + version, commit
 
 
@@ -61,7 +65,7 @@ def command(*arguments: str) -> subprocess.CompletedProcess:
         raise PublicationError("release_github_command_failed") from None
 
 
-def api(endpoint: str, *, missing_allowed: bool = False) -> dict | None:
+def api_response(endpoint: str, *, missing_allowed: bool = False) -> object:
     result = command("api", "--hostname", "github.com", "--include", "--method", "GET", endpoint)
     # Use the actual HTTP status rather than matching gh's human-readable errors.
     # A missing object is safe to create; authorization/network errors are not.
@@ -79,6 +83,15 @@ def api(endpoint: str, *, missing_allowed: bool = False) -> dict | None:
         value = json.loads(body)
     except (TypeError, ValueError):
         raise PublicationError("release_github_api_failed") from None
+    if not isinstance(value, (dict, list)):
+        raise PublicationError("release_github_api_failed")
+    return value
+
+
+def api(endpoint: str, *, missing_allowed: bool = False) -> dict | None:
+    value = api_response(endpoint, missing_allowed=missing_allowed)
+    if value is None and missing_allowed:
+        return None
     if not isinstance(value, dict):
         raise PublicationError("release_github_api_failed")
     return value
@@ -103,8 +116,42 @@ def verify_tag(tag: str, commit: str) -> None:
         raise PublicationError("release_tag_commit_mismatch")
 
 
-def prepare() -> None:
+def bumped_version(version: str, bump: str) -> str:
+    if bump not in ("major", "minor", "patch"):
+        raise PublicationError("release_bump_invalid")
+    # A source baseline ahead of published releases remains the lower bound.
+    highest = tuple(map(int, version.split(".")))
+    page = 1
+    while True:
+        releases = api_response(f"repos/{REPOSITORY}/releases?per_page=100&page={page}")
+        if not isinstance(releases, list) or len(releases) > 100:
+            raise PublicationError("release_github_release_list_invalid")
+        for release in releases:
+            if (not isinstance(release, dict) or type(release.get("draft")) is not bool
+                    or type(release.get("prerelease")) is not bool
+                    or not isinstance(release.get("tag_name"), str)):
+                raise PublicationError("release_github_release_list_invalid")
+            tag = release["tag_name"]
+            if (release["draft"] or release["prerelease"]
+                    or not re.fullmatch("v" + VERSION_PATTERN, tag)):
+                continue
+            highest = max(highest, tuple(map(int, tag[1:].split("."))))
+        if len(releases) < 100:
+            break
+        page += 1
+    major, minor, patch = highest
+    if bump == "major":
+        return f"{major + 1}.0.0"
+    if bump == "minor":
+        return f"{major}.{minor + 1}.0"
+    return f"{major}.{minor}.{patch + 1}"
+
+
+def prepare(bump: str | None = None) -> None:
     version, tag, _ = context()
+    if bump is not None:
+        version = bumped_version(version, bump)
+        tag = "v" + version
     preflight(tag)
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
@@ -139,6 +186,7 @@ def validate_receipt(path: Path, receipt: dict, version: str, commit: str, kind:
         or receipt.get("notarization") != "accepted"
         or not submission_id(receipt.get("notary_submission_id"))
         or not isinstance(app, dict)
+        or app.get("version", version) != version
         or app.get("signing") != "developer_id"
         or app.get("hardened_runtime") is not True
         or app.get("secure_timestamp") is not True
@@ -276,15 +324,15 @@ def finish_release(tag: str, commit: str, assets: list[Path], release_id: int) -
     return verified_release(tag, commit, assets, draft=False, release_id=release_id)
 
 
-def resume(directory: Path, release_id: int) -> str:
+def resume(directory: Path, release_id: int, version: str | None = None) -> str:
     """Publish an existing complete draft only when all original assets match."""
-    version, tag, commit = context()
+    version, tag, commit = context(version)
     assets = validated_assets(directory, version, commit)
     return finish_release(tag, commit, assets, release_id)
 
 
-def publish(directory: Path) -> str:
-    version, tag, commit = context()
+def publish(directory: Path, version: str | None = None) -> str:
+    version, tag, commit = context(version)
     assets = validated_assets(directory, version, commit)
     preflight(tag)
     # GitHub ignores target_commitish when a tag already exists. Create a fresh
@@ -309,20 +357,23 @@ def publish(directory: Path) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     subcommands = parser.add_subparsers(dest="operation", required=True)
-    subcommands.add_parser("prepare")
+    preparation = subcommands.add_parser("prepare")
+    preparation.add_argument("--bump", choices=("major", "minor", "patch"))
     publication = subcommands.add_parser("publish")
     publication.add_argument("--assets-dir", type=Path, default=ROOT / "dist")
+    publication.add_argument("--version", help="Exact version selected by the signing job")
     recovery = subcommands.add_parser("resume")
     recovery.add_argument("--assets-dir", type=Path, default=ROOT / "dist")
     recovery.add_argument("--release-id", type=int, required=True)
+    recovery.add_argument("--version", help="Original release version from the build receipts")
     arguments = parser.parse_args()
     try:
         if arguments.operation == "prepare":
-            prepare()
+            prepare(arguments.bump)
         elif arguments.operation == "resume":
-            print(resume(arguments.assets_dir, arguments.release_id))
+            print(resume(arguments.assets_dir, arguments.release_id, arguments.version))
         else:
-            print(publish(arguments.assets_dir))
+            print(publish(arguments.assets_dir, arguments.version))
     except PublicationError as error:
         raise SystemExit(str(error)) from None
     except KeyboardInterrupt:

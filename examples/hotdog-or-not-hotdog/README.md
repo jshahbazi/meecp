@@ -16,11 +16,21 @@ JPEG, PNG, WebP, BMP, and GIF images are accepted, up to 12 MiB and 24 million p
 
 [Ultralytics YOLO11n](https://docs.ultralytics.com/models/yolo11/) is a pretrained COCO object detector. The app uses the `hot dog` class (class ID 52), runs a fixed 640-pixel FP32 ONNX model on the CPU, and applies confidence filtering and nonmaximum suppression. The source checkpoint, exported model hashes, export settings, and toolchain versions are recorded in `model-provenance.json`.
 
-`app.py` serves the upload interface using Python's standard library. `detector.py` implements inference and also exports the ordinary Python function `detect_hotdog(image_path, confidence=0.35)`. It accepts an absolute local image path and returns a JSON-compatible dictionary with the verdict, score, original-pixel boxes, dimensions, model name, and elapsed inference time. Errors use short content-free codes.
+`app.py` serves the upload interface using Python's standard library. `detector.py` implements inference and also exports the ordinary Python function `detect_hotdog(image_path=None, confidence=0.35, *, image_base64=None)`. Pass exactly one absolute local image path or an actual image encoded as base64 (including an image data URL). It returns a JSON-compatible dictionary with the verdict, score, original-pixel boxes, dimensions, model name, and elapsed inference time. Errors use short content-free codes.
 
 The service binds to `127.0.0.1` on an available port, authenticates browser requests with a random session cookie, checks Host and Origin, and serializes inference. Photos and results stay in memory. The app does not save uploads, write detection history, or make runtime network requests. Source development setup downloads dependencies and a hash-pinned model explicitly.
 
-This folder contains an ordinary application. It has no host-specific package manifest, adapter, install hooks, or automatic registration.
+This folder contains an ordinary application. It has no host-specific package manifest, adapter, install hooks, or automatic registration. `mcp-tool.json` supplies the optional tool contract for an external agent preparing a Python callable adapter.
+
+## Images supplied by an agent
+
+An MCP adapter must use the current `mcp-tool.json` contract and the current `detector.py`. Older prepared packages requiring `image_path` need to be prepared and installed again; editing the original source does not update a sealed installation.
+
+If the client exposes an attachment's local path, the agent can pass that path directly. If it exposes the image bytes, it can pass them through `image_base64` as canonical base64 or a `data:image/png;base64,...` URL (JPEG, WebP, BMP, and GIF are also accepted). Inline data is decoded in memory. Both inline and file inputs allow up to 12 MiB. A prepared adapter must declare `lifecycle.max_request_bytes: 17825792` (17 MiB) so base64 and JSON framing fit through the host bridge and gateway. Packages without an explicit declaration retain the 1 MiB request default. Larger images need client-side resizing/compression before they are passed to the detector.
+
+MCP tool calls carry [explicit JSON arguments](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#calling-tools); they do not automatically carry the conversation's attachments. A client showing an image to its vision model does not establish that its agent can retrieve the file bytes. Attachment access depends on the client and session. The server cannot recover an image from visual context, a private attachment identifier, or a path on another computer. Do not have the model invent a path or generate base64 from what it sees. No file chooser, clipboard reading, or remote image fetching is performed.
+
+For a client that exposes attachment paths or bytes, use: "Run the hotdog detector on this attached image. Use its available attachment path, or pass its actual image bytes through image_base64."
 
 ## Develop from source
 

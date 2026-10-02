@@ -15,6 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 
+from .limits import DEFAULT_REQUEST_BYTES, MAX_REQUEST_BYTES
+
 SCHEMA_VERSION = 1
 MANIFEST_NAME = "mcpme.package.json"
 LOCK_NAME = "mcpme.lock.json"
@@ -54,6 +56,7 @@ class Protocol(StrictModel):
 
 
 class Lifecycle(StrictModel):
+    max_request_bytes: int = Field(default=DEFAULT_REQUEST_BYTES, ge=1, le=MAX_REQUEST_BYTES)
     max_sessions: int = Field(default=8, ge=1, le=64)
     idle_timeout_seconds: int = Field(default=300, ge=1, le=300)
     operation_timeout_seconds: int = Field(default=60, ge=1, le=300)

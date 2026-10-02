@@ -31,7 +31,7 @@ Add these environment secrets under [Settings > Environments > macos-release](ht
 | `APPLE_API_KEY_ID` | API key identifier. |
 | `APPLE_API_ISSUER_ID` | Issuer identifier for the API key. |
 
-Keep credentials out of Git and build logs. The helper writes credential files with owner-only permissions, captures credential-tool output, and removes the temporary keychain in an unconditional cleanup step. Missing or rejected credentials fail the release; the workflow does not fall back to an ad hoc signature. A real signed release remains unverified until the credentials are supplied and Apple accepts a workflow run.
+Keep credentials out of Git and build logs. The helper writes credential files with owner-only permissions and captures credential-tool output. It registers the temporary signing keychain alongside the runner's existing user search list and checks signing before the app build. Unconditional cleanup restores the original search list, deletes the temporary keychain, and removes the private files. Missing or rejected credentials fail the release; the workflow does not fall back to an ad hoc signature. A real signed release remains unverified until the credentials are supplied and Apple accepts a workflow run.
 
 To build a release, open **Actions > Signed installer > Run workflow**, choose `main`, and approve the `macos-release` deployment. Download `mcpme-notarized-COMMIT` after success; it contains the DMG and its build receipt and expires after thirty days. Rejection or timeout from Apple fails the run without publishing an installer artifact.
 

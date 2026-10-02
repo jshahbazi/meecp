@@ -151,6 +151,7 @@ async def test_canceled_exchange_settlement_has_finite_deadline():
 
 async def test_worker_control_failure_closes_admission_and_exits_server(monkeypatch):
     server_channel, worker_channel = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+    server_activity, worker_activity = socket.socketpair()
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(("127.0.0.1", 0))
     listener.listen()
@@ -183,7 +184,7 @@ async def test_worker_control_failure_closes_admission_and_exits_server(monkeypa
             with pytest.raises(RuntimeError, match="^supervisor_unavailable$"):
                 await captured["launch"]("retry")
     monkeypatch.setattr(worker_module, "make_app", fake_app)
-    monkeypatch.setattr(worker_module.uvicorn, "Server", FakeServer)
+    monkeypatch.setattr(worker_module, "WorkerServer", FakeServer)
     callback_threads = []
     original = loop.call_soon_threadsafe
     def thread_handoff(*args, **kwargs):
@@ -192,11 +193,13 @@ async def test_worker_control_failure_closes_admission_and_exits_server(monkeypa
         return original(*args, **kwargs)
     monkeypatch.setattr(loop, "call_soon_threadsafe", thread_handoff)
     try:
-        await asyncio.wait_for(worker_module.run(config_read, listener.detach(), worker_channel.detach()), 1)
+        await asyncio.wait_for(worker_module.run(config_read, listener.detach(), worker_channel.detach(), worker_activity.detach()), 1)
         assert captured["shutdown"]
         import threading
         assert any(thread is not threading.main_thread() for thread in callback_threads)
     finally:
+        server_activity.close()
+        worker_activity.close()
         server_channel.close()
         listener.close()
         worker_channel.close()
@@ -204,6 +207,7 @@ async def test_worker_control_failure_closes_admission_and_exits_server(monkeypa
 
 async def test_real_http_worker_exits_after_silent_control_peer():
     server_channel, worker_channel = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+    server_activity, worker_activity = socket.socketpair()
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(("127.0.0.1", 0))
     listener.listen()
@@ -214,7 +218,7 @@ async def test_real_http_worker_exits_after_silent_control_peer():
               "max_sessions": 2, "idle_timeout": 5, "request_timeout": 1, "control_timeout": 0.05}
     os.write(config_write, json.dumps(config).encode())
     os.close(config_write)
-    task = asyncio.create_task(worker_module.run(config_read, listener.detach(), worker_channel.detach()))
+    task = asyncio.create_task(worker_module.run(config_read, listener.detach(), worker_channel.detach(), worker_activity.detach()))
     try:
         async with httpx.AsyncClient(timeout=2, trust_env=False) as client:
             response = await client.post(f"http://127.0.0.1:{port}/mcp", headers={
@@ -231,6 +235,8 @@ async def test_real_http_worker_exits_after_silent_control_peer():
         if not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        server_activity.close()
+        worker_activity.close()
         server_channel.close()
         listener.close()
         worker_channel.close()

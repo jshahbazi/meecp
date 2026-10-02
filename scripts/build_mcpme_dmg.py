@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 
 from build_mcpme_app import build as build_app, developer_identity, verify_signature
-from build_mcpme_host import ROOT, BuildCommandError, run
+from build_mcpme_host import ROOT, BuildCommandError, project_version, run
 
 
 INSTALLATION = """# Install mcpme
@@ -189,7 +189,11 @@ def verify_image(image: Path, workspace: Path, info: dict, instructions: str,
 
 def build(output: Path | None = None, app: Path | None = None,
           sign_identity: str | None = None, notary_profile: str | None = None,
-          keychain: Path | None = None, zip_output: Path | None = None) -> Path:
+          keychain: Path | None = None, zip_output: Path | None = None,
+          version: str | None = None) -> Path:
+    # Validate before credential lookup, copying, signing, or notarization.
+    if version is not None:
+        project_version(version)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise SystemExit("Build requires Apple silicon macOS")
     if output is not None and (output.suffix != ".dmg" or output.exists()):
@@ -218,8 +222,13 @@ def build(output: Path | None = None, app: Path | None = None,
             # Notarization staples a ticket; operate on a copy of supplied artifacts.
             run("/usr/bin/ditto", str(app.resolve(strict=True)), str(source))
         else:
-            build_app(source, sign_identity=certificate_hash, keychain=keychain)
+            if version is None:
+                build_app(source, sign_identity=certificate_hash, keychain=keychain)
+            else:
+                build_app(source, sign_identity=certificate_hash, keychain=keychain, version=version)
         info = app_metadata(source, certificate_hash)
+        if version is not None and info["CFBundleShortVersionString"] != version:
+            raise SystemExit("supplied_app_version_mismatch")
         app_receipt = json.loads((source / "Contents/Resources/app-build.json").read_bytes())
         if app_receipt.get("signing") != ("developer_id" if signed else "ad_hoc"):
             raise SystemExit("app_signing_receipt_mismatch")
@@ -319,10 +328,12 @@ if __name__ == "__main__":
     parser.add_argument("--sign-identity", help="Developer ID Application name or certificate SHA-1")
     parser.add_argument("--notary-profile", help="notarytool Keychain profile; requires --sign-identity")
     parser.add_argument("--keychain", type=Path, help="Keychain containing signing identity and notary profile")
+    parser.add_argument("--version", help="Override the application version (major.minor.patch)")
     arguments = parser.parse_args()
     try:
         print(build(arguments.output, arguments.app, arguments.sign_identity,
-                    arguments.notary_profile, arguments.keychain, zip_output=arguments.zip_output))
+                    arguments.notary_profile, arguments.keychain, zip_output=arguments.zip_output,
+                    version=arguments.version))
     except KeyboardInterrupt:
         raise SystemExit("dmg_build_interrupted") from None
     except BuildCommandError as error:

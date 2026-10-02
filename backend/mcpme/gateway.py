@@ -25,6 +25,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from .policy import LocalPolicy, load_json
+from .activity import Activity, RequestActivity
 
 PROTOCOL_VERSION = "2025-11-25"
 MAX_MESSAGE_BYTES = 1024 * 1024
@@ -62,6 +63,7 @@ class Pending:
     progress_token: Any = None
     output_bytes: int = 0
     deadline: asyncio.Task | None = None
+    activity: RequestActivity | None = None
 
 
 def encode(message: dict) -> bytes:
@@ -182,10 +184,12 @@ class Session:
         pending.output_bytes += message_bytes
         if pending.output_bytes > MAX_OPERATION_BYTES:
             raise ValueError("operation_limit")
-        await self.publish(pending.stream, encode(message), True)
-        self.pending.pop(key)
         if pending.deadline:
             pending.deadline.cancel()
+        if pending.activity:
+            pending.activity.finish("error" not in message and not message.get("result", {}).get("isError", False))
+        await self.publish(pending.stream, encode(message), True)
+        self.pending.pop(key)
         self.last_activity = time.monotonic()
 
     async def read_messages(self):
@@ -208,7 +212,8 @@ class Session:
 class Gateway:
     def __init__(self, *, launch_session: Callable[[str], Awaitable[SessionPipes]],
                  close_session: Callable[[str], Awaitable[None]], max_sessions=8,
-                 idle_timeout=300, request_timeout=60, active=None, expected_tools=None):
+                 idle_timeout=300, request_timeout=60, active=None, expected_tools=None,
+                 activity_report=None):
         if (not isinstance(max_sessions, int) or isinstance(max_sessions, bool) or max_sessions < 1 or
                 any(not math.isfinite(v) or v <= 0 for v in (idle_timeout, request_timeout))):
             raise ValueError("invalid_limits")
@@ -216,6 +221,8 @@ class Gateway:
         self.max_sessions, self.idle_timeout, self.request_timeout = max_sessions, idle_timeout, request_timeout
         self.active = active or (lambda: True)
         self.expected_tools = expected_tools
+        self.activity = Activity()
+        self.activity_report = activity_report
         self.sessions: dict[str, Session] = {}
         self.reservations: set[str] = set()
         self.lock = asyncio.Lock()
@@ -276,7 +283,9 @@ class Gateway:
         if session is None:
             return
         session.closed = True
-        for pending in session.pending.values():
+        for pending in list(session.pending.values()):
+            if pending.activity:
+                pending.activity.finish(False)
             if pending.deadline and pending.deadline is not asyncio.current_task():
                 pending.deadline.cancel()
         for task in session.server_pending.values():
@@ -326,6 +335,18 @@ class Gateway:
         await self.close(session.session_id)
 
     async def handle(self, request: Request):
+        message = request.scope.get("mcpme.message") or {}
+        counted = request.method == "POST" and message.get("method") == "tools/call"
+        activity = RequestActivity(self.activity, self.activity_report) if counted else None
+        try:
+            if activity:
+                activity.begin()
+            return await self._handle(request, activity)
+        finally:
+            if activity and not activity.transferred:
+                activity.finish(False)
+
+    async def _handle(self, request: Request, activity=None):
         # Raw ASGI streaming is returned below so HTTP disconnect never cancels a package request.
         if self.stopping or not self.active():
             return JSONResponse({"error": {"code": "slot_stopped"}}, status_code=409)
@@ -446,11 +467,17 @@ class Gateway:
         stream = secrets.token_hex(16)
         pending = Pending(message["id"], method, stream,
                           ((message.get("params") or {}).get("_meta") or {}).get("progressToken"))
+        pending.activity = activity
         session.pending[key] = pending
-        priming = await session.publish(stream)
+        if activity:
+            activity.transferred = True
         pending.deadline = asyncio.create_task(self.deadline(session, pending))
         try:
+            priming = await session.publish(stream)
             await session.write(message)
+        except asyncio.CancelledError:
+            await self.close(session.session_id)
+            raise
         except Exception:
             await self.close(session.session_id)
             return Response(status_code=503)
@@ -522,10 +549,11 @@ class SSE(Response):
 
 
 def make_app(*, token: str, port: int, launch_session, close_session, max_sessions=8,
-             idle_timeout=300, request_timeout=60, active=None, expected_tools=None):
+             idle_timeout=300, request_timeout=60, active=None, expected_tools=None,
+             activity_report=None):
     gateway = Gateway(launch_session=launch_session, close_session=close_session, max_sessions=max_sessions,
                       idle_timeout=idle_timeout, request_timeout=request_timeout, active=active,
-                      expected_tools=expected_tools)
+                      expected_tools=expected_tools, activity_report=activity_report)
 
     @asynccontextmanager
     async def lifespan(app):

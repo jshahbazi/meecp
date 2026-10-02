@@ -85,10 +85,22 @@ async def test_lifecycle_grant_filters_slots_actions_and_operations(tmp_path, pr
     host = Supervisor(tmp_path / "host", reaper)
     try:
         first, second = await install(host, package, "First"), await install(host, package, "Second")
+        host.activity(first.id).record("received")
+        host.activity(first.id).record("succeeded", 2)
+        host.activity(second.id).record("received")
+        host.activity(second.id).record("failed", 4)
         grant = host.grants.issue({"mode": "lifecycle", "slot_ids": [first.id], "actions": ["stop"]})
         token = credential(grant)
         async with client(host, token) as api:
-            assert [slot["slot_id"] for slot in (await api.get("/v1/slots")).json()["slots"]] == [first.id]
+            listed = await api.get("/v1/slots")
+            assert listed.status_code == 200
+            slots = listed.json()["slots"]
+            assert [slot["slot_id"] for slot in slots] == [first.id]
+            assert slots[0]["activity"]["received"] == slots[0]["activity"]["succeeded"] == 1
+            assert slots[0]["activity"]["failed"] == slots[0]["activity"]["in_flight"] == 0
+            inspected = await api.get("/v1/slots/" + first.id)
+            assert inspected.status_code == 200
+            assert inspected.json()["activity"] == slots[0]["activity"]
             for route in ("/v1/status", "/v1/imports", "/v1/slots/" + second.id, "/v1/grants"):
                 assert (await api.get(route)).status_code == 403
             for target, action in ((first, "start"), (first, "restart"), (second, "stop")):

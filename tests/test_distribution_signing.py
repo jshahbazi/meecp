@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import platform
+import plistlib
 import shutil
 import subprocess
 import sys
@@ -13,7 +14,9 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import build_mcpme_app as app_builder  # noqa: E402
 import build_mcpme_dmg as dmg_builder  # noqa: E402
+import build_mcpme_host as host_builder  # noqa: E402
 from build_mcpme_host import BuildCommandError  # noqa: E402
+from build_mcpme_host import project_version  # noqa: E402
 
 
 CERTIFICATE = "A" * 40
@@ -38,6 +41,88 @@ def test_only_developer_id_application_identities_can_make_release(monkeypatch, 
     for invalid in ("-", "", "Apple Development: Distribution Test (TESTTEAM01)", "B" * 40):
         with pytest.raises(SystemExit, match="developer_id_identity_unavailable"):
             app_builder.developer_identity(invalid, keychain)
+
+
+@pytest.mark.parametrize("version", ["1", "1.2", "01.2.3", "1.2.3-alpha", "v1.2.3"])
+def test_version_override_requires_strict_major_minor_patch(version):
+    with pytest.raises(SystemExit, match="release_version_requires_major_minor_patch"):
+        project_version(version)
+
+
+def test_version_override_is_accepted_without_modifying_project_source(monkeypatch, tmp_path):
+    monkeypatch.setattr(host_builder, "ROOT", tmp_path)
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n')
+    before = (tmp_path / "pyproject.toml").read_bytes()
+    assert project_version("2.4.6") == "2.4.6"
+    assert project_version() == "0.1.0"
+    assert (tmp_path / "pyproject.toml").read_bytes() == before
+
+
+def test_app_rejects_invalid_override_before_external_build(monkeypatch, tmp_path):
+    called = []
+    monkeypatch.setattr(app_builder, "run", lambda *args: called.append(args))
+    with pytest.raises(SystemExit, match="release_version_requires_major_minor_patch"):
+        app_builder.build(tmp_path / "mcpme.app", version="1.2")
+    assert called == []
+
+
+def test_dmg_rejects_invalid_override_before_external_build(monkeypatch, tmp_path):
+    called = []
+    monkeypatch.setattr(dmg_builder, "developer_identity", lambda *args: called.append(args))
+    with pytest.raises(SystemExit, match="release_version_requires_major_minor_patch"):
+        dmg_builder.build(tmp_path / "mcpme.dmg", version="1.2")
+    assert called == []
+
+
+def test_app_build_records_selected_version_and_passes_it_to_host(monkeypatch, tmp_path):
+    source = tmp_path / "source"
+    for relative in ("Sources/McpmeMenuBar/main.swift", "Sources/McpmeMenuBar/Brand.swift",
+                     "README.md", "model-manifest.json", "THIRD_PARTY_NOTICES.md",
+                     "assets/brand/source.svg", "pyproject.toml"):
+        path = source / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('[project]\nversion = "0.1.0"\n' if relative == "pyproject.toml" else "synthetic")
+    (source / "docs").mkdir()
+    binary_directory = tmp_path / "native"
+    binary_directory.mkdir()
+    (binary_directory / "McpmeMenuBar").write_bytes(b"synthetic native app")
+    before = (source / "pyproject.toml").read_bytes()
+    host_versions = []
+
+    def run(*arguments):
+        if "--show-bin-path" in arguments:
+            return str(binary_directory)
+        if arguments[0] == "/usr/bin/iconutil":
+            Path(arguments[arguments.index("-o") + 1]).write_bytes(b"synthetic icon")
+        if "rev-parse" in arguments:
+            return "a" * 40
+        return ""
+
+    def build_host(destination, *, version):
+        host_versions.append(version)
+        (destination / "bin").mkdir(parents=True)
+        (destination / "build.json").write_text(json.dumps({
+            "host_version": version, "artifact_sha256": {},
+        }))
+        return destination
+
+    monkeypatch.setattr(app_builder, "ROOT", source)
+    monkeypatch.setattr(app_builder, "run", run)
+    monkeypatch.setattr(app_builder, "build_host", build_host)
+    monkeypatch.setattr(app_builder, "developer_identity", lambda *args: CERTIFICATE)
+    monkeypatch.setattr(app_builder, "sign_runtime", lambda *args: 0)
+    monkeypatch.setattr(app_builder, "verify_signature", lambda *args, **kwargs: None)
+    app = app_builder.build(tmp_path / "mcpme.app", sign_identity=IDENTITY, version="2.4.6")
+    resources = app / "Contents/Resources"
+    info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+    receipt = json.loads((resources / "app-build.json").read_text())
+    host_receipt = json.loads((resources / "host/build.json").read_text())
+    assert info["CFBundleShortVersionString"] == receipt["version"] == host_receipt["host_version"] == "2.4.6"
+    assert host_versions == ["2.4.6"]
+    assert receipt["source_commit"] == "a" * 40
+    assert receipt["source_tree_dirty"] is False
+    assert receipt["signing"] == host_receipt["signing"] == "developer_id"
+    assert (source / "pyproject.toml").read_bytes() == before
 
 
 def test_all_native_helpers_and_extensions_get_hardened_signatures(monkeypatch, tmp_path):
@@ -131,16 +216,26 @@ def fake_packaging(monkeypatch, tmp_path):
     monkeypatch.setattr(dmg_builder.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(dmg_builder.platform, "machine", lambda: "arm64")
     monkeypatch.setattr(dmg_builder, "developer_identity", lambda *args: CERTIFICATE)
-    monkeypatch.setattr(dmg_builder, "app_metadata", lambda *args: info)
+    def metadata(app, certificate_hash=None):
+        plist = app / "Contents/Info.plist"
+        if plist.exists():
+            return plistlib.loads(plist.read_bytes())
+        return info
+    monkeypatch.setattr(dmg_builder, "app_metadata", metadata)
     monkeypatch.setattr(dmg_builder, "verify_signature", lambda *args, **kwargs: None)
 
-    def build_app(destination, sign_identity=None, keychain=None):
+    def build_app(destination, sign_identity=None, keychain=None, version=None):
         resources = destination / "Contents/Resources"
         resources.mkdir(parents=True)
         (resources / "app-build.json").write_text(json.dumps({
             "signing": "developer_id" if sign_identity else "ad_hoc",
             "distribution": "developer_id_native_app" if sign_identity else "development_native_app",
         }))
+        (destination / "Contents").mkdir(exist_ok=True)
+        (destination / "Contents/Info.plist").write_bytes(plistlib.dumps({
+            "CFBundleShortVersionString": version or "0.1.0", "CFBundleVersion": "1",
+            "LSMinimumSystemVersion": "26.0", "CFBundleIdentifier": "com.jshahbazi.mcpme",
+            "CFBundleExecutable": "mcpme", "CFBundlePackageType": "APPL"}))
         return destination
 
     def run(*arguments):
@@ -194,6 +289,26 @@ def test_published_receipt_describes_actual_distribution(fake_packaging, tmp_pat
         assert first_staple < image_creation
     else:
         assert not any("notarytool" in call or "stapler" in call for call in fake_packaging)
+
+
+def test_version_override_propagates_to_distribution_receipts(fake_packaging, tmp_path):
+    image = dmg_builder.build(tmp_path / "installer.dmg", version="2.4.6",
+                              zip_output=tmp_path / "mcpme.zip")
+    receipt = json.loads(image.with_name(image.name + ".build.json").read_text())
+    zip_receipt = json.loads((tmp_path / "mcpme.zip.build.json").read_text())
+    assert receipt["version"] == "2.4.6"
+    assert zip_receipt["version"] == "2.4.6"
+
+
+def test_supplied_app_version_override_must_match(fake_packaging, tmp_path):
+    supplied = tmp_path / "supplied.app"
+    (supplied / "Contents").mkdir(parents=True)
+    (supplied / "Contents/Info.plist").write_bytes(plistlib.dumps({
+        "CFBundleShortVersionString": "0.1.0", "CFBundleVersion": "1",
+        "LSMinimumSystemVersion": "26.0", "CFBundleIdentifier": "com.jshahbazi.mcpme",
+        "CFBundleExecutable": "mcpme", "CFBundlePackageType": "APPL"}))
+    with pytest.raises(SystemExit, match="supplied_app_version_mismatch"):
+        dmg_builder.build(tmp_path / "installer.dmg", app=supplied, version="2.4.6")
 
 
 @pytest.mark.parametrize("reject_submission", [1, 2])

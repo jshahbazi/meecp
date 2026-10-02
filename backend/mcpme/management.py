@@ -1,0 +1,315 @@
+"""A separately connected, scoped, tools-only management MCP facade.
+
+This transport never retrieves slot invocation credentials, opens an app, or
+starts a slot during initialization. The manager checks authority on each call.
+"""
+from __future__ import annotations
+
+import asyncio
+import contextlib
+from dataclasses import dataclass
+import json
+import logging
+import os
+from pathlib import Path
+import signal
+import sys
+from typing import Callable
+
+import anyio
+from jsonschema import Draft202012Validator
+from mcp.server.lowlevel import Server
+from mcp.server.models import InitializationOptions
+from mcp.shared.message import SessionMessage
+from mcp.types import CallToolResult, JSONRPCMessage, ServerCapabilities, TextContent, Tool, ToolsCapability
+
+from .gateway import MAX_MESSAGE_BYTES, MAX_PENDING, encode
+from .grants import GrantError
+from .policy import load_json
+
+UUID_SCHEMA = {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+PATH_SCHEMA = {"type": "string", "minLength": 1, "maxLength": 4096}
+REVISION_SCHEMA = {"type": "integer", "minimum": 1}
+NAME_SCHEMA = {"type": "string", "minLength": 1, "maxLength": 256}
+INTENT_SCHEMA = {"type": "string", "maxLength": 16384}
+START_POLICY_SCHEMA = {"type": "string", "enum": ["manual", "host"]}
+DOCUMENT_ROLE_SCHEMA = {"type": "string", "enum": ["instructions", "reference"]}
+LABELS_SCHEMA = {"type": "array", "maxItems": 128, "uniqueItems": True,
+                 "items": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,128}$"}}
+REQUIREMENTS_SCHEMA = {"type": "object", "additionalProperties": False, "properties": {
+    "tools": LABELS_SCHEMA, "secret_references": LABELS_SCHEMA,
+    "profile": {"type": "string", "enum": ["mcp-stdio", "model-service"]},
+    "memory_mb": {"type": "integer", "minimum": 1, "maximum": 262144}}}
+
+# Dependencies and validators can include request content in their exceptions.
+# Only these documented metadata codes can cross the error boundary.
+SAFE_ERROR_CODES = frozenset({
+    "unauthorized", "forbidden", "grant_expired", "grant_revoked", "grant_scope_denied",
+    "grant_scope", "grant_plan_changed", "grant_limit", "grant_credential_unavailable", "grants_unavailable",
+    "grant_not_found", "grant_unavailable", "grant_operation_mismatch", "grant_plan_mismatch",
+    "invalid_grant", "invalid_credential", "unsafe_private_state", "plan_not_found", "plan_stale",
+    "invalid_plan", "invalid_install_plan", "invalid_import_plan", "import_not_found", "stale_import_revision",
+    "invalid_import_identity", "invalid_import_revision", "invalid_import_request", "invalid_import_state",
+    "import_submitted", "import_expired", "import_canceled", "imports_unavailable", "import_not_ready",
+    "source_unresolved", "source_changed", "source_credentials_detected", "source_size_exceeded",
+    "source_file_limit", "unsafe_source_path", "unsafe_source_file", "unsupported_source_file",
+    "invalid_import_intent", "invalid_document_role", "import_credentials_detected", "invalid_slot_name",
+    "invalid_import_requirements", "tool_contract_required", "tool_contract_mismatch",
+    "engine_incompatible", "secret_reference_unavailable", "unsupported_process_topology",
+    "unsupported_profile", "unsupported_capability", "package_changed", "package_digest_mismatch",
+    "invalid_package", "slot_not_found", "operation_not_found", "invalid_control", "resource_blocked",
+    "port_conflict", "ownership_lost", "incompatible", "host_unavailable", "body_limit", "response_limit",
+    "invalid_request", "service_error", "plan_expired", "import_revision_mismatch", "import_plan_invalidated",
+    "draft_inactive", "draft_finalized", "operation_in_progress", "tool_schema_mismatch",
+    "installation_recovery_required", "draft_revision_mismatch", "import_metadata_limit", "source_file_excluded",
+    "invalid_source_selection", "intent_required", "prepared_package_required", "unsupported_import_source",
+    "artifact_hash_mismatch", "artifact_mode_mismatch", "artifact_size_mismatch", "artifact_tree_mismatch",
+    "duplicate_artifact", "duplicate_tool", "entrypoint_not_executable", "external_schema_reference",
+    "invalid_artifact_path", "invalid_entrypoint", "invalid_model_profile", "invalid_package_json",
+    "invalid_package_schema", "invalid_process_graph", "invalid_resource_declaration", "invalid_tool_schema",
+    "license_required", "manifest_hash_mismatch", "model_identity_mismatch", "package_lock_mismatch",
+    "package_size_exceeded", "unsafe_package_file", "unsafe_package_path", "unsupported_execution_profile",
+    "unsupported_package_schema", "import_binding_mismatch", "import_cleanup_failed", "import_limit_exceeded",
+    "import_operation_mismatch", "import_revision_required", "invalid_import_update", "invalid_start_policy",
+    "source_identity_mismatch", "supported_source_required", "unsupported_import_schema", "unsupported_source",
+    "generation_required", "invalid_generation", "invalid_identity", "operation_conflict", "operation_finalized",
+    "ownership_reconciliation_required", "registry_unavailable", "slot_conflict", "slot_not_stopped", "stale_generation",
+    "unsupported_registry_schema", "candidate_validation_failed", "capacity_exceeded", "gateway_failed",
+    "invalid_resource_policy", "invalid_resource_reservation", "invalid_slot_identity", "migration_recovery_required",
+    "package_required", "resource_policy_required", "runtime_authentication_failed", "runtime_config_limit",
+    "runtime_identity_mismatch", "runtime_start_failed", "session_limit", "session_termination_failed",
+    "session_termination_unverified", "slot_stopped", "unsupported_mcp_capabilities", "unsupported_platform",
+    "unsupported_start_policy",
+})
+
+
+def schema(properties=None, required=(), **extra):
+    return {"type": "object", "properties": properties or {}, "required": list(required),
+            "additionalProperties": False, **extra}
+
+
+@dataclass(frozen=True)
+class Operation:
+    tool: Tool
+    method: str
+    route: str
+    body: Callable[[dict], dict | None]
+
+
+def operations() -> dict[str, Operation]:
+    result = {}
+
+    def add(name, description, method, route, input_schema=None, body=lambda _: None):
+        result[name] = Operation(Tool(name=name, description=description,
+            inputSchema=input_schema or schema()), method, route, body)
+
+    add("mcpme_capabilities", "Read supported host operations and preparation templates.", "GET", "/v1/capabilities")
+    add("mcpme_list_imports", "List resumable import draft summaries.", "GET", "/v1/imports")
+    add("mcpme_create_import", "Snapshot selected local source into a resumable draft without executing it.",
+        "POST", "/v1/imports", schema({"source": PATH_SCHEMA, "name": NAME_SCHEMA, "intent": INTENT_SCHEMA,
+            "document_role": DOCUMENT_ROLE_SCHEMA, "start": {"type": "boolean"}, "start_policy": START_POLICY_SCHEMA,
+            "files": {"type": "array", "maxItems": 2048, "uniqueItems": True, "items": PATH_SCHEMA}},
+            ("source", "name")), lambda args: {**{"intent": "", "start": False, "start_policy": "manual"}, **args})
+    add("mcpme_inspect_import", "Inspect the current draft revision and blockers.", "GET", "/v1/imports/{draft_id}",
+        schema({"draft_id": UUID_SCHEMA}, ("draft_id",)))
+    revision = {"draft_id": UUID_SCHEMA, "revision": REVISION_SCHEMA}
+    without_id = lambda args: {key: value for key, value in args.items() if key != "draft_id"}
+    add("mcpme_revise_import", "Revise a draft using its exact current revision; attached artifacts become stale.",
+        "POST", "/v1/imports/{draft_id}/revise", schema({**revision, "name": NAME_SCHEMA, "intent": INTENT_SCHEMA,
+            "document_role": DOCUMENT_ROLE_SCHEMA, "start": {"type": "boolean"}, "start_policy": START_POLICY_SCHEMA,
+            "requirements": REQUIREMENTS_SCHEMA}, ("draft_id", "revision"), minProperties=3), without_id)
+    for action in ("export", "cancel", "expire"):
+        add("mcpme_" + action + "_import", f"{action.capitalize()} the exact current draft revision.",
+            "POST", "/v1/imports/{draft_id}/" + action, schema(revision, ("draft_id", "revision")), without_id)
+    add("mcpme_attach_import_package", "Verify a prepared package against the draft source and exact revision.",
+        "POST", "/v1/imports/{draft_id}/attach", schema({**revision, "package": PATH_SCHEMA},
+            ("draft_id", "revision", "package")), without_id)
+    add("mcpme_list_slots", "List managed slots visible to this grant.", "GET", "/v1/slots")
+    add("mcpme_inspect_slot", "Inspect one slot visible to this grant.", "GET", "/v1/slots/{slot_id}",
+        schema({"slot_id": UUID_SCHEMA}, ("slot_id",)))
+    plan_schema = schema({"package": PATH_SCHEMA, "import_id": UUID_SCHEMA, "revision": REVISION_SCHEMA,
+            "name": NAME_SCHEMA, "start_policy": START_POLICY_SCHEMA, "start": {"type": "boolean"}}, oneOf=[
+        {"required": ["package"], "not": {"anyOf": [{"required": ["import_id"]}, {"required": ["revision"]}]}},
+        {"required": ["import_id", "revision"], "not": {"anyOf": [{"required": [key]} for key in
+            ("package", "name", "start_policy", "start")]}}])
+    add("mcpme_plan_install", "Create a reviewable immutable plan. Planning does not execute package code.",
+        "POST", "/v1/install/plan", plan_schema, lambda args: args if "import_id" in args else
+        {**{"start_policy": "manual", "start": False}, **args})
+    add("mcpme_inspect_install_plan", "Read the saved review summary of an exact installation plan.",
+        "GET", "/v1/plans/{plan_id}", schema({"plan_id": UUID_SCHEMA}, ("plan_id",)))
+    add("mcpme_apply_install", "Apply the exact granted plan; retries return its one bound operation.",
+        "POST", "/v1/install/apply", schema({"plan_id": UUID_SCHEMA}, ("plan_id",)), lambda args: args)
+    add("mcpme_get_operation", "Read a visible operation's bounded progress and result.", "GET", "/v1/operations/{operation_id}",
+        schema({"operation_id": UUID_SCHEMA}, ("operation_id",)))
+    for action in ("start", "stop", "restart"):
+        add("mcpme_" + action + "_slot", f"{action.capitalize()} one slot allowed by this lifecycle grant.",
+            "POST", "/v1/slots/{slot_id}/" + action, schema({"slot_id": UUID_SCHEMA}, ("slot_id",)), lambda _: {})
+    return result
+
+
+def tool_result(value: dict, *, error=False) -> CallToolResult:
+    return CallToolResult(content=[TextContent(type="text", text=json.dumps(value, allow_nan=False, separators=(",", ":")))],
+                          structuredContent=value, isError=error)
+
+
+def failure(code: str) -> CallToolResult:
+    return tool_result({"api_version": 1, "error": {"code": code}}, error=True)
+
+
+class Management:
+    def __init__(self, state: Path, credential_file: Path, *, caller=None):
+        if caller is None:
+            from .__main__ import call
+            caller = call
+        self.state, self.credential_file, self.caller = state, credential_file, caller
+        self.operations = operations()
+        self.validators = {name: Draft202012Validator(operation.tool.inputSchema)
+                           for name, operation in self.operations.items()}
+
+    async def invoke(self, name: str, arguments: dict | None) -> CallToolResult:
+        operation = self.operations.get(name)
+        if operation is None:
+            return failure("unknown_tool")
+        try:
+            if not isinstance(arguments, dict) or not self.validators[name].is_valid(arguments):
+                return failure("invalid_tool_arguments")
+            async with asyncio.timeout(330):
+                value = await self.caller(self.state, operation.method, operation.route.format(**arguments),
+                    operation.body(arguments), credential_file=self.credential_file)
+            if not isinstance(value, dict):
+                return failure("management_request_failed")
+            if "error" in value:
+                code = value["error"].get("code") if isinstance(value["error"], dict) else None
+                return failure(code if isinstance(code, str) and code in SAFE_ERROR_CODES else "management_request_failed")
+            result = tool_result(value)
+            if len(encode(result.model_dump(by_alias=True, exclude_none=True))) > MAX_MESSAGE_BYTES - 8192:
+                # Include both the structured result and its escaped text copy.
+                return failure("response_limit")
+            return result
+        except asyncio.CancelledError:
+            raise
+        except GrantError as error:
+            return failure(error.code if error.code in SAFE_ERROR_CODES else "management_request_failed")
+        except Exception:
+            return failure("host_unavailable")
+
+    def server(self) -> Server:
+        server = Server("mcpme-management", version="1")
+
+        @server.list_tools()
+        async def list_tools():
+            return [operation.tool for operation in self.operations.values()]
+
+        # The SDK's default validator includes caller arguments in error text.
+        @server.call_tool(validate_input=False)
+        async def call_tool(name, arguments):
+            return await self.invoke(name, arguments)
+
+        return server
+
+
+async def serve_streams(management: Management, reader, writer):
+    """Bound frames, queued messages, active requests, output and write deadlines."""
+    pending = set()
+    read_send, read_receive = anyio.create_memory_object_stream(1)
+    write_send, write_receive = anyio.create_memory_object_stream(1)
+    write_lock = asyncio.Lock()
+
+    async def emit(value):
+        data = encode(value) + b"\n"
+        if len(data) > MAX_MESSAGE_BYTES:
+            raise ValueError("response_limit")
+        async with write_lock, asyncio.timeout(30):
+            await writer(data)
+
+    async def input_task():
+        async with read_send:
+            while True:
+                try:
+                    line = await reader.readline()
+                except (ValueError, asyncio.LimitOverrunError):
+                    return
+                if not line:
+                    return
+                if len(line) > MAX_MESSAGE_BYTES or not line.endswith(b"\n"):
+                    return
+                try:
+                    value = load_json(line)
+                    message = JSONRPCMessage.model_validate(value)
+                except Exception:
+                    return
+                if "id" in value and "method" in value:
+                    key = (type(value["id"]), value["id"])
+                    if key in pending:
+                        return
+                    if len(pending) >= MAX_PENDING:
+                        await emit({"jsonrpc": "2.0", "id": value["id"], "error": {
+                            "code": -32000, "message": "The management request limit was reached."}})
+                        continue
+                    pending.add(key)
+                await read_send.send(SessionMessage(message))
+
+    async def output_task():
+        async with write_receive:
+            async for item in write_receive:
+                value = item.message.model_dump(by_alias=True, exclude_none=True)
+                if "error" in value:
+                    # The SDK can stringify exceptions outside our tool handler.
+                    value["error"] = {"code": -32000, "message": "The management request could not be completed."}
+                await emit(value)
+                if "id" in value and "method" not in value:
+                    pending.discard((type(value["id"]), value["id"]))
+
+    server = management.server()
+    options = InitializationOptions(server_name="mcpme-management", server_version="1",
+        capabilities=ServerCapabilities(tools=ToolsCapability(listChanged=False)))
+
+    async def run_server():
+        async with read_receive, write_send:
+            await server.run(read_receive, write_send, options)
+
+    async with anyio.create_task_group() as group:
+        group.start_soon(input_task)
+        group.start_soon(output_task)
+        group.start_soon(run_server)
+
+
+async def run_management(state: Path, credential_file: Path):
+    """Use the SDK with a private local API and terminate cleanly on EOF/signals."""
+    from .grants import read_credential
+    read_credential(credential_file)
+    logging.disable(logging.CRITICAL)
+    loop = asyncio.get_running_loop()
+    reader = asyncio.StreamReader(limit=MAX_MESSAGE_BYTES)
+    protocol = asyncio.StreamReaderProtocol(reader)
+    transport, _ = await loop.connect_read_pipe(lambda: protocol, sys.stdin.buffer)
+    stdout_fd = sys.stdout.fileno()
+    os.set_blocking(stdout_fd, False)
+
+    async def write(data):
+        view = memoryview(data)
+        while view:
+            try:
+                view = view[os.write(stdout_fd, view):]
+            except BlockingIOError:
+                ready = loop.create_future()
+                loop.add_writer(stdout_fd, lambda: None if ready.done() else ready.set_result(None))
+                try:
+                    await ready
+                finally:
+                    loop.remove_writer(stdout_fd)
+
+    task = asyncio.current_task()
+    handlers = []
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        with contextlib.suppress(NotImplementedError):
+            loop.add_signal_handler(sig, task.cancel)
+            handlers.append(sig)
+    try:
+        await serve_streams(Management(state, credential_file), reader, write)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        transport.close()
+        for sig in handlers:
+            loop.remove_signal_handler(sig)

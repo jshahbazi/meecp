@@ -56,7 +56,8 @@ Submitted drafts reject edits, return, cancel, and expiry while the operation is
 
 ## Remaining Phase 2 work
 
-- Scoped owner-issued grants and a separate management MCP facade.
+Scoped owner-issued grants and a separate management MCP facade are implemented in the [management milestone](MANAGEMENT_MCP.md).
+
 - Pinned downloads and broader package/configuration/secret-reference support.
 - Upgrades with candidate data snapshots, exposure-aware recovery, rollback, and removal preserving data by default.
 - Raw model/engine intake and end-to-end model preparation acceptance.

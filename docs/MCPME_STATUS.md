@@ -6,7 +6,7 @@ Implemented against [MCPME_DESIGN.md](MCPME_DESIGN.md). The host has a native Pr
 
 Phase 1's **two working slots** acceptance is complete for prepared local packages: JevK5 and JSON Utilities have independent controls, stable endpoints, real MCP clients, and verified supervision and cleanup. The native prepared-package setup and deliberate legacy transfer are included in the [recorded verification](MCPME_VERIFICATION.md).
 
-Phase 2 has begun with drag-and-drop, source-folder and Markdown/text intake, resumable versioned drafts, external-agent handoff, static package return, and import-bound installation plans. The prepared-package path uses the same review and installation operation. Reference-document services, raw model intake, downloads, scoped management grants/MCP, upgrade/rollback, removal, and integrated provider preparation remain pending. Phase 2 as a whole is incomplete.
+Phase 2 includes drag-and-drop, source-folder and Markdown/text intake, resumable versioned drafts, external-agent handoff, static package return, and import-bound installation plans. The prepared-package path uses the same review and installation operation. The [management milestone](MANAGEMENT_MCP.md) implements scoped grants and a management MCP facade, with owner CLI bootstrap, expiring/revocable credentials, and exact-plan one-operation binding. Reference-document services, raw model intake, downloads, upgrade/rollback, removal, and integrated provider preparation remain pending. Phase 2 as a whole is incomplete.
 
 Automatic Start at Login registration and next-login launch remain unverified for the development bundle. The tested legacy transfer preserved an explicitly owner-confirmed disabled preference; it did not validate enabled login-item transfer.
 
@@ -125,7 +125,7 @@ Any unfinished ownership record after host restart conservatively requires recon
 
 Interrupted installations become `recovery_required` and cannot be controlled into exposure. Controls are also rejected while an install is active. Once the durable exposure marker permits calls, later failures preserve the selected slot and its data. They cannot trigger automatic discard or rollback to older data. Automated recovery, upgrades, uninstall, and retention cleanup are pending; preserve the private state directory when investigating a blocked operation.
 
-Management uses the local owner's credential. Plan-scoped grants, the management MCP facade, pinned downloads, first-call start, standalone `mcp-http` packages, upgrades, and removal remain unsupported and are reported by `capabilities`.
+Management accepts the local owner's credential or an owner-issued scoped grant. The separate stdio management MCP facade requires a grant file and checks authority through the manager for each call. Pinned downloads, first-call start, standalone `mcp-http` packages, upgrades, and removal remain unsupported and are reported by `capabilities`.
 
 ## Import the existing JevK5 installation
 

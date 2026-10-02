@@ -8,6 +8,7 @@ import sqlite3
 import time
 import uuid
 from dataclasses import asdict, dataclass
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -147,7 +148,7 @@ class Registry:
             self._connection.execute("PRAGMA journal_mode = DELETE")
             self._connection.execute("PRAGMA synchronous = FULL")
             version = self._connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1):
+            if version not in (0, 1, 2):
                 self._connection.close()
                 raise RegistryError("unsupported_registry_schema")
             self._connection.executescript("""
@@ -177,7 +178,17 @@ class Registry:
                     idempotency_key TEXT UNIQUE,
                     details TEXT NOT NULL
                 );
-                PRAGMA user_version = 1;
+                CREATE TABLE IF NOT EXISTS management_grants (
+                    grant_id TEXT PRIMARY KEY,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    mode TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    revoked INTEGER NOT NULL DEFAULT 0,
+                    scope TEXT NOT NULL,
+                    operation_id TEXT
+                );
+                PRAGMA user_version = 2;
             """)
         except sqlite3.Error:
             if hasattr(self, "_connection"):
@@ -186,6 +197,20 @@ class Registry:
 
     def close(self) -> None:
         self._connection.close()
+
+    @contextmanager
+    def transaction(self):
+        """Commit linked authority and operation records together, without yielding."""
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            yield
+            self._connection.execute("COMMIT")
+        except BaseException as error:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            if isinstance(error, sqlite3.Error):
+                raise RegistryError("registry_unavailable") from None
+            raise
 
     def __enter__(self) -> Registry:
         return self

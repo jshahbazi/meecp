@@ -9,6 +9,12 @@ from mcp.types import JSONRPCMessage
 from starlette.responses import JSONResponse
 
 
+class AuthenticationError(ValueError):
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
 def load_json(data: bytes):
     def unique(pairs):
         result = {}
@@ -26,9 +32,10 @@ class LocalPolicy:
     """Authenticate before consuming bounded bodies; suppress raw exceptions."""
 
     def __init__(self, app, token: str, port: int, max_bytes: int = 1024 * 1024,
-                 body_timeout: float = 15):
+                 body_timeout: float = 15, authenticate=None):
         self.app, self.token, self.port = app, token, port
         self.max_bytes, self.body_timeout = max_bytes, body_timeout
+        self.authenticate = authenticate
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -46,8 +53,15 @@ class LocalPolicy:
         if (duplicates & sensitive or headers.get(b"host") not in allowed_hosts or
                 (b"origin" in headers and headers[b"origin"] not in allowed_origins)):
             return await self.error(scope, receive, send, 403, "forbidden")
-        if not hmac.compare_digest(headers.get(b"authorization", "").encode(),
-                                   ("Bearer " + self.token).encode()):
+        authorization = headers.get(b"authorization", "")
+        if self.authenticate is not None:
+            try:
+                scope["mcpme.principal"] = self.authenticate(authorization)
+            except AuthenticationError as error:
+                return await self.error(scope, receive, send, 401, error.code)
+            except Exception:
+                return await self.error(scope, receive, send, 401, "unauthorized")
+        elif not hmac.compare_digest(authorization.encode(), ("Bearer " + self.token).encode()):
             return await self.error(scope, receive, send, 401, "unauthorized")
         try:
             raw_length = headers.get(b"content-length", "0")

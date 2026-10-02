@@ -59,7 +59,7 @@ Describe what you want your assistant to do, then use **Copy Agent Instructions*
 
 The agent does the work of exposing your code through MCP. mcpme inspects the source without running it, then checks the returned package before installation. This workflow is still being built out: reference-document services and dropping in raw model weights aren't supported yet. See the [onboarding guide](docs/PROJECT_ONBOARDING.md) for the workflow and delivery plan.
 
-The first Phase 2 milestone provides [resumable source imports and external preparation](docs/PHASE2_ONBOARDING.md). The [package-authoring guide](docs/PACKAGE_AUTHORING.md) and versioned templates support agent preparation in a separate workspace. Downloads, scoped management MCP, upgrade/rollback, and removal remain pending.
+Phase 2 provides [resumable source imports and external preparation](docs/PHASE2_ONBOARDING.md), plus [scoped management grants and a separate management MCP connection](docs/MANAGEMENT_MCP.md). The [package-authoring guide](docs/PACKAGE_AUTHORING.md) and versioned templates support preparation in an external agent workspace. Downloads, upgrade/rollback, and removal remain pending.
 
 ## Put a local model to work
 
@@ -85,7 +85,7 @@ To add JevK5-4B, build the original app using the instructions below, then run `
 
 The current host runs prepared local tool and model packages, with JevK5-4B and JSON Utilities tested together. The first Phase 2 onboarding milestone adds source imports, saved drafts, and external-agent preparation.
 
-Downloads, upgrades, removal, a management MCP interface, and agent preparation inside the app are still ahead. Local builds are ad hoc development artifacts; the protected-main [release workflow](docs/GITHUB_RELEASES.md) signs and notarizes public installers. An automatic updater is pending. The development bundle's start-at-login behavior still needs verification.
+Downloads, upgrades, removal, and agent preparation inside the app are still ahead. Scoped management MCP is available through an owner-issued grant. Local builds are ad hoc development artifacts; the protected-main [release workflow](docs/GITHUB_RELEASES.md) signs and notarizes public installers. An automatic updater is pending. The development bundle's start-at-login behavior still needs verification.
 
 Services listen on `127.0.0.1`, require authentication, and check Host/Origin headers. The host does not log tool inputs, outputs, or raw exception payloads. Packages run with your account's permissions, so install code you trust. The [implementation guide](docs/MCPME_STATUS.md) covers supported package types, resource limits, and recovery.
 

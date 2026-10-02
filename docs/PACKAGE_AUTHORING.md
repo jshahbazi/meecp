@@ -1,4 +1,4 @@
-# Preparing a project package with an external agent
+# Preparing an app package with an external agent
 
 Phase 2 onboarding uses a versioned setup export, a selected private source snapshot, and an explicitly invoked agent preparation recipe. The host never imports source modules, runs a build script, or starts an agent during intake, attachment, or planning. A prepared package runs only during the authorized installation/runtime checks. Package contracts and lifecycle behavior remain defined in [MCPME_DESIGN.md](MCPME_DESIGN.md).
 
@@ -14,7 +14,7 @@ All three identifiers describe versioned authoring starting points. The host cur
 
 ## Export and prepare
 
-Create or resume a draft through Add Project or the `imports` CLI. Record the intended named tools, their input/output behavior, synthetic examples, side effects, access requirements, and resource limits before preparation. Missing intent or document role remains unresolved until supplied. Export the current draft:
+Create or resume a draft through Add App or the `imports` CLI. Record the intended named tools, their input/output behavior, synthetic examples, side effects, access requirements, and resource limits before preparation. Missing intent or document role remains unresolved until supplied. Export the current draft:
 
 ```sh
 umask 077

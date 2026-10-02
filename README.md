@@ -4,23 +4,23 @@
 
 **Give your AI tools a home on your Mac.**
 
-mcpme runs local MCP tools and models from your macOS menu bar. Add a project, connect it to your AI assistant, and keep an eye on it while you work. MCP (Model Context Protocol) lets assistants call those tools; mcpme takes care of keeping them running.
+mcpme runs local MCP tools and models from your macOS menu bar. Add an app, connect it to your AI assistant, and keep an eye on it while you work. MCP (Model Context Protocol) lets assistants call those tools; mcpme takes care of keeping them running. An app is a configured local tool or model service with its own controls and connection settings.
 
-Run a JSON validator alongside a local decision model. Connect several clients to the same model. Stop a project when you're done with it. Each project has its own controls and connection settings, all in one place.
+Run a JSON validator alongside a local decision model. Connect several clients to the same model. Stop an app when you're done with it. Manage them all in one place.
 
 ## What you can do
 
-- **See what's running.** Check each project's status from the menu bar, or open **Manage Projects** for details and installation progress.
-- **Control projects individually.** Start, stop, or restart a service. Choose which projects start with the host and which you start yourself.
-- **Connect your assistant.** Copy a project's connection configuration and add it to your MCP client. Its endpoint stays stable across restarts.
-- **Share a local model.** Use a model of your choice through a prepared package, and connect multiple assistants to the same running project.
+- **See what's running.** Check each app's status from the menu bar, or open **Manage Apps** for details and installation progress.
+- **Control apps individually.** Start, stop, or restart a service. In Manage Apps, choose **Manual** or **Automatic when mcpme opens** for an installed app, or remove it while keeping its data for recovery.
+- **Connect your assistant.** Copy an app's connection configuration and add it to your MCP client. Its endpoint stays stable across restarts.
+- **Share a local model.** Use a model of your choice through a prepared package, and connect multiple assistants to the same running app.
 - **Bring your own tools.** Install a prepared package, or start from source code and use an external coding agent to prepare it.
 
 mcpme currently requires **Apple silicon and macOS 26 or later**. It's an early development build; the supported features and remaining work are listed below.
 
 ## Try it
 
-Build the app and give it a first project: JSON Utilities, a small tool that checks whether a JSON document is valid and reports its top-level type. No model download is needed.
+Build mcpme and give it a first app: JSON Utilities, a small tool that checks whether a JSON document is valid and reports its top-level type. No model download is needed.
 
 You'll need Xcode Command Line Tools and `uv`. From the repository root:
 
@@ -34,14 +34,14 @@ open dist/mcpme.app
 
 The app bundles its own Python runtime and dependencies. Once built, it can run without `uv`, Homebrew, or the checkout. Builders require a fresh output path; for another app build, pass `--output dist/mcpme-dev.app`.
 
-1. Open **Add Project…** from the menu bar and choose `dist/json-utilities-package`.
+1. Open **Add App…** from the menu bar and choose `dist/json-utilities-package`.
 2. Check **Start after install**, then select **Review Package** to see the tools and declared access.
-3. Select **Add & Start Project**.
-4. Once the project is ready, use **Copy Connection Configuration** and add it to your MCP client's settings.
+3. Select **Add & Start App**.
+4. Once the app is ready, use **Copy Connection Configuration** and add it to your MCP client's settings.
 
 Your assistant can now call `validate_json(document)`. Connection formats vary by client; copying the configuration doesn't change its settings for you. If you move the app, copy the configuration again to get its new path.
 
-Closing the Projects window keeps services running. Quitting mcpme stops the processes it owns.
+Closing the Apps window keeps services running. Quitting mcpme stops the processes it owns. Changing an app's startup choice affects future launches. An explicit Stop remains in effect until Start clears it. Removing an app stops its owned processes and closes its connection; its source, package, and retained data remain available for recovery.
 
 To build a drag-to-Applications installer from current source:
 
@@ -53,13 +53,13 @@ Open `dist/mcpme-0.1.0-arm64.dmg`, drag the app to Applications, eject the image
 
 ## Bring your own tools
 
-A useful script can become a tool your assistant calls. **Add Project** accepts local source folders and Markdown or text setup instructions, as well as prepared packages.
+A useful script can become a tool your assistant calls. **Add App** accepts local source folders and Markdown or text setup instructions, as well as prepared packages.
 
 Describe what you want your assistant to do, then use **Copy Agent Instructions** to hand preparation to your coding agent. The agent builds a package in a separate workspace. Bring it back with **Import Prepared Package…**, review the tools and access it declares, and install it. Your draft is saved, so you can close the window and pick up later.
 
 The agent does the work of exposing your code through MCP. mcpme inspects the source without running it, then checks the returned package before installation. This workflow is still being built out: reference-document services and dropping in raw model weights aren't supported yet. See the [onboarding guide](docs/PROJECT_ONBOARDING.md) for the workflow and delivery plan.
 
-The first Phase 2 milestone provides [resumable source imports and external preparation](docs/PHASE2_ONBOARDING.md). The [package-authoring guide](docs/PACKAGE_AUTHORING.md) and versioned templates support agent preparation in a separate workspace. Downloads, scoped management MCP, upgrade/rollback, and removal remain pending.
+The first Phase 2 milestone provides [resumable source imports and external preparation](docs/PHASE2_ONBOARDING.md). The [package-authoring guide](docs/PACKAGE_AUTHORING.md) and versioned templates support agent preparation in a separate workspace. Downloads, scoped management MCP, and upgrade/rollback remain pending.
 
 ## Put a local model to work
 
@@ -79,13 +79,13 @@ For example, an assistant can call `JevK5_decide` with:
 
 The result includes probabilities, model and profile identity, token count, latency, and cache information. `JevK5_status()` reports readiness and aggregate counts. The assistant chooses when to call it and what to do with the result. Probabilities need validation against your own task before you use them as decision thresholds.
 
-To add JevK5-4B, build the original app using the instructions below, then run `uv run --locked python scripts/prepare_JevK5_package.py`. Add the resulting `dist/JevK5-4B-package` through **Add Project**. If you already use the standalone JevK5-4B app, the [migration guide](docs/MCPME_STATUS.md#import-the-existing-JevK5-4B-installation) covers transferring that installation.
+To add JevK5-4B, build the original app using the instructions below, then run `uv run --locked python scripts/prepare_JevK5_package.py`. Add the resulting `dist/JevK5-4B-package` through **Add App**. If you already use the standalone JevK5-4B app, the [migration guide](docs/MCPME_STATUS.md#import-the-existing-JevK5-4B-installation) covers transferring that installation.
 
 ## Where things stand
 
 The current host runs prepared local tool and model packages, with JevK5-4B and JSON Utilities tested together. The first Phase 2 onboarding milestone adds source imports, saved drafts, and external-agent preparation.
 
-Downloads, upgrades, removal, a management MCP interface, and agent preparation inside the app are still ahead. Local builds are ad hoc development artifacts; the protected-main [release workflow](docs/GITHUB_RELEASES.md) signs and notarizes public installers. An automatic updater is pending. The development bundle's start-at-login behavior still needs verification.
+Downloads, upgrades, a management MCP interface, and agent preparation inside the app are still ahead. Local builds are ad hoc development artifacts; the protected-main [release workflow](docs/GITHUB_RELEASES.md) signs and notarizes public installers. An automatic updater is pending. The development bundle's start-at-login behavior still needs verification.
 
 Services listen on `127.0.0.1`, require authentication, and check Host/Origin headers. The host does not log tool inputs, outputs, or raw exception payloads. Packages run with your account's permissions, so install code you trust. The [implementation guide](docs/MCPME_STATUS.md) covers supported package types, resource limits, and recovery.
 

@@ -21,6 +21,11 @@ import Darwin
 let state = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
 let url = URL(string: "http://127.0.0.1:19385/v1/status")!
 var request = URLRequest(url: url)
+request.httpMethod = CommandLine.arguments[2]
+if request.httpMethod == "PATCH" {
+    request.httpBody = Data("{\\"start_policy\\":\\"host\\"}".utf8)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+}
 request.timeoutInterval = 2
 request.setValue("Bearer synthetic-owner-token", forHTTPHeaderField: "Authorization")
 let done = DispatchSemaphore(value: 0)
@@ -51,7 +56,8 @@ def native_client(tmp_path_factory):
 
 
 @pytest.mark.parametrize("spelling", ["alias", "canonical", "nfc", "nfd"])
-async def test_native_client_reaches_python_owner_socket(tmp_path, native_client, spelling):
+@pytest.mark.parametrize("method", ["GET", "PATCH"])
+async def test_native_client_reaches_python_owner_socket(tmp_path, native_client, spelling, method):
     name = "state" if spelling in {"alias", "canonical"} else unicodedata.normalize(spelling.upper(), "café")
     state = tmp_path / name
     state.mkdir(mode=0o700)
@@ -63,19 +69,20 @@ async def test_native_client_reaches_python_owner_socket(tmp_path, native_client
     path = socket_path(state, "manager")
     received = []
     async def reply(request):
-        received.append(request.headers["Authorization"])
+        received.append((request.method, request.headers["Authorization"],
+                         await request.json() if request.method == "PATCH" else None))
         return JSONResponse({"api_version": 1})
-    app = LocalPolicy(Starlette(routes=[Route("/v1/status", reply)]), "synthetic-owner-token", 19385)
+    app = LocalPolicy(Starlette(routes=[Route("/v1/status", reply, methods=["GET", "PATCH"])]), "synthetic-owner-token", 19385)
     server = uvicorn.Server(uvicorn.Config(app, log_config=None, access_log=False, log_level="critical"))
     task = asyncio.create_task(server.serve(sockets=[listener]))
     try:
         async with asyncio.timeout(3):
             while not server.started:
                 await asyncio.sleep(0.01)
-        process = await asyncio.create_subprocess_exec(str(native_client), str(state),
+        process = await asyncio.create_subprocess_exec(str(native_client), str(state), method,
                     stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
         assert await asyncio.wait_for(process.wait(), 5) == 0
-        assert received == ["Bearer synthetic-owner-token"]
+        assert received == [(method, "Bearer synthetic-owner-token", {"start_policy": "host"} if method == "PATCH" else None)]
     finally:
         server.should_exit = True
         await asyncio.wait_for(task, 5)

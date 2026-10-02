@@ -10,16 +10,22 @@ import secrets
 import signal
 import sys
 import uuid
+from unittest.mock import AsyncMock
 
+import anyio
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.shared.exceptions import McpError
+from mcp.shared.message import SessionMessage
+from mcp.types import ClientNotification, CancelledNotification, CancelledNotificationParams, JSONRPCMessage
 
 from mcpme.gateway import MAX_MESSAGE_BYTES, MAX_PENDING, PROTOCOL_VERSION, encode
 from mcpme.management import Management, serve_streams
 from mcpme.private import write_private_json
 from test_mcpme_host import finish, prepared, tool_call
 from test_mcpme_management_cli import execute, private_manager
+from test_mcpme_packages import make_package
 
 ROOT = Path(__file__).resolve().parents[1]
 SENTINEL = "synthetic-private-request-must-not-appear-in-error"
@@ -176,6 +182,126 @@ async def test_pending_requests_are_bounded_and_eof_cancels_waiting_handlers():
         await asyncio.gather(task, return_exceptions=True)
 
 
+async def test_eof_cancels_backpressured_stdout_without_waiting_for_write_timeout():
+    reader = asyncio.StreamReader(limit=MAX_MESSAGE_BYTES)
+    blocked, closed = asyncio.Event(), asyncio.Event()
+    async def writer(data):
+        blocked.set()
+        try:
+            await asyncio.Future()
+        finally:
+            closed.set()
+    task = asyncio.create_task(serve_streams(Management(Path("unused"), Path("unused")), reader, writer))
+    try:
+        reader.feed_data(encode({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": PROTOCOL_VERSION, "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}}}) + b"\n")
+        await asyncio.wait_for(blocked.wait(), 2)
+        reader.feed_eof()
+        await asyncio.wait_for(task, 2)
+        assert closed.is_set()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("shutdown", ["cancel", "repeat_cancel", "eof"])
+async def test_sdk_slow_request_cancellation_and_eof_close_caller_promptly(shutdown):
+    wire = asyncio.StreamReader(limit=MAX_MESSAGE_BYTES)
+    client_read_send, client_read = anyio.create_memory_object_stream(1)
+    client_write, client_write_receive = anyio.create_memory_object_stream(1)
+    started, canceled = asyncio.Event(), asyncio.Event()
+    calls = active = 0
+    attempts = MAX_PENDING * 3 if shutdown == "repeat_cancel" else 1
+    async def caller(*args, **kwargs):
+        nonlocal calls, active
+        calls += 1
+        if calls <= attempts:
+            active += 1
+            started.set()
+            try:
+                await asyncio.Future()
+            finally:
+                active -= 1
+                canceled.set()
+        return {"api_version": 1, "ok": True}
+    async def writer(data):
+        await client_read_send.send(SessionMessage(JSONRPCMessage.model_validate_json(data)))
+    async def pump():
+        async with client_write_receive:
+            async for item in client_write_receive:
+                wire.feed_data(encode(item.message.model_dump(by_alias=True, exclude_none=True)) + b"\n")
+    task = asyncio.create_task(serve_streams(Management(Path("unused"), Path("unused"), caller=caller), wire, writer))
+    forward = asyncio.create_task(pump())
+    try:
+        async with ClientSession(client_read, client_write) as client:
+            await client.initialize()
+            for _ in range(attempts):
+                started.clear()
+                canceled.clear()
+                request_id = client._request_id
+                slow = asyncio.create_task(client.call_tool("mcpme_capabilities", {}))
+                await asyncio.wait_for(started.wait(), 2)
+                if shutdown != "eof":
+                    await client.send_notification(ClientNotification(CancelledNotification(params=CancelledNotificationParams(
+                        requestId=request_id, reason=SENTINEL))))
+                    with pytest.raises(McpError) as error:
+                        await asyncio.wait_for(slow, 2)
+                    assert SENTINEL not in str(error.value)
+                    await asyncio.wait_for(canceled.wait(), 2)
+                    assert active == 0
+                else:
+                    wire.feed_eof()
+                    await asyncio.wait_for(canceled.wait(), 2)
+                    await asyncio.wait_for(task, 2)
+                    await client_read_send.aclose()
+                    with pytest.raises(McpError):
+                        await asyncio.wait_for(slow, 2)
+            if shutdown != "eof":
+                result = await asyncio.wait_for(client.call_tool("mcpme_capabilities", {}), 2)
+                assert result.structuredContent == {"api_version": 1, "ok": True}
+                await asyncio.wait_for(client.send_ping(), 2)
+                assert not task.done()
+        if shutdown != "eof":
+            wire.feed_eof()
+            await asyncio.wait_for(task, 2)
+    finally:
+        task.cancel()
+        forward.cancel()
+        await asyncio.gather(task, forward, return_exceptions=True)
+        await client_read_send.aclose()
+
+
+async def test_stdio_disconnect_and_late_cancellation_preserve_durable_install_operation(tmp_path):
+    package = make_package(tmp_path / "package")
+    async with private_manager(tmp_path) as host:
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def candidate(slot):
+            entered.set()
+            await release.wait()
+        host.check_candidate = candidate
+        host.start_gateway = AsyncMock()
+        plan = await execute(host.root, "install", "plan", "--package", package)
+        grant = await execute(host.root, "authorize", "--plan", plan["plan_id"])
+        try:
+            async with sdk(host.root, grant["credential_file"], tmp_path / "stderr") as client:
+                await client.initialize()
+                request_id = client._request_id
+                result = await client.call_tool("mcpme_apply_install", {"plan_id": plan["plan_id"]})
+                assert not result.isError
+                operation_id = result.structuredContent["operation_id"]
+                await asyncio.wait_for(entered.wait(), 2)
+                await client.send_notification(ClientNotification(CancelledNotification(params=CancelledNotificationParams(
+                    requestId=request_id, reason=SENTINEL))))
+                progress = await client.call_tool("mcpme_get_operation", {"operation_id": operation_id})
+                assert progress.structuredContent["status"] == "running"
+            assert host.registry.get_operation(operation_id).status == "running"
+            assert any(not task.done() for task in host.tasks)
+            release.set()
+            assert (await finish(host, result.structuredContent)).status == "completed"
+        finally:
+            release.set()
+
+
 @pytest.mark.parametrize("data", [b'{"jsonrpc":"2.0","id":1,"id":2}\n', b'{"jsonrpc":"2.0","id":NaN}\n',
     b"x" * (MAX_MESSAGE_BYTES + 1) + b"\n", b'{"jsonrpc":"2.0"}'])
 async def test_invalid_or_oversized_stdio_frames_close_without_raw_output(data):
@@ -187,6 +313,35 @@ async def test_invalid_or_oversized_stdio_frames_close_without_raw_output(data):
         output.append(value)
     await asyncio.wait_for(serve_streams(Management(Path("unused"), Path("unused")), reader, writer), 2)
     assert output == []
+
+
+@pytest.mark.parametrize("invalid_id", [True, False, 1.0, 1.5, None])
+async def test_invalid_raw_request_id_closes_before_sdk_notification_fallback(invalid_id):
+    reader = asyncio.StreamReader(limit=MAX_MESSAGE_BYTES)
+    initialized = asyncio.Event()
+    output = []
+    async def caller(*args, **kwargs):
+        pytest.fail("invalid_request_id_reached_api")
+    async def writer(data):
+        value = json.loads(data)
+        output.append(value)
+        if value.get("id") == 0:
+            initialized.set()
+    task = asyncio.create_task(serve_streams(Management(Path("unused"), Path("unused"), caller=caller), reader, writer))
+    try:
+        reader.feed_data(encode({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
+            "protocolVersion": PROTOCOL_VERSION, "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}}}) + b"\n")
+        await asyncio.wait_for(initialized.wait(), 2)
+        reader.feed_data(encode({"jsonrpc": "2.0", "method": "notifications/initialized"}) + b"\n")
+        reader.feed_data(encode({"jsonrpc": "2.0", "id": invalid_id, "method": "tools/call", "params": {
+            "name": "mcpme_capabilities", "arguments": {}}}) + b"\n")
+        # The prior parser silently discarded this as an invalid SDK notification,
+        # retaining its pending ID and continuing to read future requests.
+        await asyncio.wait_for(task, 2)
+        assert [item["id"] for item in output] == [0]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.parametrize("shutdown", ["eof", signal.SIGTERM])

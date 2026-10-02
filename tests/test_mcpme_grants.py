@@ -337,3 +337,43 @@ async def test_capacity_retires_only_inactive_grants(tmp_path, prepared, monkeyp
             host.grants.authenticate(inactive_token)
     finally:
         await host.close()
+
+
+@pytest.mark.asyncio
+async def test_second_granted_import_plan_cannot_capture_first_operation(tmp_path, prepared):
+    package, reaper = prepared
+    host = Supervisor(tmp_path / "host", reaper)
+    try:
+        draft = host.imports.create(package, name="Synthetic", start=False)
+        plans = [await host.plan_install_async({"import_id": draft["draft_id"], "revision": 1}) for _ in range(2)]
+        grants = [host.grants.issue({"mode": "install", "plan_id": plan["plan_id"]},
+            plan=read_private_json(host.root / "plans" / (plan["plan_id"] + ".json"))) for plan in plans]
+        applied = await host.apply_install(plans[0]["plan_id"], grant_id=grants[0]["grant_id"])
+        with pytest.raises(GrantError, match="^grant_scope$"):
+            await host.apply_install(plans[1]["plan_id"], grant_id=grants[1]["grant_id"])
+        assert host.grants.inspect(grants[1]["grant_id"])["operation_id"] is None
+        operation = await finish(host, applied)
+        assert operation.status == "completed"
+        assert operation.slot_id == plans[0]["slot_id"]
+        assert len(host.registry.list_operations()) == len(host.registry.list_slots()) == 1
+    finally:
+        await host.close()
+
+
+@pytest.mark.asyncio
+async def test_revocation_preserves_durably_authorized_install_operation(tmp_path, prepared):
+    package, reaper = prepared
+    host = Supervisor(tmp_path / "host", reaper)
+    try:
+        plan = host.plan_install({"package": str(package), "start": False})
+        grant = host.grants.issue({"mode": "install", "plan_id": plan["plan_id"]},
+            plan=read_private_json(host.root / "plans" / (plan["plan_id"] + ".json")))
+        applied = await host.apply_install(plan["plan_id"], grant_id=grant["grant_id"])
+        host.grants.revoke(grant["grant_id"])
+        operation = await finish(host, applied)
+        assert operation.status == "completed"
+        with pytest.raises(GrantError, match="^grant_revoked$"):
+            await host.apply_install(plan["plan_id"], grant_id=grant["grant_id"])
+        assert len(host.registry.list_operations()) == len(host.registry.list_slots()) == 1
+    finally:
+        await host.close()

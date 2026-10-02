@@ -235,6 +235,8 @@ async def serve_streams(management: Management, reader, writer):
                     return
                 try:
                     value = load_json(line)
+                    if "id" in value and type(value["id"]) not in {int, str}:
+                        return
                     message = JSONRPCMessage.model_validate(value)
                 except Exception:
                     return
@@ -265,8 +267,13 @@ async def serve_streams(management: Management, reader, writer):
         capabilities=ServerCapabilities(tools=ToolsCapability(listChanged=False)))
 
     async def run_server():
-        async with read_receive, write_send:
-            await server.run(read_receive, write_send, options)
+        try:
+            async with read_receive, write_send:
+                await server.run(read_receive, write_send, options)
+        finally:
+            # A closed SDK session must also stop a blocked stdout writer.
+            # Durable manager operations live in the supervisor independently.
+            group.cancel_scope.cancel()
 
     async with anyio.create_task_group() as group:
         group.start_soon(input_task)

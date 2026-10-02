@@ -36,6 +36,9 @@ from .private import ensure_private_directory, read_private_json, snapshot_packa
 from .processes import OwnedProcess, ProcessOwner
 from .registry import Registry, RegistryError
 from .grants import GrantError, GrantStore, plan_digest
+from .preparation_contracts import PreparationError
+from .preparations import PreparationStore
+from .recipes import RecipeStore
 
 
 class HostError(ValueError):
@@ -69,6 +72,9 @@ def capabilities() -> dict:
             "management_grant_modes": ["read", "prepare", "lifecycle", "install"], "management_mcp": "scoped_stdio",
             "import_schema_versions": [1], "import_sources": ["local_folder", "markdown", "text", "prepared_package"],
             "preparation_templates": ["python-function-v1", "existing-mcp-v1", "jevk5-llamacpp-v1"],
+            "preparation_descriptor_schema_versions": [1], "recipe_bundle_schema_versions": [1],
+            "recipe_management": "local_static_declarative", "recipe_execution": False,
+            "automatic_preparation": False,
             "unsupported": ["mcp-http", "first_call", "upgrades", "downloads",
                             "reference_document_service", "raw_model_intake", "integrated_preparation"]}
 
@@ -144,6 +150,7 @@ class Supervisor:
         self.locks: dict[str, asyncio.Lock] = {}
         self.ledgers: dict[str, dict] = {}
         self.tasks: set[asyncio.Task] = set()
+        self.static_tasks: set[asyncio.Task] = set()
         self.install_lock = asyncio.Lock()
         self.closing = False
         self.residents: dict[str, dict[str, Resident]] = {}
@@ -156,6 +163,9 @@ class Supervisor:
         self.plan_imports: dict[str, tuple[str, int]] = {}
         try:
             self.imports = ImportStore(self.root)
+            self.recipes = RecipeStore(self.imports)
+            self.preparations = PreparationStore(self.imports, self.recipes)
+            self.preparations.recover()
             self.grants = GrantStore(self.registry)
             self.resource_policy = self.load_resource_policy()
         except BaseException:
@@ -187,6 +197,21 @@ class Supervisor:
                 or policy["memory_budget_mb"] < 1 or policy["gpu_policy"] != "exclusive-residency"):
             raise HostError("invalid_resource_policy")
         return policy
+
+    async def static_work(self, function, *args):
+        """Keep bounded file work owned until its thread has actually settled."""
+        if self.closing:
+            raise HostError("host_closing", 409)
+        if len(self.static_tasks) >= 4:
+            raise HostError("static_work_busy", 429)
+        task = asyncio.create_task(asyncio.to_thread(function, *args))
+        self.static_tasks.add(task)
+        def completed(result):
+            self.static_tasks.discard(result)
+            if not result.cancelled():
+                result.exception()  # Consume sanitized failures after a caller leaves.
+        task.add_done_callback(completed)
+        return await asyncio.shield(task)
 
     def activity(self, slot_id: str) -> Activity:
         if slot_id not in self.activities:
@@ -1337,6 +1362,12 @@ class Supervisor:
 
     async def close(self):
         self.closing = True
+        if self.static_tasks:
+            # Canceling an asyncio wrapper does not stop its underlying thread.
+            # Shield each owned task even if shutdown itself is canceled, so a
+            # retry retains the database and owner lock until file work settles.
+            await asyncio.gather(*(asyncio.shield(task) for task in list(self.static_tasks)),
+                                 return_exceptions=True)
         if self.tasks:
             pending = list(self.tasks)
             for task in pending:
@@ -1388,10 +1419,20 @@ def management_app(host: Supervisor, token: str, port: int):
                 if not isinstance(payload, dict):
                     raise HostError("invalid_request")
             if grant_id is not None:
+                if route.startswith(("/v1/recipes", "/v1/preparations")):
+                    # Existing metadata/attachment grants retain their scope.
+                    # This foundation introduces no scoped execution authority.
+                    raise GrantError("grant_scope", 403)
                 host.grants.authorize_route(grant_id, request.method, route, payload)
             if request.method == "GET":
                 if route == "/v1/capabilities":
                     result = capabilities()
+                elif route == "/v1/recipes":
+                    result = {"recipes": host.recipes.list_summaries()}
+                elif route == "/v1/preparations":
+                    result = {"preparations": host.preparations.list_summaries()}
+                elif route.startswith("/v1/preparations/"):
+                    result = host.preparations.get(request.path_params["job_id"])
                 elif route == "/v1/status":
                     result = {"supervisor_pid": os.getpid(), "slots": [host.slot_snapshot(slot) for slot in host.registry.list_slots()],
                               "operations": [operation.to_dict() for operation in host.registry.list_operations()],
@@ -1431,7 +1472,25 @@ def management_app(host: Supervisor, token: str, port: int):
                 else:
                     result = host.registry.get_operation(request.path_params["operation_id"]).to_dict()
             else:
-                if route == "/v1/grants":
+                if route == "/v1/recipes":
+                    if set(payload) != {"path"} or not isinstance(payload["path"], str) or not Path(payload["path"]).is_absolute():
+                        raise HostError("invalid_recipe_request")
+                    result = await host.static_work(host.recipes.add, Path(payload["path"]))
+                elif route.startswith("/v1/recipes/"):
+                    action = request.path_params["action"]
+                    if (action not in {"inspect", "enable", "disable", "revoke", "remove", "deprecate"}
+                            or set(payload) != {"recipe_id", "version"}):
+                        raise HostError("invalid_recipe_request")
+                    result = await host.static_work(getattr(host.recipes, action), payload["recipe_id"], payload["version"])
+                elif route == "/v1/preparations/plan":
+                    if set(payload) != {"import_id", "revision", "descriptor"}:
+                        raise HostError("invalid_preparation_request")
+                    result = await host.static_work(host.preparations.plan, payload["import_id"], payload["revision"], payload["descriptor"])
+                elif route.endswith("/cancel") and "job_id" in request.path_params:
+                    if payload:
+                        raise HostError("invalid_preparation_request")
+                    result = host.preparations.cancel(request.path_params["job_id"])
+                elif route == "/v1/grants":
                     plan = None
                     if payload.get("mode") == "install":
                         plan_id = payload.get("plan_id")
@@ -1466,7 +1525,7 @@ def management_app(host: Supervisor, token: str, port: int):
                         result = host.imports.revise(draft_id, revision, **{key: value for key, value in payload.items() if key != "revision"})
                         host.invalidate_import_plans(draft_id)
                     elif action == "attach" and set(payload) == {"revision", "package"} and isinstance(payload["package"], str):
-                        result = host.imports.attach(draft_id, revision, Path(payload["package"]))
+                        result = await host.static_work(host.imports.attach, draft_id, revision, Path(payload["package"]))
                     elif action in {"export", "cancel", "expire"} and set(payload) == {"revision"}:
                         result = getattr(host.imports, action)(draft_id, revision)
                         if action in {"cancel", "expire"}:
@@ -1497,12 +1556,18 @@ def management_app(host: Supervisor, token: str, port: int):
                 else:
                     raise HostError("invalid_request")
             return JSONResponse({"api_version": 1, **result})
-        except (HostError, PackageError, RegistryError, ImportDraftError, GrantError) as error:
+        except (HostError, PackageError, RegistryError, ImportDraftError, GrantError, PreparationError) as error:
             return JSONResponse({"api_version": 1, "error": {"code": error.code}}, status_code=getattr(error, "status", 400))
         except Exception:
             return JSONResponse({"api_version": 1, "error": {"code": "invalid_request"}}, status_code=400)
 
     app = Starlette(routes=[Route("/v1/capabilities", dispatch), Route("/v1/status", dispatch), Route("/v1/slots", dispatch),
+        Route("/v1/recipes", dispatch, methods=["GET", "POST"]),
+        Route("/v1/recipes/{action}", dispatch, methods=["POST"]),
+        Route("/v1/preparations", dispatch),
+        Route("/v1/preparations/plan", dispatch, methods=["POST"]),
+        Route("/v1/preparations/{job_id}", dispatch),
+        Route("/v1/preparations/{job_id}/cancel", dispatch, methods=["POST"]),
         Route("/v1/grants", dispatch, methods=["GET", "POST"]),
         Route("/v1/grants/{grant_id}", dispatch), Route("/v1/grants/{grant_id}/revoke", dispatch, methods=["POST"]),
         Route("/v1/plans/{plan_id}", dispatch),

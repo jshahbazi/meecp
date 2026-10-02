@@ -7,6 +7,8 @@ import UniformTypeIdentifiers
 import PrivateTransport
 
 private let responseLimit = 1_048_576
+private let uiPreviewMode = CommandLine.arguments.contains("--ui-preview") ||
+    Bundle.main.object(forInfoDictionaryKey: "McpmeUIPreview") as? Bool == true
 
 private func validUUID(_ value: String) -> Bool {
     UUID(uuidString: value)?.uuidString.lowercased() == value
@@ -24,6 +26,35 @@ private func safeCode(_ object: Any?) -> String? {
     return value
 }
 
+private func finiteNumber(_ object: Any?) -> Double? {
+    guard let value = object as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(),
+          value.doubleValue.isFinite, value.doubleValue >= 0, value.doubleValue < Double(Int.max) else { return nil }
+    return value.doubleValue
+}
+
+private func activityDate(_ object: Any?) -> Double? {
+    guard let value = object as? String, value.count <= 40 else { return nil }
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = formatter.date(from: value) { return date.timeIntervalSince1970 }
+    formatter.formatOptions = [.withInternetDateTime]
+    return formatter.date(from: value)?.timeIntervalSince1970
+}
+
+private func parseActivity(_ object: Any?) -> DashboardActivity? {
+    guard let object = object as? [String: Any],
+          object["available"] as? Bool != false,
+          let received = integer(object["received"]), let succeeded = integer(object["succeeded"]),
+          let failed = integer(object["failed"]), let inFlight = integer(object["in_flight"]),
+          let lastMinute = integer(object["requests_last_minute"]),
+          let startedAt = activityDate(object["started_at"]),
+          succeeded <= received, failed <= received - succeeded,
+          inFlight == received - succeeded - failed, lastMinute <= received else { return nil }
+    return DashboardActivity(received: received, succeeded: succeeded, failed: failed, inFlight: inFlight,
+                             lastMinute: lastMinute, lastLatencyMS: finiteNumber(object["last_latency_ms"]),
+                             lastRequestAt: activityDate(object["last_request_at"]), startedAt: startedAt)
+}
+
 private struct Project: Equatable {
     let id: String
     let name: String
@@ -32,6 +63,7 @@ private struct Project: Equatable {
     let policy: String
     let generation: Int
     let error: String?
+    let activity: DashboardActivity?
 
     init?(_ object: [String: Any]) {
         guard let id = object["slot_id"] as? String, validUUID(id),
@@ -44,6 +76,7 @@ private struct Project: Equatable {
               let generation = integer(object["generation"]), generation > 0 else { return nil }
         self.id = id; self.name = name; self.state = state; self.port = port
         self.policy = policy; self.generation = generation; self.error = safeCode(object["error_code"])
+        self.activity = parseActivity(object["activity"])
     }
 
     var status: String {
@@ -280,6 +313,10 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
     private var timer: Timer?
     private var stopCompletion: (() -> Void)?
     private var hostMessage = "Starting host…"
+    private var hostAvailable = false
+    private let dashboard = MenuDashboard()
+    private var detailRequests: Set<String> = []
+    private var lastDetailRefresh = Date.distantPast
     private var projects: [Project] = []
     private var operations: [Operation] = []
     private var trackedOperations: Set<String> = []
@@ -297,6 +334,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
     private var window: NSWindow?
     private var table: NSTableView?
     private var renderedProjects: [Project]?
+    private var renderedHostAvailable = false
     private var operationText: NSTextField?
     private var hostText: NSTextField?
     private var stopAllButton: NSButton?
@@ -352,11 +390,20 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = McpmeBrand.menuBarImage()
         if statusItem.button?.image == nil { statusItem.button?.title = "m" }
+        statusItem.button?.target = self; statusItem.button?.action = #selector(toggleDashboard)
+        configureDashboard()
+        if uiPreviewMode {
+            showDashboardPreview(); return
+        }
         rebuildMenu(); startHost()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.poll() }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if uiPreviewMode {
+            if !dashboard.isVisible { toggleDashboard() }
+            return false
+        }
         if process == nil && !quitting && !stopping { startHost() }
         showManagement(); return false
     }
@@ -379,7 +426,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
         guard process == nil, !quitting, !stopping, let host = hostRoot else { return }
         let executable = host.appendingPathComponent("bin/mcpme")
         guard FileManager.default.isExecutableFile(atPath: executable.path) else { hostMessage = "Bundled host is unavailable"; rebuildMenu(); return }
-        generation &+= 1; hostMessage = "Starting host…"; projects = []; operations = []; pendingAppRequests = []; pollInFlight = false; importsPollInFlight = false
+        generation &+= 1; hostAvailable = false; detailRequests = []; hostMessage = "Starting host…"; projects = []; operations = []; pendingAppRequests = []; pollInFlight = false; importsPollInFlight = false
         let service = Process()
         service.executableURL = executable
         service.arguments = ["--state-dir", stateDirectory.path, "serve", "--reaper", host.appendingPathComponent("bin/mcpme-reap").path,
@@ -392,6 +439,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
             DispatchQueue.main.async {
                 guard let self = self, let service = service, self.process === service else { return }
                 self.process = nil; self.generation &+= 1; self.pollInFlight = false; self.importsPollInFlight = false
+                self.hostAvailable = false; self.detailRequests = []
                 self.projects = []; self.operations = []; self.pendingAppRequests = []
                 let completion = self.stopCompletion; self.stopCompletion = nil; self.stopping = false
                 self.hostMessage = "Host stopped. Another host may own this installation."
@@ -406,7 +454,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
     private func stopHost(completion: @escaping () -> Void) {
         generation &+= 1; pollInFlight = false
         guard let process = process, process.isRunning else { DispatchQueue.main.async(execute: completion); return }
-        stopping = true; stopCompletion = completion; hostMessage = "Stopping apps…"; rebuildMenu(); refreshWindow()
+        stopping = true; hostAvailable = false; stopCompletion = completion; hostMessage = "Stopping apps…"; rebuildMenu(); refreshWindow()
         process.terminate()
         DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self, weak process] in
             guard let self = self, let process = process, self.process === process, process.isRunning else { return }
@@ -454,64 +502,81 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
     }
 
     private func poll() {
-        guard !pollInFlight, !quitting, !stopping, connection() != nil else { return }
+        guard !pollInFlight, !quitting, !stopping else { return }
+        guard connection() != nil else {
+            if hostAvailable && !uiPreviewMode {
+                hostAvailable = false; hostMessage = "Waiting for host… Activity will refresh after reconnecting."
+                rebuildMenu(); refreshWindow()
+            }
+            return
+        }
         pollInFlight = true
         request("v1/status") { [weak self] object, _ in
             guard let self = self else { return }; self.pollInFlight = false
             guard let object = object, integer(object["supervisor_pid"]) == Int(self.process?.processIdentifier ?? 0),
                   let rows = object["slots"] as? [[String: Any]],
                   let operations = object["operations"] as? [[String: Any]] else {
-                self.hostMessage = "Waiting for host…"; self.rebuildMenu(); self.refreshWindow(); return
+                self.hostAvailable = false; self.hostMessage = "Waiting for host… Activity will refresh after reconnecting."; self.rebuildMenu(); self.refreshWindow(); return
             }
             let parsed = rows.compactMap(Project.init)
-            guard parsed.count == rows.count, Set(parsed.map(\.id)).count == parsed.count else { return }
-            self.projects = parsed; self.operations = operations.compactMap(Operation.init)
+            guard parsed.count == rows.count, Set(parsed.map(\.id)).count == parsed.count else {
+                self.hostAvailable = false; self.hostMessage = "App status unavailable"; self.rebuildMenu(); self.refreshWindow(); return
+            }
+            self.hostAvailable = true
+            self.projects = parsed.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }; self.operations = operations.compactMap(Operation.init)
             self.hostMessage = "\(parsed.filter { $0.state == "ready" }.count) ready / \(parsed.count) installed"
             self.rebuildMenu(); self.refreshWindow(); self.pollTrackedOperations(); self.pollImports()
+            if self.dashboard.isVisible, let id = self.dashboard.selectedID, Date().timeIntervalSince(self.lastDetailRefresh) >= 6 {
+                self.loadDetails(id)
+            }
         }
     }
 
-    private func item(_ title: String, action: Selector? = nil, project: String? = nil) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-        item.target = self; item.representedObject = project; item.isEnabled = action != nil
-        return item
+    private func configureDashboard() {
+        dashboard.onSelect = { [weak self] id in self?.showDetails(id) }
+        dashboard.onControl = { [weak self] id, action in self?.control(id, action: action) }
+        dashboard.onCopy = { [weak self] id in self?.copyConfiguration(id) }
+        dashboard.onManage = { [weak self] in self?.showManagement() }
+        dashboard.onAdd = { [weak self] in self?.addProject() }
+        dashboard.onStopAll = { [weak self] in self?.stopAll() }
+        dashboard.onQuit = { [weak self] in self?.quitApp() }
+        dashboard.onRetry = { [weak self] in self?.retryHost() }
+        dashboard.onLogin = { [weak self] in self?.toggleLogin() }
+    }
+
+    @objc private func toggleDashboard() {
+        guard let button = statusItem.button, let window = button.window,
+              let screen = window.screen ?? NSScreen.main else { return }
+        let anchor = window.convertToScreen(button.convert(button.bounds, to: nil))
+        dashboard.toggle(anchor: anchor, screen: screen)
+        if dashboard.isVisible { poll() }
     }
 
     private func rebuildMenu() {
         guard statusItem != nil else { return }
-        let menu = NSMenu(); menu.autoenablesItems = false
-        menu.addItem(item("mcpme: " + hostMessage))
-        for project in projects {
-            let row = item("\(project.name)    \(project.status)    :\(project.port)")
-            let submenu = NSMenu(); submenu.autoenablesItems = false
-            let busy = project.blocked || pendingAppRequests.contains(project.id) || operations.contains {
-                $0.projectID == project.id && ($0.active || $0.action == "remove" && $0.status == "recovery_required")
+        let apps = projects.map { project in
+            let busy = pendingAppRequests.contains(project.id) || operations.contains {
+                $0.projectID == project.id && $0.active
             }
-            for (title, action) in [("Start", #selector(startProject(_:))), ("Stop", #selector(stopProject(_:))), ("Restart", #selector(restartProject(_:)))] {
-                let control = item(title, action: action, project: project.id)
-                control.isEnabled = !busy && !stopping && !quitting; submenu.addItem(control)
-            }
-            submenu.addItem(.separator())
-            submenu.addItem(item("Copy Connection Configuration", action: #selector(copyProject(_:)), project: project.id))
-            submenu.addItem(item("Details…", action: #selector(detailsProject(_:)), project: project.id))
-            row.submenu = submenu; menu.addItem(row)
+            let removalRecovery = operations.contains { $0.projectID == project.id && $0.action == "remove" && $0.status == "recovery_required" }
+            return DashboardApp(id: project.id, name: project.name, status: removalRecovery ? "Recovery required" : project.status, state: project.state,
+                                policy: project.policyLabel, activity: project.activity,
+                                error: removalRecovery ? "removal_recovery_required" : project.error, busy: busy)
         }
-        menu.addItem(.separator())
-        menu.addItem(item("Add App…", action: #selector(addProject)))
-        menu.addItem(item("Manage Apps…", action: #selector(showManagement)))
-        let stop = item("Stop All", action: #selector(stopAll)); stop.isEnabled = !projects.isEmpty && !stopping; menu.addItem(stop)
-        let login = item("Start at Login", action: #selector(toggleLogin)); login.state = SMAppService.mainApp.status == .enabled ? .on : .off; menu.addItem(login)
-        if process == nil { menu.addItem(item("Start Host", action: #selector(retryHost))) }
-        menu.addItem(.separator()); let quit = item("Quit mcpme", action: #selector(quitApp)); quit.keyEquivalent = "q"; menu.addItem(quit)
-        statusItem.menu = menu; statusItem.button?.toolTip = "mcpme: " + hostMessage
+        let loginTitle = SMAppService.mainApp.status == .requiresApproval ? "Approve Start at Login…" :
+            (SMAppService.mainApp.status == .enabled ? "Start at Login: On" : "Start at Login: Off")
+        dashboard.update(apps: apps, hostMessage: hostMessage, available: hostAvailable && !stopping && !quitting, loginTitle: loginTitle)
+        statusItem.button?.toolTip = "mcpme: " + hostMessage
     }
 
     private func control(_ id: String, action: String) {
-        guard !pendingAppRequests.contains(id) else { return }
-        pendingAppRequests.insert(id); refreshActionButtons()
+        guard hostAvailable, !stopping, !quitting, !pendingAppRequests.contains(id),
+              let project = projects.first(where: { $0.id == id }), !project.blocked,
+              !operations.contains(where: { $0.projectID == id && ($0.active || $0.action == "remove" && $0.status == "recovery_required") }) else { return }
+        pendingAppRequests.insert(id); refreshActionButtons(); rebuildMenu()
         request("v1/slots/\(id)/\(action)", method: "POST", body: [:]) { [weak self] object, code in
             guard let self = self else { return }
-            self.pendingAppRequests.remove(id); self.refreshActionButtons()
+            self.pendingAppRequests.remove(id); self.refreshActionButtons(); self.rebuildMenu()
             guard let object = object, let operation = Operation(object) else { self.showError(code ?? "invalid_response"); return }
             self.trackedOperations.insert(operation.id); self.operations.insert(operation, at: 0)
             self.rebuildMenu(); self.refreshWindow(); self.poll()
@@ -557,6 +622,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
     }
 
     @objc private func showManagement() {
+        dashboard.dismiss()
         if window == nil { makeManagementWindow() }
         window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); refreshWindow(); poll()
     }
@@ -597,7 +663,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
         self.hostText = hostText; headingRow.addArrangedSubview(hostText)
         content.addArrangedSubview(headingRow)
         let table = NSTableView(); table.delegate = self; table.dataSource = self; table.rowHeight = 28
-        for (name, title, width) in [("name", "App", 330.0), ("status", "Status", 200.0), ("port", "Port", 90.0), ("policy", "Start", 170.0)] {
+        for (name, title, width) in [("name", "App", 330.0), ("status", "Status", 200.0), ("requests", "Requests", 90.0), ("policy", "Start", 170.0)] {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(name)); column.title = title; column.width = width; table.addTableColumn(column)
         }
         let scroll = NSScrollView(); scroll.documentView = table; scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
@@ -695,7 +761,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard projects.indices.contains(row), let id = tableColumn?.identifier.rawValue else { return nil }
         let project = projects[row]
-        let value = ["name": project.name, "status": project.status, "port": String(project.port), "policy": project.policyLabel][id] ?? ""
+        let value = ["name": project.name, "status": hostAvailable ? project.status : "Unavailable",
+                     "requests": hostAvailable ? project.activity.map { String($0.received) } ?? "—" : "—", "policy": project.policyLabel][id] ?? ""
         let label = NSTextField(labelWithString: value); label.lineBreakMode = .byTruncatingTail; return label
     }
     func tableViewSelectionDidChange(_ notification: Notification) { refreshActionButtons() }
@@ -707,7 +774,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
 
     private func refreshActionButtons() {
         let selected = selectedProject
-        let available = selected != nil && connection() != nil && !stopping && !quitting
+        let available = selected != nil && hostAvailable && connection() != nil && !stopping && !quitting
         let busy = selected.map { project in
             project.blocked || pendingAppRequests.contains(project.id) || operations.contains { $0.projectID == project.id && $0.active }
         } ?? true
@@ -725,10 +792,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
 
     private func refreshWindow() {
         hostText?.stringValue = hostMessage
-        stopAllButton?.isEnabled = !projects.isEmpty && process?.isRunning == true && !stopping && !quitting
+        stopAllButton?.isEnabled = !projects.isEmpty && hostAvailable && process?.isRunning == true && !stopping && !quitting
         let selection = selectedProject?.id
-        if let table = table, renderedProjects != projects {
+        if let table = table, renderedProjects != projects || renderedHostAvailable != hostAvailable {
             renderedProjects = projects
+            renderedHostAvailable = hostAvailable
             table.reloadData()
             if let selection = selection, let index = projects.firstIndex(where: { $0.id == selection }) {
                 table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
@@ -797,23 +865,123 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
         let object: [String: Any] = ["mcpServers": [id: ["command": executable, "args": ["--state-dir", stateDirectory.path, "connect", "--slot", id]]]]
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
               let text = String(data: data, encoding: .utf8) else { showError("configuration_unavailable"); return }
-        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+        NSPasteboard.general.clearContents()
+        guard NSPasteboard.general.setString(text, forType: .string) else { showError("configuration_unavailable"); return }
+        dashboard.connectionCopied(id: id)
         setupLabel?.stringValue = "Connection configuration copied. Add it to the MCP client you choose."
     }
 
     private func showDetails(_ id: String) {
+        if !dashboard.isVisible { toggleDashboard() }
+        dashboard.showDetails(id: id)
+        loadDetails(id)
+    }
+
+    private func loadDetails(_ id: String) {
+        guard !detailRequests.contains(id) else { return }
+        detailRequests.insert(id); lastDetailRefresh = Date()
         request("v1/slots/\(id)/details") { [weak self] object, code in
-            guard let self = self, let object = object else { self?.showError(code ?? "details_unavailable"); return }
-            let detail = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 750, height: 620),
-                                  styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-            detail.title = "App Details"; detail.isReleasedWhenClosed = false; detail.center()
-            let scroll = NSScrollView(frame: detail.contentView!.bounds); scroll.autoresizingMask = [.width, .height]; scroll.hasVerticalScroller = true
-            let text = NSTextView(); text.isEditable = false; text.isSelectable = true
-            text.font = .monospacedSystemFont(ofSize: 12, weight: .regular); text.autoresizingMask = [.width]
-            text.isVerticallyResizable = true; text.textContainer?.widthTracksTextView = true
-            text.string = self.reviewDescription(object)
-            scroll.documentView = text; detail.contentView!.addSubview(scroll)
-            self.detailsWindow?.close(); self.detailsWindow = detail; detail.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+            guard let self = self else { return }
+            self.detailRequests.remove(id)
+            guard self.dashboard.selectedID == id else { return }
+            guard let object = object, let slot = object["slot"] as? [String: Any],
+                  let project = Project(slot), project.id == id,
+                  let package = object["package"] as? [String: Any] else {
+                self.dashboard.detailsFailed(id: id); return
+            }
+            self.dashboard.updateDetails(self.dashboardDetails(project: project, package: package, response: object))
+        }
+    }
+
+    private func dashboardDetails(project: Project, package: [String: Any], response: [String: Any]) -> DashboardDetails {
+        var sections: [DashboardSection] = []
+        if let model = package["model"] as? [String: Any] {
+            var lines = [model["model_id"] as? String ?? "Model"]
+            if let metrics = response["runtime_metrics"] as? [String: Any],
+               let counts = metrics["counts"] as? [String: Any] {
+                if let decisions = integer(counts["decisions"]) { lines.append("Decisions: \(decisions.formatted())") }
+                if let hits = integer(counts["cache_hits"]) { lines.append("Cache hits: \(hits.formatted())") }
+                if let errors = integer(counts["errors"]) { lines.append("Failed decisions: \(errors.formatted())") }
+                if let queue = integer(metrics["queue_depth"]) { lines.append("Queue depth: \(queue)") }
+                if let latency = finiteNumber(metrics["last_latency_ms"]) { lines.append("Last decision: \(Int(latency.rounded())) ms") }
+                lines.append("Reported by the model runtime; resets when the runtime restarts.")
+            } else { lines.append("Model activity is unavailable while the runtime is stopped or unreachable.") }
+            if let context = integer(model["context_tokens"]) { lines.append("Context capacity: \(context.formatted()) tokens") }
+            sections.append(DashboardSection(title: "Model", body: lines.joined(separator: "\n")))
+        }
+        if let tools = package["tools"] as? [[String: Any]] {
+            sections.append(DashboardSection(title: "Tools · \(tools.count)", body: tools.map {
+                ($0["name"] as? String ?? "Tool") + "\n" + ($0["description"] as? String ?? "")
+            }.joined(separator: "\n\n")))
+        }
+        sections.append(DashboardSection(title: "Connection", body: "http://127.0.0.1:\(project.port)/mcp\nUse Copy Connection to add this app to your assistant.\nStartup: \(project.policyLabel)"))
+        if let resources = package["resources"] as? [String: Any] {
+            let memory = integer(resources["memory_mb"]).map { "\($0.formatted()) MB memory reservation" } ?? "Memory estimate unavailable"
+            let compute = resources["gpu"] as? Bool == true ? "Uses GPU" : "CPU"
+            sections.append(DashboardSection(title: "Declared resources", body: "\(memory) · \(compute)\nPackage estimates; current memory use is not measured."))
+        }
+        if let access = package["access"] as? [String: Any] {
+            let files = (access["filesystem"] as? [String] ?? []).joined(separator: ", ")
+            let network = (access["network"] as? [String] ?? []).joined(separator: ", ")
+            sections.append(DashboardSection(title: "Declared access", body: [
+                "Files: " + (files.isEmpty ? "None declared" : files),
+                "Network: " + (network.isEmpty ? "None declared" : network),
+                "Writes: " + (access["writes"] as? Bool == true ? "Yes" : "None declared"),
+                "Runs with your account permissions. These declarations are not an OS sandbox."
+            ].joined(separator: "\n")))
+        }
+        var identity: [String] = []
+        for (key, label) in [("package_id", "Package"), ("version", "Version"), ("source_revision", "Source revision")] {
+            if let value = package[key] as? String { identity.append(label + ": " + value) }
+        }
+        if let licenses = package["licenses"] as? [String] { identity.append("Licenses: " + licenses.joined(separator: ", ")) }
+        identity.append("Generation: \(project.generation)")
+        sections.append(DashboardSection(title: "Package", body: identity.joined(separator: "\n")))
+        let profile = package["profile"] as? String == "model-service" ? "Local model" : "Local tools"
+        return DashboardDetails(appID: project.id, subtitle: profile, sections: sections)
+    }
+
+    // A content-free fixture for native layout and accessibility review. This path
+    // never starts a host, opens installation state, or changes login settings.
+    private func showDashboardPreview() {
+        let now = Date().timeIntervalSince1970
+        let formatter = ISO8601DateFormatter()
+        let states: [(String, String, Int, Int)] = [("JevK5 Judge", "ready", 1284, 2), ("JSON Utilities", "ready", 327, 0),
+                      ("Document Search", "failed", 12, 3), ("Local Chat", "stopped", 0, 0)]
+        projects = states.enumerated().compactMap { index, value in
+            let previewActivity: [String: Any] = ["received": value.2, "succeeded": value.2 - value.3, "failed": value.3,
+                "in_flight": 0, "requests_last_minute": min(value.2, 18),
+                "last_latency_ms": value.2 > 0 ? 146 as Any : NSNull(),
+                "last_request_at": value.2 > 0 ? formatter.string(from: Date(timeIntervalSince1970: now - 8)) as Any : NSNull(),
+                "started_at": formatter.string(from: Date(timeIntervalSince1970: now - 3600))]
+            return Project(["slot_id": String(format: "%08d-2222-4333-8444-555555555555", index + 1),
+                     "name": value.0, "observed_state": value.1, "public_port": 19385 + index,
+                     "start_policy": "manual", "generation": 1,
+                     "error_code": value.1 == "failed" ? "readiness_timeout" as Any : NSNull(),
+                     "activity": previewActivity])
+        }
+        hostAvailable = true; hostMessage = "Preview · 2 ready / 4 installed"
+        let previewDetails: (String) -> Void = { [weak self] id in
+            guard let self = self, let project = self.projects.first(where: { $0.id == id }) else { return }
+            self.dashboard.showDetails(id: id)
+            let model = project.name == "JevK5 Judge"
+            let package: [String: Any] = ["profile": model ? "model-service" : "mcp-stdio",
+                "package_id": "org.example.local-app", "version": "1.0.0", "source_revision": "preview",
+                "licenses": ["Apache-2.0"], "resources": ["memory_mb": model ? 6144 : 128, "gpu": model],
+                "model": model ? ["model_id": "JevK5-4B-v0.3-Q8_0", "context_tokens": 8192] : NSNull(),
+                "tools": [["name": model ? "jevk5_decide" : "validate_json", "description": "Evaluate supplied input with a local tool."],
+                          ["name": "status", "description": "Check readiness and aggregate activity."]],
+                "access": ["filesystem": [], "network": [], "writes": false]]
+            let response: [String: Any] = ["runtime_metrics": ["counts": ["decisions": 1284, "cache_hits": 318, "errors": 2], "queue_depth": 0, "last_latency_ms": 146]]
+            self.dashboard.updateDetails(self.dashboardDetails(project: project, package: package, response: response))
+        }
+        dashboard.onSelect = previewDetails
+        dashboard.onControl = { _, _ in }; dashboard.onCopy = { _ in }
+        dashboard.onManage = {}; dashboard.onAdd = {}; dashboard.onLogin = {}; dashboard.onStopAll = {}
+        rebuildMenu()
+        DispatchQueue.main.async { [weak self] in
+            self?.toggleDashboard()
+            if let id = self?.projects.first?.id { previewDetails(id) }
         }
     }
 
@@ -1263,6 +1431,28 @@ private func nativeSelfTest() -> Bool {
     guard projectForSelection(row: 1, rendered: displayed, current: [second, third]) == second,
           projectForSelection(row: 1, rendered: displayed, current: [first, third]) == nil,
           projectForSelection(row: -1, rendered: displayed, current: displayed) == nil else { return false }
+    let activity: [String: Any] = ["received": 8, "succeeded": 5, "failed": 1, "in_flight": 2,
+                                 "requests_last_minute": 3, "last_latency_ms": 12.5,
+                                 "last_request_at": "2026-10-02T12:00:01.125Z", "started_at": "2026-10-02T12:00:00Z"]
+    guard let parsedActivity = parseActivity(activity), parsedActivity.received == 8,
+          parsedActivity.lastLatencyMS == 12.5, parsedActivity.lastRequestAt != nil,
+          parseActivity(nil) == nil, parseActivity([:]) == nil,
+          finiteNumber(true) == nil, finiteNumber(Double.infinity) == nil else { return false }
+    var invalidActivity = activity; invalidActivity["in_flight"] = 3
+    guard parseActivity(invalidActivity) == nil else { return false }
+    invalidActivity = activity; invalidActivity["received"] = true
+    guard parseActivity(invalidActivity) == nil else { return false }
+    invalidActivity = activity; invalidActivity["available"] = false
+    guard parseActivity(invalidActivity) == nil, dashboardTotal([Int.max, 1]) == Int.max else { return false }
+    for screen in [NSRect(x: 0, y: 0, width: 1512, height: 944), NSRect(x: -1024, y: 200, width: 1024, height: 700),
+                   NSRect(x: 0, y: 0, width: 800, height: 600)] {
+        for x in [screen.minX, screen.maxX - 24] {
+            let anchor = NSRect(x: x, y: screen.maxY, width: 24, height: 24)
+            let frames = dashboardFrames(anchor: anchor, screen: screen, showsDetails: true)
+            guard let detail = frames.details, screen.contains(frames.menu), screen.contains(detail),
+                  detail.minX > frames.menu.maxX else { return false }
+        }
+    }
     return true
 }
 
@@ -1318,6 +1508,7 @@ if CommandLine.arguments.dropFirst().first == "--native-self-test" {
 }
 
 var cliArguments = Array(CommandLine.arguments.dropFirst()).filter { !$0.hasPrefix("-psn_") }
+if cliArguments == ["--ui-preview"] { cliArguments = [] }
 if let code = legacyHandoff(cliArguments) { exit(code) }
 if let code = hostLogin(cliArguments) { exit(code) }
 if cliArguments.first == "--ui-state-dir" {

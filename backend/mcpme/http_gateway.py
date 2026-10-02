@@ -16,6 +16,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from .bridge import Bridge
+from .activity import RequestActivity
 from .gateway import Gateway, MAX_MESSAGE_BYTES, MAX_PENDING, PROTOCOL_VERSION, Session, encode, error_message
 from .policy import LocalPolicy, load_json
 
@@ -218,7 +219,9 @@ class HTTPGateway(Gateway):
         if session is None:
             return
         session.closed = True
-        for pending in session.pending.values():
+        for pending in list(session.pending.values()):
+            if pending.activity:
+                pending.activity.finish(False)
             if pending.deadline is not asyncio.current_task():
                 pending.deadline.cancel()
         for task in session.server_pending.values():
@@ -261,6 +264,20 @@ class HTTPGateway(Gateway):
         return await super().handle(request)
 
     async def legacy(self, request: Request):
+        activity = (RequestActivity(self.activity, self.activity_report)
+                    if self.legacy_jev and request.url.path == "/api/decide" else None)
+        succeeded = False
+        try:
+            if activity:
+                activity.begin()
+            response = await self._legacy(request)
+            succeeded = response.status_code == 200
+            return response
+        finally:
+            if activity:
+                activity.finish(succeeded)
+
+    async def _legacy(self, request: Request):
         if not self.legacy_jev:
             return Response(status_code=404)
         path = request.url.path
@@ -300,11 +317,12 @@ class HTTPGateway(Gateway):
 
 def make_http_app(*, token, port, upstream_endpoint=None, upstream_token=None, max_sessions=8,
                   idle_timeout=300, request_timeout=180, expected_tools=None, active=None,
-                  legacy_jev=False, control=None, control_timeout=None, client=None):
+                  legacy_jev=False, control=None, control_timeout=None, client=None,
+                  activity_report=None):
     gateway = HTTPGateway(upstream_endpoint=upstream_endpoint, upstream_token=upstream_token,
                           max_sessions=max_sessions, idle_timeout=idle_timeout, request_timeout=request_timeout,
                           expected_tools=expected_tools, active=active, legacy_jev=legacy_jev, control=control,
-                          control_timeout=control_timeout, client=client)
+                          control_timeout=control_timeout, client=client, activity_report=activity_report)
 
     @asynccontextmanager
     async def lifespan(app):

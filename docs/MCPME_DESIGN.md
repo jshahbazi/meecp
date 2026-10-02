@@ -29,9 +29,14 @@ The menu bar provides quick controls. A native **Manage Apps** window provides i
 
 ```text
 mcpme                         2 ready / 3 installed
-  JevK5 Judge                 Ready        :19385
-  JSON Utilities              Ready        :19386
-  Local Chat                  Stopped      :19387
+  Requests       Last minute       In flight
+  1,611          36                0
+
+  Running
+  JevK5 Judge                 Ready        1,284 requests
+  JSON Utilities              Ready          327 requests
+  Stopped
+  Local Chat                  Stopped          0 requests
 
   Add App...
   Manage Apps...
@@ -40,7 +45,7 @@ mcpme                         2 ready / 3 installed
   Quit mcpme
 ```
 
-Each slot submenu offers Start/Stop, Restart, Copy Connection Configuration, and Details. Slots with a model label Stop as **Unload Model** where this is accurate. State text accompanies any color indicator. A click opens details with the package version, endpoint, available tools, runtime/model identity, queue depth, active calls, recent error code, and resource estimates. Initial empty state offers **Install JevK5** and **Install with an agent**.
+Apps are grouped by **Needs attention**, **Running**, and **Stopped**, with stable alphabetical ordering within groups. State text accompanies each color indicator. Clicking an app opens a companion detail panel to the right; the pair shifts left near the screen edge to stay visible. Details show live request counts, failures, work in flight, recent activity, latency, Start/Stop/Restart, Copy Connection, tools, model statistics where available, declared resources/access, and package identity. Ports appear in Connection details. The empty state leads to **Add App**. Escape or a click outside the two panels dismisses them; **Manage Apps** opens the full management window.
 
 **Add App** opens a persistent native setup window with one drop surface and a file/folder chooser. It inspects the selected source without executing code, then asks for missing intent or configuration. A compatible prepared package proceeds through static validation to installation planning; other supported inputs become resumable import drafts for external-agent preparation. Documents require an explicit choice between reference information and setup instructions. The first release prioritizes prepared packages, source folders, and Markdown/text setup briefs; reference documents require a supported document-service template. Models and other profiles are available only as host support is implemented and validated. Users do not need to select a technical source category or write a manifest before beginning. The bring-your-own workflow below defines the technical inputs, agent handoff, and return path; integrated LLM-provider preparation is deferred.
 
@@ -330,7 +335,9 @@ The initial model admission policy permits one active managed GPU inference at a
 
 ## Monitoring and local trust
 
-The host collects slot state, uptime, restart count, readiness latency, active/queued calls, completed/error counts, and aggregate latency buckets. Slot details distinguish host-observed health from package-reported health. Model slots also expose verified model/runtime identity and safe aggregate cache statistics. The UI can poll one batched manager snapshot every two seconds while open and less frequently while closed; inference never waits for UI polling.
+The manager snapshot includes content-free per-app activity: received, succeeded, failed, in-flight requests, requests in the last minute, last completion latency, last request time, and the host-session start time. It counts authenticated MCP tool calls and legacy decision calls, including tool errors and rejected calls that reach dispatch. Initialization, tool discovery, HTTP health/status polls, and requests rejected by transport authentication are excluded. Counts survive an app stop/restart and reset with the host. Removed apps leave the displayed aggregate. The last-minute count uses bounded one-second buckets. Interrupted calls are reconciled as failed when their gateway closes.
+
+The UI polls the batched snapshot every two seconds and refreshes selected app details every six seconds while open. Unavailable activity displays as unknown; a failed refresh marks status unavailable, hides stale counters, and disables runtime controls. Reporting uses bounded, nonblocking private events independently of lifecycle RPCs. Reporting loss marks counts unavailable until host restart; subsequent app restarts cannot restore the missing history. JevK5 decision/cache/queue counts are separately labeled runtime-reported statistics and reset with that runtime. Resource values remain declared reservations, not measured memory use. Uptime, restart totals, latency histograms, and measured resource pressure remain future monitoring work.
 
 Keep a bounded journal of lifecycle/installation events: time, slot UUID, operation ID, generation, event code, progress counters, exit status, and known error code. Never log prompts, evidence, responses, options, tokens, API keys, raw HTTP frames, child stdout/stderr, arbitrary exception text, command lines, or environment values. MCP stdout is protocol data and goes only through the transport. Child stderr is discarded by default. Diagnostic export includes only an explicit allowlist of metadata; unknown fields are omitted.
 

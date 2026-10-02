@@ -27,6 +27,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from .contracts import PackageError, validate_package
+from .activity import ACTIVITY_EVENTS, ACTIVITY_FRAME, Activity, timestamp
 from .imports import ImportError as ImportDraftError, ImportStore
 from .private import ensure_private_directory, read_private_json, snapshot_package, write_private_json
 from .processes import OwnedProcess, ProcessOwner
@@ -96,6 +97,9 @@ class Worker:
     service: asyncio.Task | None = None
     monitor: asyncio.Task | None = None
     closing: bool = False
+    activity_in_flight: int = 0
+    activity_channel: socket.socket | None = None
+    activity_service: asyncio.Task | None = None
 
 
 @dataclass
@@ -128,6 +132,8 @@ class Supervisor:
         self.listeners: dict[str, socket.socket] = {}
         self.plan_listeners: dict[str, socket.socket] = {}
         self.workers: dict[str, Worker] = {}
+        self.started_at = timestamp()
+        self.activities: dict[str, Activity] = {}
         self.owners: dict[str, ProcessOwner] = {}
         self.locks: dict[str, asyncio.Lock] = {}
         self.ledgers: dict[str, dict] = {}
@@ -174,6 +180,43 @@ class Supervisor:
                 or policy["memory_budget_mb"] < 1 or policy["gpu_policy"] != "exclusive-residency"):
             raise HostError("invalid_resource_policy")
         return policy
+
+    def activity(self, slot_id: str) -> Activity:
+        if slot_id not in self.activities:
+            self.activities[slot_id] = Activity(started_at=self.started_at)
+        return self.activities[slot_id]
+
+    def slot_snapshot(self, slot) -> dict:
+        return {**slot.to_dict(), "activity": self.activity(slot.id).snapshot()}
+
+    async def runtime_metrics(self, slot, package) -> dict | None:
+        """Only known numeric JevK5 statistics cross into manager/UI snapshots."""
+        if (package.manifest.profile != "model-service"
+                or {tool.name for tool in package.manifest.tools} != {"jevk5_decide", "jevk5_status"}):
+            return None
+        runtime = self.model_runtime(slot.id)
+        if runtime is None:
+            return None
+        try:
+            async with asyncio.timeout(1), httpx.AsyncClient(timeout=1, trust_env=False, follow_redirects=False) as client:
+                async with client.stream("GET", runtime["endpoint"].removesuffix("/mcp") + "/api/status",
+                        headers={"Authorization": "Bearer " + runtime["key"]}) as response:
+                    if response.status_code != 200:
+                        return None
+                    body = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        body.extend(chunk)
+                        if len(body) > 32768:
+                            return None
+            value = json.loads(body)
+            counts = value.get("counts", {})
+            result = {"counts": {key: counts[key] for key in ("decisions", "cache_hits", "errors")
+                                  if type(counts.get(key)) is int and counts[key] >= 0}}
+            if type(value.get("queue_depth")) is int and value["queue_depth"] >= 0:
+                result["queue_depth"] = value["queue_depth"]
+            return result if result["counts"] or "queue_depth" in result else None
+        except (httpx.HTTPError, TimeoutError, ValueError, TypeError, AttributeError):
+            return None
 
     def retain_legacy_lock(self, slot_id: str, descriptor: int):
         if slot_id in self.legacy_locks:
@@ -543,6 +586,8 @@ class Supervisor:
         listener = self.listeners[slot.id]
         parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
         parent.setblocking(False)
+        activity_parent, activity_child = socket.socketpair()
+        activity_parent.setblocking(False)
         config_read, config_write = os.pipe()
         config = {"token": self.connection(slot.id)["token"], "port": slot.public_port, "active": active,
                   "max_sessions": lifecycle.max_sessions, "idle_timeout": lifecycle.idle_timeout_seconds,
@@ -577,22 +622,26 @@ class Supervisor:
                             for value in ("--private-listener-fd", str(listener.fileno()))]
             process = await self.launch(slot.id, executable=Path(sys.executable),
                 args=["-P", "-m", "mcpme.worker", "--config-fd", str(config_read), "--listener-fd", str(listener.fileno()),
-                      "--channel-fd", str(child.fileno()), *private_args], cwd=self.root,
+                      "--channel-fd", str(child.fileno()), "--activity-fd", str(activity_child.fileno()), *private_args], cwd=self.root,
                 env={"PATH": "/usr/bin:/bin", "PYTHONPATH": os.pathsep.join(host_paths),
                      "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1"},
-                inherited_fds=(config_read, listener.fileno(), child.fileno(),
+                inherited_fds=(config_read, listener.fileno(), child.fileno(), activity_child.fileno(),
                                *(private.fileno() for private in private_listeners)), io_mode="fds", stop_grace=3)
             process.close_stdio()
         except BaseException:
             parent.close()
+            activity_parent.close()
             raise
         finally:
             child.close()
+            activity_child.close()
             os.close(config_read)
             for private in private_listeners:
                 private.close()
         worker = Worker(process, parent)
+        worker.activity_channel = activity_parent
         self.workers[slot.id] = worker
+        worker.activity_service = asyncio.create_task(self.serve_activity(slot.id, worker))
         worker.service = asyncio.create_task(self.serve_channel(slot, worker, active))
         worker.monitor = asyncio.create_task(self.monitor_gateway(slot.id, worker))
         # Verify the owned worker actually serves the listener before publishing Ready.
@@ -611,6 +660,38 @@ class Supervisor:
         except BaseException:
             await self.stop_gateway(slot.id)
             raise
+
+    async def serve_activity(self, slot_id: str, worker: Worker):
+        activity = self.activity(slot_id)
+        buffered = bytearray()
+        complete = False
+        try:
+            while True:
+                chunk = await asyncio.get_running_loop().sock_recv(worker.activity_channel, 4096)
+                if not chunk:
+                    break
+                buffered.extend(chunk)
+                while len(buffered) >= ACTIVITY_FRAME.size:
+                    code, latency = ACTIVITY_FRAME.unpack(buffered[:ACTIVITY_FRAME.size])
+                    del buffered[:ACTIVITY_FRAME.size]
+                    if code == 0 and latency == 0 and not buffered:
+                        complete = True
+                        return
+                    event = ACTIVITY_EVENTS[code]
+                    if event != "received" and worker.activity_in_flight == 0:
+                        raise ValueError("invalid_activity")
+                    if event == "received" and latency != 0:
+                        raise ValueError("invalid_activity")
+                    activity.record(event, None if event == "received" else latency)
+                    worker.activity_in_flight += 1 if event == "received" else -1
+        except (OSError, ValueError, KeyError):
+            pass
+        finally:
+            if not complete or buffered or worker.activity_in_flight:
+                activity.available = False
+            activity.abandon(worker.activity_in_flight)
+            worker.activity_in_flight = 0
+            worker.activity_channel.close()
 
     async def serve_channel(self, slot, worker: Worker, active: bool):
         instances: dict[str, OwnedProcess] = {}
@@ -693,6 +774,12 @@ class Supervisor:
             if not worker.service.cancelling():
                 worker.service.cancel()
             await asyncio.gather(worker.service, return_exceptions=True)
+        if worker.activity_service:
+            # The owned process has exited, so its stream reaches EOF after all
+            # already-sent events. Ownership loss may leave its target alive;
+            # never wait indefinitely on a descriptor held by that target.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(asyncio.gather(worker.activity_service, return_exceptions=True), 1)
         if not worker.closing:
             code = "ownership_lost" if worker.process.ownership_lost or self.registry.get_slot(slot_id).error_code == "ownership_lost" else "gateway_failed"
             self.registry.update_slot(slot_id, observed_state="ownership_lost" if code == "ownership_lost" else "failed", error_code=code)
@@ -793,6 +880,7 @@ class Supervisor:
         self.owners.pop(slot.id, None)
         self.residents.pop(slot.id, None)
         self.ledgers.pop(slot.id, None)
+        self.activities.pop(slot.id, None)
         self.migration_blocked.discard(slot.id)
         # Keep private data and shared package snapshots for deliberate recovery.
 
@@ -1155,6 +1243,7 @@ class Supervisor:
                 if not ownership_lost and not exposure_permitted:
                     self.registry.update_slot(slot_id, desired_state="stopped")
                     self.registry.discard_slot(slot_id)
+                    self.activities.pop(slot_id, None)
             if listener is not None and not ownership_lost and not exposure_permitted:
                 listener.close()
                 self.listeners.pop(slot_id, None)
@@ -1245,12 +1334,12 @@ def management_app(host: Supervisor, token: str, port: int):
                 if route == "/v1/capabilities":
                     result = capabilities()
                 elif route == "/v1/status":
-                    result = {"supervisor_pid": os.getpid(), "slots": [slot.to_dict() for slot in host.registry.list_slots()],
+                    result = {"supervisor_pid": os.getpid(), "slots": [host.slot_snapshot(slot) for slot in host.registry.list_slots()],
                               "operations": [operation.to_dict() for operation in host.registry.list_operations()],
                               "resource_policy": host.resource_policy,
                               "reservations": {slot_id: dict(value) for slot_id, value in host.reservations.items()}}
                 elif route == "/v1/slots":
-                    result = {"slots": [slot.to_dict() for slot in host.registry.list_slots()]}
+                    result = {"slots": [host.slot_snapshot(slot) for slot in host.registry.list_slots()]}
                 elif route == "/v1/imports":
                     host.reconcile_imports()
                     result = {"imports": host.imports.list_summaries()}
@@ -1260,7 +1349,8 @@ def management_app(host: Supervisor, token: str, port: int):
                 elif route.endswith("/details"):
                     slot = host.registry.get_slot(request.path_params["slot_id"])
                     package = await asyncio.to_thread(host.package, slot)
-                    result = {"slot": slot.to_dict(), "package": package.manifest.model_dump(),
+                    result = {"slot": host.slot_snapshot(slot), "package": package.manifest.model_dump(),
+                              "runtime_metrics": await host.runtime_metrics(slot, package),
                               "processes": [{"process_id": resident.process_id, "instance_id": resident.process.instance_id,
                                              "pid": resident.process.pid, "reaper_pid": resident.process.reaper_pid,
                                              "endpoint": resident.endpoint, "generation": resident.generation,
@@ -1270,7 +1360,7 @@ def management_app(host: Supervisor, token: str, port: int):
                     from .migrations import inspect_transfer
                     result = inspect_transfer(host, request.path_params["transfer_id"])
                 elif route.startswith("/v1/slots/"):
-                    result = host.registry.get_slot(request.path_params["slot_id"]).to_dict()
+                    result = host.slot_snapshot(host.registry.get_slot(request.path_params["slot_id"]))
                 else:
                     result = host.registry.get_operation(request.path_params["operation_id"]).to_dict()
             else:

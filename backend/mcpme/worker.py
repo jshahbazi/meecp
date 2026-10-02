@@ -10,12 +10,27 @@ import json
 import logging
 import math
 import os
+import signal
 import socket
 import time
 
 import uvicorn
 
 from .gateway import SessionPipes, make_app
+from .activity import ActivityReporter
+
+
+class WorkerServer(uvicorn.Server):
+    @contextlib.contextmanager
+    def capture_signals(self):
+        # Consume supervisor shutdown so run() can finish cleanup and publish
+        # its final activity marker before exiting the owned worker process.
+        originals = {sig: signal.signal(sig, self.handle_exit) for sig in (signal.SIGINT, signal.SIGTERM)}
+        try:
+            yield
+        finally:
+            for sig, handler in originals.items():
+                signal.signal(sig, handler)
 
 
 class RemoteLauncher:
@@ -138,13 +153,14 @@ class RemoteLauncher:
         return result
 
 
-async def run(config_fd: int, listener_fd: int, channel_fd: int, private_listener_fds=()):
+async def run(config_fd: int, listener_fd: int, channel_fd: int, activity_fd: int, private_listener_fds=()):
     with os.fdopen(config_fd, "rb") as stream:
         config = json.loads(stream.read(65537))
     listener = socket.socket(fileno=listener_fd)
     private_listeners = [socket.socket(fileno=fd) for fd in private_listener_fds]
     channel = socket.socket(fileno=channel_fd)
     launcher = RemoteLauncher(channel, timeout=config["control_timeout"])
+    activity = ActivityReporter(socket.socket(fileno=activity_fd))
     if config.get("profile", "mcp-stdio") == "model-service":
         from .http_gateway import make_http_app
         legacy_routes = config.get("legacy_routes", [])
@@ -171,6 +187,7 @@ async def run(config_fd: int, listener_fd: int, channel_fd: int, private_listene
             # The scoped RPC has its own startup/cleanup deadline; generation
             # replacement then permits at most two seconds for private DELETE.
             control_timeout=config["control_timeout"] + 3,
+            activity_report=activity.report,
         )
     else:
         app, gateway = make_app(
@@ -178,8 +195,9 @@ async def run(config_fd: int, listener_fd: int, channel_fd: int, private_listene
             launch_session=launcher.launch, close_session=launcher.close,
             max_sessions=config["max_sessions"], idle_timeout=config["idle_timeout"],
             request_timeout=config["request_timeout"], active=lambda: config["active"],
+            activity_report=activity.report,
         )
-    server = uvicorn.Server(uvicorn.Config(
+    server = WorkerServer(uvicorn.Config(
         app, access_log=False, log_config=None, log_level="critical",
         timeout_graceful_shutdown=2,
     ))
@@ -194,6 +212,7 @@ async def run(config_fd: int, listener_fd: int, channel_fd: int, private_listene
         try:
             await gateway.shutdown()
         finally:
+            activity.close()
             channel.close()
             listener.close()
             for private in private_listeners:
@@ -207,10 +226,11 @@ def main():
     parser.add_argument("--config-fd", type=int, required=True)
     parser.add_argument("--listener-fd", type=int, required=True)
     parser.add_argument("--channel-fd", type=int, required=True)
+    parser.add_argument("--activity-fd", type=int, required=True)
     parser.add_argument("--private-listener-fd", type=int, action="append", required=True)
     args = parser.parse_args()
     try:
-        asyncio.run(run(args.config_fd, args.listener_fd, args.channel_fd, args.private_listener_fd))
+        asyncio.run(run(args.config_fd, args.listener_fd, args.channel_fd, args.activity_fd, args.private_listener_fd))
     except (Exception, KeyboardInterrupt):
         return 2
     return 0

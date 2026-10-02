@@ -43,6 +43,14 @@ Your assistant can now call `validate_json(document)`. Connection formats vary b
 
 Closing the Projects window keeps services running. Quitting mcpme stops the processes it owns.
 
+To build a drag-to-Applications installer from current source:
+
+```sh
+uv run --locked python scripts/build_mcpme_dmg.py
+```
+
+Open `dist/mcpme-0.1.0-arm64.dmg`, drag the app to Applications, eject the image, and open mcpme from Applications. This is a locally signed development build. See [macOS distribution](docs/MACOS_DISTRIBUTION.md) for verification and the signing/notarization work required for public downloads.
+
 ## Bring your own tools
 
 A useful script can become a tool your assistant calls. **Add Project** accepts local source folders and Markdown or text setup instructions, as well as prepared packages.

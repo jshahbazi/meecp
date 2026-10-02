@@ -583,9 +583,8 @@ final class MenuDashboard: NSObject, NSWindowDelegate {
         updateDetailActivity()
         positionPanels()
         if isVisible {
-            if NSApp.currentEvent?.type != .keyDown {
-                detailsPanel.makeKeyAndOrderFront(nil)
-            } else { detailsPanel.orderFront(nil) }
+            // Keep keyboard navigation in the app list until the user clicks a detail control.
+            detailsPanel.orderFront(nil)
         }
     }
 
@@ -752,7 +751,7 @@ final class MenuDashboard: NSObject, NSWindowDelegate {
     }
 }
 
-/// Exercises menu selection and keyboard focus without showing windows or contacting a host.
+/// Exercises menu selection, presentation, and keyboard routing without contacting a host.
 func dashboardViewSelfTest() -> Bool { MenuDashboard.verifySelectionAndFocus() }
 
 extension MenuDashboard {
@@ -802,6 +801,31 @@ extension MenuDashboard {
         update([app("a"), app("b")])
         guard isClear(), !dashboard.detailsLoadFailed else { return false }
         dashboard.showDetails(id: "missing")
-        return isClear()
+        guard isClear(), let screen = NSScreen.main else { return false }
+        let anchor = NSRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.maxY, width: 24, height: 24)
+        defer { dashboard.dismiss() }
+        dashboard.toggle(anchor: anchor, screen: screen)
+        // CLI/CI WindowServer sessions may decline application activation.
+        // When active, opening details must leave the menu as the key window.
+        func menuKeepsFocus() -> Bool { !NSApp.isActive || dashboard.menuPanel.isKeyWindow }
+        guard isClear(), dashboard.isVisible, menuKeepsFocus() else { return false }
+        dashboard.rows["a"]?.performClick(nil)
+        guard isSelected("a"), dashboard.detailsPanel.isVisible,
+              menuKeepsFocus() else { return false }
+        guard let down = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                         windowNumber: dashboard.menuPanel.windowNumber, context: nil,
+                                         characters: "\u{F701}", charactersIgnoringModifiers: "\u{F701}",
+                                         isARepeat: false, keyCode: 125) else { return false }
+        dashboard.menuPanel.sendEvent(down)
+        guard (dashboard.menuPanel.firstResponder as? DashboardRow)?.appID == "b" else { return false }
+        dashboard.rows["b"]?.performClick(nil)
+        guard isSelected("b"), menuKeepsFocus() else { return false }
+        dashboard.detailsPanel.performClose(nil)
+        guard isClear(), dashboard.isVisible else { return false }
+        dashboard.showDetails(id: "a")
+        dashboard.toggle(anchor: anchor, screen: screen)
+        guard isClear(), !dashboard.isVisible else { return false }
+        dashboard.toggle(anchor: anchor, screen: screen)
+        return isClear() && dashboard.isVisible && menuKeepsFocus()
     }
 }

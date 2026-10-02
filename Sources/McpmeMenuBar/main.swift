@@ -1611,7 +1611,9 @@ private func hostLogin(_ arguments: [String]) -> Int32? {
 }
 
 if CommandLine.arguments.dropFirst().first == "--dashboard-ui-self-test" {
-    _ = NSApplication.shared
+    let application = NSApplication.shared
+    application.setActivationPolicy(.accessory)
+    application.finishLaunching()
     let passed = dashboardViewSelfTest()
     print(passed ? "dashboard_ui_contracts_passed" : "dashboard_ui_contracts_failed")
     exit(passed ? 0 : 1)

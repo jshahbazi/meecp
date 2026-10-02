@@ -10,7 +10,7 @@ import re
 import shutil
 import subprocess
 
-from build_mcpme_host import ROOT, build as build_host, run
+from build_mcpme_host import ROOT, BuildCommandError, build as build_host, run
 
 MACHO_MAGIC = {b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xce",
                b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca", b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca"}
@@ -55,7 +55,9 @@ def verify_signature(path: Path, certificate_hash: str | None = None, deep: bool
     if deep:
         arguments.append("--deep")
     if certificate_hash is not None:
-        arguments.extend(["-R", DEVELOPER_ID_REQUIREMENT + f' and certificate leaf = H"{certificate_hash}"'])
+        # The leading '=' selects literal requirement text; otherwise codesign
+        # interprets the entire expression as the name of a requirements file.
+        arguments.extend(["-R", "=" + DEVELOPER_ID_REQUIREMENT + f' and certificate leaf = H"{certificate_hash}"'])
     run(*arguments, str(path))
 
 
@@ -189,5 +191,7 @@ if __name__ == "__main__":
                     arguments.sign_identity, arguments.keychain))
     except KeyboardInterrupt:
         raise SystemExit("app_build_interrupted") from None
+    except BuildCommandError as error:
+        raise SystemExit(error.diagnostic) from None
     except (OSError, ValueError, subprocess.CalledProcessError):
         raise SystemExit("app_build_failed") from None

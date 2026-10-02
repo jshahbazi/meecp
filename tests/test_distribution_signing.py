@@ -1,6 +1,7 @@
 """Distribution contracts; real Apple credentials are exercised only in release CI."""
 import json
 from pathlib import Path
+import platform
 import shutil
 import subprocess
 import sys
@@ -12,6 +13,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import build_mcpme_app as app_builder  # noqa: E402
 import build_mcpme_dmg as dmg_builder  # noqa: E402
+from build_mcpme_host import BuildCommandError  # noqa: E402
 
 
 CERTIFICATE = "A" * 40
@@ -67,6 +69,16 @@ def test_all_native_helpers_and_extensions_get_hardened_signatures(monkeypatch, 
     validations = [call for call in calls if "--verify" in call]
     assert len(validations) == 3
     assert all(CERTIFICATE in call[call.index("-R") + 1] for call in validations)
+
+
+@pytest.mark.skipif(platform.system() != "Darwin", reason="Requires macOS codesign")
+def test_native_codesign_evaluates_literal_certificate_requirement():
+    # An Apple platform binary must fail the requested Developer ID certificate
+    # constraint, with the verification exit code rather than a missing-file or
+    # requirement-parser error. This exercises the real tool's -R syntax.
+    with pytest.raises(BuildCommandError) as failure:
+        app_builder.verify_signature(Path("/usr/bin/true"), CERTIFICATE)
+    assert failure.value.returncode == 3
 
 
 def test_runtime_refuses_external_symlink_before_signing(tmp_path):

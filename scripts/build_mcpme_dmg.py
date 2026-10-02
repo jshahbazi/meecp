@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 
 from build_mcpme_app import build as build_app, developer_identity, verify_signature
-from build_mcpme_host import ROOT, run
+from build_mcpme_host import ROOT, BuildCommandError, run
 
 
 INSTALLATION = """# Install mcpme
@@ -254,5 +254,7 @@ if __name__ == "__main__":
                     arguments.notary_profile, arguments.keychain))
     except KeyboardInterrupt:
         raise SystemExit("dmg_build_interrupted") from None
+    except BuildCommandError as error:
+        raise SystemExit(error.diagnostic) from None
     except Exception:
         raise SystemExit("dmg_build_failed") from None

@@ -35,6 +35,8 @@ Keep credentials out of Git and build logs. The helper writes credential files w
 
 To build a release, open **Actions > Signed installer > Run workflow**, choose `main`, and approve the `macos-release` deployment. Download `mcpme-notarized-COMMIT` after success; it contains the DMG and its build receipt and expires after thirty days. Rejection or timeout from Apple fails the run without publishing an installer artifact.
 
+Build-command failures report a fixed tool and operation code plus the numeric exit status, such as `build_command_codesign_verify_failed_exit_3`. Captured output, command arguments, paths, and credential values are omitted. A codesign verification exit status of 3 can indicate that the signature did not satisfy the requested requirement; an `input_unreadable` suffix indicates that codesign could not read an input. Inline requirements must start with `=`. Credential-import failures still report `apple_credentials_setup_failed`.
+
 ## Updating dependencies
 
 Keep workflow action references pinned to official full commit SHAs. When updating `astral-sh/setup-uv`, update its selected-action allowlist entry in repository settings as well. Keep Python and uv versions compatible with the private-runtime builder, and change `uv.lock` through uv rather than editing it manually.

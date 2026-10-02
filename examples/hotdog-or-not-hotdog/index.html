@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' blob:; connect-src 'self'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <title>Not Hotdog</title>
+  <style>
+    :root { color-scheme: dark; --ink:#f8f1df; --muted:#b9b29f; --panel:#171916; --line:#3a3d34; --cream:#eee2bf; --green:#78d6a0; --red:#ff8276; }
+    * { box-sizing:border-box; }
+    [hidden] { display:none !important; }
+    body { margin:0; min-height:100vh; background:#10110f; color:var(--ink); font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    main { width:min(1080px,calc(100% - 32px)); margin:0 auto; padding:44px 0 60px; }
+    header { display:flex; align-items:flex-end; justify-content:space-between; gap:20px; margin-bottom:30px; }
+    .eyebrow { margin:0 0 6px; color:var(--green); font-size:11px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; }
+    h1 { margin:0; color:var(--cream); font-family:Georgia,serif; font-size:clamp(42px,8vw,72px); font-weight:400; letter-spacing:-.05em; line-height:.95; }
+    .status { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px; }
+    .status-dot { width:8px; height:8px; border-radius:50%; background:#777; }
+    .status-dot.ready { background:var(--green); box-shadow:0 0 12px #78d6a077; }
+    .workspace { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:18px; }
+    .card { border:1px solid var(--line); border-radius:18px; background:var(--panel); }
+    .stage { min-height:520px; display:flex; flex-direction:column; overflow:hidden; }
+    .dropzone { position:relative; flex:1; min-height:440px; display:flex; align-items:center; justify-content:center; padding:25px; text-align:center; transition:.18s ease; }
+    .dropzone.dragging { background:#24261f; }
+    .dropzone.has-image { align-items:stretch; padding:0; }
+    .dropzone input { position:absolute; width:1px; height:1px; opacity:0; }
+    .empty { max-width:360px; }
+    .empty h2 { margin:0 0 7px; color:var(--cream); font-family:Georgia,serif; font-size:30px; font-weight:400; }
+    .empty p { margin:0 0 19px; color:var(--muted); }
+    .choose, button { cursor:pointer; border:0; border-radius:9px; background:var(--cream); color:#171916; font-family:inherit; font-size:14px; font-weight:700; padding:12px 18px; transition:.15s ease; }
+    .choose:hover, button:hover:not(:disabled) { background:#fff7df; transform:translateY(-1px); }
+    button:disabled { cursor:not-allowed; opacity:.45; }
+    .preview { position:relative; width:100%; min-height:440px; display:flex; align-items:center; justify-content:center; background:#0c0d0b; }
+    .preview img { display:block; max-width:100%; max-height:520px; width:auto; height:auto; object-fit:contain; }
+    .preview canvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+    .toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:15px 18px; border-top:1px solid var(--line); }
+    .file-name { min-width:0; overflow:hidden; color:var(--muted); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+    .side { padding:22px; }
+    .side h2 { margin:0 0 20px; color:var(--cream); font-family:Georgia,serif; font-size:25px; font-weight:400; }
+    .field { margin-bottom:22px; }
+    .field-head { display:flex; justify-content:space-between; gap:12px; margin-bottom:8px; }
+    label { color:var(--muted); font-size:13px; }
+    output { color:var(--cream); font-variant-numeric:tabular-nums; }
+    input[type=range] { width:100%; accent-color:var(--green); }
+    .detect { width:100%; margin-bottom:10px; }
+    .reset { width:100%; background:transparent; border:1px solid var(--line); color:var(--muted); }
+    .result { margin-top:22px; padding-top:20px; border-top:1px solid var(--line); }
+    .verdict { margin:0 0 3px; font-size:27px; font-weight:800; letter-spacing:.02em; }
+    .verdict.hotdog { color:var(--green); }
+    .verdict.not-hotdog { color:var(--red); }
+    .result-note, .meta, .hint { color:var(--muted); font-size:12px; }
+    .meta { display:grid; gap:5px; margin-top:15px; }
+    .meta-row { display:flex; justify-content:space-between; gap:10px; }
+    .error { margin-top:14px; color:var(--red); font-size:13px; }
+    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+    @media (max-width:760px) { main { padding-top:28px; } header { align-items:flex-start; flex-direction:column; } .workspace { grid-template-columns:1fr; } .stage { min-height:390px; } .dropzone,.preview { min-height:310px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div><p class="eyebrow">A Silicon Valley inspired experiment</p><h1>Not Hotdog</h1></div>
+      <div class="status"><span id="statusDot" class="status-dot"></span><span id="statusText">Checking detector…</span></div>
+    </header>
+    <section class="workspace" aria-label="Hotdog detector">
+      <div class="card stage">
+        <div id="dropzone" class="dropzone">
+          <input id="fileInput" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp" aria-label="Choose an image">
+          <div id="empty" class="empty"><h2>Show me the evidence.</h2><p>Drop an image here or choose one from your computer.</p><p class="hint">12 MB max. Processed locally.</p><label class="choose" for="fileInput">Choose image</label></div>
+          <div id="preview" class="preview" hidden><img id="image" alt="Selected image"><canvas id="boxes" aria-hidden="true"></canvas></div>
+        </div>
+        <div class="toolbar"><span id="fileName" class="file-name">No image selected</span><button id="replace" class="reset" type="button" hidden>Replace image</button></div>
+      </div>
+      <aside class="card side">
+        <h2>Make the call</h2>
+        <div class="field"><div class="field-head"><label for="threshold">Detection threshold</label><output id="thresholdValue">0.35</output></div><input id="threshold" type="range" min="0.05" max="0.95" step="0.01" value="0.35"><p class="hint">Lower values catch more possible hotdogs.</p></div>
+        <button id="detect" class="detect" type="button" disabled>Detect</button>
+        <button id="reset" class="reset" type="button">Reset</button>
+        <div id="result" class="result" hidden><p id="verdict" class="verdict"></p><p id="resultNote" class="result-note"></p><div class="meta"><div class="meta-row"><span>Model confidence</span><strong id="confidence">—</strong></div><div class="meta-row"><span>Inference time</span><strong id="timing">—</strong></div><div class="meta-row"><span>Detections</span><strong id="count">—</strong></div></div></div>
+        <p id="error" class="error" role="alert" hidden></p>
+      </aside>
+    </section>
+  </main>
+  <script>
+    (() => {
+      const $ = id => document.getElementById(id);
+      const input = $('fileInput'), dropzone = $('dropzone'), empty = $('empty'), preview = $('preview'), image = $('image'), canvas = $('boxes');
+      const threshold = $('threshold'), thresholdValue = $('thresholdValue'), detect = $('detect'), result = $('result'), error = $('error');
+      let file = null, objectUrl = null, pending = false, requestId = 0, responseData = null;
+      const setError = message => { error.textContent = message || ''; error.hidden = !message; };
+      const clearResult = () => { responseData = null; result.hidden = true; canvas.width = canvas.height = 0; setError(''); };
+      const setPending = value => { pending = value; input.disabled = value; threshold.disabled = value; $('reset').disabled = value; $('replace').disabled = value; detect.disabled = value || !file; };
+      const reset = () => { if (pending) return; requestId++; file = null; if (objectUrl) URL.revokeObjectURL(objectUrl); objectUrl = null; input.value = ''; image.removeAttribute('src'); empty.hidden = false; preview.hidden = true; dropzone.classList.remove('has-image'); $('replace').hidden = true; $('fileName').textContent = 'No image selected'; detect.disabled = true; clearResult(); };
+      const drawBoxes = () => {
+        if (!responseData || !image.naturalWidth) return;
+        const rect = image.getBoundingClientRect(), host = preview.getBoundingClientRect();
+        const sourceWidth = Number(responseData.image && responseData.image.width) || image.naturalWidth;
+        const sourceHeight = Number(responseData.image && responseData.image.height) || image.naturalHeight;
+        const scale = Math.min(rect.width / sourceWidth, rect.height / sourceHeight);
+        const left = (host.width - rect.width) / 2, top = (host.height - rect.height) / 2;
+        const dpr = window.devicePixelRatio || 1; canvas.width = Math.round(host.width*dpr); canvas.height = Math.round(host.height*dpr); const ctx = canvas.getContext('2d'); ctx.scale(dpr,dpr); ctx.font = '700 12px -apple-system,sans-serif';
+        responseData.detections.filter(d => Array.isArray(d.box) && d.box.length === 4).forEach(d => { const [x1,y1,x2,y2] = d.box; const x = left+x1*scale, y = top+y1*scale, w=(x2-x1)*scale, h=(y2-y1)*scale; ctx.strokeStyle='#78d6a0'; ctx.lineWidth=3; ctx.strokeRect(x,y,w,h); const text=`HOTDOG ${(Number(d.confidence)*100).toFixed(0)}%`; const tw=ctx.measureText(text).width+12; ctx.fillStyle='#78d6a0'; ctx.fillRect(x,y-22,tw,22); ctx.fillStyle='#10110f'; ctx.fillText(text,x+6,y-7); });
+      };
+      const showFile = selected => { if (pending) return; requestId++; const generation=requestId; clearResult(); if (!selected || !selected.type.startsWith('image/')) { reset(); setError('Please choose a supported image file.'); return; } if (selected.size > 12*1024*1024) { reset(); setError('Please choose an image smaller than 12 MB.'); return; } if (objectUrl) URL.revokeObjectURL(objectUrl); file=null; objectUrl=URL.createObjectURL(selected); image.onload=() => { if (generation!==requestId) return; file=selected; empty.hidden=true; preview.hidden=false; dropzone.classList.add('has-image'); $('replace').hidden=false; detect.disabled=false; }; image.onerror=() => { if (generation!==requestId) return; if (objectUrl) URL.revokeObjectURL(objectUrl); objectUrl=null; file=null; image.removeAttribute('src'); empty.hidden=false; preview.hidden=true; dropzone.classList.remove('has-image'); $('replace').hidden=true; $('fileName').textContent='No image selected'; detect.disabled=true; setError('That image could not be opened.'); }; $('fileName').textContent=selected.name; image.src=objectUrl; };
+      input.addEventListener('change', () => showFile(input.files[0])); $('replace').addEventListener('click', () => input.click());
+      ['dragenter','dragover'].forEach(type => dropzone.addEventListener(type,e => { e.preventDefault(); if(!pending) dropzone.classList.add('dragging'); }));
+      ['dragleave','drop'].forEach(type => dropzone.addEventListener(type,e => { e.preventDefault(); dropzone.classList.remove('dragging'); }));
+      dropzone.addEventListener('drop', e => { if(!pending) showFile(e.dataTransfer.files[0]); });
+      threshold.addEventListener('input', () => { thresholdValue.value = Number(threshold.value).toFixed(2); thresholdValue.textContent = thresholdValue.value; clearResult(); });
+      image.addEventListener('load', drawBoxes); window.addEventListener('resize', drawBoxes);
+      detect.addEventListener('click', async () => { if (!file || pending) return; setPending(true); requestId++; const id=requestId; clearResult(); setError(''); const started=performance.now(); try { const res=await fetch('/api/detect',{method:'POST',credentials:'include',headers:{'Content-Type':'application/octet-stream','X-Confidence':threshold.value},body:file}); const data=await res.json().catch(()=>null); if(id!==requestId)return; if(!res.ok || !data || data.error) throw new Error(data&&data.error==='invalid_image'?'The detector could not read this image.':'Detection failed. Please try again.'); if(typeof data.verdict!=='string'||!Array.isArray(data.detections)) throw new Error('The detector returned an invalid result.'); responseData=data; const hotdog=data.verdict==='hotdog'; $('verdict').textContent=hotdog?'HOTDOG':'NOT HOTDOG'; $('verdict').className='verdict '+(hotdog?'hotdog':'not-hotdog'); $('resultNote').textContent=hotdog?'A hotdog was detected at this threshold.':'Not hotdog means no hotdog detected at this threshold.'; $('confidence').textContent=Number.isFinite(data.confidence)?`${(data.confidence*100).toFixed(1)}%`: 'Unavailable'; $('timing').textContent=Number.isFinite(data.inference_ms)?`${data.inference_ms.toFixed(0)} ms`:`${(performance.now()-started).toFixed(0)} ms`; $('count').textContent=data.detections.length; result.hidden=false; drawBoxes(); } catch(e) { if(id===requestId)setError(e.message||'Detection failed. Please try again.'); } finally { if(id===requestId)setPending(false); } });
+      $('reset').addEventListener('click', reset);
+      fetch('/api/status',{credentials:'include'}).then(r=>r.ok?r.json():null).then(s=>{ if(s&&s.ready){$('statusDot').classList.add('ready'); $('statusText').textContent=s.model?'Detector ready · '+s.model:'Detector ready';} else $('statusText').textContent='Detector unavailable'; }).catch(()=>{$('statusText').textContent='Detector unavailable';});
+    })();
+  </script>
+</body>
+</html>

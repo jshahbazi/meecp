@@ -28,6 +28,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from .contracts import PackageError, validate_package
+from .connections import connection_names
 from .activity import ACTIVITY_EVENTS, ACTIVITY_FRAME, Activity, timestamp
 from .imports import ImportError as ImportDraftError, ImportStore
 from .private import ensure_private_directory, read_private_json, snapshot_package, write_private_json
@@ -191,7 +192,9 @@ class Supervisor:
         return self.activities[slot_id]
 
     def slot_snapshot(self, slot) -> dict:
-        return {**slot.to_dict(), "activity": self.activity(slot.id).snapshot()}
+        names = connection_names((item.id, item.name) for item in self.registry.list_slots())
+        return {**slot.to_dict(), "connection_name": names[slot.id],
+                "activity": self.activity(slot.id).snapshot()}
 
     async def runtime_metrics(self, slot, package) -> dict | None:
         """Only known numeric JevK5 statistics cross into manager/UI snapshots."""

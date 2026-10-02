@@ -269,7 +269,7 @@ async def verify(args, report):
             _, schema_app = make_app(None, "schema-only", tools_only=True)
             expected = [value.model_dump(by_alias=True, exclude_none=True) for value in await schema_app.state.mcp.list_tools()]
             exported = await cli("connections", "export", "--slot", model_id, "--json")
-            config = exported["configuration"]["mcpServers"][model_id]
+            config = exported["configuration"]["mcpServers"][exported["connection_name"]]
             require(Path(config["command"]) == launcher and engine_key not in json.dumps(exported))
             with open(os.devnull, "w") as errlog:
                 parameters = StdioServerParameters(command=config["command"], args=config["args"], env=env, cwd=str(home))

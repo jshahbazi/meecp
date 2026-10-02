@@ -153,7 +153,7 @@ async def verify(host: Path, package: Path, report: dict):
             serialized = json.dumps(exported)
             if any(connection["token"] in serialized for connection in [manager, *connections]) or '"token"' in serialized:
                 raise ValueError("credential_exported")
-            config = exported["configuration"]["mcpServers"][slots[1]["slot_id"]]
+            config = exported["configuration"]["mcpServers"][exported["connection_name"]]
             if Path(config["command"]) != launcher:
                 raise ValueError("launcher_not_relocated")
             checks["export_no_credentials"] = True

@@ -29,6 +29,28 @@ private func safeCode(_ object: Any?) -> String? {
     return value
 }
 
+private func fallbackConnectionName(_ name: String, id: String) -> String {
+    var result = ""
+    var separator = false
+    for scalar in name.lowercased().unicodeScalars {
+        let value = scalar.value
+        if (48...57).contains(value) || (97...122).contains(value) {
+            result.unicodeScalars.append(scalar); separator = false
+        } else if !result.isEmpty {
+            separator = true
+        }
+        if separator && !result.hasSuffix("-") { result.append("-") }
+    }
+    while result.hasSuffix("-") { result.removeLast() }
+    if result.count > 64 { result = String(result.prefix(64)).trimmingCharacters(in: CharacterSet(charactersIn: "-")) }
+    return result.isEmpty ? "app-" + id : result
+}
+
+private func connectionConfiguration(name: String, id: String, executable: String, stateDirectory: String) -> [String: Any] {
+    ["mcpServers": [name: ["command": executable,
+                              "args": ["--state-dir", stateDirectory, "connect", "--slot", id]]]]
+}
+
 private func finiteNumber(_ object: Any?) -> Double? {
     guard let value = object as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(),
           value.doubleValue.isFinite, value.doubleValue >= 0, value.doubleValue < Double(Int.max) else { return nil }
@@ -61,6 +83,7 @@ private func parseActivity(_ object: Any?) -> DashboardActivity? {
 private struct Project: Equatable {
     let id: String
     let name: String
+    let connectionName: String
     let state: String
     let port: Int
     let policy: String
@@ -77,7 +100,11 @@ private struct Project: Equatable {
               let port = integer(object["public_port"]), (1024...65535).contains(port),
               let policy = object["start_policy"] as? String, ["manual", "host", "first_call"].contains(policy),
               let generation = integer(object["generation"]), generation > 0 else { return nil }
-        self.id = id; self.name = name; self.state = state; self.port = port
+        let suppliedConnectionName = object["connection_name"] as? String
+        self.id = id; self.name = name
+        self.connectionName = suppliedConnectionName?.range(of: "^[a-z0-9][a-z0-9-]{0,63}$", options: .regularExpression) != nil
+            ? suppliedConnectionName! : fallbackConnectionName(name, id: id)
+        self.state = state; self.port = port
         self.policy = policy; self.generation = generation; self.error = safeCode(object["error_code"])
         self.activity = parseActivity(object["activity"])
     }
@@ -943,8 +970,9 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
 
     private func copyConfiguration(_ id: String) {
         guard !uiPreviewMode else { management?.connectionCopied(id: id); dashboard.connectionCopied(id: id); return }
+        guard let project = projects.first(where: { $0.id == id }) else { showError("configuration_unavailable"); return }
         let executable = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/mcpme").path
-        let object: [String: Any] = ["mcpServers": [id: ["command": executable, "args": ["--state-dir", stateDirectory.path, "connect", "--slot", id]]]]
+        let object = connectionConfiguration(name: project.connectionName, id: id, executable: executable, stateDirectory: stateDirectory.path)
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
               let text = String(data: data, encoding: .utf8) else { showError("configuration_unavailable"); return }
         NSPasteboard.general.clearContents()
@@ -1533,10 +1561,17 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
 
 private func nativeSelfTest() -> Bool {
     let id = "11111111-2222-4333-8444-555555555555"
-    let good: [String: Any] = ["slot_id": id, "name": "Synthetic", "observed_state": "ready", "public_port": 19386, "start_policy": "manual", "generation": 1]
-    guard Project(good)?.id == id, integer(true) == nil, safeCode("private arbitrary text") == nil,
+    let good: [String: Any] = ["slot_id": id, "name": "Synthetic", "connection_name": "synthetic", "observed_state": "ready", "public_port": 19386, "start_policy": "manual", "generation": 1]
+    guard Project(good)?.id == id, Project(good)?.connectionName == "synthetic",
+          fallbackConnectionName("Hot Dog / Not Hot Dog", id: id) == "hot-dog-not-hot-dog",
+          fallbackConnectionName("!!!", id: id) == "app-" + id, integer(true) == nil, safeCode("private arbitrary text") == nil,
           ManagerConnection(["api_version": 1, "supervisor_pid": 42, "endpoint": "http://127.0.0.1:19384", "token": String(repeating: "x", count: 32)]) != nil,
           ManagerConnection(["api_version": 1, "supervisor_pid": 42, "endpoint": "http://example.com:19384", "token": String(repeating: "x", count: 32)]) == nil else { return false }
+    let exported = connectionConfiguration(name: "synthetic", id: id, executable: "/Applications/mcpme.app/Contents/MacOS/mcpme", stateDirectory: "/tmp/state")
+    guard let servers = exported["mcpServers"] as? [String: Any],
+          let registration = servers["synthetic"] as? [String: Any],
+          servers[id] == nil,
+          registration["args"] as? [String] == ["--state-dir", "/tmp/state", "connect", "--slot", id] else { return false }
     guard managementSelfTest() else { return false }
     let activity: [String: Any] = ["received": 8, "succeeded": 5, "failed": 1, "in_flight": 2,
                                  "requests_last_minute": 3, "last_latency_ms": 12.5,

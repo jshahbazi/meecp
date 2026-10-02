@@ -116,6 +116,103 @@ async def test_import_cancel_and_revise_block_stale_apply(tmp_path, prepared):
 
 
 @pytest.mark.asyncio
+async def test_import_plan_initial_publication_is_bound(tmp_path, prepared, monkeypatch):
+    import mcpme.supervisor as supervisor
+    package, reaper = prepared
+    state = tmp_path.resolve() / "host"
+    host = Supervisor(state, reaper)
+    published = []
+    original = supervisor.write_private_json
+    def record_publication(path, value):
+        original(path, value)
+        if path.parent == host.root / "plans":
+            published.append(dict(value))
+    monkeypatch.setattr(supervisor, "write_private_json", record_publication)
+    try:
+        draft = host.imports.create(package, name="Bound at publication")
+        plan = await host.plan_install_async({"import_id": draft["draft_id"], "revision": 1})
+        assert len(published) == 1
+        for key in ("import_id", "import_revision", "import_digest"):
+            assert published[0][key] == plan[key]
+        assert not host.registry.list_operations() and not host.owners
+    finally:
+        await host.close()
+    reopened = Supervisor(state, reaper)
+    try:
+        await reopened.initialize()
+        reopened.imports.cancel(draft["draft_id"], 1)
+        with pytest.raises(ImportDraftError, match="draft_inactive"):
+            await reopened.apply_install(plan["plan_id"])
+        assert not reopened.registry.list_operations() and not reopened.registry.list_slots()
+    finally:
+        await reopened.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["cancel", "revise"])
+async def test_import_changed_during_staging_leaves_no_usable_plan(tmp_path, prepared, monkeypatch, action):
+    import mcpme.supervisor as supervisor
+    package, reaper = prepared
+    host = Supervisor(tmp_path.resolve() / "host", reaper)
+    original = supervisor.snapshot_package
+    try:
+        draft = host.imports.create(package, name="Changed during staging")
+        def change_after_snapshot(*args, **kwargs):
+            result = original(*args, **kwargs)
+            if action == "cancel":
+                host.imports.cancel(draft["draft_id"], 1)
+            else:
+                host.imports.revise(draft["draft_id"], 1, name="Changed")
+            return result
+        monkeypatch.setattr(supervisor, "snapshot_package", change_after_snapshot)
+        code = "draft_inactive" if action == "cancel" else "stale_import_revision"
+        with pytest.raises(ImportDraftError, match=code):
+            await host.plan_install_async({"import_id": draft["draft_id"], "revision": 1})
+        assert not list((host.root / "plans").glob("*.json"))
+        assert not list((host.root / "staging").iterdir())
+        assert not host.plan_listeners and not host.plan_imports
+        assert not host.registry.list_slots() and not host.registry.list_operations() and not host.owners
+    finally:
+        await host.close()
+
+
+@pytest.mark.asyncio
+async def test_canceled_planning_waits_for_staging_before_cleanup(tmp_path, prepared, monkeypatch):
+    import threading
+    import mcpme.supervisor as supervisor
+    package, reaper = prepared
+    host = Supervisor(tmp_path.resolve() / "host", reaper)
+    original = supervisor.snapshot_package
+    entered, release = threading.Event(), threading.Event()
+    plan_task = None
+    def paused_snapshot(*args, **kwargs):
+        entered.set()
+        if not release.wait(10):
+            raise RuntimeError("synthetic staging timeout")
+        return original(*args, **kwargs)
+    monkeypatch.setattr(supervisor, "snapshot_package", paused_snapshot)
+    try:
+        plan_task = asyncio.create_task(host.plan_install_async({"package": str(package)}))
+        async with asyncio.timeout(10):
+            while not entered.is_set():
+                await asyncio.sleep(0.01)
+        plan_task.cancel()
+        await asyncio.sleep(0)
+        assert not plan_task.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await plan_task
+        assert not list((host.root / "plans").glob("*.json"))
+        assert not list((host.root / "staging").iterdir())
+        assert not host.plan_listeners and not host.registry.list_operations()
+    finally:
+        release.set()
+        if plan_task is not None:
+            await asyncio.gather(plan_task, return_exceptions=True)
+        await host.close()
+
+
+@pytest.mark.asyncio
 async def test_import_recovers_intent_before_draft_submission(tmp_path, prepared):
     package, reaper = prepared
     state = tmp_path.resolve() / "host"

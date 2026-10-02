@@ -350,12 +350,28 @@ class ImportStore:
                 );
                 PRAGMA user_version=1;
             """)
-        except (sqlite3.Error, ImportError) as error:
+            self._recover_inactive_staging()
+        except (sqlite3.Error, ImportError, OSError, ValueError, UnicodeError) as error:
             if hasattr(self, "_connection"):
                 self._connection.close()
             if isinstance(error, ImportError):
                 raise
             raise ImportError("imports_unavailable") from None
+
+    def _recover_inactive_staging(self) -> None:
+        """Reclaim staging left behind after an inactive-state commit."""
+        rows = self._connection.execute("SELECT draft_id, data FROM drafts")
+        for row in rows:
+            draft = json.loads(row["data"])
+            if draft.get("state") not in {"canceled", "expired"}:
+                continue
+            _identity(row["draft_id"])
+            directory = self.staging / row["draft_id"]
+            if not directory.exists() and not directory.is_symlink():
+                continue
+            ensure_private_directory(directory)
+            shutil.rmtree(directory)
+        _sync_directory(self.staging)
 
     def close(self) -> None:
         self._connection.close()

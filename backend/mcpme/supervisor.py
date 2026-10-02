@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import platform
 import secrets
+import shutil
 import signal
 import socket
 import sys
@@ -863,9 +864,20 @@ class Supervisor:
                     listener.close()
                 self.plan_imports.pop(plan_id, None)
 
-    async def plan_install_async(self, payload: dict, **overrides) -> dict:
+    def _discard_unpublished_plan(self, plan_id: str):
+        listener = self.plan_listeners.pop(plan_id, None)
+        if listener is not None:
+            listener.close()
+        self.plan_imports.pop(plan_id, None)
+        (self.root / "plans" / (plan_id + ".json")).unlink(missing_ok=True)
+        directory = self.root / "staging" / plan_id
+        if directory.exists() or directory.is_symlink():
+            ensure_private_directory(directory)
+            shutil.rmtree(directory)
+
+    async def plan_install_async(self, payload: dict, *, _import_binding: dict | None = None, **overrides) -> dict:
         if "import_id" in payload:
-            if set(payload) != {"import_id", "revision"} or overrides:
+            if set(payload) != {"import_id", "revision"} or overrides or _import_binding is not None:
                 raise HostError("invalid_import_plan")
             self.reconcile_imports()
             draft = self.imports.inspect(payload["import_id"])
@@ -873,28 +885,47 @@ class Supervisor:
             if attachment is None:
                 raise HostError("package_required")
             draft = self.imports.validate_binding(draft["draft_id"], payload["revision"], attachment["digest"])
+            binding = {"import_id": draft["draft_id"], "import_revision": payload["revision"],
+                       "import_digest": attachment["digest"]}
             result = await self.plan_install_async({"package": attachment["path"], "name": draft["name"],
-                                                   "start": draft["start"], "start_policy": draft["start_policy"]})
+                                                   "start": draft["start"], "start_policy": draft["start_policy"]},
+                                                  _import_binding=binding)
             try:
                 self.imports.validate_binding(draft["draft_id"], payload["revision"], attachment["digest"])
-                binding = {"import_id": draft["draft_id"], "import_revision": payload["revision"],
-                           "import_digest": attachment["digest"]}
-                path = self.root / "plans" / (result["plan_id"] + ".json")
-                write_private_json(path, {**read_private_json(path), **binding})
                 self.plan_imports[result["plan_id"]] = (draft["draft_id"], payload["revision"])
-                return {**result, **binding}
+                return result
             except BaseException:
-                self.plan_listeners.pop(result["plan_id"]).close()
+                self._discard_unpublished_plan(result["plan_id"])
                 raise
         if set(payload) - {"package", "name", "start_policy", "start"} or not isinstance(payload.get("package"), str):
             raise HostError("invalid_install_plan")
         plan_id = str(uuid.uuid4())
-        package = await asyncio.to_thread(validate_package, Path(payload["package"]))
-        snapshot = await asyncio.to_thread(snapshot_package, package, self.root / "staging" / plan_id / "package")
-        return self.plan_install(payload, _prepared=snapshot, _plan_id=plan_id, **overrides)
+        def stage():
+            package = validate_package(Path(payload["package"]))
+            return snapshot_package(package, self.root / "staging" / plan_id / "package")
+        staging = asyncio.create_task(asyncio.to_thread(stage))
+        try:
+            snapshot = await asyncio.shield(staging)
+            return self.plan_install(payload, _prepared=snapshot, _plan_id=plan_id,
+                                     _import_binding=_import_binding, **overrides)
+        except BaseException:
+            # A canceled await does not stop a copying thread. Wait for that
+            # thread before reclaiming its tree so it cannot recreate artifacts.
+            while not staging.done():
+                try:
+                    await asyncio.shield(staging)
+                except asyncio.CancelledError:
+                    continue
+                except BaseException:
+                    break
+            if not staging.cancelled():
+                staging.exception()
+            self._discard_unpublished_plan(plan_id)
+            raise
 
     def plan_install(self, payload: dict, *, slot_id: str | None = None, public_port: int | None = None,
-                     invocation_token: str | None = None, legacy_jev: bool = False, _prepared=None, _plan_id=None) -> dict:
+                     invocation_token: str | None = None, legacy_jev: bool = False, _prepared=None, _plan_id=None,
+                     _import_binding: dict | None = None) -> dict:
         if set(payload) - {"package", "name", "start_policy", "start"} or not isinstance(payload.get("package"), str):
             raise HostError("invalid_install_plan")
         if len(self.registry.list_slots()) >= 16 or len(self.plan_listeners) >= 32:
@@ -912,10 +943,17 @@ class Supervisor:
         if legacy_jev and (package.manifest.profile != "model-service" or {tool.name for tool in package.manifest.tools} != {"jevk5_decide", "jevk5_status"}):
             raise HostError("invalid_legacy_profile")
         snapshot = _prepared or snapshot_package(package, self.root / "staging" / plan_id / "package")
+        if _import_binding is not None:
+            self.imports.validate_binding(_import_binding["import_id"], _import_binding["import_revision"],
+                                          _import_binding["import_digest"])
         listener = bind_listener(public_port) if public_port is not None else preferred_listener()
         plan = {"plan_id": plan_id, "slot_id": slot_id, "package_digest": snapshot.digest,
                 "package_path": str(snapshot.root), "name": name, "start_policy": start_policy,
                 "start": payload.get("start", False), "public_port": listener.getsockname()[1], "legacy_jev": legacy_jev}
+        if _import_binding is not None:
+            # The first durable publication must already enforce draft authority,
+            # including if the host dies before returning the plan to its caller.
+            plan.update(_import_binding)
         try:
             if invocation_token is not None:
                 if not isinstance(invocation_token, str) or not 32 <= len(invocation_token) <= 512:

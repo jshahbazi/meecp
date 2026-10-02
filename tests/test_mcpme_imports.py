@@ -329,7 +329,8 @@ def test_cancel_and_expire_preserve_sources_and_invalidate_binding(tmp_path, act
                 mutation()
 
 
-def test_inactive_cleanup_can_resume_after_interruption(tmp_path, monkeypatch):
+@pytest.mark.parametrize("action", ["cancel", "expire"])
+def test_inactive_cleanup_can_resume_after_interruption(tmp_path, monkeypatch, action):
     import mcpme.imports as imports
     with ImportStore(tmp_path / "state") as store:
         draft, package = ready(tmp_path, store)
@@ -338,15 +339,52 @@ def test_inactive_cleanup_can_resume_after_interruption(tmp_path, monkeypatch):
             raise OSError("Synthetic interrupted cleanup")
         monkeypatch.setattr(imports.shutil, "rmtree", interrupted)
         with pytest.raises(ImportError, match="^import_cleanup_failed$"):
-            store.cancel(draft["draft_id"], 1)
+            getattr(store, action)(draft["draft_id"], 1)
         canceled = store.inspect(draft["draft_id"])
-        assert canceled["state"] == "canceled"
+        assert canceled["state"] == {"cancel": "canceled", "expire": "expired"}[action]
         assert Path(draft["attachment"]["path"]).exists()
         monkeypatch.setattr(imports.shutil, "rmtree", original)
-        assert store.cancel(draft["draft_id"], 1) == canceled
+    with ImportStore(tmp_path / "state") as reopened:
+        assert reopened.inspect(draft["draft_id"])["state"] == {"cancel": "canceled", "expire": "expired"}[action]
+        assert not Path(draft["source"]["snapshot_path"]).exists()
+        assert not Path(draft["attachment"]["path"]).exists()
+    with ImportStore(tmp_path / "state") as store:
+        assert getattr(store, action)(draft["draft_id"], 1) == canceled
         assert not Path(draft["attachment"]["path"]).exists()
         assert package.exists()
         assert Path(draft["source"]["locator"]).exists()
+
+
+def test_inactive_startup_cleanup_failure_is_sanitized(tmp_path, monkeypatch):
+    import mcpme.imports as imports
+    with ImportStore(tmp_path / "state") as store:
+        draft, _ = ready(tmp_path, store)
+        store.cancel(draft["draft_id"], 1)
+    staging = tmp_path / "state" / "imports" / draft["draft_id"]
+    staging.mkdir(mode=0o700)
+    original = imports.shutil.rmtree
+    attempted = []
+    def interrupted(*args, **kwargs):
+        attempted.append(True)
+        raise OSError("private path details")
+    monkeypatch.setattr(imports.shutil, "rmtree", interrupted)
+    with pytest.raises(ImportError, match="^imports_unavailable$"):
+        ImportStore(tmp_path / "state")
+    assert attempted == [True]
+    monkeypatch.setattr(imports.shutil, "rmtree", original)
+
+
+def test_inactive_startup_cleanup_rejects_symlink_and_preserves_original(tmp_path):
+    with ImportStore(tmp_path / "state") as store:
+        draft, package = ready(tmp_path, store)
+        store.cancel(draft["draft_id"], 1)
+    staging = tmp_path / "state" / "imports" / draft["draft_id"]
+    original = Path(draft["source"]["locator"])
+    staging.symlink_to(original, target_is_directory=True)
+    with pytest.raises(ImportError, match="^imports_unavailable$"):
+        ImportStore(tmp_path / "state")
+    assert staging.is_symlink() and original.exists() and package.exists()
+    assert (original / "validator.py").exists()
 
 
 @pytest.mark.parametrize("status", ["pending", "running", "recovery_required", "failed", "canceled", "completed"])

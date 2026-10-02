@@ -46,7 +46,9 @@ scripts/mcpme imports expire DRAFT_UUID --revision 2 --json
 
 An edit increments the revision and clears the attachment. A stale return or plan fails. Repeating attachment of the same package to the same revision returns the existing result; replacing it requires an explicit edit. Editing the original source or agent output does not alter the sealed attachment. Revalidating a tampered attachment prevents planning/apply.
 
-Inactive cancel/expiry removes only host-owned draft staging and closes unapplied port reservations. Source folders and agent workspaces remain intact. Drafts show a 30-day retention deadline; expiry is explicit in this milestone, with no background cleanup scheduler. Submitted artifacts remain retained for installation/recovery.
+Inactive cancel/expiry removes only host-owned draft staging and closes unapplied port reservations. If deletion is interrupted after the inactive state commits, the next host startup resumes that cleanup. Source folders and agent workspaces remain intact. Drafts show a 30-day retention deadline; expiry is explicit in this milestone, with no background cleanup scheduler. Submitted artifacts remain retained for installation/recovery.
+
+An import plan includes its revision and package digest in its first durable publication. Revising or canceling during package staging rejects planning and reclaims that attempt's files and port reservation. Canceling a planning request waits for the staging worker to finish before deleting its files.
 
 Apply checks the revision/digest before writing a durable installation intent and submitting the draft, without yielding between those steps. The registry intent contains its import binding and owns a separate candidate snapshot. On restart, reconciliation repairs a crash between the intent write and draft submission before draft mutation can occur. Concurrent applications of different plans for the same draft revision recover one operation. Interrupted installations retain Phase 1's `recovery_required` behavior; this milestone does not add automatic runtime reconciliation.
 

@@ -405,14 +405,15 @@ class Gateway:
                     return JSONResponse({"error": {"code": "event_not_found"}}, status_code=400)
                 stream, after = event.stream, event.sequence
                 if event.terminal:
-                    session.last_activity = time.monotonic()
                     return Response(status_code=200, headers={"content-type": "text/event-stream",
                                     "mcp-session-id": session.session_id})
             else:
                 stream, after = "notifications", 0
             if stream in session.followers:
                 return Response(status_code=409)
-            session.last_activity = time.monotonic()
+            # Notification streams reconnect automatically on transport timeouts.
+            # Opening or replaying a stream is not MCP activity and must not keep
+            # a quiet session (and its child process) leased indefinitely.
             return SSE(self, session, stream, after)
         if request.method != "POST":
             return Response(status_code=405)
@@ -511,6 +512,10 @@ class SSE(Response):
         async def disconnected():
             while True:
                 if (await receive())["type"] == "http.disconnect":
+                    # Release the follower promptly so a transport reconnect can
+                    # claim it without waiting for the bounded condition timeout.
+                    async with session.condition:
+                        session.condition.notify_all()
                     return
 
         watcher = asyncio.create_task(disconnected())
@@ -538,10 +543,12 @@ class SSE(Response):
                     elif session.closed:
                         return
                     else:
-                        # A short bounded condition wait observes disconnects without retaining a cancelled tool call.
+                        # Check under the same lock used by the disconnect watcher
+                        # so a notification cannot be lost before wait() registers.
                         async with session.condition:
-                            with contextlib.suppress(TimeoutError):
-                                await asyncio.wait_for(session.condition.wait(), 0.25)
+                            if not watcher.done():
+                                with contextlib.suppress(TimeoutError):
+                                    await asyncio.wait_for(session.condition.wait(), 0.25)
         except TimeoutError:
             pass
         finally:

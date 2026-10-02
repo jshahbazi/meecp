@@ -145,7 +145,7 @@ The supervisor keeps each public port bound and passes its listener to the corre
 
 Each gateway can request only its own declared per-session entrypoint through a private channel. The supervisor launches that executable through a native reaper, then transfers its pipes. The channel accepts no executable, arguments, PID, or other-slot selection. Cancellation around the ownership transfer completes cleanup before another transfer can use the channel.
 
-DELETE, expiration, stop, restart, and gateway death reclaim session children. SSE or POST disconnection alone preserves an unexpired session and its process. Requests have finite deadlines; open event streams do not renew an idle lease. Session mappings, event replay, framing, and message sizes are bounded. Responses and protocol history are never written to disk.
+DELETE, expiration, stop, restart, and gateway death reclaim session children. SSE or POST disconnection alone preserves an unexpired session and its process. Requests have finite deadlines; opening, reconnecting, or replaying event streams does not renew an idle lease. Accepted MCP POSTs renew the lease, and pending calls remain protected by their finite deadlines. Session mappings, event replay, framing, and message sizes are bounded. Responses and protocol history are never written to disk.
 
 A surviving native reaper terminates and reaps its target if the supervisor dies, including SIGKILL. Losing the reaper itself records `ownership_lost`, closes the affected slot, stops its remaining owned processes, and retains the missing instance's record. Other slots continue. The host never guesses that an old PID is safe to signal. Restart cannot bypass this block.
 

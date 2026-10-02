@@ -1,6 +1,6 @@
 # Phase 2 onboarding verification
 
-Date: 2026-10-01. This record covers the first source-import and external-preparation milestone, not the full Phase 2 acceptance matrix.
+Date: 2026-10-01. This record covers the first source-import and external-preparation milestone, not the full Phase 2 acceptance matrix. The subsequent scoped-grant and management MCP milestone is recorded in [MANAGEMENT_MCP.md](MANAGEMENT_MCP.md).
 
 ## Automated coverage
 
@@ -49,4 +49,4 @@ The review also reproduced canceled/expired staging surviving an interrupted del
 
 Source intake, attachment, and planning never execute source/build code or package entrypoints. Agent preparation runs separately. Apply performs supervised candidate initialization and exact tool-schema checks. A source identity declaration does not prove semantic fidelity to arbitrary user intent. Synthetic package/client checks do not establish model decision quality or calibration.
 
-Downloads, scoped management grants/MCP, upgrades/data rollback, removal, raw model preparation, reference-document services, and integrated preparation are pending. This milestone does not validate interruption/recovery at every future upgrade stage, enabled login-item transfer, or drag-and-drop accessibility on every input device. Public signing/notarization is implemented in the protected-main release workflow and was not exercised by this Phase 2 verification. The tested local bundle remains an ad hoc development artifact.
+At this milestone, downloads, scoped management grants/MCP, upgrades/data rollback, removal, raw model preparation, reference-document services, and integrated preparation were pending. Scoped grants/MCP were added subsequently. This milestone does not validate interruption/recovery at every future upgrade stage, enabled login-item transfer, or drag-and-drop accessibility on every input device. Public signing/notarization is implemented in the protected-main release workflow and was not exercised by this Phase 2 verification. The tested local bundle remains an ad hoc development artifact.

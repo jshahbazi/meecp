@@ -13,8 +13,8 @@
   },
   "onnx": {
     "path": "models/yolo11n.onnx",
-    "sha256": "7ba932db5d6c0c75ed957ebc0b58adcc2ddfc59b3388ec35e4ac6eaf7d1a6d33",
-    "bytes": 10701556
+    "sha256": "121b1f682e2df1aff1c16dacb7ce4bedc26df016a500b18743349c16724ad85d",
+    "bytes": 10701557
   },
   "export": {
     "format": "onnx",
@@ -28,9 +28,9 @@
   },
   "toolchain": {
     "ultralytics": "8.3.221",
-    "torch": "2.8.0",
-    "torchvision": "0.23.0",
-    "onnx": "1.19.1"
+    "torch": "2.14.1",
+    "torchvision": "0.29.1",
+    "onnx": "1.22.0"
   },
   "docs": "https://docs.ultralytics.com/models/yolo11/"
 }

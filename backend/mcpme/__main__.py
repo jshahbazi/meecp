@@ -341,7 +341,9 @@ async def execute(args) -> dict | None:
         connection = read_private_json(state / "slots" / args.slot / "connection.json")
         if connection.get("slot_id") != args.slot:
             raise ValueError()
-        await run_bridge(endpoint(connection), connection["token"], socket_path=socket_path(state, args.slot))
+        from .limits import DEFAULT_REQUEST_BYTES
+        await run_bridge(endpoint(connection), connection["token"], socket_path=socket_path(state, args.slot),
+                         max_request_bytes=connection.get("max_request_bytes", DEFAULT_REQUEST_BYTES))
         return None
     if args.command == "migrate-jevk5":
         if args.action == "plan":

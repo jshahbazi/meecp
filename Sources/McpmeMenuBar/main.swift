@@ -1459,6 +1459,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             sections.append("Identity and licenses\n" + pretty(identity))
             if let entry = package["entrypoint"] { sections.append("Executable entrypoint\n" + pretty(entry)) }
             if let processes = package["processes"] { sections.append("Managed processes\n" + pretty(processes)) }
+            if let lifecycle = package["lifecycle"] { sections.append("Request size and lifecycle limits\n" + pretty(lifecycle)) }
             if let resources = package["resources"] { sections.append("Declared resource estimates\n" + pretty(resources)) }
             if let access = package["access"] { sections.append("Declared access (same-user code; no OS sandbox)\n" + pretty(access)) }
             if let tools = package["tools"] { sections.append("MCP tools and schemas\n" + pretty(tools)) }
@@ -1482,6 +1483,9 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                 }.joined(separator: "\n"))
             }
             if let access = package["access"] { sections.append("Declared access and side effects\n" + pretty(access) + "\nRuns with your account permissions.") }
+            let lifecycle = package["lifecycle"] as? [String: Any]
+            let requestBytes = integer(lifecycle?["max_request_bytes"]) ?? 1_048_576
+            sections.append("Maximum tool request: \(requestBytes.formatted()) bytes")
             if let resources = package["resources"] { sections.append("Declared resource estimates\n" + pretty(resources)) }
         }
         sections.append("Start after installation: " + ((object["start"] as? Bool ?? currentDraft?.start ?? false) ? "Yes" : "No"))

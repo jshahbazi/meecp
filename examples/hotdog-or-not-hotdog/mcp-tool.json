@@ -1,0 +1,150 @@
+{
+  "name": "detect_hotdog",
+  "description": "Detect hot dogs with bundled YOLO11n from an image supplied by the client. Pass exactly one of image_path (a known absolute local path) or image_base64 (actual image bytes encoded as base64, or an image data URL). Use an attachment path already present in client metadata when available; no manual path entry is needed. Chat attachments are not automatically forwarded by MCP. Never invent a path or reconstruct base64 from visual context. Supports JPEG, PNG, WebP, BMP and GIF (first frame), up to 24 million pixels. Both file and inline inputs allow 12 MiB decoded. The prepared adapter declares a 17 MiB JSON request allowance for base64 and framing. not_hotdog means no detection met the threshold; confidence is a detector score, not a calibrated probability. No file chooser, runtime network access, persistent uploads or image history.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "image_path": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 4096,
+        "pattern": "^/",
+        "description": "Known absolute local path exposed by the client or explicitly supplied by the caller."
+      },
+      "confidence": {
+        "type": "number",
+        "minimum": 0.05,
+        "maximum": 0.95,
+        "default": 0.35
+      },
+      "image_base64": {
+        "type": "string",
+        "minLength": 4,
+        "maxLength": 16777280,
+        "description": "Actual client-supplied image bytes as canonical base64, or data:image/png;base64,... (also jpeg, webp, bmp, gif). Maximum 12 MiB decoded. Do not fabricate bytes from image vision context."
+      }
+    },
+    "additionalProperties": false,
+    "oneOf": [
+      {
+        "required": [
+          "image_path"
+        ],
+        "not": {
+          "required": [
+            "image_base64"
+          ]
+        }
+      },
+      {
+        "required": [
+          "image_base64"
+        ],
+        "not": {
+          "required": [
+            "image_path"
+          ]
+        }
+      }
+    ]
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "verdict": {
+        "type": "string",
+        "enum": [
+          "hotdog",
+          "not_hotdog"
+        ]
+      },
+      "hotdog": {
+        "type": "boolean"
+      },
+      "confidence": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "minimum": 0,
+        "maximum": 1
+      },
+      "threshold": {
+        "type": "number",
+        "minimum": 0.05,
+        "maximum": 0.95
+      },
+      "detections": {
+        "type": "array",
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "properties": {
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "box": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": 0
+              },
+              "minItems": 4,
+              "maxItems": 4
+            }
+          },
+          "required": [
+            "confidence",
+            "box"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "image": {
+        "type": "object",
+        "properties": {
+          "width": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "width",
+          "height"
+        ],
+        "additionalProperties": false
+      },
+      "model": {
+        "type": "string",
+        "const": "YOLO11n / COCO / ONNX CPU"
+      },
+      "inference_ms": {
+        "type": "number",
+        "minimum": 0
+      }
+    },
+    "required": [
+      "verdict",
+      "hotdog",
+      "confidence",
+      "threshold",
+      "detections",
+      "image",
+      "model",
+      "inference_ms"
+    ],
+    "additionalProperties": false
+  },
+  "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+  }
+}

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import io
 import json
@@ -16,6 +18,9 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 ROOT = Path(__file__).resolve().parent
 MAX_BYTES = 12 * 1024 * 1024
+# A prepared adapter declares the host request allowance for base64 plus framing.
+MAX_INLINE_BYTES = MAX_BYTES
+MAX_INLINE_CHARS = 4 * ((MAX_INLINE_BYTES + 2) // 3)
 MAX_PIXELS = 24_000_000
 IMAGE_SIZE = 640
 HOTDOG_CLASS = 52
@@ -162,11 +167,44 @@ class HotdogDetector:
 _detector = HotdogDetector()
 
 
-def detect_hotdog(image_path: str, confidence: float = 0.35) -> dict:
-    """Read one local image and return a verdict, confidence, and original-pixel boxes.
+def inline_image(value: str) -> bytes:
+    """Decode bounded, canonical base64 or an image data URL without file writes."""
+    if not isinstance(value, str) or not value:
+        raise DetectorError("invalid_image_data")
+    if len(value) > MAX_INLINE_CHARS + 64:
+        raise DetectorError("image_size_limit")
+    encoded = value
+    if value.startswith("data:"):
+        header, separator, encoded = value.partition(",")
+        if not separator or header not in {
+            f"data:image/{kind};base64" for kind in ("jpeg", "png", "webp", "bmp", "gif")
+        }:
+            raise DetectorError("invalid_image_data")
+    if len(encoded) > MAX_INLINE_CHARS:
+        raise DetectorError("image_size_limit")
+    try:
+        data = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError):
+        raise DetectorError("invalid_image_data") from None
+    if not data or base64.b64encode(data).decode("ascii") != encoded:
+        raise DetectorError("invalid_image_data")
+    if len(data) > MAX_INLINE_BYTES:
+        raise DetectorError("image_size_limit")
+    return data
+
+
+def detect_hotdog(image_path: str | None = None, confidence: float = 0.35, *,
+                  image_base64: str | None = None) -> dict:
+    """Detect from exactly one client-supplied local path or base64 image/data URL.
 
     No network access, file writes, image history, or calibrated negative probability.
+    Both inline images and file inputs are limited to 12 MiB.
+    A chat client must expose attachment bytes or a path to pass them to this tool.
     """
+    if (image_path is None) == (image_base64 is None):
+        raise DetectorError("invalid_image_input")
+    if image_base64 is not None:
+        return _detector.detect(inline_image(image_base64), confidence)
     try:
         path = Path(image_path)
         if not path.is_absolute() or not path.is_file():

@@ -17,6 +17,7 @@ import time
 import uvicorn
 
 from .gateway import SessionPipes, make_app
+from .limits import DEFAULT_REQUEST_BYTES
 from .activity import ActivityReporter
 
 
@@ -183,6 +184,7 @@ async def run(config_fd: int, listener_fd: int, channel_fd: int, activity_fd: in
             token=config["token"], port=config["port"], upstream_endpoint=config.get("upstream_endpoint"),
             upstream_token=config.get("upstream_key"), max_sessions=config["max_sessions"],
             idle_timeout=config["idle_timeout"], request_timeout=config["request_timeout"],
+            max_request_bytes=config.get("max_request_bytes", DEFAULT_REQUEST_BYTES),
             active=lambda: config["active"], legacy_jev=bool(legacy_routes), control=slot_control,
             # The scoped RPC has its own startup/cleanup deadline; generation
             # replacement then permits at most two seconds for private DELETE.
@@ -195,6 +197,7 @@ async def run(config_fd: int, listener_fd: int, channel_fd: int, activity_fd: in
             launch_session=launcher.launch, close_session=launcher.close,
             max_sessions=config["max_sessions"], idle_timeout=config["idle_timeout"],
             request_timeout=config["request_timeout"], active=lambda: config["active"],
+            max_request_bytes=config.get("max_request_bytes", DEFAULT_REQUEST_BYTES),
             activity_report=activity.report,
         )
     server = WorkerServer(uvicorn.Config(

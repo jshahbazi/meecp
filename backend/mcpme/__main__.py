@@ -15,6 +15,7 @@ import httpx
 from mcpme_local_transport import private_transport, socket_path
 
 from .contracts import PackageError, validate_package
+from .connections import connection_names
 from .grants import GrantError
 from .private import read_private_json
 
@@ -321,8 +322,17 @@ async def execute(args) -> dict | None:
         if "error" in slot:
             return slot
         launcher = cli_launcher()
-        return {"slot_id": args.slot, "endpoint": f"http://127.0.0.1:{slot['public_port']}/mcp",
-                "configuration": {"mcpServers": {args.slot: {"command": str(launcher),
+        name = slot.get("connection_name")
+        if name is None:
+            # Older running hosts omit the additive snapshot field. Resolve their
+            # full installed-app list so normalization collisions remain distinct.
+            listing = await api("GET", "/v1/slots")
+            if "error" in listing:
+                return listing
+            name = connection_names((item["slot_id"], item["name"]) for item in listing["slots"])[args.slot]
+        return {"slot_id": args.slot, "connection_name": name,
+                "endpoint": f"http://127.0.0.1:{slot['public_port']}/mcp",
+                "configuration": {"mcpServers": {name: {"command": str(launcher),
                     "args": ["--state-dir", str(state), "connect", "--slot", args.slot]}}}}
     if args.command == "connect":
         from .bridge import run_bridge

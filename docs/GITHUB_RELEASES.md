@@ -38,6 +38,10 @@ The **Version bump** dropdown offers `major`, `minor`, and `patch`, with `minor`
 
 The selected version is passed explicitly into the build and publication jobs. The app's short version, host receipt, installer receipts, filenames, and `vVERSION` release tag all use it. The workflow keeps the checked-out source unchanged, records its exact commit in the receipts, and leaves `pyproject.toml` and `uv.lock` as the development baseline. Each new dispatch advances from the published release history, so repeated releases do not require source version commits. Existing tags and releases are still rejected before signing and again during publication; published versions are never overwritten.
 
+Release notes include every merged PR whose merge, squash, or rebase commit is included after the previous release's tag and through the exact built commit. The previous release is the most recently published stable `vMAJOR.MINOR.PATCH` release; drafts, prereleases, and unrelated tags are ignored. The first release covers the built commit's complete history. Each entry links to its PR and quotes the full opening description, preserving its Markdown and validation details. Entries follow merge order. Empty descriptions are identified explicitly, and a release with no new PRs says so. A full changelog link also exposes any direct commits.
+
+The publisher reads every page of release, commit, and PR results before creating a tag or draft. PRs are listed in creation order regardless of their current open/closed state, so closing or reopening an older PR does not shift the page boundaries. API failures, incomplete commit results, or a previous release outside the built commit's ancestry stop publication. Unmerged PRs and PRs merged after the built commit are excluded even when they merge while signing is running. The publication job has `pull-requests: read` alongside its release write permission. Draft recovery preserves the notes captured during initial publication.
+
 Each release offers these direct downloads under [Releases](https://github.com/jshahbazi/mcpme/releases):
 
 | Asset | Purpose |

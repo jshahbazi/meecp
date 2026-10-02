@@ -123,6 +123,7 @@ Run the repository tests with:
 uv run --locked python -m pytest -q
 swift test
 .build/debug/McpmeMenuBar --native-self-test
+.build/debug/McpmeMenuBar --dashboard-ui-self-test
 .build/debug/McpmeMenuBar --management-ui-self-test
 ```
 

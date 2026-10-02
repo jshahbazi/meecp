@@ -180,7 +180,7 @@ private final class DashboardRow: NSButton {
     private let countCaption = dashboardLabel("requests", size: 10, color: .tertiaryLabelColor)
     private let chevron = NSImageView()
     private let dot = NSView()
-    private var selected = false
+    private(set) var selected = false
 
     init(id: String) {
         appID = id
@@ -451,21 +451,30 @@ final class MenuDashboard: NSObject, NSWindowDelegate {
 
     func toggle(anchor: NSRect, screen: NSScreen) {
         if isVisible { dismiss(); return }
+        clearSelection()
         self.anchor = anchor
         screenFrame = screen.visibleFrame
         positionPanels()
         NSApp.activate(ignoringOtherApps: true)
         menuPanel.makeKeyAndOrderFront(nil)
-        if selectedID != nil { detailsPanel.orderFront(nil) }
-        if let first = rowOrder.first, let row = rows[first] { menuPanel.makeFirstResponder(row) }
+        menuPanel.makeFirstResponder(menuPanel)
         installMonitors()
     }
 
     func dismiss() {
         menuPanel.orderOut(nil)
-        detailsPanel.orderOut(nil)
+        clearSelection()
         if let localMonitor { NSEvent.removeMonitor(localMonitor); self.localMonitor = nil }
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor); self.globalMonitor = nil }
+    }
+
+    private func clearSelection() {
+        selectedID = nil; details = nil; detailsLoadFailed = false
+        selectedMissing = false; copiedID = nil
+        copyReset?.cancel(); copyReset = nil
+        detailsPanel.orderOut(nil)
+        menuPanel.makeFirstResponder(menuPanel)
+        updateRows()
     }
 
     private func installMonitors() {
@@ -561,6 +570,7 @@ final class MenuDashboard: NSObject, NSWindowDelegate {
     }
 
     func showDetails(id: String) {
+        guard let row = rows[id] else { return }
         let changed = selectedID != id
         selectedID = id
         if changed {
@@ -569,6 +579,7 @@ final class MenuDashboard: NSObject, NSWindowDelegate {
             renderSections()
         }
         updateRows()
+        menuPanel.makeFirstResponder(row)
         updateDetailActivity()
         positionPanels()
         if isVisible {
@@ -731,12 +742,66 @@ final class MenuDashboard: NSObject, NSWindowDelegate {
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         if sender === detailsPanel {
-            selectedID = nil; details = nil; detailsLoadFailed = false
-            detailsPanel.orderOut(nil)
-            updateRows(); positionPanels()
+            clearSelection()
+            positionPanels()
             menuPanel.makeKeyAndOrderFront(nil)
+            menuPanel.makeFirstResponder(menuPanel)
             return false
         }
         return true
+    }
+}
+
+/// Exercises menu selection and keyboard focus without showing windows or contacting a host.
+func dashboardViewSelfTest() -> Bool { MenuDashboard.verifySelectionAndFocus() }
+
+extension MenuDashboard {
+    fileprivate static func verifySelectionAndFocus() -> Bool {
+        let dashboard = MenuDashboard()
+        func app(_ id: String, state: String = "stopped") -> DashboardApp {
+            DashboardApp(id: id, name: id.uppercased(), status: state, state: state,
+                         policy: "Manual", activity: nil, error: nil, busy: false)
+        }
+        func update(_ apps: [DashboardApp]) {
+            dashboard.update(apps: apps, hostMessage: "", available: true, loginTitle: "Start at Login: Off")
+        }
+        func isSelected(_ id: String) -> Bool {
+            dashboard.selectedID == id &&
+                (dashboard.menuPanel.firstResponder as? DashboardRow)?.appID == id &&
+                dashboard.rows.values.filter(\.selected).map(\.appID) == [id]
+        }
+        func isClear() -> Bool {
+            dashboard.selectedID == nil && dashboard.details == nil && !dashboard.detailsPanel.isVisible &&
+                !(dashboard.menuPanel.firstResponder is DashboardRow) &&
+                !dashboard.rows.values.contains(where: \.selected)
+        }
+        dashboard.onSelect = { [weak dashboard] id in dashboard?.showDetails(id: id) }
+        update([app("a"), app("b")])
+        guard isClear() else { return false }
+        dashboard.moveSelection(1)
+        guard let first = dashboard.menuPanel.firstResponder as? DashboardRow,
+              first.appID == "a", dashboard.selectedID == nil else { return false }
+        first.performClick(nil)
+        guard isSelected("a") else { return false }
+        dashboard.rows["b"]?.performClick(nil)
+        guard isSelected("b") else { return false }
+        let details = DashboardDetails(appID: "b", subtitle: "B", sections: [])
+        dashboard.updateDetails(details)
+        dashboard.updateDetails(DashboardDetails(appID: "a", subtitle: "Late response", sections: []))
+        guard dashboard.details == details else { return false }
+        update([app("b", state: "ready"), app("a")])
+        guard isSelected("b") else { return false }
+        dashboard.moveSelection(1)
+        guard let next = dashboard.menuPanel.firstResponder as? DashboardRow, next.appID == "a" else { return false }
+        next.performClick(nil)
+        guard isSelected("a") else { return false }
+        dashboard.dismiss()
+        guard isClear() else { return false }
+        dashboard.updateDetails(details)
+        dashboard.detailsFailed(id: "a")
+        update([app("a"), app("b")])
+        guard isClear(), !dashboard.detailsLoadFailed else { return false }
+        dashboard.showDetails(id: "missing")
+        return isClear()
     }
 }

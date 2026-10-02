@@ -387,7 +387,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = McpmeBrand.menuBarImage()
         if statusItem.button?.image == nil { statusItem.button?.title = "m" }
-        statusItem.button?.target = self; statusItem.button?.action = #selector(toggleDashboard)
+        statusItem.button?.target = self; statusItem.button?.action = #selector(handleStatusButton)
+        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         configureDashboard()
         if uiPreviewMode {
             showDashboardPreview(); return
@@ -588,6 +589,26 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         dashboard.onQuit = { [weak self] in self?.quitApp() }
         dashboard.onRetry = { [weak self] in self?.retryHost() }
         dashboard.onLogin = { [weak self] in self?.toggleLogin() }
+    }
+
+    @objc private func handleStatusButton() {
+        let event = NSApp.currentEvent
+        if event?.type == .rightMouseUp || (event?.type == .leftMouseUp && event?.modifierFlags.contains(.control) == true) {
+            guard let button = statusItem.button else { return }
+            dashboard.dismiss()
+            let menu = NSMenu()
+            let open = NSMenuItem(title: "Open", action: #selector(openDashboard), keyEquivalent: "")
+            open.target = self; menu.addItem(open)
+            menu.addItem(.separator())
+            let quit = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "")
+            quit.target = self; menu.addItem(quit)
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button)
+        } else { toggleDashboard() }
+    }
+
+    @objc private func openDashboard() {
+        dashboard.dismiss()
+        toggleDashboard()
     }
 
     @objc private func toggleDashboard() {
@@ -1056,7 +1077,6 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             if managePreviewMode { self.showManagement() }
             else {
                 self.toggleDashboard()
-                if let id = self.projects.first?.id { self.dashboard.showDetails(id: id); self.loadPreviewDetails(id) }
             }
         }
     }
@@ -1588,6 +1608,13 @@ private func hostLogin(_ arguments: [String]) -> Int32? {
     } catch { result["error"] = ["code": "host_login_update_failed"]; code = 2 }
     if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), let text = String(data: data, encoding: .utf8) { print(text) }
     return code
+}
+
+if CommandLine.arguments.dropFirst().first == "--dashboard-ui-self-test" {
+    _ = NSApplication.shared
+    let passed = dashboardViewSelfTest()
+    print(passed ? "dashboard_ui_contracts_passed" : "dashboard_ui_contracts_failed")
+    exit(passed ? 0 : 1)
 }
 
 if CommandLine.arguments.dropFirst().first == "--management-ui-self-test" {

@@ -49,7 +49,11 @@ To build a drag-to-Applications installer from current source:
 uv run --locked python scripts/build_mcpme_dmg.py
 ```
 
-Open `dist/mcpme-0.1.0-arm64.dmg`, drag the app to Applications, eject the image, and open mcpme from Applications. This is a locally signed development build. See [macOS distribution](docs/MACOS_DISTRIBUTION.md) for verification and the signing/notarization work required for public downloads.
+Open `dist/mcpme-0.1.0-arm64.dmg`, open `mcpme.app` on the image, and choose **Install and Restart**. The installer verifies the new bundle, gracefully quits the current copy, replaces it, and opens the installed app. The prompt shows the destination in `/Applications` or `~/Applications`. Your installed apps and settings are preserved; services follow their saved startup policies after restart.
+
+The installer waits up to 75 seconds for the current app to quit. A refusal or timeout stops replacement. A confirmed launch failure restores the previous bundle; an unconfirmed launch leaves a recovery copy. Manual dragging and ZIP installation require quitting mcpme before copying, then opening the installed app.
+
+This is an ad hoc development build. See [macOS distribution](docs/MACOS_DISTRIBUTION.md) for signing, installation, and verification, and the [host application update plan](docs/AUTO_UPDATE_PLAN.md) for the proposed automatic updater.
 
 ## Bring your own tools
 
@@ -85,7 +89,7 @@ To add JevK5-4B, build the original app using the instructions below, then run `
 
 The current host runs prepared local tool and model packages, with JevK5-4B and JSON Utilities tested together. The first Phase 2 onboarding milestone adds source imports, saved drafts, and external-agent preparation.
 
-Downloads, upgrades, and agent preparation inside the app are still ahead. Scoped management MCP is available through an owner-issued grant. Local builds are ad hoc development artifacts; the protected-main [release workflow](docs/GITHUB_RELEASES.md) signs and notarizes public installers. An automatic updater is pending. The development bundle's start-at-login behavior still needs verification.
+Downloads, upgrades, and agent preparation inside the app are still ahead. Scoped management MCP is available through an owner-issued grant. Local builds are ad hoc development artifacts; the protected-main [release workflow](docs/GITHUB_RELEASES.md) signs and notarizes public installers. An automatic updater is pending; see the [host application update plan](docs/AUTO_UPDATE_PLAN.md). The development bundle's start-at-login behavior still needs verification.
 
 Services listen on `127.0.0.1`, require authentication, and check Host/Origin headers. The host does not log tool inputs, outputs, or raw exception payloads. Packages run with your account's permissions, so install code you trust. The [implementation guide](docs/MCPME_STATUS.md) covers supported package types, resource limits, and recovery.
 

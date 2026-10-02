@@ -5,6 +5,7 @@ import Darwin
 import CoreFoundation
 import UniformTypeIdentifiers
 import PrivateTransport
+import AppInstallation
 
 private let responseLimit = 1_048_576
 private let managePreviewMode = CommandLine.arguments.contains("--manage-preview") ||
@@ -304,6 +305,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private var process: Process?
     private var generation: UInt64 = 0
     private var quitting = false
+    private var installing = false
     private var stopping = false
     private var pollInFlight = false
     private var timer: Timer?
@@ -364,6 +366,9 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        if !uiPreviewMode && AppInstaller.isOnReadOnlyVolume(Bundle.main.bundleURL) {
+            installFromDiskImage(); return
+        }
         let mainMenu = NSMenu()
         let applicationItem = NSMenuItem(title: "mcpme", action: nil, keyEquivalent: "")
         let applicationMenu = NSMenu(title: "mcpme")
@@ -391,7 +396,47 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.poll() }
     }
 
+    private func installFromDiskImage() {
+        installing = true
+        let source = Bundle.main.bundleURL
+        let destination = AppInstaller.destination()
+        let alert = NSAlert()
+        alert.messageText = "Install mcpme?"
+        alert.informativeText = "Install in \(destination.deletingLastPathComponent().path). Any running copy of mcpme will quit, stopping its services, and the installed copy will open. Your apps and settings are preserved."
+        alert.addButton(withTitle: "Install and Restart"); alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { installing = false; NSApp.terminate(nil); return }
+        let progress = NSAlert()
+        progress.messageText = "Installing mcpme…"
+        progress.informativeText = "Copying and verifying the app, then waiting for the existing copy to quit."
+        progress.addButton(withTitle: "Installing…").isEnabled = false
+        progress.window.standardWindowButton(.closeButton)?.isEnabled = false
+        progress.window.makeKeyAndOrderFront(nil)
+        DispatchQueue.global(qos: .userInitiated).async {
+            var failure: AppInstallError?
+            do {
+                try AppInstaller.install(from: source, to: destination,
+                    hooks: InstallHooks(verify: AppInstaller.verifyCandidate,
+                                        stop: { try AppInstaller.stopRunningCopies() }, launch: AppInstaller.launch))
+            } catch { failure = error as? AppInstallError ?? .replace }
+            let result = failure
+            DispatchQueue.main.async {
+                progress.window.orderOut(nil)
+                self.installing = false
+                if let error = result {
+                    let failed = NSAlert(); failed.messageText = "mcpme could not be installed"
+                    failed.informativeText = "Installation stopped (\(error.rawValue)). " + (error == .recovery
+                        ? "Installation needs recovery. A recovery copy may be in a hidden .mcpme-install folder in \(destination.deletingLastPathComponent().path). Read that folder's RECOVERY.md before restoring it."
+                        : "Your apps and settings were preserved. If Applications requires administrator access, quit mcpme, drag the app to Applications, and open it there.")
+                    failed.addButton(withTitle: "OK"); failed.runModal()
+                }
+                NSApp.terminate(nil)
+            }
+        }
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if installing { return false }
         if uiPreviewMode {
             if managePreviewMode { showManagement() }
             else if window?.isVisible != true && !dashboard.isVisible { toggleDashboard() }
@@ -402,6 +447,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if installing { return .terminateCancel }
         if quitting { return .terminateLater }
         quitting = true; timer?.invalidate(); timer = nil
         stopHost { sender.reply(toApplicationShouldTerminate: true) }

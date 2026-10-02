@@ -72,7 +72,8 @@ def http_result(status, body=None, *, returncode=None):
 
 
 def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag_change=None,
-                   existing_draft=False, version=VERSION):
+                   existing_draft=False, version=VERSION, pull_requests=None,
+                   notes_assertion=None):
     calls = []
     drafted = existing_draft
     public = False
@@ -85,6 +86,13 @@ def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag
         calls.append(arguments)
         if arguments[0] == "api":
             endpoint = next(value for value in arguments if value.startswith("repos/"))
+            # Release-note discovery is read-only and occurs before tag creation.
+            if "/releases?" in endpoint:
+                return http_result(200, [])
+            if "/pulls?" in endpoint:
+                return http_result(200, pull_requests or [])
+            if "/commits?" in endpoint:
+                return http_result(200, [{"sha": COMMIT}])
             if "POST" in arguments:
                 assert not tagged
                 assert "ref=refs/tags/" + tag in arguments and "sha=" + COMMIT in arguments
@@ -135,6 +143,8 @@ def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag
             notes = Path(arguments[arguments.index("--notes-file") + 1]).read_text()
             assert "DMG:" in notes and "ZIP" not in notes and COMMIT in notes
             assert "SHA-256 hashes for the DMG and its build receipt" in notes
+            if notes_assertion:
+                notes_assertion(notes)
             drafted = True
         elif arguments[1] == "upload":
             assert drafted and not public
@@ -157,6 +167,219 @@ def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag
 
 def stable_release(version):
     return {"tag_name": "v" + version, "draft": False, "prerelease": False}
+
+
+def test_previous_release_tag_uses_latest_published_at_not_version_order(publisher, monkeypatch):
+    releases = [
+        {**stable_release("9.9.9"), "published_at": "2026-01-01T00:00:00Z"},
+        {**stable_release("1.2.3"), "published_at": "2026-02-01T00:00:00Z"},
+        {**stable_release("2.0.0"), "published_at": "2026-03-01T00:00:00Z"},
+    ]
+    monkeypatch.setattr(publisher, "api_response", lambda endpoint, **kwargs: releases)
+    assert publisher.previous_release_tag("v3.0.0") == "v2.0.0"
+
+
+def test_previous_release_tag_reads_multiple_release_pages(publisher, monkeypatch):
+    first = [{**stable_release(f"1.0.{index}"), "published_at": "2026-01-01T00:00:00Z"}
+             for index in range(100)]
+    second = [{**stable_release("2.0.0"), "published_at": "2026-02-01T00:00:00Z"}]
+    calls = []
+
+    def read(endpoint, **kwargs):
+        calls.append(endpoint)
+        return first if endpoint.endswith("page=1") else second
+
+    monkeypatch.setattr(publisher, "api_response", read)
+    assert publisher.previous_release_tag("v3.0.0") == "v2.0.0"
+    assert len(calls) == 2
+
+
+def test_release_commits_compare_paginates_and_checks_complete_range(publisher, monkeypatch):
+    values = [{"sha": f"{index:040x}"} for index in range(100)]
+    values.append({"sha": COMMIT})
+    base = "b" * 40
+    responses = [
+        {"status": "ahead", "total_commits": 101,
+         "base_commit": {"sha": base}, "merge_base_commit": {"sha": base},
+         "commits": values[:100]},
+        {"status": "ahead", "total_commits": 101,
+         "base_commit": {"sha": base}, "merge_base_commit": {"sha": base},
+         "commits": values[100:]},
+    ]
+    monkeypatch.setattr(publisher, "api", lambda endpoint, **kwargs: responses.pop(0))
+    result = publisher.release_commits("v0.1.0", COMMIT)
+    assert len(result) == 101 and COMMIT in result
+
+
+@pytest.mark.parametrize("status", ["behind", "diverged"])
+def test_release_commits_rejects_non_ancestor_comparison(publisher, monkeypatch, status):
+    monkeypatch.setattr(publisher, "api", lambda endpoint, **kwargs: {
+        "status": status, "total_commits": 0, "base_commit": {"sha": "b" * 40},
+        "merge_base_commit": {"sha": "b" * 40}, "commits": [],
+    })
+    with pytest.raises(publisher.PublicationError, match="release_notes_range_invalid"):
+        publisher.release_commits("v0.1.0", COMMIT)
+
+
+def test_release_commits_rejects_mismatched_merge_base(publisher, monkeypatch):
+    monkeypatch.setattr(publisher, "api", lambda endpoint, **kwargs: {
+        "status": "ahead", "total_commits": 1,
+        "base_commit": {"sha": "b" * 40}, "merge_base_commit": {"sha": "c" * 40},
+        "commits": [{"sha": COMMIT}],
+    })
+    with pytest.raises(publisher.PublicationError, match="release_notes_range_invalid"):
+        publisher.release_commits("v0.1.0", COMMIT)
+
+
+@pytest.mark.parametrize("commits", [[{"sha": COMMIT}], [{"sha": COMMIT}, {"sha": COMMIT}]])
+def test_release_commits_rejects_truncated_or_duplicate_compare_results(publisher, monkeypatch, commits):
+    base = "b" * 40
+    monkeypatch.setattr(publisher, "api", lambda endpoint, **kwargs: {
+        "status": "ahead", "total_commits": 2, "base_commit": {"sha": base},
+        "merge_base_commit": {"sha": base}, "commits": commits,
+    })
+    with pytest.raises(publisher.PublicationError, match="release_notes_commit_list_invalid"):
+        publisher.release_commits("v0.1.0", COMMIT)
+
+
+def test_first_release_commit_history_paginates_and_identical_range_is_empty(publisher, monkeypatch):
+    pages = [[{"sha": f"{index:040x}"} for index in range(100)], [{"sha": COMMIT}]]
+    monkeypatch.setattr(publisher, "api_response", lambda endpoint, **kwargs: pages.pop(0))
+    result = publisher.release_commits(None, COMMIT)
+    assert len(result) == 101 and COMMIT in result
+    monkeypatch.setattr(publisher, "api", lambda endpoint, **kwargs: {
+        "status": "identical", "total_commits": 0,
+        "base_commit": {"sha": COMMIT}, "merge_base_commit": {"sha": COMMIT},
+        "commits": [],
+    })
+    assert publisher.release_commits("v0.1.0", COMMIT) == set()
+
+
+def test_pull_request_notes_reads_second_all_pr_page_in_created_order(publisher, monkeypatch):
+    target = "b" * 40
+    monkeypatch.setattr(publisher, "release_commits", lambda previous, current: {target})
+    first = [{"number": index + 10, "title": "other", "merged_at": None,
+              "merge_commit_sha": target} for index in range(100)]
+    second = [{"number": 2, "title": "included", "merged_at": "2026-01-01T00:00:00Z",
+               "merge_commit_sha": target, "body": "description"}]
+    calls = []
+
+    def read(endpoint, **kwargs):
+        calls.append(endpoint)
+        return first if endpoint.endswith("page=1") else second
+
+    monkeypatch.setattr(publisher, "api_response", read)
+    notes = publisher.pull_request_notes("v0.1.0", target)
+    assert "included (#2)" in notes and "description" in notes
+    assert all("state=all" in endpoint and "sort=created" in endpoint
+               and "direction=asc" in endpoint for endpoint in calls)
+
+
+def test_pull_request_notes_rejects_invalid_selected_merge_timestamp(publisher, monkeypatch):
+    target = "b" * 40
+    monkeypatch.setattr(publisher, "release_commits", lambda previous, current: {target})
+    monkeypatch.setattr(publisher, "api_response", lambda endpoint, **kwargs: [{
+        "number": 3, "title": "Bad timestamp", "merged_at": "not-a-timestamp",
+        "merge_commit_sha": target, "body": "body",
+    }])
+    with pytest.raises(publisher.PublicationError, match="release_notes_pull_request_list_invalid"):
+        publisher.pull_request_notes("v0.1.0", target)
+
+
+def test_pull_request_notes_filters_range_and_preserves_ordered_bodies(publisher, monkeypatch):
+    commit = "b" * 40
+    release_commits = {commit, "c" * 40}
+    prs = [
+        {"number": 7, "title": "Later", "html_url": "https://github.com/p/7",
+         "merged_at": "2026-02-02T00:00:00Z", "merge_commit_sha": commit,
+         "body": "line 1\n\nline 2"},
+        {"number": 5, "title": "Earlier", "html_url": "https://github.com/p/5",
+         "merged_at": "2026-02-01T00:00:00Z", "merge_commit_sha": "c" * 40,
+         "body": None},
+        {"number": 9, "title": "Excluded", "html_url": "https://github.com/p/9",
+         "merged_at": "2026-02-03T00:00:00Z", "merge_commit_sha": "d" * 40,
+         "body": "outside"},
+        {"number": 10, "title": "Unmerged", "html_url": "https://github.com/p/10",
+         "merged_at": None, "merge_commit_sha": commit, "body": "outside"},
+    ]
+    monkeypatch.setattr(publisher, "release_commits", lambda previous, current: release_commits)
+    monkeypatch.setattr(publisher, "api_response", lambda endpoint, **kwargs: prs)
+    notes = publisher.pull_request_notes("v0.1.0", commit)
+    assert notes.index("#5") < notes.index("#7")
+    assert "No description was provided." in notes
+    assert "> line 1" in notes and "> line 2" in notes
+    assert "#9" not in notes and "#10" not in notes
+
+
+def test_pull_request_notes_preserves_indented_code_block_spacing(publisher, monkeypatch):
+    monkeypatch.setattr(publisher, "release_commits", lambda previous, current: {COMMIT})
+    monkeypatch.setattr(publisher, "api_response", lambda endpoint, **kwargs: [{
+        "number": 11, "title": "Code example", "merged_at": "2026-01-01T00:00:00Z",
+        "merge_commit_sha": COMMIT, "body": "    example()\n    another()\n",
+    }])
+    notes = publisher.pull_request_notes(None, COMMIT)
+    assert ">     example()" in notes
+    assert ">     another()" in notes
+
+
+def test_pull_request_page_failure_prevents_all_publication_mutations(
+        publisher, assets, monkeypatch, capsys):
+    private = "synthetic-authentication-secret"
+    calls = []
+    first_pr_page = [{"number": index + 1, "title": "Unmerged", "merged_at": None}
+                     for index in range(100)]
+
+    def run(*arguments):
+        calls.append(arguments)
+        endpoint = next((value for value in arguments if value.startswith("repos/")), "")
+        if "/releases?" in endpoint:
+            return http_result(200, [])
+        if "/releases/tags/" in endpoint or "/git/ref/" in endpoint:
+            return http_result(404)
+        if "/commits?" in endpoint:
+            return http_result(200, [{"sha": COMMIT}])
+        if "/pulls?" in endpoint and endpoint.endswith("page=1"):
+            return http_result(200, first_pr_page)
+        if "/pulls?" in endpoint and endpoint.endswith("page=2"):
+            return subprocess.CompletedProcess(
+                ["gh"], 1, "HTTP/2.0 500 Internal Server Error\n\n{}", private)
+        pytest.fail(f"unexpected GitHub call: {arguments}")
+
+    monkeypatch.setattr(publisher, "command", run)
+    with pytest.raises(publisher.PublicationError):
+        publisher.publish(assets)
+    assert any(any("/pulls?" in value and "page=2" in value for value in call)
+               for call in calls)
+    assert not any("POST" in call or "PATCH" in call for call in calls)
+    assert not any(call[:2] == ("release", action) for action in ("create", "upload")
+                   for call in calls)
+    captured = capsys.readouterr()
+    assert private not in captured.out and private not in captured.err
+
+
+def test_first_release_with_no_matching_pull_requests_has_explicit_message(publisher, monkeypatch):
+    monkeypatch.setattr(publisher, "release_commits", lambda previous, current: {COMMIT})
+    monkeypatch.setattr(publisher, "api_response", lambda endpoint, **kwargs: [])
+    assert "No pull requests were merged in this commit range." in (
+        publisher.pull_request_notes(None, COMMIT)
+    )
+
+
+def test_publish_fails_before_tag_creation_when_release_notes_lookup_fails(
+        publisher, assets, monkeypatch):
+    calls = []
+
+    def run(*arguments):
+        calls.append(arguments)
+        endpoint = next((value for value in arguments if value.startswith("repos/")), "")
+        if "/releases?" in endpoint:
+            return http_result(500)
+        return http_result(404)
+
+    monkeypatch.setattr(publisher, "command", run)
+    with pytest.raises(publisher.PublicationError):
+        publisher.publish(assets)
+    assert not any("POST" in call for call in calls)
 
 
 @pytest.mark.parametrize("bump,expected", [
@@ -301,6 +524,11 @@ def test_racing_tag_creation_cannot_publish(publisher, assets, monkeypatch):
 
     def run(*arguments):
         calls.append(arguments)
+        endpoint = next((value for value in arguments if value.startswith("repos/")), "")
+        if "/releases?" in endpoint or "/pulls?" in endpoint:
+            return http_result(200, [])
+        if "/commits?" in endpoint:
+            return http_result(200, [{"sha": COMMIT}])
         return http_result(422 if "POST" in arguments else 404)
 
     monkeypatch.setattr(publisher, "command", run)
@@ -457,6 +685,24 @@ def test_publish_is_draft_until_exact_assets_and_hashes_are_verified(publisher, 
                for call in calls[mutation + 1:])
     assert not any(call[:2] == ("release", "edit") for call in calls)
     assert capsys.readouterr() == ("", "")
+
+
+def test_publish_places_merged_pr_body_in_release_notes_file(publisher, assets, monkeypatch):
+    pull = {"number": 42, "title": "Installer improvements", "merged_at": "2026-01-01T00:00:00Z",
+            "merge_commit_sha": COMMIT, "body": "* graceful restart\n* preserves settings"}
+    calls = install_github(
+        monkeypatch, publisher, assets, pull_requests=[pull],
+        notes_assertion=lambda notes: (
+            assert_in_notes(notes, "Installer improvements (#42)"),
+            assert_in_notes(notes, "> * graceful restart"),
+        ),
+    )
+    assert publisher.publish(assets) == f"https://github.com/{publisher.REPOSITORY}/releases/tag/{TAG}"
+    assert any(call[:2] == ("release", "create") for call in calls)
+
+
+def assert_in_notes(notes, expected):
+    assert expected in notes
 
 
 @pytest.mark.parametrize("change,diagnostic", [

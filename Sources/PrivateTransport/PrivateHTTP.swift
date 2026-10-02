@@ -45,7 +45,7 @@ public enum PrivateHTTP {
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { throw Failure.unavailable }
         let body = request.httpBody ?? Data()
         let method = request.httpMethod ?? "GET"
-        guard body.count <= limit, ["GET", "POST"].contains(method) else { throw Failure.unavailable }
+        guard body.count <= limit, ["GET", "POST", "PATCH"].contains(method) else { throw Failure.unavailable }
         var headers = "\(method) \(components.percentEncodedPath.isEmpty ? "/" : components.percentEncodedPath) HTTP/1.1\r\n"
         headers += "Host: 127.0.0.1:\(port)\r\nConnection: close\r\nContent-Length: \(body.count)\r\n"
         for (name, value) in request.allHTTPHeaderFields ?? [:] {

@@ -13,7 +13,7 @@ import sys
 import uuid
 
 import httpx
-from mcpme_local_transport import private_transport, socket_path
+from mcpme_local_transport import checked_socket, private_transport, socket_path
 
 from .contracts import validate_package
 from .private import check_private_file, ensure_private_directory, read_private_json, snapshot_package, write_private_json
@@ -191,11 +191,13 @@ async def _plan_transfer(host, payload):
     if package.manifest.package_id != "local.jevk5" or package.manifest.profile != "model-service":
         raise failure("invalid_migration_package")
     check_legacy_contract(package, legacy_app)
-    # One unfinished transfer per legacy installation, including a committed one.
+    # Keep terminal removal records as history; a new explicit transfer may
+    # migrate the preserved legacy installation again under a fresh identity.
     transfer_directory = ensure_private_directory(host.root / "transfers")
     for path in transfer_directory.glob("*.json"):
         existing = read_private_json(path)
-        if existing.get("legacy_state") == str(legacy_state) and existing.get("stage") != "rolled_back":
+        if (existing.get("legacy_state") == str(legacy_state)
+                and existing.get("stage") not in {"rolled_back", "removed"}):
             if existing.get("package_digest") == package.digest:
                 return inspect_transfer(host, existing["transfer_id"])
             raise failure("migration_already_planned")
@@ -240,6 +242,8 @@ async def _plan_transfer(host, payload):
 
 async def apply_transfer(host, identity):
     record = read_private_json(record_path(host, identity))
+    if record["stage"] == "removed":
+        raise failure("migration_removed")
     if record["status"] in {"running", "completed", "recovery_required"}:
         return inspect_transfer(host, identity)
     if record["stage"] != "staged":
@@ -351,6 +355,8 @@ async def execute_transfer(host, record):
 async def recover_transfer(host, identity):
     """Explicit forward recovery of the selected generation, preserving its data."""
     record = read_private_json(record_path(host, identity))
+    if record["stage"] == "removed":
+        raise failure("migration_removed")
     if record["status"] in {"running", "completed"}:
         return inspect_transfer(host, identity)
     if record["status"] != "recovery_required" or record["stage"] not in {"endpoint_acquired", "committed"}:
@@ -382,6 +388,59 @@ async def recover_transfer(host, identity):
     return inspect_transfer(host, identity)
 
 
+def retire_transfer(host, slot_id, operation_id):
+    """Tombstone a removed migrated slot before its registry row is discarded.
+
+    The caller has already reaped every owned process and closed admission.
+    Keep the legacy lock until every matching record is durable and the private
+    legacy alias is removed. Failures leave the registry reservation available
+    for recovery. Legacy bundle, data, credential, and login state are preserved.
+    """
+    directory = host.root / "transfers"
+    if not directory.exists():
+        return
+    ensure_private_directory(directory)
+    records = [record for path in directory.glob("*.json")
+               if (record := read_private_json(path)).get("slot_id") == slot_id]
+    if not records:
+        return
+    if host.ledger(slot_id):
+        raise failure("ownership_reconciliation_required")
+    # Validate all records before writing any tombstone. This also prevents a
+    # concurrently submitted transfer/recovery from being retired mid-flight.
+    if any(record["stage"] not in {"committed", "removed"}
+           or record["status"] == "running" for record in records):
+        raise failure("migration_removal_requires_committed_transfer")
+    if len({record["legacy_state"] for record in records}) != 1:
+        raise failure("migration_registry_mismatch")
+    aliases = []
+    for record in records:
+        try:
+            alias = socket_path(Path(record["legacy_state"]), "jevk5")
+        except FileNotFoundError:
+            continue
+        if (alias.exists() or alias.is_symlink()) and alias not in aliases:
+            aliases.append(alias)
+    # On crash replay the tombstone was skipped by initialize_transfers. Prove
+    # ownership again before unlinking a stale alias; an unknown legacy backend
+    # may have acquired the preserved installation's lock in the meantime.
+    if aliases and slot_id not in host.legacy_locks:
+        retain_legacy_lock(host, records[0])
+    for record in records:
+        if record["stage"] == "removed":
+            continue
+        record.update(stage="removed", status="completed", error_code=None,
+                      removal_operation_id=operation_id)
+        save(host, record)
+    for alias in aliases:
+        checked_socket(alias)
+        alias.unlink()
+    descriptor = host.legacy_locks.pop(slot_id, None)
+    if descriptor is not None:
+        os.close(descriptor)
+    host.migration_blocked.discard(slot_id)
+
+
 async def initialize_transfers(host):
     host.migration_blocked = set()
     directory = host.root / "transfers"
@@ -390,6 +449,8 @@ async def initialize_transfers(host):
     ensure_private_directory(directory)
     for path in directory.glob("*.json"):
         record = read_private_json(path)
+        if record["stage"] == "removed":
+            continue
         if record["stage"] in {"rolled_back", "staged"} and record["status"] != "running":
             continue
         try:
@@ -441,6 +502,8 @@ async def wait_legacy_restored(record, *, timeout=180):
 
 async def rollback_transfer(host, identity):
     record = read_private_json(record_path(host, identity))
+    if record["stage"] == "removed":
+        raise failure("migration_removed")
     if record["stage"] == "committed":
         raise failure("committed_migration_requires_restore_plan")
     if record["status"] == "running":

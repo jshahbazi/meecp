@@ -1,12 +1,12 @@
 # mcpme implementation status
 
-Implemented against [MCPME_DESIGN.md](MCPME_DESIGN.md). The host has a native Projects window, package verification, durable registry, CLI, independent deterministic services, and a JevK5 model package with one shared engine. The backend API calls these installations slots. The original JevK5 app remains separately buildable. See [Phase 1 verification](MCPME_VERIFICATION.md) and [Phase 2 onboarding](PHASE2_ONBOARDING.md) for acceptance evidence and limitations.
+Implemented against [MCPME_DESIGN.md](MCPME_DESIGN.md). The host has a native Apps window, package verification, durable registry, CLI, independent deterministic services, and a JevK5 model package with one shared engine. An app is a configured local tool or model service; the backend API calls these installations slots. The original JevK5 app remains separately buildable. See [Phase 1 verification](MCPME_VERIFICATION.md) and [Phase 2 onboarding](PHASE2_ONBOARDING.md) for acceptance evidence and limitations.
 
 ## Milestone scope
 
 Phase 1's **two working slots** acceptance is complete for prepared local packages: JevK5 and JSON Utilities have independent controls, stable endpoints, real MCP clients, and verified supervision and cleanup. The native prepared-package setup and deliberate legacy transfer are included in the [recorded verification](MCPME_VERIFICATION.md).
 
-Phase 2 has begun with drag-and-drop, source-folder and Markdown/text intake, resumable versioned drafts, external-agent handoff, static package return, and import-bound installation plans. The prepared-package path uses the same review and installation operation. Reference-document services, raw model intake, downloads, scoped management grants/MCP, upgrade/rollback, removal, and integrated provider preparation remain pending. Phase 2 as a whole is incomplete.
+Phase 2 has begun with drag-and-drop, source-folder and Markdown/text intake, resumable versioned drafts, external-agent handoff, static package return, and import-bound installation plans. The prepared-package path uses the same review and installation operation. Installed apps support changing startup policy and removal with retained data. Reference-document services, raw model intake, downloads, scoped management grants/MCP, upgrade/rollback, and integrated provider preparation remain pending. Phase 2 as a whole is incomplete.
 
 Automatic Start at Login registration and next-login launch remain unverified for the development bundle. The tested legacy transfer preserved an explicitly owner-confirmed disabled preference; it did not validate enabled login-item transfer.
 
@@ -19,7 +19,8 @@ Automatic Start at Login registration and next-login launch remain unverified fo
 - Clients may advertise additional optional capabilities during initialization. The tools-only gateway advertises no unsupported client callbacks to packages; those extra features remain unavailable.
 - Stable UUIDs and bound public loopback ports; default allocation prefers 19386–19485.
 - Independent invocation credentials, with a separate owner-only management credential.
-- Manual or start-with-host policy. New slots default to manual. Explicit Stop persists suppression across host restarts.
+- Manual or start-with-host policy, editable for installed apps. New slots default to manual. Explicit Stop persists suppression across host restarts.
+- Durable installed-app removal that closes its endpoint, stops owned processes, and revokes its connection while retaining package and data for recovery.
 - Static package planning, snapshotted artifacts, idempotent apply, candidate initialization/schema checks, and asynchronous operation records.
 - Native reapers for gateways and package processes, session deadlines and leases, and durable ownership-loss blocking.
 
@@ -27,11 +28,28 @@ The supplied JSON Utilities package exposes `validate_json(document)` and return
 
 ## Native app
 
-Build the current source into a fresh app output. The menu bar lists projects and offers independent Start/Stop, Restart, connection copy, details, Stop All, and Quit. **Manage Projects** opens the native management window. **Add Project** accepts supported folders and text documents, saves a resumable draft, and offers external preparation or prepared-package review. Installation and lifecycle operations remain visible after closing and reopening the window. Copying connection configuration is a separate action and never edits a client's settings.
+Build the current source into a fresh app output. The menu bar lists apps and offers independent Start/Stop, Restart, connection copy, details, Stop All, and Quit. **Manage Apps** opens the native management window. **Add App** accepts supported folders and text documents, saves a resumable draft, and offers external preparation or prepared-package review. Installation and lifecycle operations remain visible after closing and reopening the window. Copying connection configuration is a separate action and never edits a client's settings.
 
-Closing the window leaves the host running. Quit waits for owned processes to drain and exit. The UI starts one supervisor and checks that private discovery identifies that exact process. An already running external supervisor produces a visible ownership conflict. **Start at Login** uses ServiceManagement for this app; each project's manual or start-with-host policy remains separate.
+Closing the window leaves the host running. Quit waits for owned processes to drain and exit. The UI starts one supervisor and checks that private discovery identifies that exact process. An already running external supervisor produces a visible ownership conflict. **Start at Login** uses ServiceManagement for mcpme; each installed app's manual or start-with-host policy remains separate.
 
 The supported draft and handoff commands are documented in [Phase 2 onboarding](PHASE2_ONBOARDING.md). Model selection and download wizards remain pending.
+
+### Manage installed apps
+
+Select an installed app in **Manage Apps** to see its details, choose **Manual** or **Automatic when mcpme opens**, and remove it. Startup changes affect future mcpme launches without starting or stopping the current runtime. An explicit Stop remains suppressed across host restarts; Start clears that suppression. Removal closes the endpoint, stops owned processes, revokes the connection credential, and removes the app from the active list. Its source remains untouched, and the host retains its sealed package, configuration, and data for recovery. Retention cleanup and data deletion are not part of removal.
+
+The CLI uses the existing slot UUID and technical policy values:
+
+```sh
+scripts/mcpme slots configure SLOT_UUID --start-policy host --json
+scripts/mcpme slots configure SLOT_UUID --start-policy manual --json
+scripts/mcpme slots remove SLOT_UUID --json
+scripts/mcpme operations get OPERATION_UUID --json
+```
+
+Configuration uses owner-authenticated `PATCH /v1/slots/{id}` with `{"start_policy":"manual"}` or `{"start_policy":"host"}`. Removal uses owner-authenticated `POST /v1/slots/{id}/remove` and returns a durable operation ID; poll the operation to confirm completion. App terminology does not rename the slot/package contracts or change connection identities.
+
+Startup changes and removal are blocked while installation or another removal is unfinished, ownership is lost, or migration requires recovery. Resolve the retained operation or ownership record before retrying; the controls cannot establish that an unowned process has exited.
 
 ## Build and run
 
@@ -123,9 +141,9 @@ A surviving native reaper terminates and reaps its target if the supervisor dies
 
 Any unfinished ownership record after host restart conservatively requires reconciliation, even if its surviving reaper probably cleaned up successfully. This milestone provides no automated reconciliation command. A user must establish that the previous owned targets exited before an operator repairs the retained state; ordinary Start/Restart cannot clear it.
 
-Interrupted installations become `recovery_required` and cannot be controlled into exposure. Controls are also rejected while an install is active. Once the durable exposure marker permits calls, later failures preserve the selected slot and its data. They cannot trigger automatic discard or rollback to older data. Automated recovery, upgrades, uninstall, and retention cleanup are pending; preserve the private state directory when investigating a blocked operation.
+Interrupted installations become `recovery_required` and cannot be controlled into exposure. Controls are also rejected while an install is active. Once the durable exposure marker permits calls, later failures preserve the selected slot and its data. They cannot trigger automatic discard or rollback to older data. Automated recovery, upgrades, data deletion, and retention cleanup are pending; preserve the private state directory when investigating a blocked operation.
 
-Management uses the local owner's credential. Plan-scoped grants, the management MCP facade, pinned downloads, first-call start, standalone `mcp-http` packages, upgrades, and removal remain unsupported and are reported by `capabilities`.
+Management uses the local owner's credential. Plan-scoped grants, the management MCP facade, pinned downloads, first-call start, standalone `mcp-http` packages, and upgrades remain unsupported and are reported by `capabilities`.
 
 ## Import the existing JevK5 installation
 
@@ -155,6 +173,8 @@ If macOS reports `not_found` for a moved legacy bundle, planning normally blocks
 Transfer stages are `staged`, `old_stopped`, `endpoint_acquired`, and `committed`. Duplicate applies recover the same transfer. A failure closes candidate admission and preserves recovery artifacts. Restart reacquires the legacy lock before binding a committed slot's endpoint. Interrupted transfers and ownership loss cannot be bypassed with Start. `migrate-jevk5 rollback TRANSFER_UUID` is available before candidate exposure and restores the recorded old app only after both lock and port are free. After exposure, `migrate-jevk5 recover TRANSFER_UUID` can restart and verify the selected generation using its existing data, once ownership is known and installation completed. It never restores older data. Unresolved ownership or an unfinished installation still requires reconciliation.
 
 The old stdio registration still points to the old launcher. Export a replacement with `connections export --slot SLOT_UUID` and update the specific client entry you intend to change. Migration does not rewrite client configuration.
+
+Removing a migrated JevK5 app records a durable completed transfer tombstone before releasing the retained legacy lock. It preserves the original source, bundle, and legacy data. Removal does not restart the legacy app or reenable its login registration. The removed transfer cannot be resumed as an active migration.
 
 ## Verification
 

@@ -10,6 +10,14 @@ Actions use read-only default tokens and cannot approve pull requests. Allowed a
 
 GitHub secret scanning and push protection are enabled. The native non-provider-pattern setting currently remains disabled: GitHub accepted the setting request without enabling it and exposes no control for it on this repository's settings page. The required `CI` check adds a pinned Gitleaks scan of the fetched Git history, including generic API credential and private-key rules. Scanner output and finding contents are suppressed; detection or scanner failure blocks the check. Pattern scanning has false positives and incomplete coverage, and it does not replace credential rotation after an exposure. Vulnerabilities can be reported privately using the link in [SECURITY.md](../SECURITY.md).
 
+## CodeQL scanning
+
+The repository's [CodeQL workflow](../.github/workflows/codeql.yml) scans Actions, C/C++, Python, and Swift in parallel using the default query suite. Swift uses the Apple silicon `macos-26` runner and autobuild; the other languages use `ubuntu-24.04` without a build. Actions are pinned to full commit SHAs.
+
+Pushes to `main` and pull requests targeting `main` skip CodeQL when every changed file is under `docs/`, is Markdown, or is the root `LICENSE` or `NOTICE` file. Any change outside these paths, including a mixed documentation and source change, triggers all four analyses. Weekly scans and manual dispatch still analyze the full repository. The required `CI` workflow continues to build and verify installers for documentation changes because the host bundle includes documentation.
+
+To activate this workflow when migrating from GitHub's default setup, first merge it into `main`, then disable default CodeQL setup in repository settings and manually dispatch this workflow from `main`. Default setup generates its own scans and does not honor this workflow's path filters. Confirm that all four analyses upload successfully before considering the migration verified. CodeQL is not a required status check in the current `Core` ruleset, so skipping documentation-only workflows does not block those pull requests.
+
 ## Development installer
 
 The `CI` workflow scans fetched Git history, runs the locked Python tests, and builds and verifies a development DMG on the Apple silicon `macos-26` runner. Its installer uses an ad hoc signature and is not a notarized release. Each successful run retains the DMG and build receipt as an artifact for seven days.

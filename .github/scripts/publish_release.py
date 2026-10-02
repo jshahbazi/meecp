@@ -400,7 +400,7 @@ def pull_request_notes(previous_tag: str | None, commit: str) -> str:
         # Preserve the authored opening post, including its Markdown. Quoting it
         # keeps its headings/lists scoped to this PR instead of the release page.
         title = re.sub(r"([\\`*_{}\[\]()<>#!|])", r"\\\1", " ".join(title.split()))
-        description = body.strip() if body and body.strip() else "No description was provided."
+        description = body if body and body.strip() else "No description was provided."
         notes += f"### [{title} (#{number})](https://github.com/{REPOSITORY}/pull/{number})\n\n"
         notes += "\n".join("> " + line if line else ">" for line in description.splitlines()) + "\n\n"
     if not pulls:

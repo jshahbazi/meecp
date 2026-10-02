@@ -221,6 +221,16 @@ def test_release_commits_rejects_non_ancestor_comparison(publisher, monkeypatch,
         publisher.release_commits("v0.1.0", COMMIT)
 
 
+def test_release_commits_rejects_mismatched_merge_base(publisher, monkeypatch):
+    monkeypatch.setattr(publisher, "api", lambda endpoint, **kwargs: {
+        "status": "ahead", "total_commits": 1,
+        "base_commit": {"sha": "b" * 40}, "merge_base_commit": {"sha": "c" * 40},
+        "commits": [{"sha": COMMIT}],
+    })
+    with pytest.raises(publisher.PublicationError, match="release_notes_range_invalid"):
+        publisher.release_commits("v0.1.0", COMMIT)
+
+
 @pytest.mark.parametrize("commits", [[{"sha": COMMIT}], [{"sha": COMMIT}, {"sha": COMMIT}]])
 def test_release_commits_rejects_truncated_or_duplicate_compare_results(publisher, monkeypatch, commits):
     base = "b" * 40
@@ -299,6 +309,52 @@ def test_pull_request_notes_filters_range_and_preserves_ordered_bodies(publisher
     assert "No description was provided." in notes
     assert "> line 1" in notes and "> line 2" in notes
     assert "#9" not in notes and "#10" not in notes
+
+
+def test_pull_request_notes_preserves_indented_code_block_spacing(publisher, monkeypatch):
+    monkeypatch.setattr(publisher, "release_commits", lambda previous, current: {COMMIT})
+    monkeypatch.setattr(publisher, "api_response", lambda endpoint, **kwargs: [{
+        "number": 11, "title": "Code example", "merged_at": "2026-01-01T00:00:00Z",
+        "merge_commit_sha": COMMIT, "body": "    example()\n    another()\n",
+    }])
+    notes = publisher.pull_request_notes(None, COMMIT)
+    assert ">     example()" in notes
+    assert ">     another()" in notes
+
+
+def test_pull_request_page_failure_prevents_all_publication_mutations(
+        publisher, assets, monkeypatch, capsys):
+    private = "synthetic-authentication-secret"
+    calls = []
+    first_pr_page = [{"number": index + 1, "title": "Unmerged", "merged_at": None}
+                     for index in range(100)]
+
+    def run(*arguments):
+        calls.append(arguments)
+        endpoint = next((value for value in arguments if value.startswith("repos/")), "")
+        if "/releases?" in endpoint:
+            return http_result(200, [])
+        if "/releases/tags/" in endpoint or "/git/ref/" in endpoint:
+            return http_result(404)
+        if "/commits?" in endpoint:
+            return http_result(200, [{"sha": COMMIT}])
+        if "/pulls?" in endpoint and endpoint.endswith("page=1"):
+            return http_result(200, first_pr_page)
+        if "/pulls?" in endpoint and endpoint.endswith("page=2"):
+            return subprocess.CompletedProcess(
+                ["gh"], 1, "HTTP/2.0 500 Internal Server Error\n\n{}", private)
+        pytest.fail(f"unexpected GitHub call: {arguments}")
+
+    monkeypatch.setattr(publisher, "command", run)
+    with pytest.raises(publisher.PublicationError):
+        publisher.publish(assets)
+    assert any(any("/pulls?" in value and "page=2" in value for value in call)
+               for call in calls)
+    assert not any("POST" in call or "PATCH" in call for call in calls)
+    assert not any(call[:2] == ("release", action) for action in ("create", "upload")
+                   for call in calls)
+    captured = capsys.readouterr()
+    assert private not in captured.out and private not in captured.err
 
 
 def test_first_release_with_no_matching_pull_requests_has_explicit_message(publisher, monkeypatch):

@@ -13,7 +13,7 @@ Run a JSON validator alongside a local decision model. Connect several clients t
 - **See what's running.** Check each project's status from the menu bar, or open **Manage Projects** for details and installation progress.
 - **Control projects individually.** Start, stop, or restart a service. Choose which projects start with the host and which you start yourself.
 - **Connect your assistant.** Copy a project's connection configuration and add it to your MCP client. Its endpoint stays stable across restarts.
-- **Share a local model.** JevK5 clients use one loaded model per project, so connecting another assistant doesn't load another copy.
+- **Share a local model.** Use a model of your choice through a prepared package, and connect multiple assistants to the same running project.
 - **Bring your own tools.** Install a prepared package, or start from source code and use an external coding agent to prepare it.
 
 mcpme currently requires **Apple silicon and macOS 26 or later**. It's an early development build; the supported features and remaining work are listed below.
@@ -43,6 +43,14 @@ Your assistant can now call `validate_json(document)`. Connection formats vary b
 
 Closing the Projects window keeps services running. Quitting mcpme stops the processes it owns.
 
+To build a drag-to-Applications installer from current source:
+
+```sh
+uv run --locked python scripts/build_mcpme_dmg.py
+```
+
+Open `dist/mcpme-0.1.0-arm64.dmg`, drag the app to Applications, eject the image, and open mcpme from Applications. This is a locally signed development build. See [macOS distribution](docs/MACOS_DISTRIBUTION.md) for verification and the signing/notarization work required for public downloads.
+
 ## Bring your own tools
 
 A useful script can become a tool your assistant calls. **Add Project** accepts local source folders and Markdown or text setup instructions, as well as prepared packages.
@@ -53,9 +61,9 @@ The agent does the work of exposing your code through MCP. mcpme inspects the so
 
 ## Put a local model to work
 
-JevK5 is the first model packaged for mcpme. It evaluates evidence against a question you supply and returns probabilities for the possible answers. You can ask a yes/no question, choose among named alternatives, or score something against ordered criteria.
+[JevK5-4B](https://github.com/allebee/jevk5) is the first model packaged for mcpme. It evaluates evidence against a question you supply and returns probabilities for the possible answers. You can ask a yes/no question, choose among named alternatives, or score something against ordered criteria.
 
-For example, an assistant can call `jevk5_decide` with:
+For example, an assistant can call `JevK5_decide` with:
 
 ```json
 {
@@ -67,13 +75,13 @@ For example, an assistant can call `jevk5_decide` with:
 }
 ```
 
-The result includes probabilities, model and profile identity, token count, latency, and cache information. `jevk5_status()` reports readiness and aggregate counts. The assistant chooses when to call it and what to do with the result. Probabilities need validation against your own task before you use them as decision thresholds.
+The result includes probabilities, model and profile identity, token count, latency, and cache information. `JevK5_status()` reports readiness and aggregate counts. The assistant chooses when to call it and what to do with the result. Probabilities need validation against your own task before you use them as decision thresholds.
 
-To add JevK5, build the original app using the instructions below, then run `uv run --locked python scripts/prepare_jevk5_package.py`. Add the resulting `dist/jevk5-package` through **Add Project**. If you already use the standalone JevK5 app, the [migration guide](docs/MCPME_STATUS.md#import-the-existing-jevk5-installation) covers transferring that installation.
+To add JevK5-4B, build the original app using the instructions below, then run `uv run --locked python scripts/prepare_JevK5_package.py`. Add the resulting `dist/JevK5-4B-package` through **Add Project**. If you already use the standalone JevK5-4B app, the [migration guide](docs/MCPME_STATUS.md#import-the-existing-JevK5-4B-installation) covers transferring that installation.
 
 ## Where things stand
 
-The current host runs prepared local tool and model packages, with JevK5 and JSON Utilities tested together. Source imports, saved drafts, and external-agent preparation are the next layer of onboarding now in development.
+The current host runs prepared local tool and model packages, with JevK5-4B and JSON Utilities tested together. Source imports, saved drafts, and external-agent preparation are the next layer of onboarding now in development.
 
 Downloads, upgrades, removal, a management MCP interface, and agent preparation inside the app are still ahead. Builds are locally signed development artifacts; notarization and an automatic updater are pending. The development bundle's start-at-login behavior still needs verification.
 
@@ -92,37 +100,3 @@ uv run --locked python -m pytest
 - [Verification](docs/MCPME_VERIFICATION.md): tested behavior and known limits.
 - [Visual identity](docs/BRAND.md): artwork, icons, and the [menu bar preview](assets/brand/icon-preview.html).
 - [Model provenance](model-manifest.json), [model card](docs/MODEL_CARD.md), and [third-party notices](THIRD_PARTY_NOTICES.md).
-
-<details>
-<summary>Standalone JevK5 app: build, connection, and runtime details</summary>
-
-The original JevK5 Menu Bar app remains separately buildable. It bundles the Q8 model, Metal inference runtime, and Python server. Build tools are Xcode Command Line Tools, `uv`, and the tested Homebrew llama.cpp runtime:
-
-```sh
-uv sync --locked
-uv run --locked python scripts/fetch_model.py
-uv run --locked python scripts/build.py
-open dist/JevK5.app
-```
-
-To reuse an existing GGUF, pass `--model-source /absolute/path/to/jevk5-4b-v0.3-Q8_0.gguf` to the builder. It verifies the model's size and SHA-256 before bundling it. Models, runtime files, and generated apps are ignored by Git.
-
-Builds use the local `llama-server` executable, with an optional `--llama-server` override. Packaging copies and relocates its dependencies, checks for remaining Homebrew links, and signs the app. `runtime-manifest.json` records the bundled library hashes. The measured artifact used llama.cpp 0.5.0/build 11146, ggml 0.25.3, and Python 3.12.13; Python dependencies are pinned in `uv.lock`.
-
-Opening `dist/JevK5.app` loads the model and serves MCP at `http://127.0.0.1:19385/mcp`. The menu shows readiness and counts, offers pause/resume and restart, and copies connection configuration. Pausing unloads the model; decision calls fail until you resume. Quitting stops both owned service processes.
-
-Use **Copy MCP Configuration** to get the bundled stdio adapter's path for your client. The adapter opens the app when needed, reads its token privately, and connects to the shared backend. Copy the configuration again after moving the app.
-
-For Codex, `uv run --locked python scripts/install_codex.py` registers this standalone build. It preserves other servers and existing timeouts, adding 30-second startup and 180-second tool timeouts if absent. Restart the JevK5 MCP connection to load the tools into an existing session. Remove the registration with `codex mcp remove jevk5`.
-
-Streamable HTTP clients can use `http://127.0.0.1:19385/mcp` with `Authorization: Bearer <token>`. The token lives in `~/Library/Application Support/JevK5/connection.json`, readable by your account. Prefer the stdio adapter, which handles the token for you. Keep the connection file out of Git, issues, and chat.
-
-For `choice`, supply 2–16 distinct labels in `criteria`, or an ordered object mapping IDs to descriptions. For `score`, supply a list of 2–16 descriptions for ordered levels 0 through N−1. Boolean (`noul`) questions can optionally describe `true` and `false`. Requests exceeding the 8192-token context budget are rejected. JevK5 has no retrieval or general chat interface.
-
-Decisions run one at a time. Prompt caching applies only when the full token sequence matches the immediately preceding successful completion. Changing the evidence, question, or ordered options disables reuse. Errors, pause, restart, and quit clear that identity. There is no response history or disk response cache; live inference state stays in memory while the model runs.
-
-The `m5-benchmark-v1` profile uses temperatures 1.22 and 0.93, matching the prior benchmark and pinned upstream GGUF card. Each result identifies its profile so calibration changes can be tracked.
-
-See the [JevK5 design](docs/DESIGN.md) and [verification report](docs/VERIFICATION.md) for the original app's runtime contract and synthetic integration checks.
-
-</details>

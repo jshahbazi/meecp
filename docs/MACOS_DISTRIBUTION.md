@@ -36,8 +36,7 @@ uv run --locked python scripts/build_mcpme_dmg.py \
   --sign-identity 'Developer ID Application: Your Name (TEAMID)' \
   --notary-profile mcpme-release \
   --keychain /path/to/release.keychain-db \
-  --output dist/mcpme-release.dmg \
-  --zip-output dist/mcpme-release.zip
+  --output dist/mcpme-release.dmg
 ```
 
 `--keychain` scopes both signing identity lookup and notarization credentials to
@@ -64,16 +63,12 @@ The builder:
    spaces, ejects the image, verifies the copied signature and ticket, checks
    Gatekeeper again, and executes the bundled CLI with a temporary home and a
    minimal system `PATH`.
-8. When `--zip-output` is supplied, archives the stapled app with `ditto`,
-   extracts it into an isolated directory, and verifies the extracted app's
-   metadata, signature, ticket, Gatekeeper assessment, and private runtime.
-9. Publishes the DMG, optional ZIP, and their receipts only after all checks
-   succeed. Existing outputs are never replaced; a publication failure removes
-   newly published outputs.
+8. Publishes the DMG and its receipt only after all checks succeed. Existing
+   outputs are never replaced; a publication failure removes newly published
+   outputs.
 
-The app's version comes from `[project].version` in `pyproject.toml`. The ZIP
-contains `mcpme.app` at its root; extract it and move the app to Applications.
-On the read-only DMG, open `mcpme.app` and choose **Install and Restart**.
+The app's version comes from `[project].version` in `pyproject.toml`. On the
+read-only DMG, open `mcpme.app` and choose **Install and Restart**.
 The installer checks signature, version metadata, Apple silicon architecture,
 and minimum macOS version, then stages the signed app and gracefully quits the current copy with a
 75-second wait, atomically replaces the selected installation, and launches the
@@ -88,11 +83,8 @@ retains the installed candidate and a recovery folder beside it; read that
 folder's `RECOVERY.md` before restoring its previous bundle. Normal startup
 policies apply after restart; manually configured services do not auto-resume.
 The manual DMG path remains available, but requires quitting mcpme before
-dragging the app to Applications. ZIP installation also requires quitting the
-current app first. See [Host application updates](AUTO_UPDATE_PLAN.md) for the
+dragging the app to Applications. See [Host application updates](AUTO_UPDATE_PLAN.md) for the
 separate, still-planned automatic updater.
-The app in both downloads carries the same signature and stapled ticket.
-Apple does not support signing or stapling the ZIP container itself.
 
 The two notarization submissions let both the image and the installed app carry
 their own tickets. A rejected submission, unavailable identity, tool error,
@@ -120,9 +112,7 @@ The adjacent DMG `.build.json` is the final disk-image distribution record: it i
 the actual signing and notarization modes, both accepted submission IDs, ticket
 and Gatekeeper checks, final image SHA-256, and byte count. It embeds an updated
 application record containing the app's notarization result.
-The ZIP has its own adjacent `.build.json`, recording its final hash, size,
-and the verification checks performed on the extracted app. Neither receipt
-changes the sealed app after signing.
+The receipt does not change the sealed app after signing.
 
 The local development build and the contract tests can be exercised without
 Apple credentials. The Developer ID and notarization path requires a successful

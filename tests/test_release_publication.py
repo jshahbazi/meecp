@@ -42,27 +42,22 @@ def assets(publisher, tmp_path):
         "notarization_ticket_stapled": True, "notary_submission_id": SUBMISSION,
         "source_commit": COMMIT, "source_tree_dirty": False,
     }
-    for kind, checks in (("dmg", publisher.DMG_CHECKS), ("zip", publisher.ZIP_CHECKS)):
-        binary = directory / f"mcpme-{VERSION}-arm64.{kind}"
-        binary.write_bytes(b"synthetic signed " + kind.encode())
-        receipt = {
-            "schema_version": 1,
-            "distribution": "notarized_drag_install_dmg" if kind == "dmg" else "notarized_app_zip",
-            "notarization": "accepted", "notary_submission_id": SUBMISSION,
-            "version": VERSION, "build": "1", "minimum_macos": "26.0", "architecture": "arm64",
-            "app_build": app, "checks": dict.fromkeys(checks, True),
-            "sha256": publisher.digest(binary), "bytes": binary.stat().st_size,
-        }
-        if kind == "dmg":
-            receipt.update({"disk_image_signed": True, "notarization_ticket_stapled": True})
-        else:
-            receipt["contained_app_notarization_ticket_stapled"] = True
-        binary.with_name(binary.name + ".build.json").write_text(json.dumps(receipt))
+    binary = directory / f"mcpme-{VERSION}-arm64.dmg"
+    binary.write_bytes(b"synthetic signed dmg")
+    receipt = {
+        "schema_version": 1, "distribution": "notarized_drag_install_dmg",
+        "notarization": "accepted", "notary_submission_id": SUBMISSION,
+        "version": VERSION, "build": "1", "minimum_macos": "26.0", "architecture": "arm64",
+        "app_build": app, "checks": dict.fromkeys(publisher.DMG_CHECKS, True),
+        "sha256": publisher.digest(binary), "bytes": binary.stat().st_size,
+        "disk_image_signed": True, "notarization_ticket_stapled": True,
+    }
+    binary.with_name(binary.name + ".build.json").write_text(json.dumps(receipt))
     return directory
 
 
-def change_receipt(directory, kind, change):
-    path = directory / f"mcpme-{VERSION}-arm64.{kind}.build.json"
+def change_receipt(directory, change):
+    path = directory / f"mcpme-{VERSION}-arm64.dmg.build.json"
     value = json.loads(path.read_text())
     change(value)
     path.write_text(json.dumps(value))
@@ -138,7 +133,8 @@ def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag
             assert arguments[arguments.index("--target") + 1] == COMMIT
             assert arguments[arguments.index("--title") + 1] == "mcpme " + version
             notes = Path(arguments[arguments.index("--notes-file") + 1]).read_text()
-            assert "DMG:" in notes and "ZIP:" in notes and COMMIT in notes
+            assert "DMG:" in notes and "ZIP" not in notes and COMMIT in notes
+            assert "SHA-256 hashes for the DMG and its build receipt" in notes
             drafted = True
         elif arguments[1] == "upload":
             assert drafted and not public
@@ -281,15 +277,14 @@ def test_invalid_explicit_release_version_blocks_before_github(publisher, assets
 def test_explicit_version_is_used_for_asset_and_release_verification(
         publisher, assets, monkeypatch, operation):
     selected = "0.2.0"
-    for kind in ("dmg", "zip"):
-        binary = assets / f"mcpme-{VERSION}-arm64.{kind}"
-        receipt = binary.with_name(binary.name + ".build.json")
-        value = json.loads(receipt.read_text())
-        value["version"] = selected
-        destination = assets / f"mcpme-{selected}-arm64.{kind}"
-        binary.rename(destination)
-        receipt.unlink()
-        destination.with_name(destination.name + ".build.json").write_text(json.dumps(value))
+    binary = assets / f"mcpme-{VERSION}-arm64.dmg"
+    receipt = binary.with_name(binary.name + ".build.json")
+    value = json.loads(receipt.read_text())
+    value["version"] = selected
+    destination = assets / f"mcpme-{selected}-arm64.dmg"
+    binary.rename(destination)
+    receipt.unlink()
+    destination.with_name(destination.name + ".build.json").write_text(json.dumps(value))
     calls = install_github(monkeypatch, publisher, assets, version=selected,
                            existing_draft=operation == "resume")
     if operation == "publish":
@@ -377,23 +372,23 @@ def test_transport_failure_without_http_response_fails_closed(publisher, monkeyp
         publisher.prepare()
 
 
-@pytest.mark.parametrize("kind,change", [
-    ("dmg", lambda receipt: receipt.update(notarization="rejected")),
-    ("zip", lambda receipt: receipt["app_build"].update(notarization="not_requested")),
-    ("dmg", lambda receipt: receipt["app_build"].update(signing="ad_hoc")),
-    ("zip", lambda receipt: receipt["app_build"].update(source_commit="b" * 40)),
-    ("dmg", lambda receipt: receipt["app_build"].update(source_tree_dirty=True)),
-    ("zip", lambda receipt: receipt["app_build"].update(notarization_ticket_stapled=False)),
-    ("dmg", lambda receipt: receipt["app_build"].update(hardened_runtime=False)),
-    ("zip", lambda receipt: receipt["app_build"].update(secure_timestamp=False)),
-    ("dmg", lambda receipt: receipt["app_build"].update(version="9.9.9")),
-    ("dmg", lambda receipt: receipt["checks"].update(copied_app_gatekeeper_assessment=False)),
-    ("zip", lambda receipt: receipt["checks"].update(extracted_app_signature=False)),
-    ("dmg", lambda receipt: receipt.update(disk_image_signed=False)),
-    ("zip", lambda receipt: receipt.update(contained_app_notarization_ticket_stapled=False)),
+@pytest.mark.parametrize("change", [
+    lambda receipt: receipt.update(notarization="rejected"),
+    lambda receipt: receipt["app_build"].update(notarization="not_requested"),
+    lambda receipt: receipt["app_build"].update(signing="ad_hoc"),
+    lambda receipt: receipt["app_build"].update(source_commit="b" * 40),
+    lambda receipt: receipt["app_build"].update(source_tree_dirty=True),
+    lambda receipt: receipt["app_build"].update(notarization_ticket_stapled=False),
+    lambda receipt: receipt["app_build"].update(hardened_runtime=False),
+    lambda receipt: receipt["app_build"].update(secure_timestamp=False),
+    lambda receipt: receipt["app_build"].update(version="9.9.9"),
+    lambda receipt: receipt["checks"].update(copied_app_gatekeeper_assessment=False),
+    lambda receipt: receipt["checks"].update(copied_app_signature=False),
+    lambda receipt: receipt.update(disk_image_signed=False),
+    lambda receipt: receipt.update(notarization_ticket_stapled=False),
 ])
-def test_invalid_receipts_block_before_any_remote_write(publisher, assets, monkeypatch, kind, change):
-    change_receipt(assets, kind, change)
+def test_invalid_receipts_block_before_any_remote_write(publisher, assets, monkeypatch, change):
+    change_receipt(assets, change)
     monkeypatch.setattr(publisher, "command", lambda *args: pytest.fail("unexpected GitHub access"))
     with pytest.raises(publisher.PublicationError, match="release_asset_receipt_invalid"):
         publisher.publish(assets)
@@ -402,29 +397,26 @@ def test_invalid_receipts_block_before_any_remote_write(publisher, assets, monke
 
 @pytest.mark.parametrize("field,value", [("sha256", "0" * 64), ("bytes", 1), ("version", "0.2.0")])
 def test_receipt_hash_size_and_version_must_match(publisher, assets, monkeypatch, field, value):
-    change_receipt(assets, "dmg", lambda receipt: receipt.update({field: value}))
+    change_receipt(assets, lambda receipt: receipt.update({field: value}))
     monkeypatch.setattr(publisher, "command", lambda *args: pytest.fail("unexpected GitHub access"))
     with pytest.raises(publisher.PublicationError, match="release_asset_receipt"):
         publisher.publish(assets)
 
 
-def test_two_archives_must_describe_same_app(publisher, assets, monkeypatch):
-    change_receipt(assets, "zip", lambda receipt: receipt["app_build"].update(extra_native_hash="different"))
-    monkeypatch.setattr(publisher, "command", lambda *args: pytest.fail("unexpected GitHub access"))
-    with pytest.raises(publisher.PublicationError, match="release_asset_app_mismatch"):
-        publisher.publish(assets)
-
-
-@pytest.mark.parametrize("unexpected", ["other.dmg", "debug.log"])
+@pytest.mark.parametrize("unexpected", [
+    "other.dmg", "debug.log", f"mcpme-{VERSION}-arm64.zip",
+    f"mcpme-{VERSION}-arm64.zip.build.json",
+])
 def test_unrelated_files_cannot_be_published(publisher, assets, unexpected):
     (assets / unexpected).write_text("unrelated")
     with pytest.raises(publisher.PublicationError, match="release_asset_set_invalid"):
         publisher.validated_assets(assets, VERSION, COMMIT)
 
 
-def test_missing_or_symlinked_assets_are_rejected(publisher, assets, tmp_path):
-    binary = assets / f"mcpme-{VERSION}-arm64.zip"
-    target = tmp_path / "outside.zip"
+@pytest.mark.parametrize("suffix", ["dmg", "dmg.build.json"])
+def test_missing_or_symlinked_assets_are_rejected(publisher, assets, tmp_path, suffix):
+    binary = assets / f"mcpme-{VERSION}-arm64.{suffix}"
+    target = tmp_path / f"outside.{suffix}"
     binary.rename(target)
     with pytest.raises(publisher.PublicationError, match="release_asset_set_invalid"):
         publisher.validated_assets(assets, VERSION, COMMIT)
@@ -433,10 +425,13 @@ def test_missing_or_symlinked_assets_are_rejected(publisher, assets, tmp_path):
         publisher.validated_assets(assets, VERSION, COMMIT)
 
 
-def test_checksum_manifest_covers_downloads_and_receipts(publisher, assets):
+def test_checksum_manifest_covers_dmg_and_receipt(publisher, assets):
     paths = publisher.validated_assets(assets, VERSION, COMMIT)
     manifest = (assets / "SHA256SUMS.txt").read_text().splitlines()
-    assert len(paths) == 5 and len(manifest) == 4
+    assert {path.name for path in paths} == {
+        f"mcpme-{VERSION}-arm64.dmg", f"mcpme-{VERSION}-arm64.dmg.build.json", "SHA256SUMS.txt",
+    }
+    assert len(manifest) == 2
     for line in manifest:
         checksum, filename = line.split("  ")
         assert checksum == publisher.digest(assets / filename)
@@ -468,7 +463,9 @@ def test_publish_is_draft_until_exact_assets_and_hashes_are_verified(publisher, 
     (lambda release: release["assets"][0].update(digest="sha256:" + "0" * 64), "digest_mismatch"),
     (lambda release: release["assets"][0].update(size=0), "digest_mismatch"),
     (lambda release: release["assets"].pop(), "asset_set_invalid"),
-    (lambda release: release["assets"][0].update(name="unrelated.zip"), "asset_set_invalid"),
+    (lambda release: release["assets"][0].update(name=f"mcpme-{VERSION}-arm64.zip"), "asset_set_invalid"),
+    (lambda release: release["assets"].append(dict(release["assets"][0],
+                                                name=f"mcpme-{VERSION}-arm64.zip")), "asset_set_invalid"),
     (lambda release: release.update(target_commitish="main"), "metadata_invalid"),
     (lambda release: release.update(draft=False), "metadata_invalid"),
 ])

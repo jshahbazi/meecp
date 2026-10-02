@@ -40,6 +40,9 @@ jobs:
         run: uv run --locked python .github/scripts/scan_secrets.py
       - name: Run tests
         run: uv run --locked python -m pytest -q
+      - name: Test hotdog demo and build dependencies
+        working-directory: examples/hotdog-or-not-hotdog
+        run: uv run --locked --group build python -m pytest -q
       - name: Test native transport and app management
         run: |
           swift test

@@ -50,6 +50,8 @@ Run the focused checks:
 uv run --locked python -m pytest -q
 ```
 
+To include the build dependency crash regressions, run `uv run --locked --group build python -m pytest -q`. These checks exercise malformed TorchScript annotations, LSTM weights, and packed sequences in separate processes, together with valid inputs. PyTorch is pinned to 2.14.1 because the reported TorchScript class crash still reproduces in 2.13.0.
+
 The delivered build passed 19 focused checks for preprocessing, postprocessing, upload validation, authentication, and request handling. A smoke check at threshold 0.35 detected the hotdog-positive COCO128 photo and rejected eight selected negative photos; inference took 14–22 ms on the build Mac. The browser was checked with both verdicts and bounding boxes. The relocated private runtime also performed real inference with the original source model unavailable, and its launcher started and stopped without uv or a global Python. These are functional checks; COCO128 contains training images and this small selection does not measure generalization accuracy. Fixture source: https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128.zip.
 
 To build another runnable folder after model preparation:

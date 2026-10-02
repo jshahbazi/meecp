@@ -13,7 +13,7 @@ Run a JSON validator alongside a local decision model. Connect several clients t
 - **See what's running.** Check each project's status from the menu bar, or open **Manage Projects** for details and installation progress.
 - **Control projects individually.** Start, stop, or restart a service. Choose which projects start with the host and which you start yourself.
 - **Connect your assistant.** Copy a project's connection configuration and add it to your MCP client. Its endpoint stays stable across restarts.
-- **Share a local model.** JevK5 clients use one loaded model per project, so connecting another assistant doesn't load another copy.
+- **Share a local model.** Use a model of your choice through a prepared package, and connect multiple assistants to the same running project.
 - **Bring your own tools.** Install a prepared package, or start from source code and use an external coding agent to prepare it.
 
 mcpme currently requires **Apple silicon and macOS 26 or later**. It's an early development build; the supported features and remaining work are listed below.
@@ -53,7 +53,7 @@ The agent does the work of exposing your code through MCP. mcpme inspects the so
 
 ## Put a local model to work
 
-JevK5 is the first model packaged for mcpme. It evaluates evidence against a question you supply and returns probabilities for the possible answers. You can ask a yes/no question, choose among named alternatives, or score something against ordered criteria.
+[JevK5-4B](https://github.com/allebee/jevk5) is the first model packaged for mcpme. It evaluates evidence against a question you supply and returns probabilities for the possible answers. You can ask a yes/no question, choose among named alternatives, or score something against ordered criteria.
 
 For example, an assistant can call `jevk5_decide` with:
 

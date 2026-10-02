@@ -405,14 +405,15 @@ class Gateway:
                     return JSONResponse({"error": {"code": "event_not_found"}}, status_code=400)
                 stream, after = event.stream, event.sequence
                 if event.terminal:
-                    session.last_activity = time.monotonic()
                     return Response(status_code=200, headers={"content-type": "text/event-stream",
                                     "mcp-session-id": session.session_id})
             else:
                 stream, after = "notifications", 0
             if stream in session.followers:
                 return Response(status_code=409)
-            session.last_activity = time.monotonic()
+            # Notification streams reconnect automatically on transport timeouts.
+            # Opening or replaying a stream is not MCP activity and must not keep
+            # a quiet session (and its child process) leased indefinitely.
             return SSE(self, session, stream, after)
         if request.method != "POST":
             return Response(status_code=405)

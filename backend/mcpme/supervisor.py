@@ -21,7 +21,7 @@ import uuid
 
 import httpx
 import uvicorn
-from mcpme_local_transport import bind_private_listener
+from mcpme_local_transport import bind_private_listener, checked_socket, socket_path
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -59,12 +59,13 @@ def capabilities() -> dict:
     return {"api_version": 1, "host_version": "0.1.0", "package_schema_versions": [1],
             "profiles": ["mcp-stdio", "model-service"], "protocol_versions": ["2025-11-25"], "capabilities": ["tools"],
             "start_policies": ["manual", "host"], "platform": {"os": "macos", "architecture": "arm64", "minimum_version": "26.0"},
+            "slot_actions": ["start", "stop", "restart", "remove"], "slot_settings": ["start_policy"],
             "limits": {"slots": 16, "request_bytes": 1048576, "idle_seconds": 300},
             "installation": "prepared_local_packages_and_imports", "management_credentials": "owner_and_scoped_grants",
             "management_grant_modes": ["read", "prepare", "lifecycle", "install"], "management_mcp": "scoped_stdio",
             "import_schema_versions": [1], "import_sources": ["local_folder", "markdown", "text", "prepared_package"],
             "preparation_templates": ["python-function-v1", "existing-mcp-v1", "jevk5-llamacpp-v1"],
-            "unsupported": ["mcp-http", "first_call", "upgrades", "removal", "downloads",
+            "unsupported": ["mcp-http", "first_call", "upgrades", "downloads",
                             "reference_document_service", "raw_model_intake", "integrated_preparation"]}
 
 
@@ -727,19 +728,90 @@ class Supervisor:
         return any(record.get("slot_id") == slot_id and record.get("status") == "running"
                    for record in (read_private_json(path) for path in directory.glob("*.json")))
 
-    async def control(self, slot_id: str, action: str, *, migration_internal: bool = False):
+    def check_mutation(self, slot, *, operation_id: str | None = None, migration_internal: bool = False):
+        if self.closing:
+            raise HostError("host_closing", 409)
+        if slot.id in self.migration_blocked and not migration_internal:
+            raise HostError("migration_recovery_required", 409)
+        if not migration_internal and self.migration_running(slot.id):
+            raise HostError("operation_in_progress", 409)
+        for operation in self.registry.list_unfinished_operations():
+            if operation.slot_id != slot.id or operation.id == operation_id:
+                continue
+            if operation.status in {"pending", "running"}:
+                raise HostError("operation_in_progress", 409)
+            if operation.action in {"install", "remove"}:
+                code = "installation_recovery_required" if operation.action == "install" else "removal_recovery_required"
+                raise HostError(code, 409)
+        if slot.error_code == "installation_recovery_required":
+            raise HostError("installation_recovery_required", 409)
+        if (slot.observed_state == "ownership_lost" or slot.error_code == "ownership_lost"
+                or any(value.get("state") == "ownership_lost" for value in self.ledger(slot.id).values())
+                or any(process.ownership_lost for process in self.owner(slot.id).instances.values())):
+            raise HostError("ownership_lost", 409)
+
+    async def update_settings(self, slot_id: str, payload: dict) -> dict:
+        if (set(payload) != {"start_policy"} or not isinstance(payload["start_policy"], str)
+                or payload["start_policy"] not in {"manual", "host"}):
+            raise HostError("invalid_start_policy")
+        lock = self.locks.setdefault(slot_id, asyncio.Lock())
+        if lock.locked():
+            raise HostError("operation_in_progress", 409)
+        async with lock:
+            slot = self.registry.get_slot(slot_id)
+            self.check_mutation(slot)
+            # Startup preference does not change the current runtime or an
+            # explicit stop's persisted wake suppression.
+            updated = self.registry.update_slot(slot_id, expected_generation=slot.generation,
+                                                start_policy=payload["start_policy"])
+            return {"slot": updated.to_dict()}
+
+    async def remove(self, slot, operation_id: str):
+        directory = self.slot_directory(slot.id)
+        self.registry.update_slot(slot.id, desired_state="stopped", observed_state="draining", wake_suppressed=True)
+        write_private_json(directory / "activation.json", {**self.activation(slot.id), "exposure_permitted": False})
+        await self.stop_gateway(slot.id)
+        await self.stop_residents(slot.id)
+        owner = self.owner(slot.id)
+        for process in list(owner.instances.values()):
+            await self.reap(slot.id, process)
+        if owner.instances or self.ledger(slot.id) or owner.persistence_failed:
+            raise HostError("ownership_lost" if any(process.ownership_lost for process in owner.instances.values())
+                            else "shutdown_unconfirmed", 409)
+        await self.release_model(slot.id)
+        listener = self.listeners.pop(slot.id, None)
+        if listener is not None:
+            listener.close()
+        # Public and private gateways are gone before their credential is revoked.
+        with contextlib.suppress(FileNotFoundError):
+            private_path = socket_path(self.root, slot.id)
+            if private_path.exists() or private_path.is_symlink():
+                checked_socket(private_path)
+                private_path.unlink()
+        (directory / "connection.json").unlink(missing_ok=True)
+        from .migrations import retire_transfer
+        retire_transfer(self, slot.id, operation_id)
+        self.registry.update_slot(slot.id, observed_state="stopped", error_code=None)
+        self.registry.complete_removal(slot.id, operation_id, expected_generation=slot.generation)
+        await owner.close()
+        self.owners.pop(slot.id, None)
+        self.residents.pop(slot.id, None)
+        self.ledgers.pop(slot.id, None)
+        self.migration_blocked.discard(slot.id)
+        # Keep private data and shared package snapshots for deliberate recovery.
+
+    async def control(self, slot_id: str, action: str, *, migration_internal: bool = False,
+                      operation_id: str | None = None):
+        if not isinstance(action, str) or action not in {"start", "stop", "restart", "remove"}:
+            raise HostError("invalid_control")
         async with self.locks.setdefault(slot_id, asyncio.Lock()):
             slot = self.registry.get_slot(slot_id)
-            if slot_id in self.migration_blocked and not migration_internal:
-                raise HostError("migration_recovery_required", 409)
-            if not migration_internal and self.migration_running(slot_id):
-                raise HostError("operation_in_progress", 409)
-            if any(op.slot_id == slot_id and op.action == "install" for op in self.registry.list_unfinished_operations()):
-                raise HostError("installation_recovery_required" if slot.error_code == "installation_recovery_required" else "operation_in_progress", 409)
-            if slot.error_code == "installation_recovery_required":
-                raise HostError("installation_recovery_required", 409)
-            if slot.error_code == "ownership_lost" or any(v.get("state") == "ownership_lost" for v in self.ledger(slot_id).values()):
-                raise HostError("ownership_lost", 409)
+            self.check_mutation(slot, operation_id=operation_id, migration_internal=migration_internal)
+            if action == "remove":
+                if operation_id is None:
+                    raise HostError("removal_operation_required")
+                await self.remove(slot, operation_id)
+                return {"slot_id": slot.id, "removed": True}
             if slot_id not in self.listeners:
                 self.listeners[slot_id] = bind_listener(slot.public_port)
             worker = self.workers.get(slot_id)
@@ -794,10 +866,8 @@ class Supervisor:
             slot = self.registry.get_slot(slot_id)
             if slot.error_code == "ownership_lost" or slot.id in self.migration_blocked:
                 raise HostError(slot.error_code or "migration_recovery_required", 409)
-            if action != "status" and self.migration_running(slot_id):
-                raise HostError("operation_in_progress", 409)
-            if action != "status" and any(op.slot_id == slot_id and op.action == "install" for op in self.registry.list_unfinished_operations()):
-                raise HostError("operation_in_progress", 409)
+            if action != "status":
+                self.check_mutation(slot)
             if slot.error_code == "installation_recovery_required":
                 raise HostError("installation_recovery_required", 409)
             if action != "status":
@@ -847,12 +917,27 @@ class Supervisor:
                 self.registry.update_operation(operation.id, "recovery_required", error_code="operation_interrupted")
             if operation.status in {"pending", "running", "recovery_required"} and operation.action == "install":
                 interrupted.add(operation.slot_id)
+        # A remove intent closes admission across host restarts. Replay only
+        # after an empty ownership ledger proves no unresolved target remains.
+        for operation in self.registry.list_unfinished_operations():
+            if operation.action != "remove":
+                continue
+            if self.ledger(operation.slot_id):
+                self.registry.update_operation(operation.id, "recovery_required", error_code="ownership_lost")
+                continue
+            await self.execute_control(operation)
+        pending_removals = {operation.slot_id for operation in self.registry.list_unfinished_operations()
+                            if operation.action == "remove"}
         self.reconcile_imports()
         for slot in self.registry.list_slots():
             if slot.id in self.migration_blocked:
                 continue
             if self.ledger(slot.id):
                 self.registry.update_slot(slot.id, observed_state="ownership_lost", error_code="ownership_lost")
+                continue
+            if slot.id in pending_removals:
+                # Failed revocation or finalization must never republish a
+                # partially removed app's endpoint during ordinary startup.
                 continue
             if slot.id in interrupted:
                 self.registry.update_slot(slot.id, observed_state="failed", error_code="installation_recovery_required")
@@ -1113,19 +1198,45 @@ class Supervisor:
                 self.imports.operation_status(plan["import_id"], self.registry.get_operation(operation_id).to_dict())
 
     def begin_control(self, slot_id: str, action: str) -> dict:
+        if not isinstance(action, str) or action not in {"start", "stop", "restart", "remove"}:
+            raise HostError("invalid_control")
         slot = self.registry.get_slot(slot_id)
-        operation = self.registry.create_operation(action, slot_id=slot_id, generation=slot.generation)
-        async def execute():
-            self.registry.update_operation(operation.id, "running")
-            try:
-                await self.control(slot_id, action)
-                self.registry.update_operation(operation.id, "completed")
-            except Exception as error:
-                code = error.code if isinstance(error, (HostError, PackageError, RegistryError)) else "control_failed"
-                self.registry.update_operation(operation.id, "failed", error_code=code)
-        task = asyncio.create_task(execute())
+        if self.locks.setdefault(slot_id, asyncio.Lock()).locked():
+            raise HostError("operation_in_progress", 409)
+        retry = next((operation for operation in self.registry.list_unfinished_operations()
+                      if action == "remove" and operation.slot_id == slot_id and operation.action == "remove"
+                      and operation.status == "recovery_required"), None)
+        self.check_mutation(slot, operation_id=retry.id if retry else None)
+        operation = (self.registry.update_operation(retry.id, "running") if retry else
+                     self.registry.create_operation(action, slot_id=slot_id, generation=slot.generation))
+        task = asyncio.create_task(self.execute_control(operation))
+        task.operation_id = operation.id
         self.track(task)
         return operation.to_dict()
+
+    async def execute_control(self, operation):
+        self.registry.update_operation(operation.id, "running")
+        try:
+            await self.control(operation.slot_id, operation.action, operation_id=operation.id)
+            if operation.action != "remove":
+                self.registry.update_operation(operation.id, "completed")
+        except Exception as error:
+            code = error.code if isinstance(error, (HostError, PackageError, RegistryError)) else (
+                "removal_failed" if operation.action == "remove" else "control_failed")
+            if operation.action == "remove":
+                with contextlib.suppress(RegistryError):
+                    slot = self.registry.get_slot(operation.slot_id)
+                    if slot.observed_state == "ownership_lost" or any(
+                            process.ownership_lost for process in self.owner(slot.id).instances.values()):
+                        code = "ownership_lost"
+                    self.registry.update_slot(slot.id, desired_state="stopped", wake_suppressed=True,
+                                              observed_state="ownership_lost" if code == "ownership_lost" else "failed",
+                                              error_code=code)
+            # Registry deletion and operation completion are one transaction.
+            # Cleanup after that point must not rewrite a completed result.
+            if self.registry.get_operation(operation.id).status != "completed":
+                self.registry.update_operation(operation.id, "recovery_required" if operation.action == "remove" or code == "ownership_lost"
+                                               else "failed", error_code=code)
 
     async def close(self):
         self.closing = True
@@ -1235,6 +1346,8 @@ def management_app(host: Supervisor, token: str, port: int):
                     result = host.grants.issue(payload, plan=plan)
                 elif route.endswith("/revoke") and "grant_id" in request.path_params and not payload:
                     result = host.grants.revoke(request.path_params["grant_id"])
+                elif request.method == "PATCH" and "slot_id" in request.path_params:
+                    result = await host.update_settings(request.path_params["slot_id"], payload)
                 elif route == "/v1/imports":
                     if set(payload) - {"source", "name", "intent", "document_role", "files", "start", "start_policy"}:
                         raise HostError("invalid_import_request")
@@ -1280,7 +1393,7 @@ def management_app(host: Supervisor, token: str, port: int):
                     result = await host.apply_install(payload["plan_id"], grant_id=grant_id)
                 elif "slot_id" in request.path_params and not payload:
                     action = request.path_params["action"]
-                    if action not in {"start", "stop", "restart"}:
+                    if action not in {"start", "stop", "restart", "remove"}:
                         raise HostError("invalid_control")
                     result = host.begin_control(request.path_params["slot_id"], action)
                 else:
@@ -1296,7 +1409,7 @@ def management_app(host: Supervisor, token: str, port: int):
         Route("/v1/grants/{grant_id}", dispatch), Route("/v1/grants/{grant_id}/revoke", dispatch, methods=["POST"]),
         Route("/v1/plans/{plan_id}", dispatch),
         Route("/v1/slots/{slot_id}/details", dispatch),
-        Route("/v1/slots/{slot_id}", dispatch), Route("/v1/operations/{operation_id}", dispatch),
+        Route("/v1/slots/{slot_id}", dispatch, methods=["GET", "PATCH"]), Route("/v1/operations/{operation_id}", dispatch),
         Route("/v1/imports", dispatch, methods=["GET", "POST"]),
         Route("/v1/imports/{draft_id}", dispatch),
         Route("/v1/imports/{draft_id}/{action}", dispatch, methods=["POST"]),

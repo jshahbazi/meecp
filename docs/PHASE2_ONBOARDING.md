@@ -4,7 +4,7 @@ This first Phase 2 milestone implements source intake and resumable preparation.
 
 ## Supported flow
 
-Add Project accepts a prepared package, a local source folder, or a UTF-8 Markdown/text document through a file chooser or drag-and-drop. Drafts appear in Manage Projects and survive window closure and host restart. An unfinished source draft asks what tools the assistant should receive. Documents require an explicit `instructions` or `reference` role. Reference information remains blocked on a supported document-service template.
+Add App accepts a prepared package, a local source folder, or a UTF-8 Markdown/text document through a file chooser or drag-and-drop. Drafts appear in Manage Apps and survive window closure and host restart. An unfinished source draft asks what tools the assistant should receive. Documents require an explicit `instructions` or `reference` role. Reference information remains blocked on a supported document-service template.
 
 Source intake reads metadata and selected content without importing modules or running source/build code. It snapshots an explicit file list and SHA-256 identities in owner-only staging. Folder discovery selects supported source files and excludes hidden paths, credentials, environments, caches, and generated directories. Review the selected file list in the exported specification; use repeated `--file` arguments to narrow CLI intake. Recognized credential content is rejected; authors must still select nonsecret source.
 
@@ -34,7 +34,7 @@ scripts/mcpme operations get OPERATION_UUID --json
 
 Attach validates the complete package statically and seals a copy. For source imports, its manifest must declare the exact exported `source.revision`. The host verifies package identity; that declaration alone does not prove that an agent implemented the requested behavior correctly. Review the actual tools, access declarations, resources, and start effects in the plan. Apply performs the existing supervised MCP initialization/schema checks. Client registration remains a separate action.
 
-`--import` and `--package` are mutually exclusive. Import plans take the name/start choices from that exact draft revision. Package mode keeps its existing `--name`, `--start`, and `--start-policy` arguments. Install without `--start` still runs a candidate to verify it, then leaves the project stopped.
+`--import` and `--package` are mutually exclusive. Import plans take the name/start choices from that exact draft revision. Package mode keeps its existing `--name`, `--start`, and `--start-policy` arguments. Install without `--start` still runs a candidate to verify it, then leaves the app stopped.
 
 ## Revisions and recovery
 
@@ -59,7 +59,7 @@ Submitted drafts reject edits, return, cancel, and expiry while the operation is
 Scoped owner-issued grants and a separate management MCP facade are implemented in the [management milestone](MANAGEMENT_MCP.md).
 
 - Pinned downloads and broader package/configuration/secret-reference support.
-- Upgrades with candidate data snapshots, exposure-aware recovery, rollback, and removal preserving data by default.
+- Upgrades with candidate data snapshots, exposure-aware recovery, and rollback. Installed-app removal now preserves data; see [app management](MCPME_STATUS.md#manage-installed-apps).
 - Raw model/engine intake and end-to-end model preparation acceptance.
 - Supported reference-document services and integrated provider preparation.
 

@@ -120,10 +120,14 @@ def parser() -> argparse.ArgumentParser:
     validate.add_argument("--json", action="store_true")
     slots = commands.add_parser("slots").add_subparsers(dest="action", required=True)
     slots.add_parser("list").add_argument("--json", action="store_true")
-    for name in ["inspect", "start", "stop", "restart"]:
+    for name in ["inspect", "start", "stop", "restart", "remove"]:
         item = slots.add_parser(name)
         item.add_argument("slot_id", type=uuid_argument)
         item.add_argument("--json", action="store_true")
+    configure = slots.add_parser("configure")
+    configure.add_argument("slot_id", type=uuid_argument)
+    configure.add_argument("--start-policy", choices=["manual", "host"], required=True)
+    configure.add_argument("--json", action="store_true")
     install = commands.add_parser("install").add_subparsers(dest="action", required=True)
     plan = install.add_parser("plan")
     source = plan.add_mutually_exclusive_group(required=True)
@@ -266,6 +270,8 @@ async def execute(args) -> dict | None:
             return await api("GET", "/v1/slots")
         if args.action == "inspect":
             return await api("GET", "/v1/slots/" + args.slot_id)
+        if args.action == "configure":
+            return await api("PATCH", "/v1/slots/" + args.slot_id, {"start_policy": args.start_policy})
         return await api("POST", f"/v1/slots/{args.slot_id}/{args.action}", {})
     if args.command == "install":
         if args.action == "inspect":

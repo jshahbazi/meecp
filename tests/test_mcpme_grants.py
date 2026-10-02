@@ -377,3 +377,52 @@ async def test_revocation_preserves_durably_authorized_install_operation(tmp_pat
         assert len(host.registry.list_operations()) == len(host.registry.list_slots()) == 1
     finally:
         await host.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["read", "prepare", "lifecycle", "install"])
+async def test_scoped_grants_cannot_configure_or_remove_installed_slots(tmp_path, prepared, mode):
+    package, reaper = prepared
+    host = Supervisor(tmp_path / "host", reaper)
+    try:
+        plan = host.plan_install({"package": str(package), "start": False})
+        installed = await finish(host, await host.apply_install(plan["plan_id"]))
+        assert installed.status == "completed"
+        slot = host.registry.get_slot(installed.slot_id)
+        payload = {"mode": mode}
+        saved = None
+        if mode == "lifecycle":
+            payload.update(slot_ids=[slot.id], actions=["start", "stop", "restart"])
+        elif mode == "install":
+            payload["plan_id"] = plan["plan_id"]
+            saved = read_private_json(host.root / "plans" / (plan["plan_id"] + ".json"))
+        grant = host.grants.issue(payload, plan=saved)
+        if mode == "install":
+            retry = await host.apply_install(plan["plan_id"], grant_id=grant["grant_id"])
+            assert retry["operation_id"] == installed.id
+        async with client(host, credential(grant)) as api:
+            assert (await api.get("/v1/slots/" + slot.id)).status_code == 200
+            before_operations = host.registry.list_operations()
+            for method, route, body in (("PATCH", "/v1/slots/" + slot.id, {"start_policy": "host"}),
+                                        ("POST", "/v1/slots/" + slot.id + "/remove", {})):
+                response = await api.request(method, route, json=body)
+                assert response.status_code == 403 and response.json()["error"]["code"] == "grant_scope"
+                assert host.registry.get_slot(slot.id) == slot
+                assert host.registry.list_operations() == before_operations
+        async with client(host) as owner:
+            updated = await owner.patch("/v1/slots/" + slot.id, json={"start_policy": "host"})
+            assert updated.status_code == 200 and updated.json()["slot"]["start_policy"] == "host"
+            removed = await owner.post("/v1/slots/" + slot.id + "/remove", json={})
+            assert removed.status_code == 200
+            assert (await finish(host, removed.json())).status == "completed"
+        assert not host.registry.list_slots()
+        if mode in {"lifecycle", "install"}:
+            async with client(host, credential(grant)) as api:
+                assert (await api.get("/v1/slots")).json()["slots"] == []
+                assert (await api.get("/v1/slots/" + slot.id)).status_code == 403
+                if mode == "install":
+                    retry = await api.post("/v1/install/apply", json={"plan_id": plan["plan_id"]})
+                    assert retry.status_code == 200 and retry.json()["operation_id"] == installed.id
+                    assert not host.registry.list_slots()
+    finally:
+        await host.close()

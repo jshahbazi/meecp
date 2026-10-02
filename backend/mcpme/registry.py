@@ -95,7 +95,7 @@ def _slot_values(values: dict[str, Any]) -> None:
         raise RegistryError("invalid_slot_name")
     for field, allowed in (("start_policy", START_POLICIES), ("desired_state", DESIRED_STATES),
                            ("observed_state", OBSERVED_STATES)):
-        if field in values and values[field] not in allowed:
+        if field in values and (not isinstance(values[field], str) or values[field] not in allowed):
             raise RegistryError("invalid_slot_state")
     if "generation" in values and (type(values["generation"]) is not int or values["generation"] < 1):
         raise RegistryError("invalid_generation")
@@ -364,6 +364,33 @@ class Registry:
             if slot.observed_state not in {"stopped", "failed"} or slot.desired_state != "stopped":
                 raise RegistryError("slot_not_stopped")
             self._connection.execute("DELETE FROM slots WHERE slot_id=?", (slot_id,))
+            self._connection.execute("COMMIT")
+        except Exception as error:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            if isinstance(error, sqlite3.Error):
+                raise RegistryError("registry_unavailable") from None
+            raise
+
+    def complete_removal(self, slot_id: str, operation_id: str, *, expected_generation: int) -> None:
+        """Atomically unregister a confirmed inactive slot and finalize its removal."""
+        _uuid(slot_id)
+        _uuid(operation_id)
+        if type(expected_generation) is not int or expected_generation < 1:
+            raise RegistryError("invalid_generation")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            slot = self.get_slot(slot_id)
+            operation = self.get_operation(operation_id)
+            if slot.generation != expected_generation or operation.generation != expected_generation:
+                raise RegistryError("stale_generation")
+            if operation.action != "remove" or operation.slot_id != slot_id or operation.status not in {"running", "recovery_required"}:
+                raise RegistryError("operation_conflict")
+            if slot.observed_state != "stopped" or slot.desired_state != "stopped":
+                raise RegistryError("slot_not_stopped")
+            self._connection.execute("DELETE FROM slots WHERE slot_id=?", (slot_id,))
+            self._connection.execute("UPDATE operations SET status='completed',error_code=NULL,updated_at=? WHERE operation_id=?",
+                                     (time.time(), operation_id))
             self._connection.execute("COMMIT")
         except Exception as error:
             if self._connection.in_transaction:

@@ -1,8 +1,8 @@
-# Adding a project to mcpme
+# Adding an app to mcpme
 
 Status: accepted product direction, 2026-10-01. Prepared packages, source-folder and Markdown/text intake, resumable drafts, and external preparation are implemented in the first [Phase 2 milestone](PHASE2_ONBOARDING.md). Reference-document services and integrated preparation remain pending. This document describes the complete intended journey; consult the milestone record for verified scope.
 
-This document defines the add-project experience. It refines the user-facing flow in [MCPME_DESIGN.md](MCPME_DESIGN.md), which remains the technical reference for packages, import drafts, authorization, installation, and lifecycle management.
+This document defines the Add App experience. It refines the user-facing flow in [MCPME_DESIGN.md](MCPME_DESIGN.md), which remains the technical reference for packages, import drafts, authorization, installation, and lifecycle management.
 
 ## Decision
 
@@ -14,19 +14,19 @@ The product should minimize what the user must explain: inspect the supplied sou
 
 ## Product vocabulary
 
-Use **Project**, **Add Project…**, and **Manage Projects…** consistently in the UI. A project is one configured installation that exposes tools to an assistant. It maps to the existing internal **slot** concept and retains its stable UUID, independent lifecycle, connection configuration, and package identity.
+Use **App**, **Add App…**, and **Manage Apps…** consistently in the UI. An app is one configured local tool or model service that exposes tools to an assistant. It maps to the existing internal **slot** concept and retains its stable UUID, independent lifecycle, connection configuration, and package identity.
 
-This terminology does not add another backend entity or rename the existing technical contracts. A source folder is input to setup. The installed project uses a sealed package; editing the original folder does not silently change the running service. The same package can support multiple separately configured projects.
+This terminology does not add another backend entity or rename the existing technical contracts. A source folder is input to setup. The installed app uses a sealed package; editing the original folder does not silently change the running service. The same package can support multiple separately configured apps.
 
 ## Entry point and window behavior
 
-The menu bar provides project status, start/stop, restart, connection details, and **Add Project…**. Installation and configuration live in a persistent native window.
+The menu bar provides app status, start/stop, restart, connection details, and **Add App…**. Installation and configuration live in a persistent native window.
 
 The setup window must:
 
 - Remain open when the user switches to Finder or another app.
 - Accept drag-and-drop and provide a keyboard-accessible **Choose Files…** alternative that supports the relevant files and folders.
-- Preserve an unfinished draft when closed and allow it to be resumed from Manage Projects.
+- Preserve an unfinished draft when closed and allow it to be resumed from Manage Apps.
 - Show progress for host-owned operations after the window is reopened.
 - Distinguish closing a window, canceling an import draft, and canceling an installation operation.
 - Keep installed services running when the window closes, following the host lifecycle contract.
@@ -42,9 +42,9 @@ Dragging onto the menu bar icon may become a shortcut later. It is not required 
 Start with one drop surface:
 
 ```text
-Add Project
+Add App
 
-Drop a project folder, prepared package, or document
+Drop a source folder, prepared package, or document
 
                   Choose Files…
 ```
@@ -106,15 +106,15 @@ Show **Waiting for prepared package** while no result has arrived. Copying instr
 
 Attaching a package performs static validation and snapshots the result. It does not install or execute the package. Reject stale draft revisions, incompatible host profiles, missing required fields, and unresolved artifacts with an actionable explanation. Changed tools, configuration, or access must be visible when comparing the result with the requested draft.
 
-### 4. Review the actual project
+### 4. Review the actual app
 
 Every preparation path converges on the same installation review. Lead with information the user can evaluate:
 
-- Project name and source.
+- App name and source.
 - Tools the assistant will receive, described in plain language.
 - Requested filesystem and network access, and other declared side effects.
 - Required credentials, supplied through the supported secret-reference mechanism.
-- Whether the project will start now and how it will start in later sessions.
+- Whether the app will start now and how it will start in later sessions.
 - Material downloads, storage requirements, resource reservations, and compatibility issues.
 
 Keep full tool schemas, executable entrypoints, dependency pins, artifact hashes, licenses, signature/build provenance, and detailed estimates in expandable sections. Mark estimates and package declarations as such. A declaration of read-only behavior is not an enforced operating-system sandbox; preserve the same-user trust boundary described in the architecture.
@@ -128,14 +128,14 @@ Tools             Validate JSON against a schema
 Source            Prepared local package
 Declared use      No file writes or network requests
 Start now         Yes
-At next login     Wait for manual start
+When mcpme opens  Manual
 
 Package and verification details…
 
-Back                              Add & Start Project
+Back                              Add & Start App
 ```
 
-Use **Add Project** for installation without immediate activation and **Add & Start Project** when the selected plan includes activation. New projects retain the architecture's manual-start default. The review must distinguish starting now from starting automatically later.
+Use **Add App** for installation without immediate activation and **Add & Start App** when the selected plan includes activation. New apps retain the architecture's manual-start default. The review must distinguish starting now from starting automatically later.
 
 Bind installation to the actual package, configuration, draft revision, and plan effects. Existing user authority may cover that exact scope; do not add redundant confirmation steps. A changed artifact or expanded access requires a revised plan and corresponding authority. Agent output cannot grant installation authority.
 
@@ -145,13 +145,19 @@ Show distinct host-owned stages such as downloading, verifying, installing, star
 
 The trusted host performs compatibility and health checks and any authorized synthetic smoke test. Agent-reported success remains unverified until the host checks pass. Preserve submitted-draft history and follow the installation operation's recovery rules; a terminal failure or cancellation requires a new draft and plan for another installation attempt.
 
-After successful installation and runtime verification, show **Project ready**, make it available in the menu bar, and offer **Connect an Assistant…**. Client selection and registration are a separate explicit action. Show the proposed connection settings and preserve unrelated client configuration.
+After successful installation and runtime verification, show **App ready**, make it available in the menu bar, and offer **Connect an Assistant…**. Client selection and registration are a separate explicit action. Show the proposed connection settings and preserve unrelated client configuration.
+
+### 6. Manage an installed app
+
+Select an installed app in **Manage Apps** to view its details and choose **Manual** or **Automatic when mcpme opens**. Saving that choice changes the policy for future launches; it does not start or stop the current runtime. An explicit Stop suppresses automatic startup across mcpme restarts until Start clears the suppression.
+
+**Remove App** closes the app's endpoint, stops its owned processes, revokes its connection credential, and removes it from the installed-app list. The host retains its data and sealed package for recovery and leaves the original source intact. Removal follows a durable operation so progress remains visible after the window closes.
 
 ## Flow and state ownership
 
 ```mermaid
 flowchart TD
-    A[Menu bar: Add Project] --> B[Persistent setup window]
+    A[Menu bar: Add App] --> B[Persistent setup window]
     B --> C[Select or drop source]
     C --> D[Bounded local metadata inspection]
     D --> E{Prepared package?}
@@ -163,7 +169,7 @@ flowchart TD
     I --> J
     J --> K[Review exact installation plan]
     K --> L[Authorized host installation and runtime checks]
-    L --> M[Project ready in menu bar]
+    L --> M[App ready in menu bar]
     M --> N[Connect an assistant]
 ```
 
@@ -205,4 +211,6 @@ Expose only host-supported profiles and capabilities. The broader architecture's
 - The review describes the actual tools, requested effects, credentials, and start policy in the bound plan.
 - Installation, runtime verification, and client registration have distinct outcomes and authorization boundaries.
 - Failures preserve the existing draft/operation recovery semantics and do not expose raw source, prompts, credentials, or execution errors in diagnostics.
-- User-facing language consistently uses Project while backend slot identity and package contracts remain intact.
+- User-facing language consistently uses App while backend slot identity and package contracts remain intact.
+- Manage Apps persists startup policy changes without changing current runtime state or clearing an explicit Stop.
+- Removing an app closes its endpoint and revokes its connection while retaining source, package, and data for recovery.

@@ -25,7 +25,7 @@ A slot is a service instance. Slot identity does not depend on its display order
 
 ## User experience
 
-The menu bar provides quick controls. A native **Manage Projects** window provides installation, configuration, connection details, and diagnostics. The UI calls an installed slot a **Project**; slot remains the internal contract term. [Project onboarding](PROJECT_ONBOARDING.md) defines the accepted add-project flow and delivery order.
+The menu bar provides quick controls. A native **Manage Apps** window provides installation, configuration, connection details, and diagnostics. The UI calls a configured local tool or model service an **App**; slot remains the internal contract term. [App onboarding](PROJECT_ONBOARDING.md) defines the accepted Add App flow and delivery order. The vocabulary change preserves existing slot identities and package contracts.
 
 ```text
 mcpme                         2 ready / 3 installed
@@ -33,8 +33,8 @@ mcpme                         2 ready / 3 installed
   JSON Utilities              Ready        :19386
   Local Chat                  Stopped      :19387
 
-  Add Project...
-  Manage Projects...
+  Add App...
+  Manage Apps...
   Stop All
   Settings...
   Quit mcpme
@@ -42,19 +42,21 @@ mcpme                         2 ready / 3 installed
 
 Each slot submenu offers Start/Stop, Restart, Copy Connection Configuration, and Details. Slots with a model label Stop as **Unload Model** where this is accurate. State text accompanies any color indicator. A click opens details with the package version, endpoint, available tools, runtime/model identity, queue depth, active calls, recent error code, and resource estimates. Initial empty state offers **Install JevK5** and **Install with an agent**.
 
-**Add Project** opens a persistent native setup window with one drop surface and a file/folder chooser. It inspects the selected source without executing code, then asks for missing intent or configuration. A compatible prepared package proceeds through static validation to installation planning; other supported inputs become resumable import drafts for external-agent preparation. Documents require an explicit choice between reference information and setup instructions. The first release prioritizes prepared packages, source folders, and Markdown/text setup briefs; reference documents require a supported document-service template. Models and other profiles are available only as host support is implemented and validated. Users do not need to select a technical source category or write a manifest before beginning. The bring-your-own workflow below defines the technical inputs, agent handoff, and return path; integrated LLM-provider preparation is deferred.
+**Add App** opens a persistent native setup window with one drop surface and a file/folder chooser. It inspects the selected source without executing code, then asks for missing intent or configuration. A compatible prepared package proceeds through static validation to installation planning; other supported inputs become resumable import drafts for external-agent preparation. Documents require an explicit choice between reference information and setup instructions. The first release prioritizes prepared packages, source folders, and Markdown/text setup briefs; reference documents require a supported document-service template. Models and other profiles are available only as host support is implemented and validated. Users do not need to select a technical source category or write a manifest before beginning. The bring-your-own workflow below defines the technical inputs, agent handoff, and return path; integrated LLM-provider preparation is deferred.
 
 The final installation plan shows exposed tools and their input/output contracts, download size, estimated loaded memory, platform compatibility, source, licenses, executable entrypoints, requested filesystem/network access, and whether code is locally built or publisher signed. Estimates and unverified declarations are labeled as such. Existing user authority can cover installation; the UI does not require another confirmation for the same approved scope.
 
 Installing, downloading, verifying, starting, warming up, and ready are distinct stages. A listening socket never counts as model readiness. Long operations remain visible after closing the window, with progress, Cancel where supported, and an operation ID an agent can poll.
 
-**Start at login** controls the host. Each slot independently chooses manual start, start with host, or start on first call. New slots default to manual; an explicitly requested install-and-start operation can override it. A user Stop suppresses automatic wake until Start. Quit stops every owned service and the supervisor. Closing the management window leaves them running.
+**Start at login** controls the host. In **Manage Apps**, an installed app independently chooses **Manual** or **Automatic when mcpme opens**. The saved policy changes future launches without changing the current runtime or clearing an explicit Stop. New slots default to manual; an explicitly requested install-and-start operation can override it. A user Stop suppresses automatic wake until Start. Start on first call remains planned. Quit stops every owned service and the supervisor. Closing the management window leaves them running.
+
+**Remove App** closes admission, stops the app's owned processes, revokes its connection credential, releases its public endpoint, and removes it from the installed list. Removal is a durable operation. Source files, the sealed package, and package-owned data remain retained for recovery; data deletion and artifact retention cleanup remain separate future work.
 
 ## Architecture
 
 ```mermaid
 flowchart TB
-    UI[Native menu bar and Manage Projects] --> Control[Authenticated management API]
+    UI[Native menu bar and Manage Apps] --> Control[Authenticated management API]
     Agent[External agent] --> CLI[mcpme CLI or management MCP bridge]
     CLI --> Control
     Control --> Supervisor[Host supervisor and installer]
@@ -248,7 +250,7 @@ Example user request: “Install JevK5 into mcpme and start it.”
 5. The operation stages and verifies artifacts, starts the candidate under supervision, checks MCP compatibility and health, runs an approved synthetic smoke fixture if available, and commits the slot generation.
 6. The agent polls `mcpme operations get <operation-id> --json`, then returns the slot UUID, readiness, endpoint, and connection command. It adds the client registration only if requested.
 
-The full CLI design includes `capabilities`, `imports create/inspect/revise/export/attach/cancel`, `slots list/inspect/start/stop/restart`, `install plan/apply`, `upgrade plan/apply`, `remove plan/apply`, `operations get/cancel`, `connections export`, and `connect`. The current supported groups are recorded in [implementation status](MCPME_STATUS.md); upgrades, removal, and operation cancellation remain pending. The [management milestone](MANAGEMENT_MCP.md) adds `authorize`, `grants list/inspect/revoke`, `install inspect`, and `management export/connect`. Capabilities include versioned preparation-template identifiers. CLI output uses versioned JSON with stable error codes and no credential values. Long installation mutations return promptly with operation IDs.
+The CLI includes `capabilities`, `imports create/inspect/revise/export/attach/cancel`, `slots list/inspect/start/stop/restart/configure/remove`, `install plan/apply`, `operations get`, `connections export`, and `connect`. `slots configure <slot-id> --start-policy manual|host` changes an installed app's future startup behavior. `slots remove <slot-id>` returns a durable operation. Their owner-authenticated API equivalents are `PATCH /v1/slots/{id}` with `{"start_policy":"manual"}` or `{"start_policy":"host"}`, and `POST /v1/slots/{id}/remove`. These two operations require owner authority; scoped grants do not include them. The [management milestone](MANAGEMENT_MCP.md) adds `authorize`, `grants list/inspect/revoke`, `install inspect`, and `management export/connect`. The current supported groups are recorded in [implementation status](MCPME_STATUS.md); upgrades and operation cancellation remain pending. Capabilities include versioned preparation-template identifiers. CLI output uses versioned JSON with stable error codes and no credential values. Long installation mutations return promptly with operation IDs.
 
 An optional, separately connected **mcpme management MCP server** exposes typed equivalents: `mcpme_capabilities`, `mcpme_create_import`, `mcpme_inspect_import`, `mcpme_revise_import`, `mcpme_export_import`, `mcpme_attach_import_package`, `mcpme_cancel_import`, `mcpme_list_slots`, `mcpme_inspect_slot`, `mcpme_plan_install`, `mcpme_apply_install`, `mcpme_get_operation`, and bounded lifecycle/update/removal tools. It is a host control endpoint, not another installable slot, so installation cannot depend on a slot being healthy. Ordinary slot connections never include these tools.
 
@@ -266,7 +268,8 @@ The bootstrap is a local owner action through the UI or `mcpme authorize --plan 
 - Candidate readiness includes MCP initialization/schema validation and a safe smoke fixture when defined. A running PID is insufficient. An initialization request can execute package code and therefore happens only within apply authority.
 - Preserve the previous package, configuration, and data recovery artifacts until they are no longer needed. Quiesce/reap all old writers before taking a data snapshot. Candidate probes and migrations use a candidate data clone; expose only the selected candidate data directory after commit. Even an unchanged schema does not establish that the old binary can interpret new writes. Reject upgrades requiring automatic irreversible data migrations or external side effects during migration/probes. Rolling back binaries alone does not undo data changes.
 - On restart, reconcile journaled operations with the selected generation and its durable exposure marker using the recovery rules below. A corrupt registry does not trigger deletion or guessed process adoption.
-- Remove stops/drains the slot, revokes credentials, releases its port, and unregisters it. Preserve package-owned data by default; **Remove and delete data** is a separate explicit choice. Shared artifact cleanup follows reference counts and rollback retention.
+- Remove records a durable intent, closes admission, stops/drains the slot, revokes its connection credential, releases its port, and unregisters it. Retain package-owned data, configuration, and package artifacts for recovery. **Remove and delete data** and shared-artifact retention cleanup remain future work.
+- Startup-policy updates and removal reject unfinished installation/removal, ownership loss, and migration-recovery states. Removing a migrated JevK5 slot records the transfer's durable removed state before releasing its legacy lock; it preserves legacy data and never restarts the old app or reenables its login registration. A new transfer of the retained legacy installation is blocked until the predecessor's registry removal and removal operation complete.
 
 Persist the old/candidate generation, package/configuration/data pointers, operation stage, and whether exposure has been durably recorded. The exposure marker must be committed before the gateway admits the first ordinary MCP or compatibility API request. Treat the marker as proof that candidate writes may have occurred, even if the host crashes before actually forwarding a call. Admission and exposure use the same slot-generation check; a stale gateway cannot open an old generation after a concurrent mutation.
 
@@ -341,7 +344,7 @@ A package is executable code. Origin/hash/license verification, publisher identi
 
 | Existing component | Proposed destination |
 | --- | --- |
-| [Native menu app](../Sources/JevK5MenuBar/main.swift) | Keep AppKit/ServiceManagement; replace fixed backend/model status with manager discovery and slot rows. Add Manage Projects. |
+| [Native menu app](../Sources/JevK5MenuBar/main.swift) | Keep AppKit/ServiceManagement; replace fixed backend/model status with manager discovery and slot rows. Add Manage Apps. |
 | [Entry point](../backend/jevk5_app/__main__.py) and [private state](../backend/jevk5_app/state.py) | Split host supervisor/registry/connection discovery from slot execution. Remove fixed-port assumptions from generic host code. |
 | [ModelManager](../backend/jevk5_app/runtime.py) | Keep decision admission, scorer serialization, cache handling, and result formatting in the JevK5 adapter. Move engine launch, port/key allocation, crash recovery, and reaping to the supervisor launch contract. |
 | [Scorer](../backend/jevk5_app/scorer.py), [question contracts](../backend/jevk5_app/contracts.py), and vendored scorer | Keep JevK5-specific; avoid imposing a decision schema on other tools. |

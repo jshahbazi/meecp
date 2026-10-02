@@ -43,7 +43,7 @@ iconutil -c icns runtime/McpmeAppIcon.iconset -o runtime/McpmeAppIcon.icns
 uv run --locked scripts/build_mcpme_app.py --output dist/mcpme-brand.app
 ```
 
-Use a fresh output app path. The native builder declares `CFBundleIconFile`, bundles the brand assets, and records the icon/source hashes before signing. The menu bar and Projects header use the same checked-in masters. The host package includes these assets so bundled documentation retains its images.
+Use a fresh output app path. The native builder declares `CFBundleIconFile`, bundles the brand assets, and records the icon/source hashes before signing. The menu bar and Apps header use the same checked-in masters. The host package includes these assets so bundled documentation retains its images.
 
 To refresh the checked-in menu preview PNGs, pass `assets/brand` as an optional third argument to `.build/mcpme-icon`. Normal app builds write generated icons into build scratch directories.
 

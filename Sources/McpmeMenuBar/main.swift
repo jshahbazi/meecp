@@ -51,8 +51,14 @@ private struct Project: Equatable {
          "ready": "Ready", "stopping": "Stopping", "draining": "Stopping", "failed": "Failed",
          "ownership_lost": "Reconciliation required"][state] ?? "Unavailable"
     }
-    var policyLabel: String { ["manual": "Manual", "host": "With host", "first_call": "On first call"][policy] ?? "Manual" }
+    var policyLabel: String { ["manual": "Manual", "host": "Automatic", "first_call": "On first call"][policy] ?? "Manual" }
     var blocked: Bool { state == "ownership_lost" || error == "installation_recovery_required" }
+}
+
+private func projectForSelection(row: Int, rendered: [Project]?, current: [Project]) -> Project? {
+    guard let rendered = rendered, rendered.indices.contains(row) else { return nil }
+    let id = rendered[row].id
+    return current.first { $0.id == id }
 }
 
 private struct Operation {
@@ -295,6 +301,10 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
     private var hostText: NSTextField?
     private var stopAllButton: NSButton?
     private var selectionActions: [NSButton] = []
+    private var removeButton: NSButton?
+    private var appPolicyField: NSPopUpButton?
+    private var appPolicyHint: NSTextField?
+    private var pendingAppRequests: Set<String> = []
     private var pathField: NSTextField?
     private var nameField: NSTextField?
     private var policyField: NSPopUpButton?
@@ -327,7 +337,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
         let mainMenu = NSMenu()
         let applicationItem = NSMenuItem(title: "mcpme", action: nil, keyEquivalent: "")
         let applicationMenu = NSMenu(title: "mcpme")
-        let manage = NSMenuItem(title: "Manage Projects…", action: #selector(showManagement), keyEquivalent: "m")
+        let manage = NSMenuItem(title: "Manage Apps…", action: #selector(showManagement), keyEquivalent: "m")
         manage.target = self; applicationMenu.addItem(manage); applicationMenu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit mcpme", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self; applicationMenu.addItem(quit); applicationItem.submenu = applicationMenu
@@ -369,7 +379,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
         guard process == nil, !quitting, !stopping, let host = hostRoot else { return }
         let executable = host.appendingPathComponent("bin/mcpme")
         guard FileManager.default.isExecutableFile(atPath: executable.path) else { hostMessage = "Bundled host is unavailable"; rebuildMenu(); return }
-        generation &+= 1; hostMessage = "Starting host…"; projects = []; operations = []; pollInFlight = false; importsPollInFlight = false
+        generation &+= 1; hostMessage = "Starting host…"; projects = []; operations = []; pendingAppRequests = []; pollInFlight = false; importsPollInFlight = false
         let service = Process()
         service.executableURL = executable
         service.arguments = ["--state-dir", stateDirectory.path, "serve", "--reaper", host.appendingPathComponent("bin/mcpme-reap").path,
@@ -382,7 +392,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
             DispatchQueue.main.async {
                 guard let self = self, let service = service, self.process === service else { return }
                 self.process = nil; self.generation &+= 1; self.pollInFlight = false; self.importsPollInFlight = false
-                self.projects = []; self.operations = []
+                self.projects = []; self.operations = []; self.pendingAppRequests = []
                 let completion = self.stopCompletion; self.stopCompletion = nil; self.stopping = false
                 self.hostMessage = "Host stopped. Another host may own this installation."
                 self.rebuildMenu(); self.refreshWindow(); completion?()
@@ -396,7 +406,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
     private func stopHost(completion: @escaping () -> Void) {
         generation &+= 1; pollInFlight = false
         guard let process = process, process.isRunning else { DispatchQueue.main.async(execute: completion); return }
-        stopping = true; stopCompletion = completion; hostMessage = "Stopping projects…"; rebuildMenu(); refreshWindow()
+        stopping = true; stopCompletion = completion; hostMessage = "Stopping apps…"; rebuildMenu(); refreshWindow()
         process.terminate()
         DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self, weak process] in
             guard let self = self, let process = process, self.process === process, process.isRunning else { return }
@@ -474,7 +484,9 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
         for project in projects {
             let row = item("\(project.name)    \(project.status)    :\(project.port)")
             let submenu = NSMenu(); submenu.autoenablesItems = false
-            let busy = project.blocked || operations.contains { $0.projectID == project.id && $0.active }
+            let busy = project.blocked || pendingAppRequests.contains(project.id) || operations.contains {
+                $0.projectID == project.id && ($0.active || $0.action == "remove" && $0.status == "recovery_required")
+            }
             for (title, action) in [("Start", #selector(startProject(_:))), ("Stop", #selector(stopProject(_:))), ("Restart", #selector(restartProject(_:)))] {
                 let control = item(title, action: action, project: project.id)
                 control.isEnabled = !busy && !stopping && !quitting; submenu.addItem(control)
@@ -485,8 +497,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
             row.submenu = submenu; menu.addItem(row)
         }
         menu.addItem(.separator())
-        menu.addItem(item("Add Project…", action: #selector(addProject)))
-        menu.addItem(item("Manage Projects…", action: #selector(showManagement)))
+        menu.addItem(item("Add App…", action: #selector(addProject)))
+        menu.addItem(item("Manage Apps…", action: #selector(showManagement)))
         let stop = item("Stop All", action: #selector(stopAll)); stop.isEnabled = !projects.isEmpty && !stopping; menu.addItem(stop)
         let login = item("Start at Login", action: #selector(toggleLogin)); login.state = SMAppService.mainApp.status == .enabled ? .on : .off; menu.addItem(login)
         if process == nil { menu.addItem(item("Start Host", action: #selector(retryHost))) }
@@ -495,8 +507,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
     }
 
     private func control(_ id: String, action: String) {
+        guard !pendingAppRequests.contains(id) else { return }
+        pendingAppRequests.insert(id); refreshActionButtons()
         request("v1/slots/\(id)/\(action)", method: "POST", body: [:]) { [weak self] object, code in
             guard let self = self else { return }
+            self.pendingAppRequests.remove(id); self.refreshActionButtons()
             guard let object = object, let operation = Operation(object) else { self.showError(code ?? "invalid_response"); return }
             self.trackedOperations.insert(operation.id); self.operations.insert(operation, at: 0)
             self.rebuildMenu(); self.refreshWindow(); self.poll()
@@ -521,8 +536,15 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
                     if id == self.setupOperation { self.persistSetup(); self.setupLabel?.stringValue = operation.label }
                     if operation.status == "completed", operation.action == "install", let projectID = operation.projectID,
                        !self.completedNotices.contains(id) {
-                        self.completedNotices.insert(id); self.setupLabel?.stringValue = "Installed. Select the project to copy its connection configuration."
+                        self.completedNotices.insert(id); self.setupLabel?.stringValue = "Installed. Select the app to copy its connection configuration."
                         self.table?.selectRowIndexes(IndexSet(integer: self.projects.firstIndex { $0.id == projectID } ?? 0), byExtendingSelection: false)
+                    }
+                    if operation.action == "remove", !self.completedNotices.contains(id) {
+                        self.completedNotices.insert(id)
+                        if operation.status == "completed" {
+                            self.projects.removeAll { $0.id == operation.projectID }
+                            self.rebuildMenu()
+                        } else { self.showError(operation.error ?? "removal_failed") }
                     }
                 } else if id == self.setupOperation { self.setupLabel?.stringValue = operation.label }
                 self.refreshWindow()
@@ -544,7 +566,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
     private func makeManagementWindow() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1020, height: 850),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "mcpme — Manage Projects"; window.minSize = NSSize(width: 940, height: 780)
+        window.title = "mcpme — Manage Apps"; window.minSize = NSSize(width: 940, height: 780)
         window.isReleasedWhenClosed = false; window.delegate = self; window.center(); self.window = window
         let pageScroll = NSScrollView(); pageScroll.hasVerticalScroller = true; pageScroll.translatesAutoresizingMaskIntoConstraints = false
         window.contentView!.addSubview(pageScroll)
@@ -568,14 +590,14 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
         headingRow.addArrangedSubview(brandIcon)
         let titles = NSStackView(); titles.orientation = .vertical; titles.alignment = .leading; titles.spacing = 2
         let heading = NSTextField(labelWithString: "mcpme"); heading.font = .systemFont(ofSize: 20, weight: .semibold)
-        let subtitle = NSTextField(labelWithString: "Your local projects"); subtitle.font = .systemFont(ofSize: 12)
+        let subtitle = NSTextField(labelWithString: "Your local apps"); subtitle.font = .systemFont(ofSize: 12)
         subtitle.textColor = .secondaryLabelColor
         titles.addArrangedSubview(heading); titles.addArrangedSubview(subtitle); headingRow.addArrangedSubview(titles)
         let hostText = NSTextField(labelWithString: hostMessage); hostText.textColor = .secondaryLabelColor
         self.hostText = hostText; headingRow.addArrangedSubview(hostText)
         content.addArrangedSubview(headingRow)
         let table = NSTableView(); table.delegate = self; table.dataSource = self; table.rowHeight = 28
-        for (name, title, width) in [("name", "Project", 330.0), ("status", "Status", 200.0), ("port", "Port", 90.0), ("policy", "Start", 170.0)] {
+        for (name, title, width) in [("name", "App", 330.0), ("status", "Status", 200.0), ("port", "Port", 90.0), ("policy", "Start", 170.0)] {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(name)); column.title = title; column.width = width; table.addTableColumn(column)
         }
         let scroll = NSScrollView(); scroll.documentView = table; scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
@@ -588,14 +610,24 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
         }
         let stopAll = button("Stop All", action: #selector(stopAll)); self.stopAllButton = stopAll; controls.addArrangedSubview(stopAll)
         controls.addArrangedSubview(button("Quit mcpme", action: #selector(quitApp))); content.addArrangedSubview(controls)
+        let appSettings = NSStackView(); appSettings.orientation = .horizontal; appSettings.spacing = 10
+        appSettings.addArrangedSubview(NSTextField(labelWithString: "Startup:"))
+        let appPolicy = NSPopUpButton(); appPolicy.addItems(withTitles: ["Manual", "Automatic — when mcpme opens"])
+        appPolicy.target = self; appPolicy.action = #selector(changeAppPolicy)
+        appPolicy.setAccessibilityLabel("Selected app startup")
+        appSettings.addArrangedSubview(appPolicy); self.appPolicyField = appPolicy
+        let remove = button("Remove App…", action: #selector(removeSelected)); self.removeButton = remove
+        appSettings.addArrangedSubview(remove); content.addArrangedSubview(appSettings)
+        let hint = NSTextField(wrappingLabelWithString: "Select an app to change its startup."); hint.font = .systemFont(ofSize: 12)
+        hint.textColor = .secondaryLabelColor; content.addArrangedSubview(hint); self.appPolicyHint = hint
         let operationText = NSTextField(wrappingLabelWithString: ""); operationText.font = .systemFont(ofSize: 12)
         content.addArrangedSubview(operationText); self.operationText = operationText
         let divider = NSBox(); divider.boxType = .separator; content.addArrangedSubview(divider)
         divider.widthAnchor.constraint(equalTo: content.widthAnchor, constant: -36).isActive = true
-        let addHeading = NSTextField(labelWithString: "Add Project"); addHeading.font = .boldSystemFont(ofSize: 18); content.addArrangedSubview(addHeading)
+        let addHeading = NSTextField(labelWithString: "Add App"); addHeading.font = .boldSystemFont(ofSize: 18); content.addArrangedSubview(addHeading)
         let draftsRow = NSStackView(); draftsRow.orientation = .horizontal; draftsRow.spacing = 8
         let draftPicker = NSPopUpButton(); draftPicker.addItem(withTitle: "New draft"); draftPicker.target = self; draftPicker.action = #selector(selectDraft)
-        draftPicker.setAccessibilityLabel("Saved project draft"); self.draftField = draftPicker; draftsRow.addArrangedSubview(draftPicker)
+        draftPicker.setAccessibilityLabel("Saved app draft"); self.draftField = draftPicker; draftsRow.addArrangedSubview(draftPicker)
         draftPicker.widthAnchor.constraint(greaterThanOrEqualToConstant: 460).isActive = true
         let newDraft = button("New Draft", action: #selector(newDraft)); self.newDraftButton = newDraft; draftsRow.addArrangedSubview(newDraft)
         content.addArrangedSubview(draftsRow)
@@ -610,16 +642,16 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
         NSLayoutConstraint.activate([sourceRow.leadingAnchor.constraint(equalTo: drop.leadingAnchor, constant: 10),
                                      sourceRow.trailingAnchor.constraint(equalTo: drop.trailingAnchor, constant: -10),
                                      sourceRow.centerYAnchor.constraint(equalTo: drop.centerYAnchor)])
-        let path = NSTextField(); path.placeholderString = "Drop a project folder, prepared package, or Markdown/text document"; path.isEditable = false; path.isSelectable = true
+        let path = NSTextField(); path.placeholderString = "Drop a source folder, prepared package, or Markdown/text document"; path.isEditable = false; path.isSelectable = true
         path.setAccessibilityLabel("Selected source")
         self.pathField = path; sourceRow.addArrangedSubview(path)
         let choose = button("Choose Files…", action: #selector(chooseSource)); sourceRow.addArrangedSubview(choose); self.chooseButton = choose
         path.widthAnchor.constraint(greaterThanOrEqualToConstant: 700).isActive = true
         let settings = NSStackView(); settings.orientation = .horizontal; settings.spacing = 10
-        let name = NSTextField(); name.placeholderString = "Project name"; name.delegate = self; self.nameField = name
-        name.setAccessibilityLabel("Project name")
+        let name = NSTextField(); name.placeholderString = "App name"; name.delegate = self; self.nameField = name
+        name.setAccessibilityLabel("App name")
         name.widthAnchor.constraint(equalToConstant: 270).isActive = true; settings.addArrangedSubview(name)
-        let policy = NSPopUpButton(); policy.addItems(withTitles: ["Start manually", "Start with host"]); policy.target = self; policy.action = #selector(setupChanged)
+        let policy = NSPopUpButton(); policy.addItems(withTitles: ["Start manually", "Automatic — when mcpme opens"]); policy.target = self; policy.action = #selector(setupChanged)
         self.policyField = policy; settings.addArrangedSubview(policy)
         let start = NSButton(checkboxWithTitle: "Start after install", target: self, action: #selector(setupChanged)); self.startCheck = start; settings.addArrangedSubview(start)
         content.addArrangedSubview(settings)
@@ -644,7 +676,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
         content.addArrangedSubview(handoff)
         let actions = NSStackView(); actions.orientation = .horizontal; actions.spacing = 8
         let review = button("Review Package", action: #selector(reviewPackage)); self.reviewButton = review; actions.addArrangedSubview(review)
-        let install = button("Add Project", action: #selector(installPackage)); self.installButton = install; actions.addArrangedSubview(install)
+        let install = button("Add App", action: #selector(installPackage)); self.installButton = install; actions.addArrangedSubview(install)
         let details = button("Package and Verification Details…", action: #selector(showPlanDetails)); self.planDetailsButton = details; actions.addArrangedSubview(details)
         content.addArrangedSubview(actions)
         let label = NSTextField(wrappingLabelWithString: ""); self.setupLabel = label; content.addArrangedSubview(label)
@@ -670,15 +702,25 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
     func controlTextDidChange(_ notification: Notification) { setupChanged() }
     func textDidChange(_ notification: Notification) { setupChanged() }
     private var selectedProject: Project? {
-        guard let index = table?.selectedRow, projects.indices.contains(index) else { return nil }; return projects[index]
+        projectForSelection(row: table?.selectedRow ?? -1, rendered: renderedProjects, current: projects)
     }
 
     private func refreshActionButtons() {
         let selected = selectedProject
+        let available = selected != nil && connection() != nil && !stopping && !quitting
+        let busy = selected.map { project in
+            project.blocked || pendingAppRequests.contains(project.id) || operations.contains { $0.projectID == project.id && $0.active }
+        } ?? true
+        let removalNeedsRecovery = selected.map { project in
+            operations.contains { $0.projectID == project.id && $0.action == "remove" && $0.status == "recovery_required" }
+        } ?? false
         for (index, button) in selectionActions.enumerated() {
-            let busy = selected.map { project in project.blocked || operations.contains { $0.projectID == project.id && $0.active } } ?? true
-            button.isEnabled = selected != nil && !stopping && !quitting && (index >= 3 || !busy)
+            button.isEnabled = available && (index >= 3 || !busy && !removalNeedsRecovery)
         }
+        removeButton?.isEnabled = available && !busy
+        appPolicyField?.isEnabled = available && !busy && !removalNeedsRecovery && selected?.policy != "first_call"
+        appPolicyField?.selectItem(at: selected?.policy == "host" ? 1 : 0)
+        appPolicyHint?.stringValue = selected == nil ? "Select an app to change its startup." : "Applies the next time mcpme opens. Stop stays in effect until Start."
     }
 
     private func refreshWindow() {
@@ -686,11 +728,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
         stopAllButton?.isEnabled = !projects.isEmpty && process?.isRunning == true && !stopping && !quitting
         let selection = selectedProject?.id
         if let table = table, renderedProjects != projects {
-            table.reloadData()
             renderedProjects = projects
+            table.reloadData()
             if let selection = selection, let index = projects.firstIndex(where: { $0.id == selection }) {
                 table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-            }
+            } else { table.deselectAll(nil) }
         }
         refreshActionButtons()
         operationText?.stringValue = operations.prefix(3).map(\.label).joined(separator: "   •   ")
@@ -710,7 +752,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
         reviewButton?.isEnabled = editable && (currentDraft?.packagePath != nil || currentDraft == nil && !(pathField?.stringValue.isEmpty ?? true))
         installButton?.isEnabled = enabled && setupPlan != nil && setupOperation == nil && !draftDirty
         planDetailsButton?.isEnabled = setupPlan != nil
-        installButton?.title = startCheck?.state == .on ? "Add & Start Project" : "Add Project"
+        installButton?.title = startCheck?.state == .on ? "Add & Start App" : "Add App"
     }
 
     private var intakeEnabled: Bool {
@@ -720,6 +762,31 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
     @objc private func startSelected() { if let project = selectedProject { control(project.id, action: "start") } }
     @objc private func stopSelected() { if let project = selectedProject { control(project.id, action: "stop") } }
     @objc private func restartSelected() { if let project = selectedProject { control(project.id, action: "restart") } }
+    @objc private func changeAppPolicy() {
+        guard let project = selectedProject, let field = appPolicyField else { return }
+        let policy = field.indexOfSelectedItem == 1 ? "host" : "manual"
+        guard policy != project.policy, !pendingAppRequests.contains(project.id) else { return }
+        pendingAppRequests.insert(project.id); refreshActionButtons()
+        request("v1/slots/\(project.id)", method: "PATCH", body: ["start_policy": policy]) { [weak self] object, code in
+            guard let self = self else { return }
+            self.pendingAppRequests.remove(project.id)
+            guard let row = object?["slot"] as? [String: Any], let updated = Project(row), updated.id == project.id else {
+                self.refreshActionButtons(); self.showError(code ?? "invalid_response"); return
+            }
+            if let index = self.projects.firstIndex(where: { $0.id == updated.id }) { self.projects[index] = updated }
+            self.rebuildMenu(); self.refreshWindow(); self.poll()
+        }
+    }
+    @objc private func removeSelected() {
+        guard let project = selectedProject, !project.blocked, !pendingAppRequests.contains(project.id), let window = window else { return }
+        let alert = NSAlert(); alert.alertStyle = .warning
+        alert.messageText = "Remove \(project.name)?"
+        alert.informativeText = "This stops the app and removes it from mcpme. Its assistant connections will stop working. Source files and saved app data are kept."
+        alert.addButton(withTitle: "Remove App"); alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            if response == .alertFirstButtonReturn { self?.control(project.id, action: "remove") }
+        }
+    }
     @objc private func detailsSelected() { if let project = selectedProject { showDetails(project.id) } }
     @objc private func copySelected() { if let project = selectedProject { copyConfiguration(project.id) } }
     @objc private func detailsProject(_ sender: NSMenuItem) { if let id = sender.representedObject as? String { showDetails(id) } }
@@ -739,7 +806,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
             guard let self = self, let object = object else { self?.showError(code ?? "details_unavailable"); return }
             let detail = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 750, height: 620),
                                   styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-            detail.title = "Project Details"; detail.isReleasedWhenClosed = false; detail.center()
+            detail.title = "App Details"; detail.isReleasedWhenClosed = false; detail.center()
             let scroll = NSScrollView(frame: detail.contentView!.bounds); scroll.autoresizingMask = [.width, .height]; scroll.hasVerticalScroller = true
             let text = NSTextView(); text.isEditable = false; text.isSelectable = true
             text.font = .monospacedSystemFont(ofSize: 12, weight: .regular); text.autoresizingMask = [.width]
@@ -848,9 +915,9 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
          "draft_revision_conflict": "This draft changed. Resume it from the draft list, then try again.",
          "operation_in_progress": "Installation is running. Follow its operation status.",
          "draft_finalized": "This draft was already submitted. Create a new draft for another installation.",
-         "unsupported_source": "Choose a project folder, prepared package, or Markdown/text document.",
-         "source_limit_exceeded": "The selected source exceeds inspection limits. Choose a smaller project folder.",
-         "source_size_exceeded": "The selected source exceeds inspection limits. Choose a smaller project folder.",
+         "unsupported_source": "Choose a source folder, prepared package, or Markdown/text document.",
+         "source_limit_exceeded": "The selected source exceeds inspection limits. Choose a smaller source folder.",
+         "source_size_exceeded": "The selected source exceeds inspection limits. Choose a smaller source folder.",
          "source_identity_mismatch": "The source changed during inspection. Choose it again to create a fresh draft.",
          "import_revision_required": "Resume this draft from the draft list to refresh its revision.",
          "intent_required": "Describe what your assistant should be able to do.",
@@ -889,7 +956,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
         guard intakeEnabled, let window = window else { return }
         let panel = NSOpenPanel(); panel.canChooseFiles = true; panel.canChooseDirectories = true; panel.allowsMultipleSelection = false
         panel.allowedContentTypes = [UTType(filenameExtension: "md")!, .plainText]
-        panel.message = "Choose a project folder, prepared package, or Markdown/text document"
+        panel.message = "Choose a source folder, prepared package, or Markdown/text document"
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, let url = panel.url else { return }; self?.beginImport(url)
         }
@@ -1052,7 +1119,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
                     self.setupLabel?.stringValue = self.draftError(code ?? "invalid_plan"); self.refreshWindow(); return
                 }
                 self.setupPlan = object; self.setupOperation = nil; self.reviewText?.string = self.reviewSummary(object)
-                self.setupLabel?.stringValue = "Review the tools and declared access. Add Project applies this exact plan."
+                self.setupLabel?.stringValue = "Review the tools and declared access. Add App applies this exact plan."
                 self.persistSetup(); self.refreshWindow(); self.pollImports()
             }
         }
@@ -1073,8 +1140,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
 
     private func reviewDescription(_ object: [String: Any]) -> String {
         var sections: [String] = []
-        if let name = object["name"] as? String { sections.append("Project: " + name) }
-        if let slot = object["slot"] as? [String: Any] { sections.append("Project state\n" + pretty(slot)) }
+        if let name = object["name"] as? String { sections.append("App: " + name) }
+        if let slot = object["slot"] as? [String: Any] { sections.append("App state\n" + pretty(slot)) }
         if let port = integer(object["public_port"]) { sections.append("Public endpoint: http://127.0.0.1:\(port)/mcp") }
         if let bytes = integer(object["installed_bytes"]) { sections.append("Installed artifacts: \(bytes) bytes") }
         if let package = object["package"] as? [String: Any] {
@@ -1095,7 +1162,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
 
     private func reviewSummary(_ object: [String: Any]) -> String {
         var sections: [String] = []
-        if let name = object["name"] as? String { sections.append("Project: " + name) }
+        if let name = object["name"] as? String { sections.append("App: " + name) }
         if let draft = currentDraft {
             sections.append("Source: " + draft.sourcePath)
             if !draft.intent.isEmpty { sections.append("Requested capabilities\n" + draft.intent) }
@@ -1111,7 +1178,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
         }
         sections.append("Start after installation: " + ((object["start"] as? Bool ?? currentDraft?.start ?? false) ? "Yes" : "No"))
         let policy = object["start_policy"] as? String ?? currentDraft?.policy ?? "manual"
-        sections.append("Later sessions: " + (policy == "host" ? "Start with host" : "Start manually"))
+        sections.append("Later sessions: " + (policy == "host" ? "Automatic — when mcpme opens" : "Start manually"))
         return sections.joined(separator: "\n\n")
     }
 
@@ -1176,7 +1243,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTable
 
     private func showError(_ code: String) {
         NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert(); alert.messageText = "mcpme"; alert.informativeText = "The request could not complete (\(safeCode(code) ?? "request_failed")). Check project status."
+        let alert = NSAlert(); alert.messageText = "mcpme"; alert.informativeText = "The request could not complete (\(safeCode(code) ?? "request_failed")). Check app status."
         alert.addButton(withTitle: "OK"); alert.runModal()
     }
 }
@@ -1187,6 +1254,15 @@ private func nativeSelfTest() -> Bool {
     guard Project(good)?.id == id, integer(true) == nil, safeCode("private arbitrary text") == nil,
           ManagerConnection(["api_version": 1, "supervisor_pid": 42, "endpoint": "http://127.0.0.1:19384", "token": String(repeating: "x", count: 32)]) != nil,
           ManagerConnection(["api_version": 1, "supervisor_pid": 42, "endpoint": "http://example.com:19384", "token": String(repeating: "x", count: 32)]) == nil else { return false }
+    var secondRow = good; secondRow["slot_id"] = "22222222-2222-4333-8444-555555555555"
+    var thirdRow = good; thirdRow["slot_id"] = "33333333-2222-4333-8444-555555555555"
+    guard let first = Project(good), let second = Project(secondRow), let third = Project(thirdRow) else { return false }
+    let displayed = [first, second, third]
+    // The selected identity survives removal of a preceding row; deleting the
+    // selected identity clears selection rather than targeting its successor.
+    guard projectForSelection(row: 1, rendered: displayed, current: [second, third]) == second,
+          projectForSelection(row: 1, rendered: displayed, current: [first, third]) == nil,
+          projectForSelection(row: -1, rendered: displayed, current: displayed) == nil else { return false }
     return true
 }
 

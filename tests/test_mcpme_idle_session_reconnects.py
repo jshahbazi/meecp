@@ -16,11 +16,6 @@ async def test_bridge_notification_read_timeouts_release_idle_capacity_and_reap_
     async def record_response(response):
         if response.request.method == "GET":
             get_statuses.append(response.status_code)
-            if response.status_code == 200:
-                # The server checks disconnected followers every 250ms. Delay
-                # starting the short read timeout so its ordinary 100ms retry
-                # pause allows that follower to clear before the next GET.
-                await asyncio.sleep(0.12)
 
     async with live_gateway(max_sessions=1, idle_timeout=idle_timeout) as (endpoint, owner, gateway):
         async with client(endpoint) as http, httpx.AsyncClient(
@@ -38,6 +33,7 @@ async def test_bridge_notification_read_timeouts_release_idle_capacity_and_reap_
                 # A real read timeout and the bridge's retry pause yield several GETs
                 # before the idle lease and its bounded sweeper delay have elapsed.
                 await asyncio.wait({notifications}, timeout=idle_timeout * 2)
+                assert 409 not in get_statuses
                 assert get_statuses.count(200) >= 4
                 assert sid not in gateway.sessions
                 assert child.returncode is not None

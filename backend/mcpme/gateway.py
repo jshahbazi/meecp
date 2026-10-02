@@ -512,6 +512,10 @@ class SSE(Response):
         async def disconnected():
             while True:
                 if (await receive())["type"] == "http.disconnect":
+                    # Release the follower promptly so a transport reconnect can
+                    # claim it without waiting for the bounded condition timeout.
+                    async with session.condition:
+                        session.condition.notify_all()
                     return
 
         watcher = asyncio.create_task(disconnected())
@@ -539,10 +543,12 @@ class SSE(Response):
                     elif session.closed:
                         return
                     else:
-                        # A short bounded condition wait observes disconnects without retaining a cancelled tool call.
+                        # Check under the same lock used by the disconnect watcher
+                        # so a notification cannot be lost before wait() registers.
                         async with session.condition:
-                            with contextlib.suppress(TimeoutError):
-                                await asyncio.wait_for(session.condition.wait(), 0.25)
+                            if not watcher.done():
+                                with contextlib.suppress(TimeoutError):
+                                    await asyncio.wait_for(session.condition.wait(), 0.25)
         except TimeoutError:
             pass
         finally:

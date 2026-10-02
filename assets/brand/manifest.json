@@ -9,17 +9,17 @@
       "width": 1024
     },
     "local-relay-hero.png": {
-      "bytes": 1360121,
+      "bytes": 1337910,
       "has_alpha": false,
       "height": 827,
-      "sha256": "cac32556d79a36089f95320b96afe4c32e064f57d4cbc681881ad1d9700ef2bf",
+      "sha256": "9cb019a513567905b09d8cf52791b1cc07c1ca86eff1a9906afb2b3f7a73c1fc",
       "width": 1902
     },
     "mcpme-banner.png": {
-      "bytes": 1314369,
+      "bytes": 1349640,
       "has_alpha": false,
       "height": 827,
-      "sha256": "b0d881c5e53dcab0dce5e50678485342adc08409ccf7ae0f420b01633013d7b1",
+      "sha256": "dd0f1b70fdaef5b4c0ecd3713d87cf3139b3e9624ccb8d135cbf2e49fccaae4a",
       "width": 1902
     },
     "menu-bar-pedestal-master.png": {

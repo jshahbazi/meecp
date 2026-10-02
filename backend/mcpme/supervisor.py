@@ -19,6 +19,7 @@ import uuid
 
 import httpx
 import uvicorn
+from mcpme_local_transport import bind_private_listener
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -551,13 +552,26 @@ class Supervisor:
         bundled_dependencies = Path(sys.executable).parent.parent / "site-packages"
         if bundled_dependencies.is_dir():
             host_paths.append(str(bundled_dependencies))
+        private_listeners = []
         try:
+            private_listeners.append(bind_private_listener(self.root, slot.id))
+            # Updated legacy adapters retain their original state location after
+            # migration. Serve its private alias only while holding that lock.
+            if slot.id in self.legacy_locks:
+                for path in (self.root / "transfers").glob("*.json"):
+                    transfer = read_private_json(path)
+                    if transfer["slot_id"] == slot.id and transfer["stage"] != "rolled_back":
+                        private_listeners.append(bind_private_listener(Path(transfer["legacy_state"]), "jevk5"))
+                        break
+            private_args = [value for listener in private_listeners
+                            for value in ("--private-listener-fd", str(listener.fileno()))]
             process = await self.launch(slot.id, executable=Path(sys.executable),
-                args=["-m", "mcpme.worker", "--config-fd", str(config_read), "--listener-fd", str(listener.fileno()),
-                      "--channel-fd", str(child.fileno())], cwd=self.root,
+                args=["-P", "-m", "mcpme.worker", "--config-fd", str(config_read), "--listener-fd", str(listener.fileno()),
+                      "--channel-fd", str(child.fileno()), *private_args], cwd=self.root,
                 env={"PATH": "/usr/bin:/bin", "PYTHONPATH": os.pathsep.join(host_paths),
                      "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1"},
-                inherited_fds=(config_read, listener.fileno(), child.fileno()), io_mode="fds", stop_grace=3)
+                inherited_fds=(config_read, listener.fileno(), child.fileno(),
+                               *(private.fileno() for private in private_listeners)), io_mode="fds", stop_grace=3)
             process.close_stdio()
         except BaseException:
             parent.close()
@@ -565,6 +579,8 @@ class Supervisor:
         finally:
             child.close()
             os.close(config_read)
+            for private in private_listeners:
+                private.close()
         worker = Worker(process, parent)
         self.workers[slot.id] = worker
         worker.service = asyncio.create_task(self.serve_channel(slot, worker, active))
@@ -1090,7 +1106,9 @@ async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None):
     server = HostServer(uvicorn.Config(management_app(host, token, port), access_log=False,
         log_config=None, log_level="critical", timeout_graceful_shutdown=5))
     watchdog = None
+    private_listener = None
     try:
+        private_listener = bind_private_listener(host.root, "manager")
         await host.initialize()
         write_private_json(host.root / "manager-connection.json", {"api_version": 1,
             "endpoint": f"http://127.0.0.1:{port}", "token": token, "supervisor_pid": os.getpid()})
@@ -1101,7 +1119,7 @@ async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None):
                         server.should_exit = True
                     await asyncio.sleep(0.2)
             watchdog = asyncio.create_task(watch())
-        await server.serve(sockets=[listener])
+        await server.serve(sockets=[listener, private_listener])
     finally:
         if watchdog:
             watchdog.cancel()
@@ -1109,3 +1127,5 @@ async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None):
         (host.root / "manager-connection.json").unlink(missing_ok=True)
         await host.close()
         listener.close()
+        if private_listener:
+            private_listener.close()

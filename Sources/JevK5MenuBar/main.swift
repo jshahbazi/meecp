@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import ServiceManagement
 import Darwin
+import PrivateTransport
 
 private struct BackendStatus {
     let state: String
@@ -60,16 +61,6 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
     private var generation: UInt64 = 0
     private let stateDirectory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/JevK5", isDirectory: true)
-    private let session: URLSession = {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 3
-        configuration.timeoutIntervalForResource = 5
-        configuration.urlCache = nil
-        configuration.httpShouldSetCookies = false
-        configuration.httpCookieStorage = nil
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        return URLSession(configuration: configuration)
-    }()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
@@ -104,7 +95,6 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         // The backend also watches this app's PID in case termination skips the delegate.
         if let process = service, process.isRunning { process.terminate() }
-        session.invalidateAndCancel()
     }
 
     private func menuItem(_ title: String, action: Selector? = nil) -> NSMenuItem {
@@ -171,7 +161,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
         }
         let process = Process()
         process.executableURL = python
-        process.arguments = ["-m", "jevk5_app", "serve", "--resources", resources.path,
+        process.arguments = ["-P", "-m", "jevk5_app", "serve", "--resources", resources.path,
                              "--state-dir", stateDirectory.path, "--parent-pid", String(getpid())]
         var environment = ProcessInfo.processInfo.environment
         for name in ["PYTHONHOME", "PYTHONUSERBASE", "PYTHONSTARTUP", "PYTHONINSPECT"] {
@@ -267,6 +257,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
 
     private func request(_ path: String, connection: Connection) -> URLRequest {
         var request = URLRequest(url: connection.endpoint.appendingPathComponent(path))
+        request.timeoutInterval = 3
         request.setValue("Bearer \(connection.token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         return request
@@ -286,9 +277,9 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
         pollInFlight = true
         let expectedGeneration = generation
         let expectedPID = process.processIdentifier
-        session.dataTask(with: request("api/status", connection: connection)) { [weak self] data, response, _ in
+        PrivateHTTP.request(request("api/status", connection: connection), stateDirectory: stateDirectory, service: "jevk5") { [weak self] data, response, _ in
             var parsed: BackendStatus?
-            if let response = response as? HTTPURLResponse, response.statusCode == 200,
+            if let response = response, response.statusCode == 200,
                let data = data, data.count <= 65_536,
                let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 parsed = BackendStatus(object)
@@ -312,7 +303,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
                 }
                 self.rebuildMenu()
             }
-        }.resume()
+        }
     }
 
     @objc private func togglePaused() {
@@ -326,8 +317,8 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
         request.timeoutInterval = 15
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["action": status.paused ? "resume" : "pause"])
-        session.dataTask(with: request) { [weak self] _, response, error in
-            let success = error == nil && (response as? HTTPURLResponse)?.statusCode == 200
+        PrivateHTTP.request(request, stateDirectory: stateDirectory, service: "jevk5") { [weak self] _, response, error in
+            let success = error == nil && response?.statusCode == 200
             DispatchQueue.main.async {
                 guard let self = self, self.generation == expectedGeneration,
                       self.service === process, process.isRunning else { return }
@@ -336,7 +327,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
                 if !success { self.showError("The model control request could not be completed. Check the menu status or restart the service.") }
                 self.pollStatus()
             }
-        }.resume()
+        }
     }
 
     @objc private func restartService() {

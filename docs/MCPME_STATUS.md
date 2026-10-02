@@ -95,7 +95,7 @@ scripts/mcpme slots inspect SLOT_UUID --json
 scripts/mcpme connect --slot SLOT_UUID
 ```
 
-Lifecycle commands return operation IDs. Poll `operations get` for completion. `connect` speaks MCP stdio and is intended for an MCP client. It resolves the endpoint and credential privately, forwards protocol messages, and attempts DELETE on EOF or shutdown. Abrupt client loss is reclaimed by the gateway's lease. It does not retry tool calls.
+Lifecycle commands return operation IDs. Poll `operations get` for completion. `connect` speaks MCP stdio and is intended for an MCP client. It resolves an owner-only Unix socket and credential privately, forwards protocol messages, and attempts DELETE on EOF or shutdown. The management CLI and native UI also use private sockets and fail closed without TCP fallback. Public HTTP endpoints and their Host/Origin/bearer checks remain available. Abrupt client loss is reclaimed by the gateway's lease. It does not retry tool calls.
 
 ## Package contract
 
@@ -147,6 +147,8 @@ dist/mcpme-with-migration.app/Contents/MacOS/mcpme migrate-jevk5 inspect TRANSFE
 ```
 
 Planning snapshots and verifies the package, records the recovery locations and old login/pause preferences, and presents the transfer effects. Apply requests the old application's supported termination, retires its login item, acquires its lock and port without evicting another owner, installs and verifies a synthetic decision, then commits the transfer. Login preference transfer can require macOS approval; an unavailable or unverified setting is surfaced rather than assumed. The old bundle, state, and migration record are retained.
+
+Recovery bundles also receive the updated private-socket backend and safe Python launcher, while retaining their model and runtime files. Quit an original JevK5 build before planning migration: a running legacy service must provide the updated owner-only socket to read its pause preference safely. Otherwise planning returns `legacy_transport_upgrade_required`. Offline planning sends no status probe to the fixed TCP port. Migration verification and rollback readiness use private sockets without a TCP fallback.
 
 If macOS reports `not_found` for a moved legacy bundle, planning normally blocks. After confirming that the old app's Start at Login is disabled, add `--legacy-login-disabled` to the plan command. The record labels that fact as owner-confirmed, not an observed ServiceManagement setting. This flag does not bypass a known enabled or approval-required login item.
 

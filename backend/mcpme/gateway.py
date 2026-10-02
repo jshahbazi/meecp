@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import math
 import os
 import secrets
@@ -30,6 +31,12 @@ MAX_MESSAGE_BYTES = 1024 * 1024
 MAX_OPERATION_BYTES = 8 * MAX_MESSAGE_BYTES
 MAX_EVENTS = 256
 MAX_PENDING = 16
+
+
+def request_id_digest(request_id: int | str) -> bytes:
+    # Bound lifetime duplicate tracking without changing wire IDs or the pending
+    # response map. Include type: JSON-RPC integer 1 and string "1" are distinct.
+    return hashlib.sha256(encode(["int" if type(request_id) is int else "str", request_id])).digest()
 
 
 @dataclass(frozen=True)
@@ -84,7 +91,7 @@ class Session:
     write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     pending: dict = field(default_factory=dict)
     server_pending: dict = field(default_factory=dict)
-    seen_ids: set = field(default_factory=set)
+    seen_ids: set[bytes] = field(default_factory=set)
     followers: set = field(default_factory=set)
     reader_task: asyncio.Task | None = None
 
@@ -431,9 +438,10 @@ class Gateway:
                 session.client_ready = True
             return Response(status_code=202)
         key = (type(message["id"]), message["id"])
-        if key in session.seen_ids or len(session.pending) >= MAX_PENDING or len(session.seen_ids) >= 4096:
+        digest = request_id_digest(message["id"])
+        if digest in session.seen_ids or len(session.pending) >= MAX_PENDING or len(session.seen_ids) >= 4096:
             return JSONResponse({"error": {"code": "request_limit"}}, status_code=429)
-        session.seen_ids.add(key)
+        session.seen_ids.add(digest)
         session.last_activity = time.monotonic()
         stream = secrets.token_hex(16)
         pending = Pending(message["id"], method, stream,

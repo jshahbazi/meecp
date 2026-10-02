@@ -40,6 +40,8 @@ jobs:
         run: uv run --locked python .github/scripts/scan_secrets.py
       - name: Run tests
         run: uv run --locked python -m pytest -q
+      - name: Test native private transport
+        run: swift test
       - name: Build and verify development installer
         run: |
           uv run --locked python scripts/build_mcpme_dmg.py \

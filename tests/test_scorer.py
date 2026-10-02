@@ -1,3 +1,8 @@
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.error import HTTPError
+
 import pytest
 
 from jevk5_app.contracts import ServiceError
@@ -71,3 +76,55 @@ def test_tokenization_preserves_pinned_flags():
     scorer.decide("public evidence", QUESTION)
     assert scorer.requests[0][1]["add_special"] is False
     assert scorer.requests[0][1]["parse_special"] is True
+
+
+@pytest.mark.parametrize("url", [
+    "https://127.0.0.1:8080", "http://localhost:8080", "http://user@127.0.0.1:8080",
+    "http://127.0.0.1:8080/model", "http://127.0.0.1:8080/?secret=1",
+    "http://127.0.0.1:8080/#secret", "http://127.0.0.1:0", "http://127.0.0.1:65536",
+])
+def test_endpoint_must_be_strict_loopback(url):
+    with pytest.raises(ValueError):
+        LocalScorer(url, "key", 8192)
+
+
+def test_direct_loopback_ignores_proxy_and_rejects_redirect(monkeypatch):
+    calls = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            calls.append(self.path)
+            length = int(self.headers.get("Content-Length", "0"))
+            redirect = json.loads(self.rfile.read(length) or b"{}").get("redirect")
+            if self.path == "/tokenize":
+                if redirect:
+                    self.send_response(302); self.send_header("Location", "/completion"); self.end_headers(); return
+                body = {"tokens": [1]}
+            elif self.path == "/completion":
+                body = {"truncated": False, "completion_probabilities": [{"top_logprobs": []}]}
+            else:
+                self.send_response(302); self.send_header("Location", "/tokenize"); self.end_headers(); return
+            encoded = json.dumps(body).encode()
+            self.send_response(200); self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers(); self.wfile.write(encoded)
+        def log_message(self, *_args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    try:
+        for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+            monkeypatch.setenv(name, "http://127.0.0.1:1")
+        monkeypatch.setenv("NO_PROXY", "")
+        monkeypatch.setenv("no_proxy", "")
+        discovered = []
+        monkeypatch.setattr("urllib.request.getproxies", lambda: discovered.append(True) or {"http": "http://127.0.0.1:1"})
+        scorer = LocalScorer(f"http://127.0.0.1:{server.server_port}/", "key", 8192)
+        assert scorer._transport("/tokenize", {"content": "x"}) == {"tokens": [1]}
+        with pytest.raises(HTTPError) as caught:
+            scorer._transport("/tokenize", {"redirect": True})
+        assert caught.value.code == 302
+        assert discovered == []
+        assert calls == ["/tokenize", "/tokenize"]
+    finally:
+        server.shutdown(); thread.join(timeout=2); server.server_close()

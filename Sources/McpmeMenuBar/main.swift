@@ -3,6 +3,7 @@ import Foundation
 import ServiceManagement
 import Darwin
 import CoreFoundation
+import PrivateTransport
 
 private let responseLimit = 1_048_576
 
@@ -155,11 +156,6 @@ private enum PrivateFile {
     }
 }
 
-private final class RedirectBlocker: NSObject, URLSessionTaskDelegate {
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
-}
-
 final class McpmeApp: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
     private var statusItem: NSStatusItem!
     private var process: Process?
@@ -201,14 +197,6 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSTableViewDataSource, NS
         }
         return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/mcpme", isDirectory: true)
     }()
-    private let redirectBlocker = RedirectBlocker()
-    private lazy var session: URLSession = {
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 30; config.timeoutIntervalForResource = 330
-        config.urlCache = nil; config.httpShouldSetCookies = false; config.httpCookieStorage = nil
-        config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        return URLSession(configuration: config, delegate: redirectBlocker, delegateQueue: nil)
-    }()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -241,7 +229,6 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSTableViewDataSource, NS
 
     func applicationWillTerminate(_ notification: Notification) {
         if let process = process, process.isRunning { process.terminate() }
-        session.invalidateAndCancel()
     }
 
     private var hostRoot: URL? { Bundle.main.resourceURL?.appendingPathComponent("host", isDirectory: true) }
@@ -301,6 +288,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSTableViewDataSource, NS
         }
         var request = URLRequest(url: connection.endpoint.appendingPathComponent(path))
         request.httpMethod = method
+        request.timeoutInterval = 30
         if path.hasSuffix("/plan") { request.timeoutInterval = 300 }
         request.setValue("Bearer " + connection.token, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -309,19 +297,19 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSTableViewDataSource, NS
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         }
         let expectedGeneration = generation
-        session.dataTask(with: request) { [weak self] data, response, _ in
+        PrivateHTTP.request(request, stateDirectory: stateDirectory, service: "manager") { [weak self] data, response, _ in
             var object: [String: Any]?
             var code = "request_failed"
             if let data = data, data.count <= responseLimit, let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
                integer(parsed["api_version"]) == 1 {
                 if let error = parsed["error"] as? [String: Any] { code = safeCode(error["code"]) ?? "request_failed" }
-                else if let response = response as? HTTPURLResponse, (200...299).contains(response.statusCode) { object = parsed }
+                else if let response = response, (200...299).contains(response.statusCode) { object = parsed }
             }
             DispatchQueue.main.async {
                 guard let self = self, self.generation == expectedGeneration, self.process === process, process.isRunning else { return }
                 completion(object, object == nil ? code : nil)
             }
-        }.resume()
+        }
     }
 
     private func poll() {

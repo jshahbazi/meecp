@@ -10,7 +10,7 @@ A user selects source, a program, or model artifacts, supplies any missing inten
 
 Broad app support means an extensible set of adapters and tested runtime combinations. An unfamiliar GUI application needs a supported API, CLI, or automation adapter. Unresolved compatibility remains visible. Adding an agent does not establish runtime compatibility.
 
-The first usable milestone must prepare both a Python callable and the exact hotdog CPU ONNX application without copying a prompt, invoking an external agent, editing a manifest, or manually supplementing the model. General CLI, local LLM, and integrated-agent work can advance concurrently against the common contracts.
+The first usable milestone must prepare both a Python callable and the exact hotdog CPU ONNX application without copying a prompt, invoking an external agent, editing a manifest, or manually supplementing the model. It must also accept an independently added recipe through the extension workflow. General CLI, local LLM, and integrated-agent work can advance concurrently against the common contracts.
 
 ## Verified starting point
 
@@ -56,6 +56,73 @@ Recipe eligibility requires exactly one compatible recipe and every required bin
 Store a versioned preparation receipt as an ordinary **locked package artifact**. It binds descriptor, source, artifact collection, recipe, runtime/dependency and fixture identities. Do not add arbitrary fields to strict `PackageLock`, and do not put the final package digest inside its own receipt. After sealing, store the final digest and runtime attestation in the preparation-job record.
 
 Managed automatic/agent returns additionally check their receipt against the bound job before calling the existing static attachment path. External legacy packages retain existing compatibility unless that draft explicitly requires the new receipt.
+
+## Adding and managing recipes
+
+Recipe extension is a first-milestone requirement. A new combination using supported capabilities must be addable through a self-contained recipe bundle and fixture set, without modifying the host dispatcher, native forms, import methods or every existing recipe. A new transport, runtime authority or unsupported process topology requires explicit host capability work.
+
+Keep three objects distinct: the **descriptor** selects a recipe and supplies app-specific inputs; the **recipe bundle** defines its input schema and implementation; the **registry** records available versions, provenance and admission state. Migrate the current template implementations behind this interface while preserving their external generator CLI and exported legacy template IDs.
+
+### Bundle and stable runner contract
+
+A recipe bundle has `mcpme.recipe.json`, `mcpme.recipe.lock.json`, input/form schemas, documentation, nonsecret fixtures, and any declared implementation/runtime artifacts. Its closed-tree lock hashes every file and preserves licenses/provenance. Recipe IDs are namespaced; semantic versions are immutable. A `(recipe_id, version)` collision with different content fails rather than replacing the existing bytes.
+
+The manifest declares recipe-worker API version, descriptor/form schema versions, platform/package/protocol requirements, required runner capabilities, accepted artifact roles, matching rules, runtime/task dependencies, resource/effect ceilings, supported process topology, replay/cancellation behavior, and required acceptance gates. Bundle admission is static. Merely viewing or adding a bundle never launches its implementation.
+
+Use two extension kinds:
+
+- **Declarative composition:** typed configuration combines existing runtime, adapter, artifact and validation steps. This is the simplest way to add variants, class mappings, callable contracts and supported model profiles. Every referenced component/version/digest is resolved and pinned; reject cycles or missing dependencies.
+- **Executable preparation worker:** a reviewed foreground worker adds preparation logic beyond the built-in steps. It has a pinned self-contained runtime and a versioned JSON/stdin-stdout interface. It runs out of process only under job-bound execution authority. It is never imported into the host process or invoked for code-free inspection/planning. Introducing this kind requires worker ownership/cancellation and capability-interface acceptance before it can be enabled.
+
+The runner contract separates these operations:
+
+| Operation | Contract and owner |
+| --- | --- |
+| Match and normalize | Host interprets bounded eligibility/schema/form metadata using host-owned static metadata/AST parsers. No recipe/source module imports, subprocesses, dependency resolution, downloads or worker invocation occur. Returns bindings, missing fields or blockers without recipe/source execution. |
+| Plan | Host validates exact immutable inputs and compiles supported declarative steps plus declared executable-worker scope. Returns effects, resources, dependencies and required authority without launching worker code. |
+| Prepare | An admitted recipe executes known steps or its foreground worker in the job workspace, requesting typed runner services. Returns candidate metadata and artifacts. |
+| Seal and verify | Host closes the artifact set, compares descriptor fidelity and runs independent required protocol/runtime fixtures. Recipe-specific assertions supplement mandatory host checks. |
+| Return | Host admits the exact verified digest through the existing attachment transaction. The recipe has no installation authority. |
+
+Runner services own artifact resolution, controlled process launch/reaping, resource reservations, cancellation, deadlines, private working/data directories and sanitized progress. Recipes receive versioned requests and scoped service handles; they receive no arbitrary host object, manager credential or public-port authority. Executable extensions retain the documented same-user trust boundary unless a separate isolation mechanism is implemented.
+
+The supported worker contract prohibits direct subprocess creation. All process requests go through runner services, with host ownership of the full descendant tree, resource accounting, cancellation and reaping. Executable-worker admission is blocked until those topology guarantees pass; a worker's declaration alone does not prove them. New static file parsers are reviewed host capability additions, not executable matching hooks hidden in a recipe bundle.
+
+Use a bounded form vocabulary for files, callable choices, enums, strings, numeric limits and schema previews. A recipe can supply its schema, descriptions, defaults and static extraction rules without supplying executable UI or HTML. Complex unsupported fields remain explicit blockers or use the agent proposal route. Execution code, provider credentials and arbitrary import/module names cannot enter through form metadata.
+
+### Easy authoring and addition
+
+Provide a recipe development kit with a scaffold command, reusable step library, schema helpers, fake runner services and a common acceptance harness. Proposed commands are `mcpme recipes scaffold`, `check`, `test`, `add`, `list`, `inspect`, `enable`, `disable`, `remove` and `deprecate`.
+
+An author or agent scaffolds from the nearest supported recipe, fills input/form metadata and fixtures, and runs `check` for static validation. `test` runs the common and family-specific gates under explicit preparation authority using a development-verification attempt bound to the candidate digest. This attempt may test a proposed bundle before enablement, but cannot promote it or bypass production attachment admission. `add` statically snapshots the bundle into private versioned storage and presents identity, provenance, effects and compatibility for admission. Enabling a third-party executable recipe requires applicable review/authority; an agent cannot approve its own extension. Publisher signatures may strengthen provenance when supported, but a hash alone does not establish publisher trust.
+
+The native **Manage Recipes** view offers **Add Recipe**, enabled/disabled status, versions, documentation, compatibility blockers and acceptance evidence. Drop/select a local recipe folder for the initial workflow. Repository URL/catalog synchronization and automatic downloads are later acquisition capabilities; adding a recipe must not silently execute a repository installer. Initial discovery is local and uses installed/bundled metadata.
+
+Adding an app whose descriptor names an unavailable recipe offers resolution through Manage Recipes or the agent proposal route. Do not substitute a similar recipe silently. New compatible versions are separate entries; existing descriptors/jobs/receipts retain their selected implementation digest. Existing generated app packages remain independently sealed and usable without loading the recipe worker.
+
+### Registry lifecycle and retention
+
+Add a versioned runtime recipe registry alongside the existing bundled template catalog. Advertise admitted recipe/capability summaries through the management API. Preserve legacy `template_ids` compatibility until its explicit migration; users should not edit catalog source to register a recipe.
+
+| Operation/state | Defined behavior |
+| --- | --- |
+| Add / proposed | Validate and snapshot exact bundle bytes; display provenance and unmet capabilities. No execution or automatic enablement of new executable code. |
+| Enable | Permit new jobs only after compatibility/admission and required gate evidence pass. Each job binds the resolved version and bundle digest. |
+| Update | Add a new immutable version with fresh validation. Existing jobs/receipts do not change. |
+| Disable | Block new plans/starts. Already executing authorized jobs may finish with their pinned bundle; queued jobs cannot start. Installed app packages remain independent. |
+| Deprecate | Show replacement guidance and an explicit new-job cutoff; preserve inspection and receipt verification. |
+| Revoke | Block new execution and result admission for the affected digest, request cancellation of active jobs, and flag receipts/packages for review. Installed-app control uses its own authorized lifecycle actions. |
+| Remove / withdraw | Remove selection availability; retain bundle identities/evidence and referenced bytes until job/reproduction retention rules permit collection. Never delete generated apps or invalidate their package locks. |
+
+A recipe's receipt records the full resolved component/recipe digest set. Recheck registry revocation and input authority at execution admission and before attachment. Ordinary disabling cannot rewrite a running job's inputs; revocation closes late-result admission. Avoid mutable global module discovery or a user's Python/Node installation as a recipe runtime.
+
+### Extensibility acceptance gate
+
+After baseline recipe-management support exists, build a fresh minimal recipe using the development kit outside the host tree. Add it through CLI and native recipe management, complete its generated input form, prepare a synthetic app, validate and attach it, restart mcpme, then repeat inspection. Adding this recipe must require zero host dispatcher/UI/import source edits.
+
+Exercise version collision, incompatible worker/schema/platform/capability, unsupported form field, dependency cycle, missing notice/runtime artifact, false gate evidence, worker cancellation/reaping, disabled queued start, revocation during verification/attachment, update during an active job, and removal with retained receipts. Recipe-reported results alone cannot satisfy mandatory independent acceptance checks. Common checks plus recipe-specific fixtures run in parallel where independent; their evidence is tied to the exact bundle/component digests.
+
+Port the existing recipe definitions through this same contract. Their platform, CPython/MCP SDK assumptions and compatibility gates become recipe metadata. Acceptance must prove a new supported recipe is additive before first automatic preparation is advertised.
 
 ## Artifact acquisition and source lifetime
 
@@ -143,7 +210,7 @@ The setup window displays a detected candidate and focused missing-fields questi
 
 A native descriptor form and repository descriptor generate the same normalized request. Show actual tools, effects, source/artifact provenance, download requirements, declared resources and preparation execution scope. Progress comes from real worker stages, bytes/files and validation counts. Closing the window preserves the job. **Cancel Preparation** terminates owned preparation and preserves the draft. **Cancel Draft** invalidates pending results and coordinates source/staging cleanup. Installation cancellation remains unsupported; new preparation controls cannot imply it exists.
 
-Add versioned recipe inspection, preparation plan/start/list/inspect/cancel operations to the CLI, management API and management MCP facade. Proposed CLI namespace: `mcpme preparations inspect-source|plan|start|list|get|cancel`. Preparation planning remains static. Start requires its own execution scope. API routes live under `/v1/preparations`; import summaries reference preparation job ID/status without conflating them with installation operation ID/status.
+Add versioned recipe management and preparation plan/start/list/inspect/cancel operations to the CLI, management API and management MCP facade. Proposed namespaces are `mcpme recipes ...` for the versioned registry and `mcpme preparations inspect-source|plan|start|list|get|cancel` for app jobs. Recipe metadata routes live under `/v1/recipes`; preparation routes live under `/v1/preparations`. Code-free planning remains static. Execution requires its own scope. Import summaries reference preparation job ID/status without conflating them with installation operation ID/status.
 
 The CLI/API needs descriptor and artifact-selection file arguments or structured request bodies; current `imports create` does not expose a general requirements-file argument. Extend explicit import create/revise contracts and keep unknown-field rejection. Native polling must observe job stage/revision changes alongside existing draft and installation changes.
 
@@ -176,15 +243,18 @@ flowchart TD
     A --> H[Native forms and progress]
     A --> I[Agent backend capability spike]
     A --> J[Independent acceptance harness]
+    A --> R[Recipe registry and development kit]
     B --> P[Python end-to-end gate]
     D --> P
     H --> P
     J --> P
+    R --> P
     B --> V[Hotdog automatic gate]
     C --> V
     F --> V
     H --> V
     J --> V
+    R --> V
     B --> K[CLI execution gate]
     C --> K
     E --> K
@@ -199,8 +269,14 @@ flowchart TD
     I --> Q
     J --> Q
     H --> Q
+    R --> Q
+    R --> X[New recipe extension gate]
+    H --> X
+    J --> X
+    B --> X
     P --> M[First usable milestone]
     V --> M
+    X --> M
 ```
 
 | Lane | Agent-owned implementation area | Dependencies and concrete output |
@@ -215,6 +291,7 @@ flowchart TD
 | H: UI | Native preparation forms, polling and progress | Uses a fake job API from A before the worker is complete; shared routing changes go through A. |
 | I: agent | Programmatic backend spike, scoped orchestration and provider tests | Uses the same fake job interface; production agent execution waits for B's authority/recovery gate. |
 | J: independent verification | Acceptance/race harness and evidence review | Starts adversarial cases with A; verifies immutable integrated outputs and reported scope. |
+| R: recipe extensibility | Registry, bundle/worker contract, development kit and extension fixtures | Starts against A's seeded contract; owns additive registration/version lifecycle. UI hooks go through H; central API/authority changes go through A. |
 
 There are four active-agent slots including the coordinator in this planning session. Queue ready lanes and reuse freed workers; use a larger configured pool when available. Simple local reads go to a lower-cost agent. Substantial implementation and independent review receive models appropriate to their task. Concurrency respects CPU/disk limits and model/GPU reservations; actual inference tests on one constrained engine serialize while static work and unrelated CPU fixtures continue.
 
@@ -227,6 +304,7 @@ Agents commit complete slices. The integration owner applies them into the integ
 | Gate | Required evidence |
 | --- | --- |
 | A0: contracts | Descriptor canonicalization and unknown-version/field rejection; legacy source digests/exports/packages unchanged; receipt/job identity tests; static inspection executes nothing; old preparation grants cannot run code. |
+| A0R: recipe extension | Independently scaffolded recipe is added, managed, selected through generated forms, prepared and attached with zero host dispatcher/UI/import edits. Exact bundle versions/components, lifecycle races, capability blockers, independent evidence and restart retention pass. |
 | A1: automatic stdio | Separate native/API cases prepare a selected synthetic Python callable and an existing foreground MCP server. Each validates full MCP contract and relocation, attaches the matching revision, then follows existing authorized plan/apply verification. User performs no external prompt handoff or manifest editing. Existing-MCP capability requires its own passing case. |
 | A2: automatic hotdog | Same user path, with explicit selected ONNX artifact, verified model hash, complete runtime/notices, synthetic real inference and controlled tensor tests. Measure maximum accepted image-size memory/deadline behavior or reduce advertised limits. No manual copying from the original checkout. Wrong weights/layout/classes fail eligibility. |
 | A3: CLI | Actual command execution with bounded argv/input/output, exit mapping, timeout/cancel, descendant and process-group cleanup, crashes/restart, private runtime closure and declared effects. Release remains blocked until ownership is enforceable. |
@@ -244,10 +322,10 @@ Current installed-host candidate checks establish MCP initialization and tool di
 
 Report declared resource budgets separately from measured workload peaks, and functional checks separately from task quality. The hotdog gate preserves the current negative-model/positive-tensor distinction. If recognition accuracy becomes an acceptance requirement, select explicit nonsecret positive/negative fixtures and thresholds before the run. Packaging success cannot establish model calibration or quality.
 
-The first release capability flag enables automatic Python, supported existing MCP and the exact CPU hotdog recipe only after A0–A2 pass. CLI, generic LLM and agent routes enable individually as A3–A5 pass. This allows concurrent development and independently verified delivery without broad compatibility claims.
+The first release capability flag enables automatic Python, supported existing MCP and the exact CPU hotdog recipe only after A0, A0R and A1–A2 pass. CLI, generic LLM and agent routes enable individually as A3–A5 pass. This allows concurrent development and independently verified delivery without broad compatibility claims.
 
 ## Immediate execution packet
 
-At implementation start, the coordinator freezes the descriptor/job/receipt interfaces and seeds fake recipes, a fake job API and adversarial fixtures. Dispatch worker/artifact lanes and recipe/UI lanes against those interfaces immediately; rotate queued LLM, CLI and provider spike work into available slots. Keep the independent verifier supplied with every immutable candidate and acceptance claim.
+At implementation start, the coordinator freezes descriptor/job/receipt and recipe-worker/registry interfaces and seeds fake recipes, a fake job API and adversarial fixtures. Dispatch worker/artifact lanes and recipe/registry/UI lanes against those interfaces immediately; rotate queued LLM, CLI and provider spike work into available slots. Keep the independent verifier supplied with every immutable candidate and acceptance claim.
 
 The critical path for the first usable result is contract seed → controlled worker plus Python/vision recipes and artifact storage → native preparation binding → independent sealed probes → current attachment/review flow. A failed lane produces a concrete blocker and a targeted repair task while other ready lanes continue.

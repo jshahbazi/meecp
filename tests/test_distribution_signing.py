@@ -253,9 +253,8 @@ def fake_packaging(monkeypatch, tmp_path):
             return json.dumps({"status": "Accepted", "id": SUBMISSION})
         return ""
 
-    def verify(image, workspace, metadata, instructions, certificate, gatekeeper):
-        assert (workspace / "contents/Install.md").read_text() == instructions
-        assert gatekeeper == ("notarized by Apple" in instructions)
+    def verify(image, workspace, metadata, certificate, gatekeeper):
+        assert {path.name for path in (workspace / "contents").iterdir()} == {"mcpme.app", "Applications"}
         return {"fake_contract_verification": True}
 
     monkeypatch.setattr(dmg_builder, "build_app", build_app)

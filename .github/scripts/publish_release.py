@@ -296,10 +296,13 @@ def release_notes(version: str, commit: str) -> str:
     notes = (
         f"mcpme {version} for Apple silicon Macs running macOS 26 or later.\n\n"
         "Both downloads contain the same Developer ID signed, Apple notarized app.\n\n"
-        "- DMG: open the disk image and drag mcpme.app to Applications.\n"
-        "- ZIP: extract the archive and move mcpme.app to Applications.\n\n"
-        "Quit any running copy before replacing it, then open mcpme from Applications. "
-        "The app includes its runtime; projects and settings are preserved.\n\n"
+        "- DMG: open mcpme.app on the read-only image and choose Install and Restart.\n"
+        "  It stages the signed app, gracefully quits the current copy, replaces the\n"
+        "  installation, and launches it. Manual dragging remains available after quitting.\n"
+        "- ZIP: extract the archive and move mcpme.app to Applications after quitting mcpme.\n\n"
+        "The DMG installer waits up to 75 seconds for graceful shutdown and restores the\n"
+        "prior installation on a confirmed launch failure. The app includes its runtime;\n"
+        "projects and settings are preserved.\n\n"
         "SHA256SUMS.txt contains SHA-256 hashes for both downloads and their build receipts.\n\n"
         f"Built from commit `{commit}`.\n"
     )

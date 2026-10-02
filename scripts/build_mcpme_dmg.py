@@ -17,44 +17,6 @@ from build_mcpme_app import build as build_app, developer_identity, verify_signa
 from build_mcpme_host import ROOT, BuildCommandError, project_version, run
 
 
-INSTALLATION = """# Install mcpme
-
-Requires an Apple silicon Mac running macOS 26 or later.
-
-1. Quit any running copy of mcpme before replacing it.
-2. Drag mcpme.app onto the Applications shortcut.
-3. Eject this disk image and open mcpme from Applications.
-4. Look for mcpme in the menu bar, then choose Add Project or Manage Projects.
-
-{distribution_notice}
-
-The app includes its runtime. Running it requires no uv, Homebrew, Python
-installation, or source checkout. Tool packages and models are added separately.
-
-Projects and settings live in ~/Library/Application Support/mcpme. Replacing
-the app preserves them. Copy connection configuration after installing at the
-final location: client configurations include the app's absolute path.
-"""
-
-
-def installation_text(signed: bool = False, notarized: bool = False) -> str:
-    if notarized:
-        if not signed:
-            raise SystemExit("notarization_requires_signing_identity")
-        notice = ("This release is signed with a Developer ID Application certificate and\n"
-                  "notarized by Apple. Both the application and disk image carry stapled\n"
-                  "notarization tickets and passed Gatekeeper verification during packaging.")
-    elif signed:
-        notice = ("This build is signed with a Developer ID Application certificate. It has\n"
-                  "not been submitted to Apple for notarization. A downloaded copy may be\n"
-                  "blocked by Gatekeeper; this image is not a notarized public release.")
-    else:
-        notice = ("This is a local development build with an ad hoc code signature. It has not\n"
-                  "been submitted to Apple for notarization. A downloaded copy may be blocked\n"
-                  "by Gatekeeper; this image is not a notarized public release.")
-    return INSTALLATION.format(distribution_notice=notice)
-
-
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -150,7 +112,7 @@ def publish_outputs(outputs: list[tuple[Path, Path]]):
         raise
 
 
-def verify_image(image: Path, workspace: Path, info: dict, instructions: str,
+def verify_image(image: Path, workspace: Path, info: dict,
                  certificate_hash: str | None = None, gatekeeper: bool = False) -> dict:
     """Mount read-only, simulate a drag install, and exercise the private runtime."""
     mount = workspace / "mounted"
@@ -161,8 +123,8 @@ def verify_image(image: Path, workspace: Path, info: dict, instructions: str,
         shortcut = mount / "Applications"
         if not shortcut.is_symlink() or os.readlink(shortcut) != "/Applications":
             raise SystemExit("Disk image is missing the Applications shortcut")
-        if (mount / "Install.md").read_text() != instructions:
-            raise SystemExit("Disk image installation instructions changed")
+        if {path.name for path in mount.iterdir() if not path.name.startswith(".")} != {"mcpme.app", "Applications"}:
+            raise SystemExit("Disk image contains unexpected files")
         if app_metadata(mount / "mcpme.app", certificate_hash) != info:
             raise SystemExit("Disk image app metadata changed")
         installed = workspace / "test Applications/mcpme.app"
@@ -212,7 +174,6 @@ def build(output: Path | None = None, app: Path | None = None,
         raise SystemExit("notary_profile_required")
     certificate_hash = developer_identity(sign_identity, keychain) if sign_identity is not None else None
     signed, notarized = certificate_hash is not None, notary_profile is not None
-    instructions = installation_text(signed, notarized)
     scratch = ROOT / ".build"
     scratch.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="mcpme-dmg-app-", dir=scratch) as temporary:
@@ -260,7 +221,6 @@ def build(output: Path | None = None, app: Path | None = None,
             stage.mkdir()
             run("/usr/bin/ditto", str(source), str(stage / "mcpme.app"))
             (stage / "Applications").symlink_to("/Applications", target_is_directory=True)
-            (stage / "Install.md").write_text(instructions)
             staged_image = image_workspace / "mcpme.dmg"
             run("/usr/bin/hdiutil", "create", "-volname", "mcpme", "-srcfolder", str(stage),
                 "-fs", "HFS+", "-format", "UDZO", "-imagekey", "zlib-level=9", str(staged_image))
@@ -276,7 +236,7 @@ def build(output: Path | None = None, app: Path | None = None,
             run("/usr/bin/hdiutil", "verify", str(staged_image))
             if signed:
                 verify_signature(staged_image, certificate_hash)
-            checks = verify_image(staged_image, image_workspace, info, instructions,
+            checks = verify_image(staged_image, image_workspace, info,
                                   certificate_hash, notarized)
             distribution = ("notarized_drag_install_dmg" if notarized else
                             "developer_id_drag_install_dmg" if signed else "development_drag_install_dmg")

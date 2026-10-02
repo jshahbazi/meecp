@@ -40,13 +40,16 @@ jobs:
         run: uv run --locked python .github/scripts/scan_secrets.py
       - name: Run tests
         run: uv run --locked python -m pytest -q
-      - name: Test native private transport
-        run: swift test
-      - name: Build and verify development installer
+      - name: Test native transport and app management
+        run: |
+          swift test
+          .build/debug/McpmeMenuBar --native-self-test
+          .build/debug/McpmeMenuBar --dashboard-ui-self-test
+          .build/debug/McpmeMenuBar --management-ui-self-test
+      - name: Build and verify development DMG
         run: |
           uv run --locked python scripts/build_mcpme_dmg.py \
-            --output dist/mcpme-arm64-development.dmg \
-            --zip-output dist/mcpme-arm64-development.zip
+            --output dist/mcpme-arm64-development.dmg
       - name: Upload development installer
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -54,7 +57,5 @@ jobs:
           path: |
             dist/mcpme-arm64-development.dmg
             dist/mcpme-arm64-development.dmg.build.json
-            dist/mcpme-arm64-development.zip
-            dist/mcpme-arm64-development.zip.build.json
           if-no-files-found: error
           retention-days: 7

@@ -65,7 +65,7 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
         run: uv run --locked python .github/scripts/apple_credentials.py setup
-      - name: Build, sign, notarize, and verify DMG and ZIP
+      - name: Build, sign, notarize, and verify DMG
         env:
           MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
@@ -75,8 +75,7 @@ jobs:
             --sign-identity "$MACOS_SIGNING_IDENTITY" \
             --keychain "$RUNNER_TEMP/mcpme-signing/signing.keychain-db" \
             --notary-profile mcpme-notary \
-            --output "dist/mcpme-$RELEASE_VERSION-arm64.dmg" \
-            --zip-output "dist/mcpme-$RELEASE_VERSION-arm64.zip"
+            --output "dist/mcpme-$RELEASE_VERSION-arm64.dmg"
       - name: Remove temporary Apple credentials
         if: always()
         run: uv run --locked python .github/scripts/apple_credentials.py cleanup
@@ -87,8 +86,6 @@ jobs:
           path: |
             dist/mcpme-${{ steps.release.outputs.version }}-arm64.dmg
             dist/mcpme-${{ steps.release.outputs.version }}-arm64.dmg.build.json
-            dist/mcpme-${{ steps.release.outputs.version }}-arm64.zip
-            dist/mcpme-${{ steps.release.outputs.version }}-arm64.zip.build.json
           if-no-files-found: error
           retention-days: 30
 
@@ -100,6 +97,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      pull-requests: read
     steps:
       - name: Check out protected source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

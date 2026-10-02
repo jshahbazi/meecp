@@ -1,7 +1,7 @@
 # macOS installer distribution
 
-mcpme targets Apple silicon and macOS 26 or later. The DMG contains `mcpme.app`,
-an Applications shortcut, and `Install.md`. The application includes its locked
+mcpme targets Apple silicon and macOS 26 or later. The DMG contains `mcpme.app`
+and an Applications shortcut. The application includes its locked
 Python runtime and server dependencies; tool packages and model weights are
 installed separately.
 
@@ -15,8 +15,8 @@ uv sync --locked
 uv run --locked python scripts/build_mcpme_dmg.py --output dist/mcpme-dev.dmg
 ```
 
-The app uses ad hoc signatures. The DMG is unsigned and unnotarized. Its install
-instructions and build receipt identify it as a development artifact. Do not
+The app uses ad hoc signatures. The DMG is unsigned and unnotarized. Its
+build receipt identifies it as a development artifact. Do not
 present that artifact as a public release.
 
 The output and its adjacent `.build.json` receipt must both be fresh paths.
@@ -36,8 +36,7 @@ uv run --locked python scripts/build_mcpme_dmg.py \
   --sign-identity 'Developer ID Application: Your Name (TEAMID)' \
   --notary-profile mcpme-release \
   --keychain /path/to/release.keychain-db \
-  --output dist/mcpme-release.dmg \
-  --zip-output dist/mcpme-release.zip
+  --output dist/mcpme-release.dmg
 ```
 
 `--keychain` scopes both signing identity lookup and notarization credentials to
@@ -64,17 +63,28 @@ The builder:
    spaces, ejects the image, verifies the copied signature and ticket, checks
    Gatekeeper again, and executes the bundled CLI with a temporary home and a
    minimal system `PATH`.
-8. When `--zip-output` is supplied, archives the stapled app with `ditto`,
-   extracts it into an isolated directory, and verifies the extracted app's
-   metadata, signature, ticket, Gatekeeper assessment, and private runtime.
-9. Publishes the DMG, optional ZIP, and their receipts only after all checks
-   succeed. Existing outputs are never replaced; a publication failure removes
-   newly published outputs.
+8. Publishes the DMG and its receipt only after all checks succeed. Existing
+   outputs are never replaced; a publication failure removes newly published
+   outputs.
 
-The app's version comes from `[project].version` in `pyproject.toml`. The ZIP
-contains `mcpme.app` at its root; extract it and move the app to Applications.
-The app in both downloads carries the same signature and stapled ticket.
-Apple does not support signing or stapling the ZIP container itself.
+The app's version comes from `[project].version` in `pyproject.toml`. On the
+read-only DMG, open `mcpme.app` and choose **Install and Restart**.
+The installer checks signature, version metadata, Apple silicon architecture,
+and minimum macOS version, then stages the signed app and gracefully quits the current copy with a
+75-second wait, atomically replaces the selected installation, and launches the
+result. The prompt shows the destination. A single running installation in
+`/Applications` or `~/Applications` takes precedence. Otherwise an existing
+`/Applications/mcpme.app` is preferred, then an existing personal copy. A new
+copy goes in `/Applications` when writable and `~/Applications` otherwise.
+An unwritable existing system installation requires a manual Finder copy with
+administrator authorization. A refused quit or timeout prevents replacement.
+A confirmed launch failure restores the prior bundle. An unconfirmed launch
+retains the installed candidate and a recovery folder beside it; read that
+folder's `RECOVERY.md` before restoring its previous bundle. Normal startup
+policies apply after restart; manually configured services do not auto-resume.
+The manual DMG path remains available, but requires quitting mcpme before
+dragging the app to Applications. See [Host application updates](AUTO_UPDATE_PLAN.md) for the
+separate, still-planned automatic updater.
 
 The two notarization submissions let both the image and the installed app carry
 their own tickets. A rejected submission, unavailable identity, tool error,
@@ -83,7 +93,7 @@ captured without printing certificate material, credentials, exception dumps,
 or Apple notarization logs. Error reporting uses fixed messages.
 
 Passing `--sign-identity` without `--notary-profile` builds a Developer ID signed
-installer that explicitly says it is unnotarized. It is not labeled as a
+installer whose receipt records that notarization was not requested. It is not labeled as a
 notarized release. The native app builder also accepts `--sign-identity` and
 `--keychain` when an app is needed independently of a DMG.
 
@@ -102,15 +112,33 @@ The adjacent DMG `.build.json` is the final disk-image distribution record: it i
 the actual signing and notarization modes, both accepted submission IDs, ticket
 and Gatekeeper checks, final image SHA-256, and byte count. It embeds an updated
 application record containing the app's notarization result.
-The ZIP has its own adjacent `.build.json`, recording its final hash, size,
-and the verification checks performed on the extracted app. Neither receipt
-changes the sealed app after signing.
+The receipt does not change the sealed app after signing.
 
 The local development build and the contract tests can be exercised without
 Apple credentials. The Developer ID and notarization path requires a successful
 credentialed run before a release can be claimed. The isolated CLI check does
 not exercise every native menu action, installed tool package, or model; run
 those acceptance checks separately when preparing a product release.
+
+The Swift suite exercises staging, signature failure, quit failure, concurrent
+installation, changed destinations, atomic replacement, and launch recovery:
+
+```sh
+swift test
+```
+
+In a logged-in macOS session, opt into native lifecycle tests as well:
+
+```sh
+MCPME_RUN_INSTALL_LIFECYCLE_TESTS=1 swift test --filter AppInstallationTests
+```
+
+These launch signed synthetic apps in a temporary directory, replace one from
+a real read-only image, and verify a refused quit leaves it running and prevents
+replacement. They do not touch the user's installed app or Application Support.
+The install callback confirms macOS opened the app; it does not establish host
+or model health. A notarized downloaded build still needs a release acceptance
+check for Gatekeeper, app translocation, administrator permissions, and login items.
 
 See [GitHub release setup](GITHUB_RELEASES.md) for the protected release workflow
 and its secrets. Apple's primary references are

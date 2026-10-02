@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -23,11 +25,6 @@ DMG_CHECKS = (
     "private_runtime_minimal_environment", "copied_app_notarization_ticket",
     "copied_app_gatekeeper_assessment", "disk_image_notarization_ticket",
     "disk_image_gatekeeper_assessment",
-)
-ZIP_CHECKS = (
-    "archive_contains_app", "extracted_app_signature",
-    "extracted_app_notarization_ticket", "extracted_app_gatekeeper_assessment",
-    "private_runtime_minimal_environment",
 )
 
 
@@ -116,16 +113,21 @@ def verify_tag(tag: str, commit: str) -> None:
         raise PublicationError("release_tag_commit_mismatch")
 
 
-def bumped_version(version: str, bump: str) -> str:
-    if bump not in ("major", "minor", "patch"):
-        raise PublicationError("release_bump_invalid")
-    # A source baseline ahead of published releases remains the lower bound.
-    highest = tuple(map(int, version.split(".")))
+def api_pages(endpoint: str, diagnostic: str) -> Iterator[list]:
     page = 1
     while True:
-        releases = api_response(f"repos/{REPOSITORY}/releases?per_page=100&page={page}")
-        if not isinstance(releases, list) or len(releases) > 100:
-            raise PublicationError("release_github_release_list_invalid")
+        separator = "&" if "?" in endpoint else "?"
+        values = api_response(f"{endpoint}{separator}per_page=100&page={page}")
+        if not isinstance(values, list) or len(values) > 100:
+            raise PublicationError(diagnostic)
+        yield values
+        if len(values) < 100:
+            return
+        page += 1
+
+
+def stable_releases() -> Iterator[dict]:
+    for releases in api_pages(f"repos/{REPOSITORY}/releases", "release_github_release_list_invalid"):
         for release in releases:
             if (not isinstance(release, dict) or type(release.get("draft")) is not bool
                     or type(release.get("prerelease")) is not bool
@@ -135,10 +137,16 @@ def bumped_version(version: str, bump: str) -> str:
             if (release["draft"] or release["prerelease"]
                     or not re.fullmatch("v" + VERSION_PATTERN, tag)):
                 continue
-            highest = max(highest, tuple(map(int, tag[1:].split("."))))
-        if len(releases) < 100:
-            break
-        page += 1
+            yield release
+
+
+def bumped_version(version: str, bump: str) -> str:
+    if bump not in ("major", "minor", "patch"):
+        raise PublicationError("release_bump_invalid")
+    # A source baseline ahead of published releases remains the lower bound.
+    highest = tuple(map(int, version.split(".")))
+    for release in stable_releases():
+        highest = max(highest, tuple(map(int, release["tag_name"][1:].split("."))))
     major, minor, patch = highest
     if bump == "major":
         return f"{major + 1}.0.0"
@@ -172,14 +180,12 @@ def submission_id(value: object) -> bool:
     return isinstance(value, str) and re.fullmatch(SUBMISSION_PATTERN, value) is not None
 
 
-def validate_receipt(path: Path, receipt: dict, version: str, commit: str, kind: str) -> None:
+def validate_receipt(path: Path, receipt: dict, version: str, commit: str) -> None:
     app = receipt.get("app_build")
     checks = receipt.get("checks")
-    expected_distribution = "notarized_drag_install_dmg" if kind == "dmg" else "notarized_app_zip"
-    expected_checks = DMG_CHECKS if kind == "dmg" else ZIP_CHECKS
     if (
         type(receipt.get("schema_version")) is not int or receipt.get("schema_version") != 1
-        or receipt.get("distribution") != expected_distribution
+        or receipt.get("distribution") != "notarized_drag_install_dmg"
         or receipt.get("version") != version
         or receipt.get("architecture") != "arm64"
         or receipt.get("minimum_macos") != "26.0"
@@ -196,15 +202,13 @@ def validate_receipt(path: Path, receipt: dict, version: str, commit: str, kind:
         or app.get("source_commit") != commit
         or app.get("source_tree_dirty") is not False
         or not isinstance(checks, dict)
-        or any(checks.get(name) is not True for name in expected_checks)
+        or any(checks.get(name) is not True for name in DMG_CHECKS)
     ):
         raise PublicationError("release_asset_receipt_invalid")
-    if kind == "dmg" and (
+    if (
         receipt.get("disk_image_signed") is not True
         or receipt.get("notarization_ticket_stapled") is not True
     ):
-        raise PublicationError("release_asset_receipt_invalid")
-    if kind == "zip" and receipt.get("contained_app_notarization_ticket_stapled") is not True:
         raise PublicationError("release_asset_receipt_invalid")
     if (type(receipt.get("bytes")) is not int or receipt["bytes"] <= 0
             or receipt["bytes"] != path.stat().st_size or receipt.get("sha256") != digest(path)):
@@ -212,25 +216,21 @@ def validate_receipt(path: Path, receipt: dict, version: str, commit: str, kind:
 
 
 def validated_assets(directory: Path, version: str, commit: str) -> list[Path]:
-    binaries = [directory / f"mcpme-{version}-arm64.{kind}" for kind in ("dmg", "zip")]
-    paths = [path for binary in binaries for path in (binary, binary.with_name(binary.name + ".build.json"))]
+    binary = directory / f"mcpme-{version}-arm64.dmg"
+    receipt_path = binary.with_name(binary.name + ".build.json")
+    paths = [binary, receipt_path]
     allowed_names = {path.name for path in paths} | {"SHA256SUMS.txt"}
     if not directory.is_dir() or {path.name for path in directory.iterdir()} - allowed_names:
         raise PublicationError("release_asset_set_invalid")
     if any(path.is_symlink() or not path.is_file() for path in paths):
         raise PublicationError("release_asset_set_invalid")
-    receipts = []
-    for binary in binaries:
-        try:
-            receipt = json.loads(binary.with_name(binary.name + ".build.json").read_text())
-        except (ValueError, UnicodeError):
-            raise PublicationError("release_asset_receipt_invalid") from None
-        if not isinstance(receipt, dict):
-            raise PublicationError("release_asset_receipt_invalid")
-        validate_receipt(binary, receipt, version, commit, binary.suffix[1:])
-        receipts.append(receipt)
-    if any(receipts[0].get(name) != receipts[1].get(name) for name in ("build", "app_build")):
-        raise PublicationError("release_asset_app_mismatch")
+    try:
+        receipt = json.loads(receipt_path.read_text())
+    except (ValueError, UnicodeError):
+        raise PublicationError("release_asset_receipt_invalid") from None
+    if not isinstance(receipt, dict):
+        raise PublicationError("release_asset_receipt_invalid")
+    validate_receipt(binary, receipt, version, commit)
     sums = directory / "SHA256SUMS.txt"
     content = "".join(f"{digest(path)}  {path.name}\n" for path in sorted(paths))
     if sums.exists() or sums.is_symlink():
@@ -292,15 +292,136 @@ def verified_release(tag: str, commit: str, assets: list[Path], *, draft: bool,
     return expected_url
 
 
+def previous_release_tag(tag: str) -> str | None:
+    previous = []
+    for release in stable_releases():
+        if release["tag_name"] == tag:
+            continue
+        published = release.get("published_at")
+        if not isinstance(published, str):
+            raise PublicationError("release_github_release_list_invalid")
+        try:
+            published = datetime.strptime(published, "%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            raise PublicationError("release_github_release_list_invalid") from None
+        previous.append((published, release["tag_name"]))
+    return max(previous)[1] if previous else None
+
+
+def release_commits(previous_tag: str | None, commit: str) -> set[str]:
+    """Use reachable commits, never merge/publication timestamps, as the boundary."""
+    if (not re.fullmatch(r"[0-9a-f]{40}", commit)
+            or (previous_tag is not None and not re.fullmatch("v" + VERSION_PATTERN, previous_tag))):
+        raise PublicationError("release_notes_range_invalid")
+    commits = set()
+
+    def collect(values: object) -> int:
+        if not isinstance(values, list) or len(values) > 100:
+            raise PublicationError("release_notes_commit_list_invalid")
+        for value in values:
+            sha = value.get("sha") if isinstance(value, dict) else None
+            if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha) or sha in commits:
+                raise PublicationError("release_notes_commit_list_invalid")
+            commits.add(sha)
+        return len(values)
+
+    if previous_tag is None:
+        for values in api_pages(f"repos/{REPOSITORY}/commits?sha={commit}",
+                                "release_notes_commit_list_invalid"):
+            collect(values)
+        if commit not in commits:
+            raise PublicationError("release_notes_commit_list_invalid")
+        return commits
+
+    page = 1
+    metadata = None
+    while True:
+        value = api(f"repos/{REPOSITORY}/compare/{previous_tag}...{commit}?per_page=100&page={page}")
+        base = value.get("base_commit")
+        merge_base = value.get("merge_base_commit")
+        total = value.get("total_commits")
+        if (value.get("status") not in ("ahead", "identical")
+                or type(total) is not int or total < 0
+                or not isinstance(base, dict) or not isinstance(merge_base, dict)
+                or not isinstance(base.get("sha"), str)
+                or not re.fullmatch(r"[0-9a-f]{40}", base["sha"])
+                or base["sha"] != merge_base.get("sha")
+                or (value["status"] == "identical" and (total != 0 or base["sha"] != commit))
+                or (value["status"] == "ahead" and total == 0)):
+            raise PublicationError("release_notes_range_invalid")
+        current = (base["sha"], total, value["status"])
+        if metadata is not None and metadata != current:
+            raise PublicationError("release_notes_range_invalid")
+        metadata = current
+        count = collect(value.get("commits"))
+        if count < 100:
+            if len(commits) != total or (total > 0 and commit not in commits) or base["sha"] in commits:
+                raise PublicationError("release_notes_commit_list_invalid")
+            return commits
+        page += 1
+
+
+def pull_request_notes(previous_tag: str | None, commit: str) -> str:
+    commits = release_commits(previous_tag, commit)
+    heading = f"## Changes since {previous_tag}" if previous_tag else "## Changes in this release"
+    notes = heading + "\n\n"
+    if previous_tag:
+        notes += f"[Full changelog](https://github.com/{REPOSITORY}/compare/{previous_tag}...{commit})\n\n"
+    pulls = {}
+    if commits:
+        # Listing all PRs in creation order keeps pagination stable when an old
+        # closed PR is reopened or an old open PR is closed during publication.
+        for values in api_pages(f"repos/{REPOSITORY}/pulls?state=all&sort=created&direction=asc",
+                                "release_notes_pull_request_list_invalid"):
+            for pull in values:
+                if not isinstance(pull, dict) or "merged_at" not in pull:
+                    raise PublicationError("release_notes_pull_request_list_invalid")
+                if pull["merged_at"] is None:
+                    continue
+                merged = pull["merged_at"]
+                sha = pull.get("merge_commit_sha")
+                if (not isinstance(merged, str) or not isinstance(sha, str)
+                        or not re.fullmatch(r"[0-9a-f]{40}", sha)):
+                    raise PublicationError("release_notes_pull_request_list_invalid")
+                if sha not in commits:
+                    continue
+                try:
+                    merged = datetime.strptime(merged, "%Y-%m-%dT%H:%M:%SZ")
+                except ValueError:
+                    raise PublicationError("release_notes_pull_request_list_invalid") from None
+                number, title, body = pull.get("number"), pull.get("title"), pull.get("body")
+                if (type(number) is not int or number <= 0 or number in pulls
+                        or not isinstance(title, str) or not title.strip()
+                        or (body is not None and not isinstance(body, str))):
+                    raise PublicationError("release_notes_pull_request_list_invalid")
+                pulls[number] = (merged, title, body)
+    for number in sorted(pulls, key=lambda number: (pulls[number][0], number)):
+        _, title, body = pulls[number]
+        # Preserve the authored opening post, including its Markdown. Quoting it
+        # keeps its headings/lists scoped to this PR instead of the release page.
+        title = re.sub(r"([\\`*_{}\[\]()<>#!|])", r"\\\1", " ".join(title.split()))
+        description = body if body and body.strip() else "No description was provided."
+        notes += f"### [{title} (#{number})](https://github.com/{REPOSITORY}/pull/{number})\n\n"
+        notes += "\n".join("> " + line if line else ">" for line in description.splitlines()) + "\n\n"
+    if not pulls:
+        notes += "No pull requests were merged in this commit range.\n\n"
+    return notes
+
+
 def release_notes(version: str, commit: str) -> str:
+    changes = pull_request_notes(previous_release_tag("v" + version), commit)
     notes = (
         f"mcpme {version} for Apple silicon Macs running macOS 26 or later.\n\n"
-        "Both downloads contain the same Developer ID signed, Apple notarized app.\n\n"
-        "- DMG: open the disk image and drag mcpme.app to Applications.\n"
-        "- ZIP: extract the archive and move mcpme.app to Applications.\n\n"
-        "Quit any running copy before replacing it, then open mcpme from Applications. "
-        "The app includes its runtime; projects and settings are preserved.\n\n"
-        "SHA256SUMS.txt contains SHA-256 hashes for both downloads and their build receipts.\n\n"
+        + changes
+        + "## Installation\n\n"
+        "The DMG contains the Developer ID signed, Apple notarized app.\n\n"
+        "- DMG: open mcpme.app on the read-only image and choose Install and Restart.\n"
+        "  It stages the signed app, gracefully quits the current copy, replaces the\n"
+        "  installation, and launches it. Manual dragging remains available after quitting.\n\n"
+        "The DMG installer waits up to 75 seconds for graceful shutdown and restores the\n"
+        "prior installation on a confirmed launch failure. The app includes its runtime;\n"
+        "projects and settings are preserved.\n\n"
+        "SHA256SUMS.txt contains SHA-256 hashes for the DMG and its build receipt.\n\n"
         f"Built from commit `{commit}`.\n"
     )
     run_id = os.environ.get("GITHUB_RUN_ID", "")
@@ -335,6 +456,9 @@ def publish(directory: Path, version: str | None = None) -> str:
     version, tag, commit = context(version)
     assets = validated_assets(directory, version, commit)
     preflight(tag)
+    # Finish all changelog reads before creating a tag or draft. API failures
+    # must not silently produce an incomplete public release summary.
+    content = release_notes(version, commit)
     # GitHub ignores target_commitish when a tag already exists. Create a fresh
     # lightweight ref atomically so a racing tag cannot silently select other code.
     checked_command("api", "--hostname", "github.com", "--method", "POST",
@@ -343,7 +467,7 @@ def publish(directory: Path, version: str | None = None) -> str:
     verify_tag(tag, commit)
     with tempfile.TemporaryDirectory(prefix="mcpme-release-notes-") as temporary:
         notes = Path(temporary) / "notes.md"
-        notes.write_text(release_notes(version, commit), encoding="utf-8")
+        notes.write_text(content, encoding="utf-8")
         checked_command("release", "create", tag, "--repo", GH_REPOSITORY, "--draft",
                         "--verify-tag", "--target", commit, "--title", "mcpme " + version,
                         "--notes-file", str(notes))

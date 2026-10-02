@@ -42,27 +42,22 @@ def assets(publisher, tmp_path):
         "notarization_ticket_stapled": True, "notary_submission_id": SUBMISSION,
         "source_commit": COMMIT, "source_tree_dirty": False,
     }
-    for kind, checks in (("dmg", publisher.DMG_CHECKS), ("zip", publisher.ZIP_CHECKS)):
-        binary = directory / f"mcpme-{VERSION}-arm64.{kind}"
-        binary.write_bytes(b"synthetic signed " + kind.encode())
-        receipt = {
-            "schema_version": 1,
-            "distribution": "notarized_drag_install_dmg" if kind == "dmg" else "notarized_app_zip",
-            "notarization": "accepted", "notary_submission_id": SUBMISSION,
-            "version": VERSION, "build": "1", "minimum_macos": "26.0", "architecture": "arm64",
-            "app_build": app, "checks": dict.fromkeys(checks, True),
-            "sha256": publisher.digest(binary), "bytes": binary.stat().st_size,
-        }
-        if kind == "dmg":
-            receipt.update({"disk_image_signed": True, "notarization_ticket_stapled": True})
-        else:
-            receipt["contained_app_notarization_ticket_stapled"] = True
-        binary.with_name(binary.name + ".build.json").write_text(json.dumps(receipt))
+    binary = directory / f"mcpme-{VERSION}-arm64.dmg"
+    binary.write_bytes(b"synthetic signed dmg")
+    receipt = {
+        "schema_version": 1, "distribution": "notarized_drag_install_dmg",
+        "notarization": "accepted", "notary_submission_id": SUBMISSION,
+        "version": VERSION, "build": "1", "minimum_macos": "26.0", "architecture": "arm64",
+        "app_build": app, "checks": dict.fromkeys(publisher.DMG_CHECKS, True),
+        "sha256": publisher.digest(binary), "bytes": binary.stat().st_size,
+        "disk_image_signed": True, "notarization_ticket_stapled": True,
+    }
+    binary.with_name(binary.name + ".build.json").write_text(json.dumps(receipt))
     return directory
 
 
-def change_receipt(directory, kind, change):
-    path = directory / f"mcpme-{VERSION}-arm64.{kind}.build.json"
+def change_receipt(directory, change):
+    path = directory / f"mcpme-{VERSION}-arm64.dmg.build.json"
     value = json.loads(path.read_text())
     change(value)
     path.write_text(json.dumps(value))
@@ -77,7 +72,8 @@ def http_result(status, body=None, *, returncode=None):
 
 
 def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag_change=None,
-                   existing_draft=False, version=VERSION):
+                   existing_draft=False, version=VERSION, pull_requests=None,
+                   notes_assertion=None):
     calls = []
     drafted = existing_draft
     public = False
@@ -90,6 +86,13 @@ def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag
         calls.append(arguments)
         if arguments[0] == "api":
             endpoint = next(value for value in arguments if value.startswith("repos/"))
+            # Release-note discovery is read-only and occurs before tag creation.
+            if "/releases?" in endpoint:
+                return http_result(200, [])
+            if "/pulls?" in endpoint:
+                return http_result(200, pull_requests or [])
+            if "/commits?" in endpoint:
+                return http_result(200, [{"sha": COMMIT}])
             if "POST" in arguments:
                 assert not tagged
                 assert "ref=refs/tags/" + tag in arguments and "sha=" + COMMIT in arguments
@@ -138,7 +141,10 @@ def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag
             assert arguments[arguments.index("--target") + 1] == COMMIT
             assert arguments[arguments.index("--title") + 1] == "mcpme " + version
             notes = Path(arguments[arguments.index("--notes-file") + 1]).read_text()
-            assert "DMG:" in notes and "ZIP:" in notes and COMMIT in notes
+            assert "DMG:" in notes and "ZIP" not in notes and COMMIT in notes
+            assert "SHA-256 hashes for the DMG and its build receipt" in notes
+            if notes_assertion:
+                notes_assertion(notes)
             drafted = True
         elif arguments[1] == "upload":
             assert drafted and not public
@@ -161,6 +167,219 @@ def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag
 
 def stable_release(version):
     return {"tag_name": "v" + version, "draft": False, "prerelease": False}
+
+
+def test_previous_release_tag_uses_latest_published_at_not_version_order(publisher, monkeypatch):
+    releases = [
+        {**stable_release("9.9.9"), "published_at": "2026-01-01T00:00:00Z"},
+        {**stable_release("1.2.3"), "published_at": "2026-02-01T00:00:00Z"},
+        {**stable_release("2.0.0"), "published_at": "2026-03-01T00:00:00Z"},
+    ]
+    monkeypatch.setattr(publisher, "api_response", lambda endpoint, **kwargs: releases)
+    assert publisher.previous_release_tag("v3.0.0") == "v2.0.0"
+
+
+def test_previous_release_tag_reads_multiple_release_pages(publisher, monkeypatch):
+    first = [{**stable_release(f"1.0.{index}"), "published_at": "2026-01-01T00:00:00Z"}
+             for index in range(100)]
+    second = [{**stable_release("2.0.0"), "published_at": "2026-02-01T00:00:00Z"}]
+    calls = []
+
+    def read(endpoint, **kwargs):
+        calls.append(endpoint)
+        return first if endpoint.endswith("page=1") else second
+
+    monkeypatch.setattr(publisher, "api_response", read)
+    assert publisher.previous_release_tag("v3.0.0") == "v2.0.0"
+    assert len(calls) == 2
+
+
+def test_release_commits_compare_paginates_and_checks_complete_range(publisher, monkeypatch):
+    values = [{"sha": f"{index:040x}"} for index in range(100)]
+    values.append({"sha": COMMIT})
+    base = "b" * 40
+    responses = [
+        {"status": "ahead", "total_commits": 101,
+         "base_commit": {"sha": base}, "merge_base_commit": {"sha": base},
+         "commits": values[:100]},
+        {"status": "ahead", "total_commits": 101,
+         "base_commit": {"sha": base}, "merge_base_commit": {"sha": base},
+         "commits": values[100:]},
+    ]
+    monkeypatch.setattr(publisher, "api", lambda endpoint, **kwargs: responses.pop(0))
+    result = publisher.release_commits("v0.1.0", COMMIT)
+    assert len(result) == 101 and COMMIT in result
+
+
+@pytest.mark.parametrize("status", ["behind", "diverged"])
+def test_release_commits_rejects_non_ancestor_comparison(publisher, monkeypatch, status):
+    monkeypatch.setattr(publisher, "api", lambda endpoint, **kwargs: {
+        "status": status, "total_commits": 0, "base_commit": {"sha": "b" * 40},
+        "merge_base_commit": {"sha": "b" * 40}, "commits": [],
+    })
+    with pytest.raises(publisher.PublicationError, match="release_notes_range_invalid"):
+        publisher.release_commits("v0.1.0", COMMIT)
+
+
+def test_release_commits_rejects_mismatched_merge_base(publisher, monkeypatch):
+    monkeypatch.setattr(publisher, "api", lambda endpoint, **kwargs: {
+        "status": "ahead", "total_commits": 1,
+        "base_commit": {"sha": "b" * 40}, "merge_base_commit": {"sha": "c" * 40},
+        "commits": [{"sha": COMMIT}],
+    })
+    with pytest.raises(publisher.PublicationError, match="release_notes_range_invalid"):
+        publisher.release_commits("v0.1.0", COMMIT)
+
+
+@pytest.mark.parametrize("commits", [[{"sha": COMMIT}], [{"sha": COMMIT}, {"sha": COMMIT}]])
+def test_release_commits_rejects_truncated_or_duplicate_compare_results(publisher, monkeypatch, commits):
+    base = "b" * 40
+    monkeypatch.setattr(publisher, "api", lambda endpoint, **kwargs: {
+        "status": "ahead", "total_commits": 2, "base_commit": {"sha": base},
+        "merge_base_commit": {"sha": base}, "commits": commits,
+    })
+    with pytest.raises(publisher.PublicationError, match="release_notes_commit_list_invalid"):
+        publisher.release_commits("v0.1.0", COMMIT)
+
+
+def test_first_release_commit_history_paginates_and_identical_range_is_empty(publisher, monkeypatch):
+    pages = [[{"sha": f"{index:040x}"} for index in range(100)], [{"sha": COMMIT}]]
+    monkeypatch.setattr(publisher, "api_response", lambda endpoint, **kwargs: pages.pop(0))
+    result = publisher.release_commits(None, COMMIT)
+    assert len(result) == 101 and COMMIT in result
+    monkeypatch.setattr(publisher, "api", lambda endpoint, **kwargs: {
+        "status": "identical", "total_commits": 0,
+        "base_commit": {"sha": COMMIT}, "merge_base_commit": {"sha": COMMIT},
+        "commits": [],
+    })
+    assert publisher.release_commits("v0.1.0", COMMIT) == set()
+
+
+def test_pull_request_notes_reads_second_all_pr_page_in_created_order(publisher, monkeypatch):
+    target = "b" * 40
+    monkeypatch.setattr(publisher, "release_commits", lambda previous, current: {target})
+    first = [{"number": index + 10, "title": "other", "merged_at": None,
+              "merge_commit_sha": target} for index in range(100)]
+    second = [{"number": 2, "title": "included", "merged_at": "2026-01-01T00:00:00Z",
+               "merge_commit_sha": target, "body": "description"}]
+    calls = []
+
+    def read(endpoint, **kwargs):
+        calls.append(endpoint)
+        return first if endpoint.endswith("page=1") else second
+
+    monkeypatch.setattr(publisher, "api_response", read)
+    notes = publisher.pull_request_notes("v0.1.0", target)
+    assert "included (#2)" in notes and "description" in notes
+    assert all("state=all" in endpoint and "sort=created" in endpoint
+               and "direction=asc" in endpoint for endpoint in calls)
+
+
+def test_pull_request_notes_rejects_invalid_selected_merge_timestamp(publisher, monkeypatch):
+    target = "b" * 40
+    monkeypatch.setattr(publisher, "release_commits", lambda previous, current: {target})
+    monkeypatch.setattr(publisher, "api_response", lambda endpoint, **kwargs: [{
+        "number": 3, "title": "Bad timestamp", "merged_at": "not-a-timestamp",
+        "merge_commit_sha": target, "body": "body",
+    }])
+    with pytest.raises(publisher.PublicationError, match="release_notes_pull_request_list_invalid"):
+        publisher.pull_request_notes("v0.1.0", target)
+
+
+def test_pull_request_notes_filters_range_and_preserves_ordered_bodies(publisher, monkeypatch):
+    commit = "b" * 40
+    release_commits = {commit, "c" * 40}
+    prs = [
+        {"number": 7, "title": "Later", "html_url": "https://github.com/p/7",
+         "merged_at": "2026-02-02T00:00:00Z", "merge_commit_sha": commit,
+         "body": "line 1\n\nline 2"},
+        {"number": 5, "title": "Earlier", "html_url": "https://github.com/p/5",
+         "merged_at": "2026-02-01T00:00:00Z", "merge_commit_sha": "c" * 40,
+         "body": None},
+        {"number": 9, "title": "Excluded", "html_url": "https://github.com/p/9",
+         "merged_at": "2026-02-03T00:00:00Z", "merge_commit_sha": "d" * 40,
+         "body": "outside"},
+        {"number": 10, "title": "Unmerged", "html_url": "https://github.com/p/10",
+         "merged_at": None, "merge_commit_sha": commit, "body": "outside"},
+    ]
+    monkeypatch.setattr(publisher, "release_commits", lambda previous, current: release_commits)
+    monkeypatch.setattr(publisher, "api_response", lambda endpoint, **kwargs: prs)
+    notes = publisher.pull_request_notes("v0.1.0", commit)
+    assert notes.index("#5") < notes.index("#7")
+    assert "No description was provided." in notes
+    assert "> line 1" in notes and "> line 2" in notes
+    assert "#9" not in notes and "#10" not in notes
+
+
+def test_pull_request_notes_preserves_indented_code_block_spacing(publisher, monkeypatch):
+    monkeypatch.setattr(publisher, "release_commits", lambda previous, current: {COMMIT})
+    monkeypatch.setattr(publisher, "api_response", lambda endpoint, **kwargs: [{
+        "number": 11, "title": "Code example", "merged_at": "2026-01-01T00:00:00Z",
+        "merge_commit_sha": COMMIT, "body": "    example()\n    another()\n",
+    }])
+    notes = publisher.pull_request_notes(None, COMMIT)
+    assert ">     example()" in notes
+    assert ">     another()" in notes
+
+
+def test_pull_request_page_failure_prevents_all_publication_mutations(
+        publisher, assets, monkeypatch, capsys):
+    private = "synthetic-authentication-secret"
+    calls = []
+    first_pr_page = [{"number": index + 1, "title": "Unmerged", "merged_at": None}
+                     for index in range(100)]
+
+    def run(*arguments):
+        calls.append(arguments)
+        endpoint = next((value for value in arguments if value.startswith("repos/")), "")
+        if "/releases?" in endpoint:
+            return http_result(200, [])
+        if "/releases/tags/" in endpoint or "/git/ref/" in endpoint:
+            return http_result(404)
+        if "/commits?" in endpoint:
+            return http_result(200, [{"sha": COMMIT}])
+        if "/pulls?" in endpoint and endpoint.endswith("page=1"):
+            return http_result(200, first_pr_page)
+        if "/pulls?" in endpoint and endpoint.endswith("page=2"):
+            return subprocess.CompletedProcess(
+                ["gh"], 1, "HTTP/2.0 500 Internal Server Error\n\n{}", private)
+        pytest.fail(f"unexpected GitHub call: {arguments}")
+
+    monkeypatch.setattr(publisher, "command", run)
+    with pytest.raises(publisher.PublicationError):
+        publisher.publish(assets)
+    assert any(any("/pulls?" in value and "page=2" in value for value in call)
+               for call in calls)
+    assert not any("POST" in call or "PATCH" in call for call in calls)
+    assert not any(call[:2] == ("release", action) for action in ("create", "upload")
+                   for call in calls)
+    captured = capsys.readouterr()
+    assert private not in captured.out and private not in captured.err
+
+
+def test_first_release_with_no_matching_pull_requests_has_explicit_message(publisher, monkeypatch):
+    monkeypatch.setattr(publisher, "release_commits", lambda previous, current: {COMMIT})
+    monkeypatch.setattr(publisher, "api_response", lambda endpoint, **kwargs: [])
+    assert "No pull requests were merged in this commit range." in (
+        publisher.pull_request_notes(None, COMMIT)
+    )
+
+
+def test_publish_fails_before_tag_creation_when_release_notes_lookup_fails(
+        publisher, assets, monkeypatch):
+    calls = []
+
+    def run(*arguments):
+        calls.append(arguments)
+        endpoint = next((value for value in arguments if value.startswith("repos/")), "")
+        if "/releases?" in endpoint:
+            return http_result(500)
+        return http_result(404)
+
+    monkeypatch.setattr(publisher, "command", run)
+    with pytest.raises(publisher.PublicationError):
+        publisher.publish(assets)
+    assert not any("POST" in call for call in calls)
 
 
 @pytest.mark.parametrize("bump,expected", [
@@ -281,15 +500,14 @@ def test_invalid_explicit_release_version_blocks_before_github(publisher, assets
 def test_explicit_version_is_used_for_asset_and_release_verification(
         publisher, assets, monkeypatch, operation):
     selected = "0.2.0"
-    for kind in ("dmg", "zip"):
-        binary = assets / f"mcpme-{VERSION}-arm64.{kind}"
-        receipt = binary.with_name(binary.name + ".build.json")
-        value = json.loads(receipt.read_text())
-        value["version"] = selected
-        destination = assets / f"mcpme-{selected}-arm64.{kind}"
-        binary.rename(destination)
-        receipt.unlink()
-        destination.with_name(destination.name + ".build.json").write_text(json.dumps(value))
+    binary = assets / f"mcpme-{VERSION}-arm64.dmg"
+    receipt = binary.with_name(binary.name + ".build.json")
+    value = json.loads(receipt.read_text())
+    value["version"] = selected
+    destination = assets / f"mcpme-{selected}-arm64.dmg"
+    binary.rename(destination)
+    receipt.unlink()
+    destination.with_name(destination.name + ".build.json").write_text(json.dumps(value))
     calls = install_github(monkeypatch, publisher, assets, version=selected,
                            existing_draft=operation == "resume")
     if operation == "publish":
@@ -306,6 +524,11 @@ def test_racing_tag_creation_cannot_publish(publisher, assets, monkeypatch):
 
     def run(*arguments):
         calls.append(arguments)
+        endpoint = next((value for value in arguments if value.startswith("repos/")), "")
+        if "/releases?" in endpoint or "/pulls?" in endpoint:
+            return http_result(200, [])
+        if "/commits?" in endpoint:
+            return http_result(200, [{"sha": COMMIT}])
         return http_result(422 if "POST" in arguments else 404)
 
     monkeypatch.setattr(publisher, "command", run)
@@ -377,23 +600,23 @@ def test_transport_failure_without_http_response_fails_closed(publisher, monkeyp
         publisher.prepare()
 
 
-@pytest.mark.parametrize("kind,change", [
-    ("dmg", lambda receipt: receipt.update(notarization="rejected")),
-    ("zip", lambda receipt: receipt["app_build"].update(notarization="not_requested")),
-    ("dmg", lambda receipt: receipt["app_build"].update(signing="ad_hoc")),
-    ("zip", lambda receipt: receipt["app_build"].update(source_commit="b" * 40)),
-    ("dmg", lambda receipt: receipt["app_build"].update(source_tree_dirty=True)),
-    ("zip", lambda receipt: receipt["app_build"].update(notarization_ticket_stapled=False)),
-    ("dmg", lambda receipt: receipt["app_build"].update(hardened_runtime=False)),
-    ("zip", lambda receipt: receipt["app_build"].update(secure_timestamp=False)),
-    ("dmg", lambda receipt: receipt["app_build"].update(version="9.9.9")),
-    ("dmg", lambda receipt: receipt["checks"].update(copied_app_gatekeeper_assessment=False)),
-    ("zip", lambda receipt: receipt["checks"].update(extracted_app_signature=False)),
-    ("dmg", lambda receipt: receipt.update(disk_image_signed=False)),
-    ("zip", lambda receipt: receipt.update(contained_app_notarization_ticket_stapled=False)),
+@pytest.mark.parametrize("change", [
+    lambda receipt: receipt.update(notarization="rejected"),
+    lambda receipt: receipt["app_build"].update(notarization="not_requested"),
+    lambda receipt: receipt["app_build"].update(signing="ad_hoc"),
+    lambda receipt: receipt["app_build"].update(source_commit="b" * 40),
+    lambda receipt: receipt["app_build"].update(source_tree_dirty=True),
+    lambda receipt: receipt["app_build"].update(notarization_ticket_stapled=False),
+    lambda receipt: receipt["app_build"].update(hardened_runtime=False),
+    lambda receipt: receipt["app_build"].update(secure_timestamp=False),
+    lambda receipt: receipt["app_build"].update(version="9.9.9"),
+    lambda receipt: receipt["checks"].update(copied_app_gatekeeper_assessment=False),
+    lambda receipt: receipt["checks"].update(copied_app_signature=False),
+    lambda receipt: receipt.update(disk_image_signed=False),
+    lambda receipt: receipt.update(notarization_ticket_stapled=False),
 ])
-def test_invalid_receipts_block_before_any_remote_write(publisher, assets, monkeypatch, kind, change):
-    change_receipt(assets, kind, change)
+def test_invalid_receipts_block_before_any_remote_write(publisher, assets, monkeypatch, change):
+    change_receipt(assets, change)
     monkeypatch.setattr(publisher, "command", lambda *args: pytest.fail("unexpected GitHub access"))
     with pytest.raises(publisher.PublicationError, match="release_asset_receipt_invalid"):
         publisher.publish(assets)
@@ -402,29 +625,26 @@ def test_invalid_receipts_block_before_any_remote_write(publisher, assets, monke
 
 @pytest.mark.parametrize("field,value", [("sha256", "0" * 64), ("bytes", 1), ("version", "0.2.0")])
 def test_receipt_hash_size_and_version_must_match(publisher, assets, monkeypatch, field, value):
-    change_receipt(assets, "dmg", lambda receipt: receipt.update({field: value}))
+    change_receipt(assets, lambda receipt: receipt.update({field: value}))
     monkeypatch.setattr(publisher, "command", lambda *args: pytest.fail("unexpected GitHub access"))
     with pytest.raises(publisher.PublicationError, match="release_asset_receipt"):
         publisher.publish(assets)
 
 
-def test_two_archives_must_describe_same_app(publisher, assets, monkeypatch):
-    change_receipt(assets, "zip", lambda receipt: receipt["app_build"].update(extra_native_hash="different"))
-    monkeypatch.setattr(publisher, "command", lambda *args: pytest.fail("unexpected GitHub access"))
-    with pytest.raises(publisher.PublicationError, match="release_asset_app_mismatch"):
-        publisher.publish(assets)
-
-
-@pytest.mark.parametrize("unexpected", ["other.dmg", "debug.log"])
+@pytest.mark.parametrize("unexpected", [
+    "other.dmg", "debug.log", f"mcpme-{VERSION}-arm64.zip",
+    f"mcpme-{VERSION}-arm64.zip.build.json",
+])
 def test_unrelated_files_cannot_be_published(publisher, assets, unexpected):
     (assets / unexpected).write_text("unrelated")
     with pytest.raises(publisher.PublicationError, match="release_asset_set_invalid"):
         publisher.validated_assets(assets, VERSION, COMMIT)
 
 
-def test_missing_or_symlinked_assets_are_rejected(publisher, assets, tmp_path):
-    binary = assets / f"mcpme-{VERSION}-arm64.zip"
-    target = tmp_path / "outside.zip"
+@pytest.mark.parametrize("suffix", ["dmg", "dmg.build.json"])
+def test_missing_or_symlinked_assets_are_rejected(publisher, assets, tmp_path, suffix):
+    binary = assets / f"mcpme-{VERSION}-arm64.{suffix}"
+    target = tmp_path / f"outside.{suffix}"
     binary.rename(target)
     with pytest.raises(publisher.PublicationError, match="release_asset_set_invalid"):
         publisher.validated_assets(assets, VERSION, COMMIT)
@@ -433,10 +653,13 @@ def test_missing_or_symlinked_assets_are_rejected(publisher, assets, tmp_path):
         publisher.validated_assets(assets, VERSION, COMMIT)
 
 
-def test_checksum_manifest_covers_downloads_and_receipts(publisher, assets):
+def test_checksum_manifest_covers_dmg_and_receipt(publisher, assets):
     paths = publisher.validated_assets(assets, VERSION, COMMIT)
     manifest = (assets / "SHA256SUMS.txt").read_text().splitlines()
-    assert len(paths) == 5 and len(manifest) == 4
+    assert {path.name for path in paths} == {
+        f"mcpme-{VERSION}-arm64.dmg", f"mcpme-{VERSION}-arm64.dmg.build.json", "SHA256SUMS.txt",
+    }
+    assert len(manifest) == 2
     for line in manifest:
         checksum, filename = line.split("  ")
         assert checksum == publisher.digest(assets / filename)
@@ -464,11 +687,31 @@ def test_publish_is_draft_until_exact_assets_and_hashes_are_verified(publisher, 
     assert capsys.readouterr() == ("", "")
 
 
+def test_publish_places_merged_pr_body_in_release_notes_file(publisher, assets, monkeypatch):
+    pull = {"number": 42, "title": "Installer improvements", "merged_at": "2026-01-01T00:00:00Z",
+            "merge_commit_sha": COMMIT, "body": "* graceful restart\n* preserves settings"}
+    calls = install_github(
+        monkeypatch, publisher, assets, pull_requests=[pull],
+        notes_assertion=lambda notes: (
+            assert_in_notes(notes, "Installer improvements (#42)"),
+            assert_in_notes(notes, "> * graceful restart"),
+        ),
+    )
+    assert publisher.publish(assets) == f"https://github.com/{publisher.REPOSITORY}/releases/tag/{TAG}"
+    assert any(call[:2] == ("release", "create") for call in calls)
+
+
+def assert_in_notes(notes, expected):
+    assert expected in notes
+
+
 @pytest.mark.parametrize("change,diagnostic", [
     (lambda release: release["assets"][0].update(digest="sha256:" + "0" * 64), "digest_mismatch"),
     (lambda release: release["assets"][0].update(size=0), "digest_mismatch"),
     (lambda release: release["assets"].pop(), "asset_set_invalid"),
-    (lambda release: release["assets"][0].update(name="unrelated.zip"), "asset_set_invalid"),
+    (lambda release: release["assets"][0].update(name=f"mcpme-{VERSION}-arm64.zip"), "asset_set_invalid"),
+    (lambda release: release["assets"].append(dict(release["assets"][0],
+                                                name=f"mcpme-{VERSION}-arm64.zip")), "asset_set_invalid"),
     (lambda release: release.update(target_commitish="main"), "metadata_invalid"),
     (lambda release: release.update(draft=False), "metadata_invalid"),
 ])

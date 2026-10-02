@@ -7,6 +7,7 @@ This store never executes selected sources or package entrypoints.
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -17,6 +18,7 @@ import stat
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -34,6 +36,39 @@ RETENTION_SECONDS = 30 * 24 * 60 * 60
 TEMPLATE_IDS = ["python-function-v1", "existing-mcp-v1", "jevk5-llamacpp-v1"]
 _TERMINAL_OPERATIONS = {"completed", "failed", "canceled"}
 _OPERATION_STATUSES = _TERMINAL_OPERATIONS | {"pending", "running", "recovery_required"}
+_ACTIVE_ATTACHMENT_STAGES_LOCK = threading.RLock()
+_ATTACHMENT_STAGE_LOCKS: dict[Path, _AttachmentLease] = {}
+
+
+@dataclass
+class _AttachmentLease:
+    descriptor: int
+    metadata: bytes
+    identity: tuple[int, ...] | None = None
+    claimed: bool = False
+
+
+def _stage_metadata(stage: dict[str, Any]) -> bytes:
+    return json.dumps(stage, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+
+
+def _root_identity(path: Path) -> tuple[int, ...]:
+    details = path.lstat()
+    if not stat.S_ISDIR(details.st_mode):
+        raise ImportError("package_digest_mismatch")
+    return (details.st_dev, details.st_ino, details.st_mode, details.st_mtime_ns, details.st_ctime_ns)
+
+
+def _remove_attachment_tree(path: Path) -> None:
+    if path.is_symlink():
+        raise ImportError("imports_unavailable")
+    if path.exists():
+        ensure_private_directory(path)
+        try:
+            shutil.rmtree(path)
+        except FileNotFoundError:
+            # A second collector may already be deleting a quarantined tree.
+            pass
 _EXCLUDED_DIRECTORIES = {
     ".git", ".hg", ".svn", ".venv", "venv", "env", "node_modules", "__pycache__",
     ".pytest_cache", ".mypy_cache", ".ruff_cache", ".cache", ".tox", ".nox",
@@ -319,6 +354,7 @@ class ImportStore:
     def __init__(self, state_root: Path):
         self.root = ensure_private_directory(Path(state_root))
         self.staging = ensure_private_directory(self.root / "imports")
+        self.attachment_staging = ensure_private_directory(self.root / "attachment-staging")
         self.path = self.root / "imports.sqlite"
         self._lock = threading.RLock()
         for suffix in ("", "-journal", "-wal", "-shm"):
@@ -351,6 +387,7 @@ class ImportStore:
                 PRAGMA user_version=1;
             """)
             self._recover_inactive_staging()
+            self._recover_attachment_staging()
         except (sqlite3.Error, ImportError, OSError, ValueError, UnicodeError) as error:
             if hasattr(self, "_connection"):
                 self._connection.close()
@@ -359,19 +396,85 @@ class ImportStore:
             raise ImportError("imports_unavailable") from None
 
     def _recover_inactive_staging(self) -> None:
-        """Reclaim staging left behind after an inactive-state commit."""
-        rows = self._connection.execute("SELECT draft_id, data FROM drafts")
-        for row in rows:
-            draft = json.loads(row["data"])
-            if draft.get("state") not in {"canceled", "expired"}:
-                continue
-            _identity(row["draft_id"])
-            directory = self.staging / row["draft_id"]
-            if not directory.exists() and not directory.is_symlink():
-                continue
-            ensure_private_directory(directory)
-            shutil.rmtree(directory)
-        _sync_directory(self.staging)
+        """Quarantine abandoned publications under the same admission winner.
+
+        The database lock excludes a live publisher between rename and commit.
+        Only directory renames occur inside the transaction; deletion follows.
+        """
+        abandoned = []
+        with self._transaction():
+            drafts = [json.loads(row["data"]) for row in self._connection.execute("SELECT data FROM drafts")]
+            referenced = {Path(draft["attachment"]["path"]).absolute()
+                          for draft in drafts if draft.get("attachment")}
+            inactive = {draft["draft_id"] for draft in drafts if draft.get("state") in {"canceled", "expired"}}
+            for directory in self.staging.iterdir():
+                if directory.name in inactive and directory.is_symlink():
+                    raise ImportError("imports_unavailable")
+                if directory.is_symlink() or not directory.is_dir():
+                    continue
+                candidates = [directory] if directory.name in inactive else list(directory.glob("package-*"))
+                for candidate in candidates:
+                    if candidate.absolute() in referenced and directory.name not in inactive:
+                        continue
+                    ensure_private_directory(candidate)
+                    quarantine = self.attachment_staging / (".garbage-" + uuid.uuid4().hex)
+                    os.rename(candidate, quarantine)
+                    abandoned.append(quarantine)
+                if directory.exists():
+                    _sync_directory(directory)
+            _sync_directory(self.staging)
+        for candidate in abandoned:
+            _remove_attachment_tree(candidate)
+
+    @contextlib.contextmanager
+    def _attachment_coordination(self) -> Iterator[None]:
+        """Serialize lease creation and collection across processes.
+
+        Creating a file and flocking it are not atomic. This short directory
+        lease prevents a collector from unlinking a not-yet-locked owner file.
+        It is never held during package validation or copying.
+        """
+        with _ACTIVE_ATTACHMENT_STAGES_LOCK:
+            descriptor = os.open(self.attachment_staging / ".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            try:
+                check_private_file(self.attachment_staging / ".lock")
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
+                yield
+            finally:
+                os.close(descriptor)
+
+    def _recover_attachment_staging(self) -> None:
+        """Collect only trees whose OS lease proves their owner has stopped."""
+        with self._attachment_coordination():
+            protected = set()
+            entries = list(self.attachment_staging.iterdir())
+            for entry in entries:
+                if not entry.name.endswith(".owner"):
+                    continue
+                base = entry.name[:-6]
+                check_private_file(entry)
+                descriptor = os.open(entry, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
+                try:
+                    try:
+                        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        # Both the completed tree and snapshot_package's
+                        # in-progress temp tree belong to this live lease.
+                        protected.add(base)
+                        continue
+                    for tree in entries:
+                        if tree.name == base or (tree.name.startswith(base + ".") and tree.name.endswith(".tmp")):
+                            _remove_attachment_tree(tree)
+                    entry.unlink(missing_ok=True)
+                finally:
+                    os.close(descriptor)
+            for entry in entries:
+                if entry.name == ".lock" or entry.name.endswith(".owner"):
+                    continue
+                if any(entry.name == base or entry.name.startswith(base + ".") for base in protected):
+                    continue
+                _remove_attachment_tree(entry)
+            _sync_directory(self.attachment_staging)
 
     def close(self) -> None:
         self._connection.close()
@@ -537,26 +640,176 @@ class ImportStore:
                 )
             return specification
 
-    def attach(self, draft_id: str, revision: int, package: Path) -> dict[str, Any]:
-        with self._transaction():
+    def stage_attachment(self, draft_id: str, revision: int, package: Path,
+                         *, expected_digest: str | None = None) -> dict[str, Any]:
+        """Validate and copy a package without holding the import write lock."""
+        with self._lock:
             draft = self._get(draft_id, revision)
             self._mutable(draft)
-            validated = validate_package(package)
-            if (draft["source"]["kind"] != "prepared_package"
-                    and validated.manifest.source_revision != draft["source"]["revision"]):
-                raise ImportError("source_identity_mismatch")
-            existing = draft["attachment"]
-            if existing is not None:
-                if existing["digest"] != validated.digest:
+        # Hashing a large package must not hold even the connection's read lock.
+        try:
+            source = validate_package(package)
+        except PackageError as error:
+            raise ImportError(error.code) from None
+        if expected_digest is not None and source.digest != expected_digest:
+            raise ImportError("package_digest_mismatch")
+        if (draft["source"]["kind"] != "prepared_package"
+                and source.manifest.source_revision != draft["source"]["revision"]):
+            raise ImportError("source_identity_mismatch")
+        digest = source.digest
+        stage = self.attachment_staging / f"{draft_id}-{revision}-{digest}-{uuid.uuid4().hex}"
+        metadata = {"draft_id": draft_id, "revision": revision,
+                    "path": str(stage), "digest": digest,
+                    "source_revision": source.manifest.source_revision}
+        frozen = _stage_metadata(metadata)
+        owner_path = Path(str(stage) + ".owner")
+        with self._attachment_coordination():
+            owner = os.open(owner_path, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            try:
+                fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with os.fdopen(os.dup(owner), "wb") as output:
+                    output.write(frozen)
+                    output.flush()
+                    os.fsync(output.fileno())
+                _ATTACHMENT_STAGE_LOCKS[stage] = _AttachmentLease(owner, frozen)
+                _sync_directory(self.attachment_staging)
+            except BaseException:
+                os.close(owner)
+                owner_path.unlink(missing_ok=True)
+                raise
+        completed = False
+        try:
+            sealed = snapshot_package(source, stage, expected_digest=digest)
+            with _ACTIVE_ATTACHMENT_STAGES_LOCK:
+                _ATTACHMENT_STAGE_LOCKS[stage].identity = _root_identity(sealed.root)
+            completed = True
+            return metadata
+        except PackageError as error:
+            raise ImportError(error.code) from None
+        except (OSError, ValueError):
+            raise ImportError("package_snapshot_failed") from None
+        finally:
+            if not completed:
+                self._discard_attachment_stage(stage)
+
+    def _discard_attachment_stage(self, path: Path) -> None:
+        """Clean while the lease remains held, then release its identity."""
+        with _ACTIVE_ATTACHMENT_STAGES_LOCK:
+            lease = _ATTACHMENT_STAGE_LOCKS.get(path)
+        if lease is None:
+            return
+        try:
+            _remove_attachment_tree(path)
+        finally:
+            with self._attachment_coordination():
+                try:
+                    _ATTACHMENT_STAGE_LOCKS.pop(path, None)
+                    Path(str(path) + ".owner").unlink(missing_ok=True)
+                    _sync_directory(self.attachment_staging)
+                finally:
+                    os.close(lease.descriptor)
+
+    def _reclaim_publication(self, final: Path, identity: tuple[int, ...], stage: Path) -> None:
+        """Rollback cleanup cannot remove a publication another writer admitted."""
+        with self._transaction():
+            references = [json.loads(row["data"]).get("attachment")
+                          for row in self._connection.execute("SELECT data FROM drafts")]
+            if any(item and Path(item["path"]).absolute() == final for item in references):
+                return
+            if final.exists() and _root_identity(final)[:2] == identity[:2]:
+                os.rename(final, stage)
+                _sync_directory(final.parent)
+
+    def admit_attachment(self, stage: dict[str, Any], *, admission=None) -> dict[str, Any]:
+        """Publish an already copied package with a short transaction."""
+        required = {"draft_id", "revision", "path", "digest", "source_revision"}
+        if not isinstance(stage, dict) or set(stage) != required:
+            raise ImportError("invalid_attachment_stage")
+        draft_id, revision = stage["draft_id"], stage["revision"]
+        if not all(isinstance(stage[key], str) for key in ("path", "digest", "source_revision", "draft_id")):
+            raise ImportError("invalid_attachment_stage")
+        stage_path = Path(stage["path"]).absolute()
+        if stage_path.parent != self.attachment_staging:
+            raise ImportError("invalid_attachment_stage")
+        _identity(draft_id)
+        if type(revision) is not int or revision < 1 or not re.fullmatch(r"[0-9a-f]{64}", stage["digest"]):
+            raise ImportError("invalid_attachment_stage")
+        with _ACTIVE_ATTACHMENT_STAGES_LOCK:
+            lease = _ATTACHMENT_STAGE_LOCKS.get(stage_path)
+            if lease is None or lease.claimed or lease.identity is None or lease.metadata != _stage_metadata(stage):
+                raise ImportError("invalid_attachment_stage")
+            lease.claimed = True
+        published = None
+        committed = False
+        try:
+            sealed = validate_package(stage_path)
+            if (sealed.digest != stage["digest"] or sealed.manifest.source_revision != stage["source_revision"]
+                    or _root_identity(stage_path) != lease.identity):
+                raise ImportError("package_digest_mismatch")
+            final = self.staging / draft_id / f"package-{revision}-{sealed.digest}"
+            while True:
+                with self._lock:
+                    observed = self._get(draft_id, revision)
+                    self._mutable(observed)
+                existing = observed["attachment"]
+                if existing is not None and existing["digest"] != sealed.digest:
                     raise ImportError("import_revision_required")
-                if validate_package(Path(existing["path"])).digest != existing["digest"]:
-                    raise ImportError("package_digest_mismatch")
-                return draft
-            path = self.staging / draft_id / f"package-{revision}-{validated.digest}"
-            sealed = snapshot_package(validated, path, expected_digest=validated.digest)
-            draft["attachment"] = _attachment(sealed)
-            self._save(draft)
-            return draft
+                target = Path(existing["path"]).absolute() if existing else final
+                target_identity = None
+                # Validate even an idempotent attachment or an orphaned final
+                # tree. These expensive reads are outside the admission lock.
+                if existing is not None or target.exists() or target.is_symlink():
+                    if validate_package(target).digest != sealed.digest:
+                        raise ImportError("package_digest_mismatch")
+                    target_identity = _root_identity(target)
+                retry = False
+                with self._transaction():
+                    draft = self._get(draft_id, revision)
+                    self._mutable(draft)
+                    if draft["source"]["kind"] != "prepared_package" and sealed.manifest.source_revision != draft["source"]["revision"]:
+                        raise ImportError("source_identity_mismatch")
+                    if draft["attachment"] != existing:
+                        # Another writer won while validation was in progress.
+                        # Validate its tree outside the transaction before retry.
+                        retry = True
+                    elif target_identity is None and (target.exists() or target.is_symlink()):
+                        retry = True
+                    else:
+                        if target_identity is not None and _root_identity(target) != target_identity:
+                            raise ImportError("package_digest_mismatch")
+                        if _root_identity(stage_path) != lease.identity:
+                            raise ImportError("package_digest_mismatch")
+                        if admission is not None:
+                            admission(draft, sealed)
+                        if existing is None:
+                            if target_identity is None:
+                                ensure_private_directory(final.parent)
+                                os.rename(stage_path, final)
+                                published = (final, _root_identity(final))
+                                _sync_directory(final.parent)
+                            attachment = _attachment(sealed)
+                            attachment["path"] = str(final)
+                            draft["attachment"] = attachment
+                            self._save(draft)
+                if not retry:
+                    committed = True
+                    return draft
+        except ImportError:
+            raise
+        except PackageError as error:
+            raise ImportError(error.code) from None
+        except OSError:
+            raise ImportError("package_snapshot_failed") from None
+        finally:
+            try:
+                if published is not None and not committed:
+                    self._reclaim_publication(*published, stage_path)
+            finally:
+                self._discard_attachment_stage(stage_path)
+
+    def attach(self, draft_id: str, revision: int, package: Path) -> dict[str, Any]:
+        stage = self.stage_attachment(draft_id, revision, package)
+        return self.admit_attachment(stage)
 
     def _binding(self, draft_id: str, revision: int, package_digest: str) -> dict[str, Any]:
         draft = self._get(draft_id, revision)

@@ -189,6 +189,34 @@ def parser() -> argparse.ArgumentParser:
             item.add_argument("--start-policy", choices=["manual", "host"])
             item.add_argument("--requirements", type=Path, help="JSON file of nonsecret tool/profile/resource requirements.")
         item.add_argument("--json", action="store_true")
+    recipes = commands.add_parser("recipes").add_subparsers(dest="action", required=True)
+    scaffold = recipes.add_parser("scaffold")
+    scaffold.add_argument("--output", type=Path, required=True)
+    scaffold.add_argument("--id", dest="recipe_id", required=True)
+    scaffold.add_argument("--version", default="1.0.0")
+    scaffold.add_argument("--component", choices=["python-function-v1", "existing-mcp-v1"], default="python-function-v1")
+    scaffold.add_argument("--json", action="store_true")
+    for action in ("check", "lock", "add"):
+        item = recipes.add_parser(action)
+        item.add_argument("--path", type=Path, required=True)
+        item.add_argument("--json", action="store_true")
+    recipes.add_parser("list").add_argument("--json", action="store_true")
+    for action in ("inspect", "enable", "disable", "revoke", "remove", "deprecate"):
+        item = recipes.add_parser(action)
+        item.add_argument("--id", dest="recipe_id", required=True)
+        item.add_argument("--version", required=True)
+        item.add_argument("--json", action="store_true")
+    preparations = commands.add_parser("preparations").add_subparsers(dest="action", required=True)
+    preparation_plan = preparations.add_parser("plan")
+    preparation_plan.add_argument("--import", dest="import_id", type=uuid_argument, required=True)
+    preparation_plan.add_argument("--revision", type=int, required=True)
+    preparation_plan.add_argument("--descriptor", type=Path, required=True)
+    preparation_plan.add_argument("--json", action="store_true")
+    preparations.add_parser("list").add_argument("--json", action="store_true")
+    for action in ("get", "cancel"):
+        item = preparations.add_parser(action)
+        item.add_argument("job_id", type=uuid_argument)
+        item.add_argument("--json", action="store_true")
     operation = commands.add_parser("operations").add_subparsers(dest="action", required=True).add_parser("get")
     operation.add_argument("operation_id", type=uuid_argument)
     operation.add_argument("--json", action="store_true")
@@ -264,6 +292,33 @@ async def execute(args) -> dict | None:
     if args.command == "validate":
         package = validate_package(args.package.absolute())
         return {"valid": True, "package_digest": package.digest, "package": package.manifest.model_dump()}
+    if args.command == "recipes":
+        if args.action in {"scaffold", "check", "lock"}:
+            from .recipe_sdk import check_recipe, relock_recipe, scaffold_recipe
+            if args.action == "scaffold":
+                return scaffold_recipe(args.output, args.recipe_id, args.version, args.component)
+            if args.action == "lock":
+                return relock_recipe(args.path.absolute())
+            return check_recipe(args.path.absolute())
+        if args.action == "list":
+            return await api("GET", "/v1/recipes")
+        if args.action == "add":
+            return await api("POST", "/v1/recipes", {"path": str(args.path.absolute())})
+        return await api("POST", "/v1/recipes/" + args.action,
+                         {"recipe_id": args.recipe_id, "version": args.version})
+    if args.command == "preparations":
+        if args.action == "plan":
+            from .recipe_sdk import read_contract_file
+            if args.revision < 1:
+                from .preparation_contracts import PreparationError
+                raise PreparationError("invalid_import_revision")
+            descriptor = read_contract_file(args.descriptor)
+            return await api("POST", "/v1/preparations/plan",
+                             {"import_id": args.import_id, "revision": args.revision, "descriptor": descriptor})
+        if args.action == "list":
+            return await api("GET", "/v1/preparations")
+        route = "/v1/preparations/" + args.job_id
+        return await api("GET", route) if args.action == "get" else await api("POST", route + "/cancel", {})
     if args.command == "capabilities":
         return await api("GET", "/v1/capabilities")
     if args.command == "slots":
@@ -373,7 +428,8 @@ def main(argv=None) -> int:
     except (Exception, KeyboardInterrupt) as error:
         # No error text is exposed: dependencies may include caller data in it.
         if args.command != "connect" and not (args.command == "management" and args.action == "connect"):
-            emit({"error": {"code": error.code if isinstance(error, (PackageError, GrantError)) else "host_unavailable"}})
+            from .preparation_contracts import PreparationError
+            emit({"error": {"code": error.code if isinstance(error, (PackageError, GrantError, PreparationError)) else "host_unavailable"}})
         return 2
     return 0
 

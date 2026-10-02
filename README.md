@@ -11,7 +11,7 @@ Run a JSON validator alongside a local decision model. Connect several clients t
 ## What you can do
 
 - **See what's running.** The menu groups apps that need attention, running apps, and stopped apps. See incoming requests, recent traffic, and work in flight at a glance. Click an app to open its live details to the right, with controls, failures, latency, tools, and connection setup.
-- **Control apps individually.** Start, stop, or restart a service. In Manage Apps, choose **Manual** or **Automatic when mcpme opens** for an installed app, or remove it while keeping its data for recovery.
+- **Manage apps in one place.** Search and filter the app sidebar, then select an app for live requests, tools, connection details, and recent operations. Start, stop, or restart a service. Choose **Manual** or **Automatic when mcpme opens**, or remove the app while keeping its data for recovery.
 - **Connect your assistant.** Copy an app's connection configuration and add it to your MCP client. Its endpoint stays stable across restarts.
 - **Share a local model.** Use a model of your choice through a prepared package, and connect multiple assistants to the same running app.
 - **Bring your own tools.** Install a prepared package, or start from source code and use an external coding agent to prepare it.

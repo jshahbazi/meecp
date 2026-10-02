@@ -125,6 +125,7 @@ def test_notary_uses_selected_keychain_and_records_only_submission(monkeypatch, 
 @pytest.fixture
 def fake_packaging(monkeypatch, tmp_path):
     calls = []
+    archives = {}
     info = {"CFBundleShortVersionString": "0.1.0", "CFBundleVersion": "1", "LSMinimumSystemVersion": "26.0"}
     monkeypatch.setattr(dmg_builder, "ROOT", tmp_path)
     monkeypatch.setattr(dmg_builder.platform, "system", lambda: "Darwin")
@@ -148,6 +149,9 @@ def fake_packaging(monkeypatch, tmp_path):
             Path(arguments[-1]).write_bytes(b"synthetic image bytes")
         elif arguments[:2] == ("/usr/bin/ditto", "-c"):
             Path(arguments[-1]).write_bytes(b"synthetic zip")
+            archives[arguments[-1]] = Path(arguments[-2])
+        elif arguments[:2] == ("/usr/bin/ditto", "-x"):
+            shutil.copytree(archives[arguments[-2]], Path(arguments[-1]) / "mcpme.app")
         elif arguments[0] == "/usr/bin/ditto":
             shutil.copytree(arguments[1], arguments[2])
         elif "notarytool" in arguments:
@@ -162,6 +166,7 @@ def fake_packaging(monkeypatch, tmp_path):
     monkeypatch.setattr(dmg_builder, "build_app", build_app)
     monkeypatch.setattr(dmg_builder, "run", run)
     monkeypatch.setattr(dmg_builder, "verify_image", verify)
+    monkeypatch.setattr(dmg_builder, "verify_runtime", lambda app, workspace: calls.append(("verify_runtime", str(app))))
     return calls
 
 
@@ -232,3 +237,153 @@ def test_notarization_requires_explicit_release_identity(fake_packaging, tmp_pat
     with pytest.raises(SystemExit, match="requires_signing_identity"):
         dmg_builder.build(tmp_path / "installer.dmg", notary_profile="release")
     assert fake_packaging == []
+
+
+@pytest.mark.parametrize("signed,notarized,distribution", [
+    (False, False, "development_app_zip"),
+    (True, False, "developer_id_app_zip"),
+    (True, True, "notarized_app_zip"),
+])
+def test_zip_receipt_matches_verified_app_and_archive(fake_packaging, tmp_path, signed, notarized, distribution):
+    image = tmp_path / "installer.dmg"
+    archive = tmp_path / "archives/mcpme.zip"
+    assert dmg_builder.build(image, sign_identity=IDENTITY if signed else None,
+                             notary_profile="release" if notarized else None,
+                             zip_output=archive) == image
+    receipt = json.loads(archive.with_name(archive.name + ".build.json").read_text())
+    assert receipt["distribution"] == distribution
+    assert receipt["sha256"] == dmg_builder.sha256(archive)
+    assert receipt["bytes"] == archive.stat().st_size
+    assert receipt["version"] == "0.1.0"
+    assert receipt["build"] == "1"
+    assert receipt["architecture"] == "arm64"
+    assert receipt["checks"]["archive_contains_app"] is True
+    assert receipt["checks"]["extracted_app_signature"] is True
+    assert receipt["checks"]["private_runtime_minimal_environment"] is True
+    runtime_call = next(call for call in fake_packaging if call[0] == "verify_runtime")
+    assert "test Applications/mcpme.app" in runtime_call[-1]
+    assert "notarization_ticket_stapled" not in receipt
+    if notarized:
+        assert receipt["notarization"] == "accepted"
+        assert receipt["contained_app_notarization_ticket_stapled"] is True
+        assert receipt["app_build"]["notarization_ticket_stapled"] is True
+        assert receipt["notary_submission_id"] == SUBMISSION
+        assert receipt["checks"]["extracted_app_notarization_ticket"] is True
+        assert receipt["checks"]["extracted_app_gatekeeper_assessment"] is True
+        archives = [i for i, call in enumerate(fake_packaging) if call[:2] == ("/usr/bin/ditto", "-c")]
+        app_staple = next(i for i, call in enumerate(fake_packaging)
+                          if "staple" in call and call[-1].endswith("mcpme.app"))
+        assert len(archives) == 2
+        assert archives[0] < app_staple < archives[1]
+        assert len([call for call in fake_packaging if "notarytool" in call]) == 2
+    else:
+        assert receipt["notarization"] == "not_requested"
+        assert "contained_app_notarization_ticket_stapled" not in receipt
+
+
+def test_zip_extraction_metadata_failure_prevents_all_publication(fake_packaging, monkeypatch, tmp_path):
+    original_metadata = dmg_builder.app_metadata
+
+    def metadata(app, certificate=None):
+        if app.parent.name == "test Applications":
+            return {"CFBundleShortVersionString": "0.2.0"}
+        return original_metadata(app, certificate)
+
+    monkeypatch.setattr(dmg_builder, "app_metadata", metadata)
+    image, archive = tmp_path / "installer.dmg", tmp_path / "mcpme.zip"
+    with pytest.raises(SystemExit, match="ZIP app metadata changed"):
+        dmg_builder.build(image, sign_identity=IDENTITY, notary_profile="release", zip_output=archive)
+    assert any(call[:2] == ("/usr/bin/ditto", "-x") for call in fake_packaging)
+    for output in (image, archive, image.with_name(image.name + ".build.json"),
+                   archive.with_name(archive.name + ".build.json")):
+        assert not output.exists()
+
+
+def test_zip_extracted_gatekeeper_failure_prevents_all_publication(fake_packaging, monkeypatch, tmp_path):
+    original_run = dmg_builder.run
+
+    def run(*arguments):
+        if arguments[0] == "/usr/sbin/spctl" and "test Applications" in arguments[-1]:
+            raise BuildCommandError("spctl_assess", 1)
+        return original_run(*arguments)
+
+    monkeypatch.setattr(dmg_builder, "run", run)
+    image, archive = tmp_path / "installer.dmg", tmp_path / "mcpme.zip"
+    with pytest.raises(BuildCommandError):
+        dmg_builder.build(image, sign_identity=IDENTITY, notary_profile="release", zip_output=archive)
+    assert not image.exists()
+    assert not archive.exists()
+    assert not image.with_name(image.name + ".build.json").exists()
+    assert not archive.with_name(archive.name + ".build.json").exists()
+
+
+@pytest.mark.parametrize("obstacle", ["archive", "receipt", "suffix", "symlink"])
+def test_zip_requires_fresh_output_and_receipt(fake_packaging, tmp_path, obstacle):
+    archive = tmp_path / "mcpme.zip"
+    if obstacle == "archive":
+        archive.write_bytes(b"existing archive")
+    elif obstacle == "receipt":
+        archive.with_name(archive.name + ".build.json").write_text("existing receipt")
+    elif obstacle == "suffix":
+        archive = archive.with_suffix(".tar")
+    else:
+        archive.symlink_to(tmp_path / "missing")
+    with pytest.raises(SystemExit, match="fresh"):
+        dmg_builder.build(tmp_path / "installer.dmg", zip_output=archive)
+    assert fake_packaging == []
+
+
+def test_publication_failure_rolls_back_dmg_zip_and_receipts(fake_packaging, monkeypatch, tmp_path):
+    original_link = dmg_builder.os.link
+    image, archive = tmp_path / "installer.dmg", tmp_path / "mcpme.zip"
+    zip_receipt = archive.with_name(archive.name + ".build.json")
+
+    def link(staged, destination):
+        if destination == zip_receipt:
+            raise OSError("publication failure")
+        original_link(staged, destination)
+
+    monkeypatch.setattr(dmg_builder.os, "link", link)
+    with pytest.raises(OSError, match="publication failure"):
+        dmg_builder.build(image, zip_output=archive)
+    assert not image.exists()
+    assert not archive.exists()
+    assert not image.with_name(image.name + ".build.json").exists()
+    assert not zip_receipt.exists()
+
+
+def test_publication_collision_preserves_existing_file(fake_packaging, monkeypatch, tmp_path):
+    original_link = dmg_builder.os.link
+    image, archive = tmp_path / "installer.dmg", tmp_path / "mcpme.zip"
+
+    def link(staged, destination):
+        if destination == archive:
+            archive.write_bytes(b"another publisher")
+        original_link(staged, destination)
+
+    monkeypatch.setattr(dmg_builder.os, "link", link)
+    with pytest.raises(FileExistsError):
+        dmg_builder.build(image, zip_output=archive)
+    assert not image.exists()
+    assert not image.with_name(image.name + ".build.json").exists()
+    assert archive.read_bytes() == b"another publisher"
+    assert not archive.with_name(archive.name + ".build.json").exists()
+
+
+def test_private_runtime_uses_isolated_home_and_minimal_environment(monkeypatch, tmp_path):
+    app = tmp_path / "test Applications/mcpme.app"
+    captured = {}
+
+    def run(arguments, **kwargs):
+        captured.update({"arguments": arguments, **kwargs})
+
+    monkeypatch.setattr(dmg_builder.subprocess, "run", run)
+    dmg_builder.verify_runtime(app, tmp_path)
+    assert captured["arguments"] == [str(app / "Contents/Resources/host/bin/mcpme"), "--help"]
+    assert captured["cwd"] == tmp_path / "test home"
+    assert captured["env"] == {"HOME": str(tmp_path / "test home"), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                               "LANG": "en_US.UTF-8", "TMPDIR": str(tmp_path)}
+    assert captured["stdout"] == subprocess.DEVNULL
+    assert captured["stderr"] == subprocess.PIPE
+    assert captured["check"] is True
+    assert captured["timeout"] == 30

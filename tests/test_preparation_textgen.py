@@ -125,3 +125,26 @@ def test_verifier_implementation_changes_component_identity(tmp_path, monkeypatc
         return data + b"\n# identity test\n" if path.name == "preparation_textgen_verifier.py" else data
     monkeypatch.setattr(textgen, "_read", changed)
     assert all(a.digest != b.digest for a, b in zip(before, textgen.references()))
+
+
+def test_generic_store_selects_full_text_composition_and_static_candidate(tmp_path, monkeypatch):
+    from mcpme.imports import ImportStore
+    from mcpme.preparations import PreparationStore
+    from mcpme.recipes import RecipeStore
+    monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: pytest.fail("static inspection launched a process"))
+    family = textgen.TextGenerationFamily(None)
+    with ImportStore(tmp_path / "state") as imports:
+        store = PreparationStore(imports, RecipeStore(imports), families=(family,))
+        source = draft(); value = descriptor(source)
+        assert store.family_for(value) is family
+        inspection = store.inspect_source(source)
+        assert not inspection["blockers"]
+        assert [c["kind"] for c in inspection["candidates"]] == ["llamacpp-text-generation"]
+        candidate = inspection["candidates"][0]
+        assert family.form_provider.accepts(candidate, recipe())
+        fields, bindings, blockers = family.form_provider.fields(source, candidate, recipe())
+        assert not blockers and len(fields) == len(bindings) == 2
+        raw = value.model_dump(exclude_none=True)
+        raw["components"].pop()
+        with pytest.raises(PreparationError, match="unknown_preparation_component"):
+            store.family_for(parse_component_descriptor(raw))

@@ -105,6 +105,22 @@ and 2,048 held-leader windows passed. Sampled windows do not prove full lifetime
 coverage or a hard physical-memory ceiling. Its report-only executor remains
 unregistered and cannot supply a positive preparation result.
 
+The combined backend and immutable TextGen 1.0.5 recipe passed 2,540 Python
+checks with 12 skips and no failures. Swift passed 18 checks with three opt-in
+installer skips. After adding the inert format-4 helper packaging and native
+TextGen acceptance driver, the 119 affected packaging/signing/launcher/harness
+checks passed; the secret scanner and diff check also passed. These are source
+checkpoint results, before the fresh combined installed-artifact run.
+
+An independent mint review verified the exact 74 implementation and ten asset
+hashes, seven new recipe files and 35 historical TextGen files. All 34 real-store
+upgrade/lifecycle cases passed without creating a process or enabling execution.
+The independent packaging review passed 96 bounded checks and verified unchanged
+format-3 and backend bytes. A separate native-harness review found no remaining
+actionable gap after checking its transitive clean-host guard and private imports.
+Public/default admission, resource enforcement and whole-phase acceptance remain
+open.
+
 The durable-job review additionally reproduced pre-execution recipe disable bypass, missing-wrapper ownership that could never settle, cached recovery/failed shutdown that missed later completion, cancellation during attachment and publication hashes, and initial/post-probe verifier hashing that outlived cancellation. Repairs add first-execution fencing, explicit proven-nonlaunch receipts, refreshable recovery/shutdown, and owned thread barriers. Each has a checked-in regression case; independent reproductions also exercise the publication responsiveness and cancellation winners. This review covers the checkpoint and does not replace the final complete Phase 3 review.
 
 ## Checkpoint verification

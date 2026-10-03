@@ -50,7 +50,7 @@ async def bounded_json(client, method, url, *, headers, payload=None):
 
 
 async def verify_textgen_package(package_root: Path, descriptor, reaper: Path, workspace: Path, *,
-                                 timeout_seconds=60, owner=None):
+                                 timeout_seconds=60, owner=None, graph_accounting=None, graph_admission_check=None):
     if (type(timeout_seconds) not in {int, float} or not math.isfinite(timeout_seconds)
             or not 0 < timeout_seconds <= 3600):
         raise PreparationError("invalid_preparation_probe_limit")
@@ -60,7 +60,12 @@ async def verify_textgen_package(package_root: Path, descriptor, reaper: Path, w
         validate_model_package(package, descriptor, require_receipt=True)
     require([f.model_dump(exclude_none=True) for f in descriptor.validation] == task_fixtures(),
             "textgen_fixture_contract_mismatch")
-    owner = owner if owner is not None else ProcessOwner(reaper)
+    if owner is not None and graph_accounting is not None:
+        require(getattr(owner, "graph_accounting", None) is graph_accounting, "textgen_graph_owner_mismatch")
+    if owner is not None and graph_admission_check is not None:
+        require(getattr(owner, "graph_admission_check", None) is graph_admission_check, "textgen_graph_owner_mismatch")
+    owner = owner if owner is not None else ProcessOwner(reaper, graph_accounting=graph_accounting,
+                                                       graph_admission_check=graph_admission_check)
     processes = []
     try:
         async with asyncio.timeout(max(0, timeout_seconds - (time.monotonic() - started))):
@@ -86,6 +91,7 @@ async def verify_textgen_package(package_root: Path, descriptor, reaper: Path, w
                         ["--mcpme-config-fd", str(read)], package.root,
                         {"PATH": "/usr/bin:/bin", "HOME": str(workspace), "TMPDIR": str(workspace), "LANG": "C"},
                         inherited_fds=(read,), owned_group=True, io_mode="fds",
+                        **({"graph_role": role} if getattr(owner, "graph_accounting", None) is not None else {}),
                         startup_timeout=min(timeout_seconds, 120), stop_grace=.1)
                     processes.append(process)
                     process.close_stdio()

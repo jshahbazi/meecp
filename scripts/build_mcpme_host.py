@@ -177,6 +177,38 @@ def bundle_textgen_toolchain(destination: Path, engine: Path) -> None:
     bundle(destination, engine)
 
 
+def bundle_command_helper(destination: Path) -> None:
+    """Ship reviewed ownership bytes without enabling the experimental profile.
+
+    This is an inventory, not an admission configuration. No runtime path reads
+    it to construct HostCommandAdmission; the production constructor stays closed.
+    """
+    source = ROOT / "scripts/mcpme-command-reap.c"
+    helper = destination / "bin/mcpme-command-reap"
+    run("/usr/bin/cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", str(source), "-o", str(helper))
+    run("/usr/bin/codesign", "--force", "--sign", "-", str(helper))
+    (destination / "command-execution.json").write_text(json.dumps({
+        "schema_version": 1, "package_schema": 2, "profile": "host-command",
+        "component": "macos26-arm64-command-v3", "receipt_format": 3,
+        "helper": "bin/mcpme-command-reap", "helper_sha256": hashlib.sha256(helper.read_bytes()).hexdigest(),
+        "helper_source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "platform": {"os": "macos", "major": 26, "architecture": "arm64"},
+        "production_admission": "disabled", "configuration_authority": "inventory-only",
+        "open_gates": ["aggregate-process-memory-enforcement", "signed-relocated-native-app"]},
+        sort_keys=True, indent=2) + "\n")
+
+
+def refresh_command_inventory(destination: Path) -> None:
+    """Refresh only the artifact hash after distribution signing changes bytes."""
+    path = destination / "command-execution.json"
+    value = json.loads(path.read_bytes())
+    if (value.get("helper") != "bin/mcpme-command-reap" or value.get("production_admission") != "disabled"
+            or value.get("configuration_authority") != "inventory-only"):
+        raise ValueError("command_inventory_invalid")
+    value["helper_sha256"] = hashlib.sha256((destination / "bin/mcpme-command-reap").read_bytes()).hexdigest()
+    path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n")
+
+
 def build(destination: Path, version: str | None = None, *, textgen_engine: Path | None = None):
     version = project_version(version)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
@@ -194,6 +226,7 @@ def build(destination: Path, version: str | None = None, *, textgen_engine: Path
     (destination / "bin").mkdir()
     run("/usr/bin/cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
         str(ROOT / "scripts/mcpme-reap.c"), "-o", str(destination / "bin/mcpme-reap"))
+    bundle_command_helper(destination)
     requirements = destination / "requirements.txt"
     run("uv", "export", "--frozen", "--no-dev", "--no-emit-project", "--format", "requirements-txt",
         "--output-file", str(requirements))
@@ -222,7 +255,8 @@ def build(destination: Path, version: str | None = None, *, textgen_engine: Path
                     *[path for path in sorted((destination / "assets/brand").rglob("*")) if path.is_file()],
                     *[path for path in sorted((destination / "docs").rglob("*")) if path.is_file()], destination / "uv.lock",
                     destination / "pyproject.toml", *[path for path in sorted((destination / "templates").rglob("*")) if path.is_file()],
-                    destination / "requirements.txt", destination / "README.md", destination / "bin/mcpme-reap"]
+                    destination / "requirements.txt", destination / "README.md", destination / "bin/mcpme-reap",
+                    destination / "bin/mcpme-command-reap", destination / "command-execution.json"]
     source_files.extend(path for path in sorted((destination / "preparation-toolchain").rglob("*")) if path.is_file())
     source_hashes = {str(path.relative_to(destination)): hashlib.sha256(path.read_bytes()).hexdigest()
                      for path in source_files}
@@ -231,7 +265,7 @@ def build(destination: Path, version: str | None = None, *, textgen_engine: Path
         "source_tree_dirty": bool(run("git", "-C", str(ROOT), "status", "--porcelain")),
         "python": run(str(runtime / "bin/python3.12"), "--version"),
         "toolchain": run("/usr/bin/cc", "--version").splitlines()[0],
-        "signing": "ad_hoc_reaper_only", "distribution": "development_cli_milestone"}, indent=2) + "\n")
+        "signing": "ad_hoc_native_helpers", "distribution": "development_cli_milestone"}, indent=2) + "\n")
     return destination
 
 

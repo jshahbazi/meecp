@@ -10,7 +10,7 @@ import re
 import shutil
 import subprocess
 
-from build_mcpme_host import ROOT, BuildCommandError, build as build_host, project_version, run
+from build_mcpme_host import ROOT, BuildCommandError, build as build_host, project_version, run, refresh_command_inventory
 from build_preparation_toolchain import refresh_toolchain_manifest
 from prepare_json_package import prepare as prepare_json_package
 
@@ -218,6 +218,8 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
     # receipt before sealing Resources; never leave development labels on a release.
     host_receipt_path = host / "build.json"
     host_receipt = json.loads(host_receipt_path.read_bytes())
+    if (host / "command-execution.json").is_file():
+        refresh_command_inventory(host)
     for relative in host_receipt["artifact_sha256"]:
         host_receipt["artifact_sha256"][relative] = sha256(host / relative)
     host_receipt["signing"] = "developer_id" if release else "ad_hoc"

@@ -157,6 +157,7 @@ def test_host_build_preserves_nested_document_links_and_binds_all_document_hashe
     files = {"pyproject.toml": '[project]\nversion = "0.1.0"\n', "uv.lock": "synthetic lock",
              "backend/mcpme/service.py": "synthetic source", "backend/mcpme_local_transport.py": "synthetic transport",
              "README.md": "synthetic readme", "THIRD_PARTY_NOTICES.md": "synthetic notices",
+             "scripts/mcpme-command-reap.c": "synthetic helper source",
              "assets/brand/source.svg": "synthetic branding", "templates/catalog.json": "{}",
              "templates/task/.venv/private-input.txt": "excluded local environment",
              "docs/AUTOMATIC_PREPARATION.md": "[Review](reviews/DIRECTORY_ONBOARDING_REVIEW.md)\n",
@@ -220,6 +221,21 @@ def test_host_build_preserves_nested_document_links_and_binds_all_document_hashe
     assert ("preparation-toolchain/engine" in receipt["artifact_sha256"]) is with_engine
     if with_engine:
         assert receipt["artifact_sha256"]["preparation-toolchain/engine"] == hashlib.sha256(b"synthetic exact engine").hexdigest()
-    assert receipt["signing"] == "ad_hoc_reaper_only"
+    assert receipt["signing"] == "ad_hoc_native_helpers"
     assert receipt["artifact_sha256"]["bin/mcpme-reap"] == hashlib.sha256((host / "bin/mcpme-reap").read_bytes()).hexdigest()
-    assert len([call for call in calls if call[0] == "/usr/bin/codesign"]) == 1
+    assert len([call for call in calls if call[0] == "/usr/bin/codesign"]) == 2
+    metadata = json.loads((host / "command-execution.json").read_bytes())
+    assert metadata["production_admission"] == "disabled" and metadata["configuration_authority"] == "inventory-only"
+    assert metadata["receipt_format"] == 3 and metadata["package_schema"] == 2
+    assert metadata["helper_sha256"] == hashlib.sha256((host / metadata["helper"]).read_bytes()).hexdigest()
+    for name in (metadata["helper"], "command-execution.json"):
+        assert receipt["artifact_sha256"][name] == hashlib.sha256((host / name).read_bytes()).hexdigest()
+    helper = host / metadata["helper"]
+    helper.write_bytes(helper.read_bytes() + b" distribution signature")
+    host_builder.refresh_command_inventory(host)
+    refreshed = json.loads((host / "command-execution.json").read_bytes())
+    assert refreshed == {**metadata, "helper_sha256": hashlib.sha256(helper.read_bytes()).hexdigest()}
+    refreshed["production_admission"] = "enabled"
+    (host / "command-execution.json").write_text(json.dumps(refreshed))
+    with pytest.raises(ValueError, match="command_inventory_invalid"):
+        host_builder.refresh_command_inventory(host)

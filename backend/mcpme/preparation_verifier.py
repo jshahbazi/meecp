@@ -19,7 +19,7 @@ from mcp.types import JSONRPCMessage
 from .contracts import PackageError, validate_package
 from .preparation_contracts import PreparationError, PreparationDescriptor, canonical_bytes
 from .preparation_processes import _settle
-from .processes import OwnedProcess, OwnershipLost, ProcessOwner, _watch_ownership
+from .processes import OwnedProcess, OwnershipLost, ProcessOwner, _await_ownership, _watch_ownership
 
 MAX_PROBE_MESSAGE = 1024 * 1024
 
@@ -31,6 +31,15 @@ class VerificationReport:
     fixtures_checked: int
     protocol_version: str
     peak_memory_bytes: int
+
+
+async def _validate_joined(package_root: Path):
+    """Cancellation cannot return while package hashing still reads its tree."""
+    task = asyncio.create_task(asyncio.to_thread(validate_package, package_root))
+    try:
+        return await asyncio.shield(task)
+    finally:
+        await _await_ownership(asyncio.gather(task, return_exceptions=True))
 
 
 @asynccontextmanager
@@ -73,7 +82,7 @@ async def _owned_transport(process: OwnedProcess):
 
 async def verify_prepared_package(
     package_root: Path, descriptor: PreparationDescriptor, reaper: Path, workspace: Path, *,
-    timeout_seconds: float = 60,
+    timeout_seconds: float = 60, owner: ProcessOwner | None = None,
 ) -> VerificationReport:
     """Use a real MCP SDK session; check schemas, fixtures, mutation and cleanup.
 
@@ -84,7 +93,7 @@ async def verify_prepared_package(
     if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or not 0 < timeout_seconds <= 3600:
         raise PreparationError("invalid_preparation_probe_limit")
     try:
-        package = await asyncio.to_thread(validate_package, package_root)
+        package = await _validate_joined(package_root)
     except PackageError as failure:
         raise PreparationError(failure.code) from None
     if (package.manifest.profile != "mcp-stdio" or package.manifest.tools != descriptor.interface.tools
@@ -97,7 +106,7 @@ async def verify_prepared_package(
         raise PreparationError("preparation_candidate_mismatch")
     if {fixture.tool for fixture in descriptor.validation} != {tool.name for tool in descriptor.interface.tools}:
         raise PreparationError("preparation_fixture_coverage_required")
-    owner = ProcessOwner(reaper)
+    owner = owner if owner is not None else ProcessOwner(reaper)
     process = None
     try:
         async with asyncio.timeout(timeout_seconds):
@@ -133,7 +142,7 @@ async def verify_prepared_package(
         if peak > descriptor.resources.memory_mb * 1024 * 1024:
             raise PreparationError("preparation_probe_memory_limit")
         try:
-            current = await asyncio.to_thread(validate_package, package.root)
+            current = await _validate_joined(package.root)
         except PackageError:
             raise PreparationError("preparation_package_mutated") from None
         if current.digest != package.digest:

@@ -158,7 +158,8 @@ async def call(state_dir: Path, method: str, path: str, body: dict | None = None
         from .grants import read_credential
         # Reopen for every call; a removed or unsafe file never selects owner authority.
         token = read_credential(credential_file)["token"]
-    timeout = 300 if path in {"/v1/install/plan", "/v1/upgrade/plan", "/v1/migrations/jevk5/plan", "/v1/imports"} or path.endswith(("/attach", "/engine")) else 30
+    timeout = 300 if path in {"/v1/install/plan", "/v1/upgrade/plan", "/v1/migrations/jevk5/plan", "/v1/imports",
+                             "/v1/preparations/plan", "/v1/preparations/inspect-source"} or path.endswith(("/attach", "/engine")) else 30
     async with httpx.AsyncClient(base_url=endpoint(connection), timeout=timeout, follow_redirects=False, trust_env=False,
                                  transport=private_transport(socket_path(state_dir, "manager")),
                                  headers={"Authorization": "Bearer " + token}) as client:
@@ -344,12 +345,25 @@ def parser() -> argparse.ArgumentParser:
     preparation_plan.add_argument("--import", dest="import_id", type=uuid_argument, required=True)
     preparation_plan.add_argument("--revision", type=int, required=True)
     preparation_plan.add_argument("--descriptor", type=Path, required=True)
+    preparation_plan.add_argument("--policy", type=Path, help="Review an execution plan under the policy in this JSON file.")
     preparation_plan.add_argument("--json", action="store_true")
+    preparation_inspect = preparations.add_parser("inspect-source")
+    preparation_inspect.add_argument("--import", dest="import_id", type=uuid_argument, required=True)
+    preparation_inspect.add_argument("--revision", type=int, required=True)
+    preparation_inspect.add_argument("--json", action="store_true")
+    preparation_start = preparations.add_parser("start")
+    preparation_start.add_argument("--plan", dest="plan_id", type=uuid_argument, required=True)
+    preparation_start.add_argument("--plan-digest", type=digest_argument, required=True)
+    preparation_start.add_argument("--idempotency-key", type=uuid_argument, required=True)
+    preparation_start.add_argument("--json", action="store_true")
     preparations.add_parser("list").add_argument("--json", action="store_true")
     for action in ("get", "cancel"):
         item = preparations.add_parser(action)
         item.add_argument("job_id", type=uuid_argument)
         item.add_argument("--json", action="store_true")
+    preparation_recover = preparations.add_parser("recover")
+    preparation_recover.add_argument("--job-id", type=uuid_argument, required=True)
+    preparation_recover.add_argument("--json", action="store_true")
     downloads = commands.add_parser("downloads").add_subparsers(dest="action", required=True)
     fetch = downloads.add_parser("fetch")
     fetch.add_argument("--url", required=True)
@@ -467,18 +481,24 @@ async def execute(args) -> dict | None:
         return await api("POST", "/v1/recipes/" + args.action,
                          {"recipe_id": args.recipe_id, "version": args.version})
     if args.command == "preparations":
-        if args.action == "plan":
+        if args.action in {"plan", "inspect-source"}:
             from .recipe_sdk import read_contract_file
             if args.revision < 1:
                 from .preparation_contracts import PreparationError
                 raise PreparationError("invalid_import_revision")
-            descriptor = read_contract_file(args.descriptor)
-            return await api("POST", "/v1/preparations/plan",
-                             {"import_id": args.import_id, "revision": args.revision, "descriptor": descriptor})
+            body = {"import_id": args.import_id, "revision": args.revision}
+            if args.action == "plan":
+                body["descriptor"] = read_contract_file(args.descriptor)
+                if args.policy is not None:
+                    body["execution_policy"] = read_contract_file(args.policy)
+            return await api("POST", "/v1/preparations/" + args.action, body)
+        if args.action == "start":
+            return await api("POST", "/v1/preparations/start", {"plan_id": args.plan_id,
+                             "plan_digest": args.plan_digest, "idempotency_key": args.idempotency_key})
         if args.action == "list":
             return await api("GET", "/v1/preparations")
         route = "/v1/preparations/" + args.job_id
-        return await api("GET", route) if args.action == "get" else await api("POST", route + "/cancel", {})
+        return await api("GET", route) if args.action == "get" else await api("POST", route + "/" + args.action, {})
     if args.command == "downloads":
         if args.action == "fetch":
             body = {"url": args.url, "sha256": args.sha256, "size": args.size}

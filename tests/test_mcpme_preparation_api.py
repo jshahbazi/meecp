@@ -28,7 +28,7 @@ async def test_new_foundation_routes_require_owner_and_execution_stays_unavailab
                 assert rejected.status_code == 403 and rejected.json()["error"]["code"] == "grant_scope"
                 assert (await client.get(route, headers={"Authorization": "Bearer " + owner})).status_code == 200
             unavailable = await client.post("/v1/preparations/start", json={}, headers={"Authorization": "Bearer " + owner})
-            assert unavailable.status_code == 405
+            assert unavailable.status_code == 400 and unavailable.json()["error"]["code"] == "invalid_preparation_request"
             assert not host.registry.list_slots() and not host.registry.list_operations()
         assert capabilities()["automatic_preparation"] is False
         assert capabilities()["recipe_execution"] is False

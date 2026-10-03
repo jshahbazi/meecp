@@ -227,14 +227,8 @@ class ProcessOwner:
                    and not process._done.done() and not process._monitor.done()
                    for identifier, process in self.instances.items())
 
-    async def launch(
-        self, executable: Path, args: list[str], cwd: Path, env: dict[str, str], *,
-        instance_id: str | None = None, io_mode: str = "streams",
-        inherited_fds: tuple[int, ...] = (), startup_timeout: float = 10,
-        stop_grace: float = 2, completion_fd: int | None = None,
-        completion_nonce: str | None = None,
-        owned_group: bool = False,
-    ) -> OwnedProcess:
+    def _preflight(self, identifier, io_mode, inherited_fds, startup_timeout, stop_grace,
+                   completion_fd, completion_nonce, owned_group):
         if self._closed:
             raise ProcessError("owner_closed")
         if any(p.ownership_lost for p in self.instances.values()):
@@ -243,7 +237,6 @@ class ProcessOwner:
             raise ProcessError("invalid_launch")
         if not 0 < startup_timeout <= 120:
             raise ProcessError("invalid_launch")
-        identifier = instance_id or uuid.uuid4().hex
         if identifier in self.instances or identifier in self._pending_ids:
             raise ProcessError("duplicate_instance")
         if completion_fd is None and completion_nonce is not None:
@@ -252,15 +245,35 @@ class ProcessOwner:
             from .ownership_receipts import validate_receipt_descriptor
             if (completion_fd in inherited_fds or not validate_receipt_descriptor(completion_fd, identifier, completion_nonce)):
                 raise ProcessError("invalid_launch")
+
+    async def launch(
+        self, executable: Path, args: list[str], cwd: Path, env: dict[str, str], *,
+        instance_id: str | None = None, io_mode: str = "streams",
+        inherited_fds: tuple[int, ...] = (), startup_timeout: float = 10,
+        stop_grace: float = 2, completion_fd: int | None = None,
+        completion_nonce: str | None = None, owned_group: bool = False,
+        nonlaunch_callback=None,
+    ) -> OwnedProcess:
+        if nonlaunch_callback is not None and not callable(nonlaunch_callback):
+            raise ProcessError("invalid_launch")
+        identifier = instance_id or uuid.uuid4().hex
+        launch_status = {"attempted": False, "not_started": False}
+        try:
+            self._preflight(identifier, io_mode, inherited_fds, startup_timeout, stop_grace,
+                            completion_fd, completion_nonce, owned_group)
+            inputs = (Path(executable).absolute(), list(args), Path(cwd).absolute(), dict(env),
+                      identifier, io_mode, tuple(inherited_fds), startup_timeout, stop_grace,
+                      completion_fd, completion_nonce, owned_group, launch_status)
+        except BaseException:
+            # No native creation task exists at this point. This proof is
+            # independent of any unrelated instance still owned by the host.
+            if nonlaunch_callback is not None:
+                nonlaunch_callback()
+            raise
         # Shield creation through acknowledgment so cancellation cannot orphan a
         # subprocess between OS spawn and Python receiving its owned handle.
         self._pending_ids.add(identifier)
-        task = asyncio.create_task(self._launch(
-            Path(executable).absolute(), list(args), Path(cwd).absolute(), dict(env),
-            identifier, io_mode, tuple(inherited_fds), startup_timeout, stop_grace,
-            completion_fd, completion_nonce,
-            owned_group,
-        ))
+        task = asyncio.create_task(self._launch(*inputs))
         self._launches.add(task)
         try:
             return await asyncio.shield(task)
@@ -275,6 +288,8 @@ class ProcessOwner:
         finally:
             self._pending_ids.discard(identifier)
             self._launches.discard(task)
+            if nonlaunch_callback is not None and (not launch_status["attempted"] or launch_status["not_started"]):
+                nonlaunch_callback()
 
     async def _launch(
         self, executable: Path, args: list[str], cwd: Path, env: dict[str, str],
@@ -282,6 +297,7 @@ class ProcessOwner:
         startup_timeout: float, stop_grace: float,
         completion_fd: int | None, completion_nonce: str | None,
         owned_group: bool,
+        launch_status: dict,
     ) -> OwnedProcess:
         if any(not isinstance(v, str) or "\0" in v for v in args):
             raise ProcessError("invalid_launch")
@@ -329,14 +345,21 @@ class ProcessOwner:
                 string(value)
             if len(payload) > 1024 * 1024:
                 raise ProcessError("invalid_launch")
-            wrapper = await asyncio.create_subprocess_exec(
-                str(self.reaper), str(spec_child.fileno()), str(control_child.fileno()), str(os.getpid()),
-                *([str(completion_fd)] if completion_fd is not None else []),
-                stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL, env={},
-                pass_fds=(spec_child.fileno(), control_child.fileno(), input_read, output_write, *inherited_fds,
-                          *((completion_fd,) if completion_fd is not None else ())),
-            )
+            launch_status["attempted"] = True
+            try:
+                wrapper = await asyncio.create_subprocess_exec(
+                    str(self.reaper), str(spec_child.fileno()), str(control_child.fileno()), str(os.getpid()),
+                    *([str(completion_fd)] if completion_fd is not None else []),
+                    stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL, env={},
+                    pass_fds=(spec_child.fileno(), control_child.fileno(), input_read, output_write, *inherited_fds,
+                              *((completion_fd,) if completion_fd is not None else ())),
+                )
+            except (FileNotFoundError, PermissionError):
+                # POSIX exec failure means the requested native wrapper never
+                # ran. Other creation errors and cancellation remain unknown.
+                launch_status["not_started"] = True
+                raise
             control_parent.setblocking(False)
             process = OwnedProcess(self, identifier, wrapper, control_parent, input_write, output_read, stop_grace)
             self.instances[identifier] = process

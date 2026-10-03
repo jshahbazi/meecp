@@ -27,8 +27,8 @@ async def _settle(process: OwnedProcess) -> None:
 
 
 class PreparationExecutor:
-    def __init__(self, reaper: Path):
-        self.owner = ProcessOwner(reaper)
+    def __init__(self, reaper: Path, *, owner: ProcessOwner | None = None):
+        self.owner = owner if owner is not None else ProcessOwner(reaper)
         self.closed = False
 
     async def execute(

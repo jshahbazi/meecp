@@ -11,7 +11,7 @@ from typing import Annotated, Literal, get_origin
 
 from pydantic import Field, ValidationError, field_validator, model_validator
 
-from .contracts import Digest, StrictModel
+from .contracts import Artifact, Digest, HostCommand, StrictModel
 from .preparation_components import (
     ComponentReference, ComponentRegistry, PreparationDescriptorV2, SourceBinding,
     SourceFileBinding, parse_component_descriptor,
@@ -54,9 +54,15 @@ class CollectionReference(InputContract):
 
 
 class OriginalSourceReference(InputContract):
-    kind: Literal["local_folder", "document", "artifact_collection", "captured_artifact_collection", "service_connection"]
-    schema_version: Literal[1]
+    kind: Literal["local_folder", "document", "artifact_collection", "captured_artifact_collection", "service_connection", "application_directory"]
+    schema_version: Literal[1, 2]
     revision: SourceIdentity
+
+    @model_validator(mode="after")
+    def source_version(self):
+        if (self.kind == "application_directory") != (self.schema_version == 2):
+            raise PreparationError("unsupported_preparation_source_version")
+        return self
 
 
 class OriginalFileReference(InputContract):
@@ -260,18 +266,56 @@ class DescriptorView:
     def artifacts(self):
         return tuple(self.descriptor.artifacts)
 
-    def expected_package_contract(self, source_revision: str, *, profile: str):
+    def expected_package_contract(self, source_revision: str, *, profile: str,
+                                  command=None, licenses=None, source_artifacts=None):
         """Host-selected target profile; no inference from language or recipe ID."""
         self.assert_unchanged()
-        if profile not in {"mcp-stdio", "mcp-http", "model-service"}:
+        if profile not in {"mcp-stdio", "mcp-http", "model-service", "host-command"}:
             raise PreparationError("unsupported_execution_profile")
         if any(item.source_revision != source_revision for item in self.source_bindings):
             raise PreparationError("source_identity_mismatch")
-        return {"package_id": self.package.id, "version": self.package.version, "name": self.package.name,
+        base = {"package_id": self.package.id, "version": self.package.version, "name": self.package.name,
                 "source_revision": source_revision, "profile": profile,
                 "tools": [tool.model_dump(exclude_none=True) for tool in self.tools],
                 "access": self.access.model_dump(), "resources": self.resources.model_dump(),
                 "lifecycle": self.lifecycle.model_dump()}
+        return extend_package_contract(base, command=command, licenses=licenses, source_artifacts=source_artifacts)
+
+
+def extend_package_contract(base, *, command=None, licenses=None, source_artifacts=None):
+    """Explicit schema-2 command fields; never reinterpret a legacy contract."""
+    if base["profile"] != "host-command":
+        if any(item is not None for item in (command, licenses, source_artifacts)):
+            raise PreparationError("expected_package_contract_mismatch")
+        return base
+    try:
+        if (type(command) is not dict or type(licenses) is not list or not 1 <= len(licenses) <= 128
+                or type(source_artifacts) is not list or not 1 <= len(source_artifacts) <= 2048):
+            raise PreparationError("expected_package_contract_mismatch")
+        normalized_command = HostCommand.model_validate(command).model_dump()
+        license_paths = [relative_path(item) for item in licenses]
+        if license_paths != sorted(set(license_paths)):
+            raise PreparationError("expected_package_contract_mismatch")
+        artifacts = [Artifact.model_validate(item).model_dump() for item in source_artifacts]
+        paths = [relative_path(item["path"]) for item in artifacts]
+        if (paths != sorted(set(paths)) or any(not path.startswith("source/") for path in paths)
+                or not set(license_paths) <= set(paths)
+                or any(item["license"] not in license_paths for item in artifacts)):
+            raise PreparationError("expected_package_contract_mismatch")
+        executable = {item["path"] for item in artifacts if item["executable"]}
+        if (set(normalized_command["commands"]) != {tool["name"] for tool in base["tools"]}
+                or any(entry["executable"] not in executable for entry in normalized_command["commands"].values())):
+            raise PreparationError("expected_package_contract_mismatch")
+        return {**base, "schema_version": 2, "command": normalized_command,
+                "licenses": license_paths, "source_artifacts": artifacts}
+    except (ValidationError, TypeError, KeyError):
+        raise PreparationError("expected_package_contract_mismatch") from None
+
+
+def candidate_contract_digest(contract):
+    domain = ("preparation-host-command-candidate-v1" if contract.get("profile") == "host-command"
+              else "preparation-candidate-v1")
+    return contract_digest(domain, contract)
 
 
 def adapt_descriptor(value, *, draft: dict, recipe: dict, registry: ComponentRegistry) -> DescriptorView:
@@ -297,7 +341,9 @@ def bind_preparation_inputs(view: DescriptorView, *, draft: dict, captured_colle
     source = draft["source"]
     if any(item.source_revision != source["revision"] for item in view.source_bindings):
         raise PreparationError("source_identity_mismatch")
-    expected = view.expected_package_contract(source["revision"], profile=expected_package_contract.get("profile"))
+    extra = ({key: expected_package_contract.get(key) for key in ("command", "licenses", "source_artifacts")}
+             if expected_package_contract.get("profile") == "host-command" else {})
+    expected = view.expected_package_contract(source["revision"], profile=expected_package_contract.get("profile"), **extra)
     if expected != expected_package_contract:
         raise PreparationError("expected_package_contract_mismatch")
     validations = [SourceValidationReference.from_binding(item) for item in view.source_bindings]

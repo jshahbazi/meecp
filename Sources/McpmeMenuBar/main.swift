@@ -1801,7 +1801,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             let directory = (try? source.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
             let name = suppliedName ?? (directory ? source.lastPathComponent : source.deletingPathExtension().lastPathComponent)
             self.setupRequest = true; self.setupLabel?.stringValue = "Inspecting selected source…"; self.refreshWindow()
-            self.request("v1/imports", method: "POST", body: ["source": source.path, "name": name, "start": false, "start_policy": "manual"]) { [weak self] object, code in
+            self.request("v1/imports", method: "POST", body: ["source": source.path, "source_mode": "automatic", "name": name, "start": false, "start_policy": "manual"]) { [weak self] object, code in
                 guard let self = self else { return }; self.setupRequest = false
                 guard let object = object, let draft = ImportDraft(object) else {
                     self.setupLabel?.stringValue = self.draftError(code ?? "invalid_draft"); self.refreshWindow(); return

@@ -2290,7 +2290,7 @@ def management_app(host: Supervisor, token: str, port: int):
                 elif request.method == "PATCH" and "slot_id" in request.path_params:
                     result = await host.update_settings(request.path_params["slot_id"], payload)
                 elif route == "/v1/imports":
-                    if set(payload) - {"source", "name", "intent", "document_role", "files", "start", "start_policy", "model_engine"}:
+                    if set(payload) - {"source", "name", "intent", "document_role", "files", "start", "start_policy", "model_engine", "source_mode"}:
                         raise HostError("invalid_import_request")
                     if not isinstance(payload.get("source"), str) or not isinstance(payload.get("name"), str):
                         raise HostError("invalid_import_request")

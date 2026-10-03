@@ -361,7 +361,7 @@ class PreparationDescriptor(Contract):
 
 class RecipeRequirements(Contract):
     host_api_version: Literal[1] = 1
-    package_schema: Literal[1] = 1
+    package_schema: Literal[1, 2] = 1
     protocol: Literal["2025-11-25"] = "2025-11-25"
     os: Literal["macos"] = "macos"
     architecture: Literal["arm64"] = "arm64"

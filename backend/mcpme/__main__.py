@@ -296,6 +296,8 @@ def parser() -> argparse.ArgumentParser:
     imports.add_parser("list").add_argument("--json", action="store_true")
     create = imports.add_parser("create")
     create.add_argument("--source", type=Path, required=True)
+    create.add_argument("--source-mode", choices=["legacy", "automatic"], default="legacy",
+                        help="Automatic directory intake includes bounded binary application files.")
     create.add_argument("--model-engine", type=Path, help="Explicit verified engine build for a selected GGUF model.")
     create.add_argument("--name", required=True)
     create.add_argument("--intent", default="")
@@ -601,6 +603,8 @@ async def execute(args) -> dict | None:
                 body["files"] = args.files
             if args.model_engine is not None:
                 body["model_engine"] = str(args.model_engine.absolute())
+            if args.source_mode != "legacy":
+                body["source_mode"] = args.source_mode
             return await api("POST", "/v1/imports", body)
         route = "/v1/imports/" + args.draft_id
         if args.action == "inspect":

@@ -50,7 +50,8 @@ async def bounded_json(client, method, url, *, headers, payload=None):
 
 
 async def verify_textgen_package(package_root: Path, descriptor, reaper: Path, workspace: Path, *,
-                                 timeout_seconds=60, owner=None, graph_accounting=None, graph_admission_check=None):
+                                 timeout_seconds=60, owner=None, graph_accounting=None, graph_admission_check=None,
+                                 probe_confinement=None, confinement_factory=None):
     if (type(timeout_seconds) not in {int, float} or not math.isfinite(timeout_seconds)
             or not 0 < timeout_seconds <= 3600):
         raise PreparationError("invalid_preparation_probe_limit")
@@ -69,6 +70,15 @@ async def verify_textgen_package(package_root: Path, descriptor, reaper: Path, w
     processes = []
     try:
         async with asyncio.timeout(max(0, timeout_seconds - (time.monotonic() - started))):
+            if confinement_factory is not None:
+                require(probe_confinement is None and callable(confinement_factory),
+                        "textgen_probe_confinement_mismatch")
+                probe_confinement = await _joined(confinement_factory, package, descriptor, workspace, reaper)
+            if probe_confinement is not None:
+                from .preparation_textgen_probe_confinement import TextgenProbeConfinementV1
+                require(type(probe_confinement) is TextgenProbeConfinementV1 and owner.reaper == reaper,
+                        "textgen_probe_confinement_mismatch")
+                await _joined(probe_confinement.check, package, descriptor, reaper)
             async def launch(role, dependencies):
                 address, url = endpoint()
                 key = secrets.token_urlsafe(32)
@@ -87,10 +97,23 @@ async def verify_textgen_package(package_root: Path, descriptor, reaper: Path, w
                 finally:
                     os.close(write)
                 try:
-                    process = await owner.launch(package.root / ("bin/textgen-" + role),
+                    executable, arguments, cwd, environment = (package.root / ("bin/textgen-" + role),
                         ["--mcpme-config-fd", str(read)], package.root,
-                        {"PATH": "/usr/bin:/bin", "HOME": str(workspace), "TMPDIR": str(workspace), "LANG": "C"},
+                        {"PATH": "/usr/bin:/bin", "HOME": str(workspace), "TMPDIR": str(workspace), "LANG": "C"})
+                    admission = {}
+                    if probe_confinement is not None:
+                        executable, arguments, cwd, environment, admit = await _joined(
+                            lambda: probe_confinement.launch(package, descriptor, reaper, role=role,
+                                port=address["port"], engine_port=(int(dependencies["engine"]["endpoint"].rsplit(":", 1)[1])
+                                    if role == "adapter" else None), keyfile=keyfile, config_fd=read))
+                        def confined_admit():
+                            require(owner.reaper == probe_confinement.reaper,
+                                    "textgen_probe_confinement_mismatch")
+                            return admit()
+                        admission = {"admit": confined_admit, "expected_reaper": probe_confinement.reaper}
+                    process = await owner.launch(executable, arguments, cwd, environment,
                         inherited_fds=(read,), owned_group=True, io_mode="fds",
+                        **admission,
                         **({"graph_role": role} if getattr(owner, "graph_accounting", None) is not None else {}),
                         startup_timeout=min(timeout_seconds, 120), stop_grace=.1)
                     processes.append(process)
@@ -177,6 +200,8 @@ async def verify_textgen_package(package_root: Path, descriptor, reaper: Path, w
         require(sum(peaks) <= descriptor.resources.memory_mb * 1024**2, "preparation_probe_memory_limit")
         current = await _validate_joined(package.root)
         require(current.digest == package.digest, "preparation_package_mutated")
+        if probe_confinement is not None:
+            await _joined(probe_confinement.check, current, descriptor, reaper)
         return VerificationReport(package.digest, tools, fixtures, "2025-11-25", sum(peaks))
     except OwnershipLost:
         raise
@@ -191,3 +216,15 @@ async def verify_textgen_package(package_root: Path, descriptor, reaper: Path, w
         # to settle. ProcessOwner retains every unproven native ownership row.
         await _await_ownership(asyncio.gather(*(_settle(p) for p in reversed(processes)), return_exceptions=True))
         await _await_ownership(owner.close())
+
+
+async def _joined(function, *args):
+    task = asyncio.create_task(asyncio.to_thread(function, *args))
+    try:
+        return await asyncio.shield(task)
+    except BaseException:
+        try:
+            await _await_ownership(task)
+        except BaseException:
+            pass
+        raise

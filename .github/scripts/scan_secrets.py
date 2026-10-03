@@ -38,6 +38,7 @@ PUBLIC_GGUF_METADATA_PATHS = (
     # Byte-identical metadata shipped inside the immutable declarative recipe.
     "templates/builtin-recipes/text-generation-v1/model-provenance.json",
     "templates/builtin-recipes/text-generation-v1-0-1/model-provenance.json",
+    "templates/builtin-recipes/text-generation-v1-0-2/model-provenance.json",
 )
 
 

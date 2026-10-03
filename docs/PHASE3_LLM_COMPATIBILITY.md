@@ -222,3 +222,33 @@ acceptance requires a new clean host built from the corrected source.
 
 The corrected combined source suite passed 2,169 tests with 12 skips, including
 the real identity regression and pinned secret-scanner integration.
+
+## Captured model validation timing
+
+The fresh `41e25b8` host verified all 1,757 artifact hashes. Its composed captured
+run reached building but exceeded the harness's 300-second budget before a
+command completed. A separate diagnostic wrapped only fixed preparation stages:
+seven model-input validations consumed 228.641 seconds, while private-toolchain
+validation took about 0.37 seconds per call. Cancellation joined the work,
+settled ownership and released its reservation; failed artifacts were retained.
+
+Each artifact read applies the credential regex while hashing captured bytes.
+The scanner now checks the regex's mandatory literal prefixes first, then uses
+the unchanged regex over the unchanged chunk and retained tail whenever a prefix
+is present. Capture, copied-file verification, reader leases and full content
+hashing retain their existing authority and ownership checks.
+
+An independent full-file scan of the pinned 491,400,032-byte model used 1 MiB
+chunks and a 256-byte tail. The original predicate took 8.151 seconds and the
+guarded predicate took 2.198 seconds; both reported zero credential matches.
+Independent verification passed 124 artifact tests and 267 boundary comparisons.
+New capture and reverification cases cover every credential pattern, split
+boundaries, minimum lengths and word-boundary near misses.
+
+This source change receives component and recipe version `1.0.2`. The existing
+`1.0.0` and `1.0.1` bundles remain unchanged. Fresh managed construction,
+installation and native acceptance remain required; the timing diagnostic does
+not establish an installed capability.
+
+The complete source suite passed 2,198 tests with 12 skips after this change,
+including the actual pinned secret scanner. No test failures remained.

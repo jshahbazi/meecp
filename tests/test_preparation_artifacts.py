@@ -217,6 +217,53 @@ def test_secret_marker_across_chunk_boundary_is_detected(directory, monkeypatch)
     assert capture_error(store(directory), selection(directory / "source", content)) == "artifact_credentials_disallowed"
 
 
+def credential_samples():
+    # Construct synthetic pattern fixtures; these are not service credentials.
+    return [b"-----BEGIN " + b"PRIVATE KEY-----",
+            b"-----BEGIN RSA " + b"PRIVATE KEY-----",
+            b"A" + b"KIA" + b"1" * 16,
+            b"s" + b"k-" + b"A" * 24,
+            b"s" + b"k-proj-" + b"A" * 24,
+            *(b"gh" + kind + b"_" + b"A" * 24 for kind in (b"p", b"o", b"u", b"s", b"r"))]
+
+
+@pytest.mark.parametrize("case", range(10))
+def test_all_credential_patterns_rejected_across_every_prefix_boundary(directory, monkeypatch, case):
+    monkeypatch.setattr(artifacts, "COPY_CHUNK_BYTES", 64)
+    credential = credential_samples()[case]
+    value = store(directory)
+    for split in range(1, len(credential)):
+        content = b"\x00" * (64 - split) + credential + b"\x00" * 64
+        request = selection(directory / ("source-" + str(split)), content)
+        assert capture_error(value, request) == "artifact_credentials_disallowed"
+
+
+@pytest.mark.parametrize("case", range(10))
+def test_reverification_preserves_credential_rejection(directory, monkeypatch, case):
+    monkeypatch.setattr(artifacts, "COPY_CHUNK_BYTES", 64)
+    credential = credential_samples()[case]
+    value = store(directory)
+    content = b"\x00" * 61 + credential + b"\x00" * 64
+    request = selection(directory / "source", b"\x08" * len(content))
+    collection = value.capture(request, disk_ceiling_bytes=BUDGET)
+    captured = value.root / "objects" / collection.digest / "files" / "weights"
+    captured.chmod(0o600)
+    captured.write_bytes(content)
+    captured.chmod(0o400)
+    with pytest.raises(artifacts.ArtifactError) as caught:
+        value.verify(collection.digest)
+    assert caught.value.code == "artifact_credentials_disallowed"
+
+
+def test_prefix_near_misses_keep_original_word_boundaries_and_minimum_lengths(directory):
+    samples = credential_samples()
+    content = b"\x00".join([b"-----BEGIN malformed header", b"AKIA-short", b"sk-short", b"ghp_short",
+                              b"x" + samples[2], samples[2] + b"x", b"x" + samples[3], b"x" + samples[5]])
+    value = store(directory)
+    collection = value.capture(selection(directory / "source", content), disk_ceiling_bytes=BUDGET)
+    assert value.verify(collection.digest) == collection
+
+
 def test_license_bytes_must_be_utf8(directory):
     request = selection(directory / "source")
     Path(request.entries[1].path).write_bytes(b"\xff\xfe")

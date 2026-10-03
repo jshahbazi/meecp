@@ -47,6 +47,14 @@ _CREDENTIAL_NAMES = {".env", ".netrc", ".npmrc", ".pypirc", "credentials", "cred
 _CREDENTIAL_DIRECTORIES = {".ssh", ".aws", ".azure", ".gnupg"}
 _ARCHIVE_SUFFIXES = {".zip", ".tar", ".tgz", ".gz", ".xz", ".bz2", ".7z", ".rar", ".whl", ".npz", ".zst", ".lz4"}
 _CREDENTIAL_BYTES = re.compile(rb"-----BEGIN (?:[A-Z ]{1,32} )?PRIVATE KEY-----|\bAKIA[0-9A-Z]{16}\b|\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,})\b")
+_CREDENTIAL_PREFIXES = (b"-----BEGIN", b"AKIA", b"sk-", b"ghp_", b"gho_", b"ghu_", b"ghs_", b"ghr_")
+
+
+def _contains_credential(data: bytes) -> bool:
+    # Every regex match requires one of these exact literals. Skip expensive
+    # word-boundary scanning of model bytes only when all literals are absent;
+    # the original regex remains the deciding check over the same chunk/tail.
+    return any(prefix in data for prefix in _CREDENTIAL_PREFIXES) and _CREDENTIAL_BYTES.search(data) is not None
 
 
 class ArtifactError(PreparationError):
@@ -391,7 +399,7 @@ def _hash_fd(fd: int, size: int, budget: _Budget, *, license_text: bool = False)
         header += data[:max(0, 512 - len(header))]
         if _archive_header(header):
             raise ArtifactError("artifact_archive_disallowed")
-        if _CREDENTIAL_BYTES.search(tail + data):
+        if _contains_credential(tail + data):
             raise ArtifactError("artifact_credentials_disallowed")
         if text is not None:
             try:
@@ -489,7 +497,7 @@ def _copy_source(entry: LocalFileAcquisitionV1, destination: int, budget: _Budge
                     header += data[:max(0, 512 - len(header))]
                     if _archive_header(header):
                         raise ArtifactError("artifact_archive_disallowed")
-                    if _CREDENTIAL_BYTES.search(tail + data):
+                    if _contains_credential(tail + data):
                         raise ArtifactError("artifact_credentials_disallowed")
                     tail = data[-256:]
                     if text is not None:

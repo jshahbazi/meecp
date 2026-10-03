@@ -1,0 +1,16 @@
+{
+  "artifact": "models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+  "context_tokens": 512,
+  "engine_identity": {
+    "build": "11146-7fe450e19305b828c199d602c23a8337aaa1f03b",
+    "runtime": "llama.cpp"
+  },
+  "model_id": "Qwen2.5-0.5B-Instruct-Q4_K_M",
+  "parameters": {
+    "context_guard": 8,
+    "max_output_tokens": 64,
+    "queue_limit": 4
+  },
+  "profile": "qwen2.5-0.5b-q4_k_m-cpu-text-v1",
+  "sha256": "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db"
+}

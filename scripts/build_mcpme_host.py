@@ -213,13 +213,22 @@ def refresh_command_inventory(destination: Path) -> None:
     path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n")
 
 
+def _resolved_runtime_path(path: Path) -> Path:
+    try:
+        return path.resolve(strict=True)
+    except RuntimeError:
+        # Python 3.12 reports symlink cycles as RuntimeError, outside the build
+        # CLI's OSError/ValueError diagnostic boundary. Normalize only this seam.
+        raise ValueError("private_python_runtime_invalid") from None
+
+
 def copy_private_runtime(runtime: Path, destination: Path) -> None:
     """Copy bounded regular bytes, resolving only internal file links.
 
     Directory links are unsupported, avoiding traversal cycles and implicit
     closure expansion. The selected managed runtime contains only file links.
     """
-    root = runtime.resolve(strict=True)
+    root = _resolved_runtime_path(runtime)
     def identity(details):
         return (details.st_dev, details.st_ino, details.st_size, details.st_mtime_ns, details.st_ctime_ns)
     records, total, count = [], 0, 0
@@ -230,7 +239,7 @@ def copy_private_runtime(runtime: Path, destination: Path) -> None:
         relative = path.relative_to(root)
         if "__pycache__" in relative.parts or path.suffix == ".pyc":
             continue
-        target = path.resolve(strict=True)
+        target = _resolved_runtime_path(path)
         if not target.is_relative_to(root):
             raise ValueError("private_python_runtime_escape")
         details = target.stat()
@@ -275,7 +284,7 @@ def build(destination: Path, version: str | None = None, *, textgen_engine: Path
     if destination.exists():
         raise SystemExit("Destination already exists; select a new output directory")
     destination.mkdir(parents=True)
-    runtime = Path(run("uv", "python", "find", "--managed-python", PYTHON_VERSION)).resolve().parent.parent
+    runtime = _resolved_runtime_path(Path(run("uv", "python", "find", "--managed-python", PYTHON_VERSION))).parent.parent
     copy_private_runtime(runtime, destination / "python")
     shutil.copytree(ROOT / "backend/mcpme", destination / "backend/mcpme",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))

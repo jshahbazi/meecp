@@ -22,11 +22,11 @@ This family remains blocked for public enablement until the original A3 aggregat
 
 ## Evidence
 
-The clean full-closure build is source commit `308f6d56d20f2243be0f003b24e2558cd7b723fa`. It was built to a new path, then moved to `/private/tmp/mcpme-combined-cli-308f6d5-relocated` before execution. Its receipt binds 4,701 files; the complete file set and every hash still matched after verification. These are development CLI receipts, not signed native-app acceptance.
+The clean full-closure build is source commit `d4197745bae15b411888889e6486a3cf8dacb088`. It was built to a new path, then moved to `/private/tmp/mcpme-combined-cli-d419774-relocated` before execution. Its receipt binds 4,702 files; the complete file set and every hash still matched after verification. These are development CLI receipts, not signed native-app acceptance.
 
 | Identity | SHA-256 |
 | --- | --- |
-| Host `build.json` | `0858a7a2215db6bd56eb6c3f8164b56597b142acc58ba3ce1ecacec970603f3f` |
+| Host `build.json` | `ab51fd3515442e555fd631066bc8ad518b5493eee45460e3e05758e26ac85d73` |
 | Ad-hoc signed command helper | `d5fca15cf1469965a8411229add585477aaf70289a7f669f0fc9a3f725974496` |
 | Reviewed helper source | `b99f87541598427df51a39486d384a5855813ea3decac55a1d091cafb5e17933` |
 | Private Python executable | `36984af9f922aec72ba5b03e811ee92512268785007192e20f826cbd07cf8d04` |
@@ -37,6 +37,8 @@ The frozen installed harness ran with the relocated `python/bin/python3.12 -B -I
 
 Before that execution, a separate copied payload was verified with the trusted source-side inventory checker. Appending synthetic bytes to `python/lib/python3.12/json/decoder.py` and, separately, `python/site-packages/httpx/__init__.py` caused rejection before importing or executing any target implementation. Restoring those bytes restored complete verification. This negative control did not execute the modified runtime or dependency.
 
-The complete combined regression passed **2,239 tests with 69 skips** in 285.98 seconds. The subsequent build-only closure change passed **235 distribution/preparation tests with two skips**, including bounded copying and complete receipt membership. The pinned scanner integration passed **71 tests**; the full tracked-source and fetched-history credential scan passed after each packaging freeze. The 116-case initial native/installed/build packet passed, including existing failure/receipt races. No old textgen component-identity failure remains in this combined full-suite result. `git range-diff` confirms the four imported commits are patch-identical to `66921d1`, `0e3fae2`, `5f46784` and `7c85ef0`.
+The complete combined regression passed **2,239 tests with 69 skips** in 285.98 seconds. The subsequent build-only closure change passed **238 distribution/preparation tests with two skips**, including bounded copying and complete receipt membership. The pinned scanner integration passed **71 tests**; the full tracked-source and fetched-history credential scan passed after each packaging freeze. The 116-case initial native/installed/build packet passed, including existing failure/receipt races. No old textgen component-identity failure remains in this combined full-suite result. `git range-diff` confirms the four imported commits are patch-identical to `66921d1`, `0e3fae2`, `5f46784` and `7c85ef0`.
 
-Local sanitized evidence files are `/tmp/mcpme-combined-full-tests.txt`, `/tmp/mcpme-combined-distribution-tests.txt`, `/tmp/mcpme-combined-scanner-tests.txt`, `/tmp/mcpme-combined-closure-scan.txt`, `/tmp/mcpme-combined-cli-negative.json`, and `/tmp/mcpme-combined-cli-full-proof.json`. They contain test summaries or bounded outcome/identity metadata. The harness returns `production_admission: disabled`, `aggregate_os_limits_proven: false`, and `signed_native_app_proven: false`.
+Local sanitized evidence files are `/tmp/mcpme-combined-full-tests.txt`, `/tmp/mcpme-combined-copy-race-tests.txt`, `/tmp/mcpme-combined-scanner-tests.txt`, `/tmp/mcpme-combined-copy-race-scan.txt`, `/tmp/mcpme-combined-cli-final-negative.json`, and `/tmp/mcpme-combined-cli-final-proof.json`. They contain test summaries or bounded outcome/identity metadata. The harness returns `production_admission: disabled`, `aggregate_os_limits_proven: false`, and `signed_native_app_proven: false`.
+
+Independent review found that concurrent substitution of a validated managed-runtime source file with a FIFO could block the builder. The repair uses nonblocking, no-follow open and requires the held descriptor to remain the same regular device/inode/size/mtime/ctime before and after copying. Owned-subprocess regressions cover FIFO substitution, replacement with another regular inode and a write to the same inode, all under a finite test deadline. This build-only correction does not change command target authority, helper bytes or textgen component identity.

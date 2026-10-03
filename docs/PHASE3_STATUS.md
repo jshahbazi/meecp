@@ -14,7 +14,8 @@ independent whole-phase adversarial review.
 Status terms: **Verified checkpoint** has passing recorded evidence;
 **In review** has implementation awaiting independent clearance;
 **In progress** is being implemented or integrated; **Open** has required
-acceptance work remaining; **Separate gate** covers additional capability work.
+acceptance work remaining; **In repair** has an independently reproduced issue
+being fixed; **Separate gate** covers additional capability work.
 
 ## Acceptance goals
 
@@ -66,11 +67,11 @@ acceptance work remaining; **Separate gate** covers additional capability work.
 | A4 | Restricted engine/adapter probes and current host-owned bindings | In review | Frozen checkpoint 92f0de90 passed 123 author checks; independent review and actual inference await the next recipe/host. Wildcard-listener containment is unproved. |
 | A4 | Immutable recipe upgrade with preserved lifecycle choices | In progress | Mint the coherent next version; retain all published 1.0.5 and earlier bytes. |
 | A5: integrated agent | Concrete provider transport and parallel task coordinator | Verified checkpoint | OpenAI Responses transport has simulated tests; live provider/model acceptance remains open. |
-| A5 | Review exact source transfer, provider/model, recipe and usage limits | In review | Host implementation exists; freeze, independent review and integration pending. |
-| A5 | Durable jobs, cancellation, restart and stale-result rejection | In review | Real store/FD tests pass; independent and final artifact checks pending. |
-| A5 | Host-validated candidate adoption through ordinary preparation | In review | Off-loop selection and short guarded commit implemented; final independent review pending. |
-| A5 | Native agent controls and owner-only shared routes | In progress | Controls compile and button tests pass; shared registration patch is not integrated. |
-| A5 | Unfamiliar supported Python source through proposal, build, SDK probe and attachment | In review | Author run passed actual private build, SDK probe, attachment and relocation with simulated transport. Independent and live-provider acceptance remain open. |
+| A5 | Review exact source transfer, provider/model, recipe and usage limits | In review | Frozen checkpoint 14ef656a has 14 source hashes independently matched; full review and integration pending. |
+| A5 | Durable jobs, cancellation, restart and stale-result rejection | In repair | Independent review reproduced a delayed native status response overwriting settled cancellation. A request-generation and terminal-state fence is being added. |
+| A5 | Host-validated candidate adoption through ordinary preparation | In repair | Independent review reproduced source mutation after worker validation publishing a stale selection revision. Preserve the validated source identity through the short commit; then recheck the race. Later building already rejects the changed bytes. |
+| A5 | Native agent controls and owner-only shared routes | In progress | Controls compile and button tests pass; repair the delayed-response race and integrate the shared registration patch after clearance. |
+| A5 | Unfamiliar supported Python source through proposal, build, SDK probe and attachment | In review | Actual private build, SDK probe, attachment and relocation passed with simulated transport on checkpoint 14ef656a. The two review repairs and live-provider acceptance remain open. |
 | A5 | Live backend, selected credentials and model compatibility | Open | Requires a selected configured provider; no credential discovery or live dispatch has occurred. |
 | A5 | Generated adapter source and unsupported interfaces | Open | Proposed source is blocked; a controlled derivation component is not implemented. |
 | A5 | Integrated installed/native path and final adversarial acceptance | Open | Complete after source integration and concrete live acceptance. |

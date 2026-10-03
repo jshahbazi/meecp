@@ -6,6 +6,8 @@ coordinator, never to a recipe-provided receipt or claimed passing gate.
 """
 from __future__ import annotations
 
+from .preparation_inputs import descriptor_tools
+
 import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -96,7 +98,7 @@ async def verify_prepared_package(
         package = await _validate_joined(package_root)
     except PackageError as failure:
         raise PreparationError(failure.code) from None
-    if (package.manifest.profile != "mcp-stdio" or package.manifest.tools != descriptor.interface.tools
+    if (package.manifest.profile != "mcp-stdio" or package.manifest.tools != descriptor_tools(descriptor)
             or package.manifest.access != descriptor.access
             or package.manifest.resources.model_dump() != descriptor.resources.model_dump()
             or package.manifest.lifecycle != descriptor.lifecycle
@@ -104,7 +106,7 @@ async def verify_prepared_package(
             or package.manifest.version != descriptor.package.version
             or package.manifest.name != descriptor.package.name):
         raise PreparationError("preparation_candidate_mismatch")
-    if {fixture.tool for fixture in descriptor.validation} != {tool.name for tool in descriptor.interface.tools}:
+    if {fixture.tool for fixture in descriptor.validation} != {tool.name for tool in descriptor_tools(descriptor)}:
         raise PreparationError("preparation_fixture_coverage_required")
     owner = owner if owner is not None else ProcessOwner(reaper)
     process = None
@@ -125,7 +127,7 @@ async def verify_prepared_package(
                         listing = await client.list_tools()
                         if (listing.nextCursor is not None or
                                 [tool.model_dump(by_alias=True, exclude_none=True) for tool in listing.tools] !=
-                                [tool.mcp_schema() for tool in descriptor.interface.tools]):
+                                [tool.mcp_schema() for tool in descriptor_tools(descriptor)]):
                             raise PreparationError("preparation_tool_schema_mismatch")
                         for fixture in descriptor.validation:
                             output = await client.call_tool(fixture.tool, fixture.arguments)

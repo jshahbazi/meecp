@@ -152,6 +152,18 @@ def source_records(draft: dict) -> tuple[dict, ...]:
         raise PreparationError("invalid_source_identity") from None
 
 
+def original_file_records(draft):
+    """Original file metadata for either existing snapshot or captured source."""
+    source = draft["source"]
+    if source["kind"] != "captured_artifact_collection":
+        return tuple(source.get("files", []))
+    from .preparation_artifacts import CapturedArtifactCollectionV1
+    collection = CapturedArtifactCollectionV1.model_validate(source["collection"])
+    if source.get("contract_version") != 1 or (source["digest"], source["revision"]) != (collection.digest, "sha256:" + collection.digest):
+        raise PreparationError("source_identity_mismatch")
+    return tuple({"path": item.path, "sha256": item.sha256, "size": item.size} for item in collection.entries)
+
+
 def read_snapshot(draft: dict) -> SourceSnapshot:
     """Read and recheck the exact bounded snapshot tree without importing it."""
     records = source_records(draft)
@@ -309,7 +321,7 @@ class ComponentRegistry:
             if (not isinstance(binding, SourceBinding) or binding.component_key != key
                     or binding.source_revision != draft["source"]["revision"]):
                 raise PreparationError("component_binding_mismatch")
-            records = {item["path"]: item for item in draft["source"].get("files", [])}
+            records = {item["path"]: item for item in original_file_records(draft)}
             if any(item.path not in records or (item.sha256, item.size) !=
                    (records[item.path]["sha256"], records[item.path]["size"]) for item in binding.files):
                 raise PreparationError("component_binding_mismatch")
@@ -362,4 +374,6 @@ def builtin_component_registry() -> ComponentRegistry:
         record = catalog[name + "@1.0.0"]
         components.append(PythonSourceComponent(ComponentReference(id=name, version="1.0.0", digest=record["digest"]),
                                                 interface_kind=kind))
+    from .preparation_resolved_python import ResolvedPythonComponent
+    components.append(ResolvedPythonComponent())
     return ComponentRegistry(tuple(components))

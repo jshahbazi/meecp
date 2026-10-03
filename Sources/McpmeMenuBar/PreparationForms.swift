@@ -261,11 +261,17 @@ struct OnboardingFormV1 {
     let tools: [[String: Any]]
     let blockers: [String]
     let executionAvailable: Bool
+    let resolutionRequired: Bool
+    let resolutionOperations: [String]
+    let resolutionDigest: String?
+    let resolutionAvailable: Bool
+    let resolutionPolicy: PreparationResolutionPolicy?
 
     init?(_ object: [String: Any]) {
         let keys: Set<String> = ["schema_version", "import_id", "revision", "source_revision", "form_digest", "candidate_id", "recipe",
             "candidate_choices", "recipe_choices", "fields", "tools", "blockers", "execution_available"]
-        guard keys.isSubset(of: Set(object.keys)), Set(object.keys).isSubset(of: keys.union(["api_version"])),
+        let resolutionKeys: Set<String> = ["resolution_required", "resolution_operations", "resolution_digest", "resolution_available", "resolution_policy"]
+        guard keys.isSubset(of: Set(object.keys)), Set(object.keys).isSubset(of: keys.union(resolutionKeys).union(["api_version"])),
               preparationInteger(object["schema_version"]) == 1, let id = preparationUUID(object["import_id"]),
               let revision = preparationInteger(object["revision"]), revision > 0,
               let source = preparationText(object["source_revision"], maximum: 256), let digest = preparationDigest(object["form_digest"]),
@@ -318,6 +324,23 @@ struct OnboardingFormV1 {
         self.importID = id; self.revision = revision; self.sourceRevision = source; self.digest = digest
         self.candidateID = candidateID; self.recipe = recipe; self.candidates = candidateChoices; self.recipes = recipeChoices
         self.fields = fields; self.values = values; self.tools = tools; self.blockers = blockers; self.executionAvailable = available
+        if resolutionKeys.isDisjoint(with: Set(object.keys)) {
+            resolutionRequired = false; resolutionOperations = []; resolutionDigest = nil; resolutionAvailable = false; resolutionPolicy = nil
+        } else {
+            guard resolutionKeys.isSubset(of: Set(object.keys)), let required = preparationBoolean(object["resolution_required"]),
+                  let operations = object["resolution_operations"] as? [String], operations.count <= 2,
+                  Set(operations).count == operations.count, Set(operations).isSubset(of: ["resolve_dependencies", "discover_interface"]),
+                  let resolutionAvailable = preparationBoolean(object["resolution_available"]) else { return nil }
+            let digest = preparationDigest(object["resolution_digest"])
+            let policy = (object["resolution_policy"] as? [String: Any]).flatMap(PreparationResolutionPolicy.init)
+            guard object["resolution_digest"] is NSNull || digest != nil,
+                  object["resolution_policy"] is NSNull || policy != nil,
+                  !required || (candidateID != nil && digest == nil && !operations.isEmpty && policy?.operations == operations),
+                  !resolutionAvailable || policy != nil,
+                  policy == nil || policy?.operations == operations else { return nil }
+            resolutionRequired = required; resolutionOperations = operations; resolutionDigest = digest
+            self.resolutionAvailable = resolutionAvailable; resolutionPolicy = policy
+        }
     }
 }
 
@@ -391,7 +414,7 @@ struct PreparationReview {
 
     init?(_ object: [String: Any], form: OnboardingFormV1) {
         let required: Set<String> = ["schema_version", "import_id", "revision", "source_revision", "form_digest", "execution_available", "plan_id", "plan_digest", "expires_at", "tools", "access", "resources", "downloads", "blockers", "draft"]
-        let optional: Set<String> = ["api_version", "effects", "execution_policy", "recipe", "descriptor_digest"]
+        let optional: Set<String> = ["api_version", "effects", "execution_policy", "recipe", "descriptor_digest", "resolution_digest"]
         guard required.isSubset(of: Set(object.keys)), Set(object.keys).isSubset(of: required.union(optional)),
               preparationInteger(object["schema_version"]) == 1, object["import_id"] as? String == form.importID,
               let revision = preparationInteger(object["revision"]), revision >= form.revision,
@@ -400,6 +423,8 @@ struct PreparationReview {
               let draft = object["draft"] as? [String: Any], let context = PreparationContext(draft),
               context.importID == form.importID, context.revision == revision, context.sourceRevision == form.sourceRevision,
               let available = preparationBoolean(object["execution_available"]),
+              object["resolution_digest"] == nil || (object["resolution_digest"] is NSNull && form.resolutionDigest == nil) ||
+                  (preparationDigest(object["resolution_digest"]) == form.resolutionDigest && form.resolutionDigest != nil),
               let blockers = object["blockers"] as? [String], blockers.count <= 128, blockers.allSatisfy({ preparationCode($0) != nil }),
               let tools = object["tools"] as? [[String: Any]], tools.count <= 128,
               tools.allSatisfy({ preparationText($0["name"], maximum: 128) != nil && $0["input_schema"] is [String: Any] }),
@@ -484,6 +509,12 @@ final class PreparationWorkspaceView: NSStackView {
     private let status = NSTextField(wrappingLabelWithString: "Save a draft to load its preparation questions.")
     private let progress = NSTextField(wrappingLabelWithString: "")
     private let reviewText = NSTextView()
+    private let resolutionStatus = NSTextField(wrappingLabelWithString: "")
+    private let resolutionProgress = NSTextField(wrappingLabelWithString: "")
+    private var resolutionReviewButton: NSButton!
+    private var resolutionStartButton: NSButton!
+    private var resolutionCancelButton: NSButton!
+    private var resolutionRecoverButton: NSButton!
     private var refreshButton: NSButton!
     private var reviewButton: NSButton!
     private var startButton: NSButton!
@@ -497,9 +528,14 @@ final class PreparationWorkspaceView: NSStackView {
     private(set) var form: OnboardingFormV1?
     private(set) var review: PreparationReview?
     private(set) var job: PreparationJob?
+    private(set) var resolutionReview: PreparationResolutionReview?
+    private(set) var resolutionJob: PreparationResolutionJob?
+    private var resolutionStartKey: String?
+    private var resolutionNotification: String?
+    private var resolutionPolling = false
     private var startKey: String?
     private var attachedNotification: String?
-    var hasActiveJob: Bool { job?.active == true }
+    var hasActiveJob: Bool { job?.active == true || resolutionJob?.active == true }
 
     override init(frame: NSRect) {
         super.init(frame: frame); orientation = .vertical; alignment = .leading; spacing = 10
@@ -513,6 +549,14 @@ final class PreparationWorkspaceView: NSStackView {
         }
         let selectors = workspaceStack([workspaceLabel("Candidate", size: 12), candidatePicker, workspaceLabel("Recipe", size: 12), recipePicker], horizontal: true)
         addArrangedSubview(selectors); workspaceFill(selectors, in: self)
+        addArrangedSubview(resolutionStatus); workspaceFill(resolutionStatus, in: self)
+        resolutionReviewButton = NSButton(title: "Review Dependency Resolution", target: self, action: #selector(reviewResolution))
+        resolutionStartButton = NSButton(title: "Resolve Reviewed Inputs", target: self, action: #selector(startResolution))
+        resolutionCancelButton = NSButton(title: "Cancel Resolution", target: self, action: #selector(cancelResolution))
+        resolutionRecoverButton = NSButton(title: "Recover Resolution", target: self, action: #selector(recoverResolution))
+        for button in [resolutionReviewButton!, resolutionStartButton!, resolutionCancelButton!, resolutionRecoverButton!] { button.bezelStyle = .rounded }
+        addArrangedSubview(workspaceStack([resolutionReviewButton, resolutionStartButton, resolutionCancelButton, resolutionRecoverButton], horizontal: true))
+        addArrangedSubview(resolutionProgress); workspaceFill(resolutionProgress, in: self)
         addArrangedSubview(formView); workspaceFill(formView, in: self)
         formView.onChange = { [weak self] in
             guard let self else { return }; self.epoch &+= 1; self.polling = false; self.review = nil; self.startKey = nil
@@ -538,9 +582,10 @@ final class PreparationWorkspaceView: NSStackView {
     func bind(_ next: PreparationContext?, saved: Bool, eligible: Bool) {
         if context != next || self.saved != saved || self.eligible != eligible {
             let sameSource = context?.importID == next?.importID && context?.sourceRevision == next?.sourceRevision
-            epoch &+= 1; busy = false; polling = false; form = nil; review = nil; startKey = nil
+            epoch &+= 1; busy = false; polling = false; resolutionPolling = false; form = nil; review = nil; startKey = nil; resolutionReview = nil; resolutionStartKey = nil
             formView.configure(fields: [], values: [:]); candidatePicker.removeAllItems(); recipePicker.removeAllItems(); reviewText.string = ""
-            if !sameSource { job = nil; attachedNotification = nil; progress.stringValue = "" }
+            if !sameSource { job = nil; attachedNotification = nil; progress.stringValue = ""; resolutionJob = nil; resolutionNotification = nil; resolutionProgress.stringValue = "" }
+            resolutionStatus.stringValue = ""
             context = next; self.saved = saved; self.eligible = eligible
             status.stringValue = next == nil ? "Choose a source to begin." : !saved ? "Save the draft to load preparation questions." : !eligible ? "Use the prepared package review below." : "Load the questions detected by the host."
         }
@@ -549,7 +594,7 @@ final class PreparationWorkspaceView: NSStackView {
 
     // Dropping connection state never cancels a durable host job.
     func invalidate() {
-        epoch &+= 1; busy = false; polling = false; form = nil; review = nil; startKey = nil
+        epoch &+= 1; busy = false; polling = false; resolutionPolling = false; form = nil; review = nil; startKey = nil; resolutionReview = nil; resolutionStartKey = nil
         formView.configure(fields: [], values: [:]); reviewText.string = ""; updateControls()
     }
     func refreshAvailability() { updateControls() }
@@ -561,29 +606,48 @@ final class PreparationWorkspaceView: NSStackView {
         candidatePicker.isEnabled = enabled && currentForm; recipePicker.isEnabled = enabled && currentForm
         formView.setEditable(enabled && currentForm)
         refreshButton?.isEnabled = enabled
-        reviewButton?.isEnabled = enabled && currentForm && form?.candidateID != nil && form?.recipe != nil && formView.answers() != nil
+        reviewButton?.isEnabled = enabled && currentForm && form?.candidateID != nil && form?.recipe != nil && form?.resolutionRequired != true && formView.answers() != nil
         startButton?.isEnabled = enabled && review?.context == context && review?.canStart() == true
         if enabled, let review, review.executionAvailable, !review.canStart() {
             status.stringValue = "The preparation review expired. Load the current questions and review again."
         }
         cancelButton?.isEnabled = available?() == true && !busy && job?.active == true && job?.state != "cancel_requested"
         cancelButton?.isHidden = job == nil
+        let requiresResolution = currentForm && form?.resolutionRequired == true
+        resolutionStatus.isHidden = !requiresResolution && resolutionReview == nil && resolutionJob == nil
+        resolutionReviewButton.isHidden = !requiresResolution; resolutionStartButton.isHidden = !requiresResolution
+        resolutionReviewButton.isEnabled = enabled && requiresResolution && form?.resolutionPolicy != nil
+        resolutionStartButton.isEnabled = enabled && requiresResolution && form?.resolutionAvailable == true && resolutionReview?.context == context && resolutionReview?.canStart() == true
+        resolutionCancelButton.isHidden = resolutionJob == nil || resolutionJob?.active != true || resolutionJob?.needsRecovery == true
+        resolutionCancelButton.isEnabled = available?() == true && !busy && resolutionJob?.active == true && resolutionJob?.state != "cancel_requested" && resolutionJob?.needsRecovery != true
+        resolutionRecoverButton.isHidden = resolutionJob?.needsRecovery != true
+        resolutionRecoverButton.isEnabled = available?() == true && !busy && resolutionJob?.needsRecovery == true
+        if enabled, let resolutionReview, resolutionReview.executionAvailable, !resolutionReview.canStart() {
+            resolutionStatus.stringValue = "The resolution review expired. Review the current dependency scope again."
+        }
     }
 
-    @objc func refreshForm() { loadForm(candidateID: nil, recipe: nil) }
+    @objc func refreshForm() {
+        let successful = resolutionJob.flatMap { $0.state == "succeeded" && !$0.active ? $0 : nil }
+        loadForm(candidateID: form?.candidateID ?? successful?.candidateID, recipe: form?.recipe,
+                 resolutionDigest: form?.resolutionDigest ?? successful?.resultDigest)
+    }
 
-    private func loadForm(candidateID: String?, recipe: PreparationRecipeReference?) {
+    private func loadForm(candidateID: String?, recipe: PreparationRecipeReference?, resolutionDigest: String? = nil) {
         guard !busy, !hasActiveJob, saved, eligible, available?() == true, let context, let request else { return }
-        epoch &+= 1; let expected = epoch; busy = true; polling = false
+        epoch &+= 1; let expected = epoch; busy = true; polling = false; resolutionPolling = false
         form = nil; review = nil; startKey = nil; formView.configure(fields: [], values: [:]); reviewText.string = ""
+        resolutionReview = nil; resolutionStartKey = nil
         var body: [String: Any] = ["import_id": context.importID, "revision": context.revision]
         if let candidateID { body["candidate_id"] = candidateID }; if let recipe { body["recipe"] = recipe.object }
+        if let resolutionDigest { body["resolution_digest"] = resolutionDigest }
         status.stringValue = "Loading preparation questions…"; updateControls(); onStateChange?()
         request("v1/preparations/form", "POST", body) { [weak self] object, code in
             guard let self, self.epoch == expected, self.context == context, self.saved else { return }; self.busy = false
             guard let object, let form = OnboardingFormV1(object), form.importID == context.importID,
                   form.revision == context.revision, form.sourceRevision == context.sourceRevision,
-                  candidateID == nil || candidateID == form.candidateID, recipe == nil || recipe == form.recipe else {
+                  candidateID == nil || candidateID == form.candidateID, recipe == nil || recipe == form.recipe,
+                  resolutionDigest == nil || resolutionDigest == form.resolutionDigest else {
                 self.status.stringValue = "Questions unavailable (\(preparationCode(code) ?? "unsupported_preparation_form"))."; self.updateControls(); self.onStateChange?(); return
             }
             self.form = form; self.candidatePicker.removeAllItems(); self.recipePicker.removeAllItems()
@@ -597,6 +661,8 @@ final class PreparationWorkspaceView: NSStackView {
                 if choice.reference == form.recipe { self.recipePicker.select(self.recipePicker.lastItem) }
             }
             self.formView.configure(fields: form.fields, values: form.values)
+            self.resolutionStatus.stringValue = form.resolutionRequired ? "The host must resolve dependencies" + (form.resolutionOperations.contains("discover_interface") ? " and discover this App's tools" : "") + " before package preparation. Review the scope below." : form.resolutionDigest != nil ? "Resolved dependencies and tools are bound to this source and candidate." : ""
+            if form.resolutionRequired, let policy = form.resolutionPolicy { self.resolutionStatus.stringValue += "\n" + policy.display }
             self.status.stringValue = form.blockers.isEmpty ? "Complete the questions and review the host plan." : "Host blockers: " + form.blockers.joined(separator: ", ")
             self.updateControls(); self.onStateChange?()
         }
@@ -607,17 +673,43 @@ final class PreparationWorkspaceView: NSStackView {
         let candidate = candidatePicker.selectedItem?.representedObject as? String
         let recipeID = recipePicker.selectedItem?.representedObject as? String
         let recipe = sender === candidatePicker ? nil : form.recipes.first { $0.choice.id == recipeID }?.reference
-        loadForm(candidateID: candidate, recipe: recipe)
+        let digest = candidate == form.candidateID ? form.resolutionDigest : nil
+        loadForm(candidateID: candidate, recipe: recipe, resolutionDigest: digest)
+    }
+
+    // Explicit native acceptance entry points apply only values represented by
+    // the generated form. They cannot supply descriptors, policies or locks.
+    func acceptanceSelect(candidateID: String?, recipeID: String?) -> Bool {
+        guard let form, candidateID == nil || form.candidates.contains(where: { $0.id == candidateID }) else { return false }
+        let recipe = recipeID.flatMap { id in form.recipes.first { $0.reference.id == id }?.reference }
+        guard recipeID == nil || recipe != nil else { return false }
+        loadForm(candidateID: candidateID ?? form.candidateID, recipe: recipe ?? form.recipe, resolutionDigest: form.resolutionDigest)
+        return true
+    }
+
+    func acceptanceAnswers(_ overrides: [String: Any]) -> Bool {
+        guard !busy, !hasActiveJob, let form, !form.resolutionRequired, overrides.count <= 256,
+              preparationJSON(overrides, maximum: 262144) != nil else { return false }
+        var values = form.values
+        for (label, value) in overrides {
+            let fields = form.fields.filter { $0.label == label && $0.kind != "schema-preview" }
+            guard fields.count == 1, let field = fields.first, field.accepts(value) else { return false }
+            values[field.id] = value
+        }
+        formView.configure(fields: form.fields, values: values); updateControls()
+        return formView.answers() != nil
     }
 
     @objc func reviewForm() {
         guard !busy, !hasActiveJob, saved, eligible, available?() == true, let context, let form,
               form.importID == context.importID, form.revision == context.revision, form.sourceRevision == context.sourceRevision,
+              !form.resolutionRequired,
               let candidate = form.candidateID, let recipe = form.recipe, let answers = formView.answers(), let request else { return }
         epoch &+= 1; let expected = epoch; busy = true; polling = false; review = nil; startKey = nil; reviewText.string = ""
         status.stringValue = "Reviewing the exact preparation inputs…"; updateControls(); onStateChange?()
-        let body: [String: Any] = ["import_id": context.importID, "revision": context.revision, "candidate_id": candidate,
+        var body: [String: Any] = ["import_id": context.importID, "revision": context.revision, "candidate_id": candidate,
             "recipe": recipe.object, "form_digest": form.digest, "answers": answers]
+        if let digest = form.resolutionDigest { body["resolution_digest"] = digest }
         request("v1/preparations/plan-form", "POST", body) { [weak self] object, code in
             guard let self, self.epoch == expected, self.context == context, self.saved, self.form?.digest == form.digest else { return }; self.busy = false
             guard let object, let review = PreparationReview(object, form: form) else {
@@ -651,7 +743,95 @@ final class PreparationWorkspaceView: NSStackView {
         }
     }
 
+    @objc func reviewResolution() {
+        guard !busy, !hasActiveJob, saved, eligible, available?() == true, let context, let form,
+              form.importID == context.importID, form.revision == context.revision, form.sourceRevision == context.sourceRevision,
+              form.resolutionRequired, let candidate = form.candidateID, let policy = form.resolutionPolicy, let request else { return }
+        epoch &+= 1; let expected = epoch; busy = true; polling = false; resolutionPolling = false
+        resolutionReview = nil; resolutionStartKey = nil; review = nil; startKey = nil; reviewText.string = ""
+        resolutionStatus.stringValue = "Reviewing the exact dependency and tool discovery scope…"; updateControls(); onStateChange?()
+        request("v1/resolutions/plan", "POST", ["import_id": context.importID, "revision": context.revision, "candidate_id": candidate, "policy": policy.object]) { [weak self] object, code in
+            guard let self, self.epoch == expected, self.context == context, self.form?.digest == form.digest else { return }; self.busy = false
+            guard let object, let review = PreparationResolutionReview(object, context: context, candidateID: candidate, policy: policy) else {
+                self.resolutionStatus.stringValue = "Resolution review failed (\(preparationCode(code) ?? "invalid_resolution_plan"))."; self.updateControls(); self.onStateChange?(); return
+            }
+            self.resolutionReview = review
+            self.resolutionStatus.stringValue = policy.display + "\n" + (review.executionAvailable ? "Start authorizes this exact source, candidate, download scope and budgets once." : "Automatic resolution is unavailable on this host.")
+            self.updateControls(); self.onStateChange?()
+        }
+    }
+
+    @objc func startResolution() {
+        guard !busy, !hasActiveJob, saved, eligible, available?() == true, let context, let form, form.resolutionRequired,
+              form.resolutionAvailable, let review = resolutionReview, review.context == context,
+              review.candidateID == form.candidateID, review.canStart(), let request else { return }
+        let key = resolutionStartKey ?? UUID().uuidString.lowercased(); resolutionStartKey = key
+        epoch &+= 1; let expected = epoch; busy = true; polling = false; resolutionPolling = false
+        resolutionStatus.stringValue = "Submitting the reviewed resolution…"; updateControls(); onStateChange?()
+        request("v1/resolutions/start", "POST", ["plan_id": review.planID, "plan_digest": review.planDigest, "idempotency_key": key]) { [weak self] object, code in
+            guard let self, self.epoch == expected, self.context == context, self.resolutionReview?.planID == review.planID,
+                  self.resolutionReview?.planDigest == review.planDigest else { return }; self.busy = false
+            guard let object, let job = PreparationResolutionJob(object), job.importID == context.importID,
+                  job.revision == context.revision, job.sourceRevision == context.sourceRevision, job.candidateID == review.candidateID else {
+                self.resolutionStatus.stringValue = "Resolution could not start (\(preparationCode(code) ?? "invalid_resolution_job"))."; self.updateControls(); self.onStateChange?(); self.pollResolution(); return
+            }
+            self.acceptResolution(job); self.updateControls(); self.onStateChange?()
+        }
+    }
+
+    private func pollResolution() {
+        guard form?.resolutionPolicy != nil || resolutionJob != nil || form?.resolutionRequired == true else { return }
+        guard !resolutionPolling, !busy, saved, available?() == true, let context, let request else { return }
+        resolutionPolling = true; let expected = epoch
+        request("v1/resolutions", "GET", nil) { [weak self] object, _ in
+            guard let self, self.epoch == expected, self.context == context else { return }
+            guard let rows = object?["resolutions"] as? [[String: Any]], rows.count <= 1024 else { self.resolutionPolling = false; return }
+            let jobs = rows.compactMap(PreparationResolutionJob.init)
+            guard jobs.count == rows.count, Set(jobs.map(\.id)).count == jobs.count else { self.resolutionPolling = false; return }
+            let related = jobs.filter { $0.importID == context.importID && $0.revision <= context.revision && $0.sourceRevision == context.sourceRevision }
+            // An unresolved owned job has priority over a later terminal result.
+            let latest = related.filter(\.active).max(by: { $0.updatedAt < $1.updatedAt }) ?? related.max(by: { $0.updatedAt < $1.updatedAt })
+            guard let latest else { self.resolutionPolling = false; return }
+            if self.resolutionJob?.id == latest.id, (self.resolutionJob?.updatedAt ?? -1) >= latest.updatedAt { self.resolutionPolling = false; return }
+            request("v1/resolutions/" + latest.id, "GET", nil) { [weak self] object, _ in
+                guard let self, self.epoch == expected, self.context == context else { return }; self.resolutionPolling = false
+                guard let object, let job = PreparationResolutionJob(object), job.id == latest.id, job.importID == context.importID,
+                      job.revision <= context.revision, job.sourceRevision == context.sourceRevision, job.updatedAt >= latest.updatedAt,
+                      self.resolutionJob?.id != job.id || job.updatedAt >= (self.resolutionJob?.updatedAt ?? 0) else { return }
+                self.acceptResolution(job); self.updateControls(); self.onStateChange?()
+            }
+        }
+    }
+
+    @objc func cancelResolution() { changeResolution(recover: false) }
+    @objc func recoverResolution() { changeResolution(recover: true) }
+
+    private func changeResolution(recover: Bool) {
+        guard !busy, available?() == true, let context, let job = resolutionJob, let request,
+              recover ? job.needsRecovery : job.active && !job.needsRecovery && job.state != "cancel_requested" else { return }
+        epoch &+= 1; let expected = epoch; busy = true; polling = false; resolutionPolling = false; updateControls(); onStateChange?()
+        request("v1/resolutions/" + job.id + (recover ? "/recover" : "/cancel"), "POST", [:]) { [weak self] object, code in
+            guard let self, self.epoch == expected, self.context == context, self.resolutionJob?.id == job.id else { return }; self.busy = false
+            guard let object, let updated = PreparationResolutionJob(object), updated.id == job.id, updated.importID == job.importID,
+                  updated.revision == job.revision, updated.sourceRevision == context.sourceRevision, updated.candidateID == job.candidateID,
+                  updated.updatedAt >= job.updatedAt else {
+                self.resolutionStatus.stringValue = "Resolution " + (recover ? "recovery" : "cancellation") + " failed (\(preparationCode(code) ?? "invalid_resolution_job"))."; self.updateControls(); self.onStateChange?(); return
+            }
+            self.acceptResolution(updated); self.updateControls(); self.onStateChange?()
+        }
+    }
+
+    private func acceptResolution(_ next: PreparationResolutionJob) {
+        resolutionJob = next; resolutionProgress.stringValue = "Draft revision \(next.revision) · " + next.summary
+        resolutionStatus.stringValue = next.active ? "Resolution is owned by the host. Closing this window keeps it running." : next.state == "succeeded" ? "Dependencies and tools resolved. Loading the generated preparation questions…" : "Resolution " + next.state + ". The draft is preserved."
+        if next.state == "succeeded", !next.active, resolutionNotification != next.id, let digest = next.resultDigest {
+            resolutionNotification = next.id
+            loadForm(candidateID: next.candidateID, recipe: form?.recipe, resolutionDigest: digest)
+        }
+    }
+
     func poll() {
+        pollResolution()
         guard !polling, !busy, saved, available?() == true, let context, let request else { return }
         polling = true; let expected = epoch
         request("v1/preparations", "GET", nil) { [weak self] object, _ in
@@ -885,9 +1065,94 @@ private enum PreparationTestData {
         return ["job_id": job["job_id"]!, "import_id": binding["import_id"]!, "revision": binding["revision"]!, "source_revision": binding["source_revision"]!,
             "state": job["state"]!, "updated_at": job["updated_at"]!, "error_code": job["error_code"]!, "progress": job["progress"]!]
     }
+    static var resolutionPolicy: [String: Any] { ["schema_version": 1, "operations": ["resolve_dependencies", "discover_interface"], "network": ["pypi.org", "files.pythonhosted.org"], "wall_seconds": 120, "disk_bytes": 1_073_741_824, "memory_mb": 512] }
+    static func resolutionForm(revision: Int = 1, resolved: Bool = false) -> [String: Any] {
+        var value = form(revision: revision, available: true)
+        value["resolution_required"] = !resolved; value["resolution_operations"] = ["resolve_dependencies", "discover_interface"]
+        value["resolution_available"] = true; value["resolution_policy"] = resolutionPolicy
+        value["resolution_digest"] = resolved ? String(repeating: "f", count: 64) : NSNull(); return value
+    }
+    static func resolutionPlan(available: Bool = true, expired: Bool = false) -> [String: Any] {
+        ["schema_version": 1, "plan_id": planID, "plan_digest": planDigest, "expires_at": Date().timeIntervalSince1970 + (expired ? -1 : 120),
+         "execution_available": available, "request": ["import_id": importID, "revision": 1, "source_revision": source,
+            "candidate_id": candidate, "candidate_kind": "python-mcp", "policy": resolutionPolicy]]
+    }
+    static func resolutionJob(state: String = "running", updated: Double = 1, settled: Bool = false) -> [String: Any] {
+        ["job_id": jobID, "request": ["import_id": importID, "revision": 1, "source_revision": source, "candidate_id": candidate],
+         "state": state, "stage": state == "succeeded" ? "succeeded" : "discovering", "updated_at": updated,
+         "ownership_settled": settled, "reservation_retained": !settled, "result_digest": state == "succeeded" ? String(repeating: "f", count: 64) : NSNull(),
+         "error_code": NSNull(), "progress": ["commands_finished": 3, "wheels_acquired": 2, "bytes_acquired": 4096, "files_checked": 5, "tools_discovered": 1]]
+    }
 }
 
 extension PreparationWorkspaceView {
+    static func resolutionContractSelfTest() -> Bool {
+        var invalid = PreparationTestData.resolutionForm()
+        invalid["resolution_required"] = "true"; guard OnboardingFormV1(invalid) == nil else { return false }
+        invalid = PreparationTestData.resolutionForm(); invalid["resolution_digest"] = String(repeating: "f", count: 64)
+        guard OnboardingFormV1(invalid) == nil else { return false }
+        invalid = PreparationTestData.resolutionForm(); var policy = PreparationTestData.resolutionPolicy; policy["network"] = ["arbitrary.test"]
+        invalid["resolution_policy"] = policy; guard OnboardingFormV1(invalid) == nil else { return false }
+        invalid = PreparationTestData.resolutionJob(); var counters = invalid["progress"] as! [String: Any]; counters["tools_discovered"] = 129
+        invalid["progress"] = counters; guard PreparationResolutionJob(invalid) == nil else { return false }
+        guard let parsedPolicy = PreparationResolutionPolicy(PreparationTestData.resolutionPolicy),
+              parsedPolicy.display.contains("pypi.org"), parsedPolicy.display.contains("Deadline: 120 seconds"),
+              let expired = PreparationResolutionReview(PreparationTestData.resolutionPlan(expired: true), context: PreparationTestData.context, candidateID: PreparationTestData.candidate, policy: parsedPolicy), !expired.canStart() else { return false }
+        let view = PreparationWorkspaceView(); var calls: [PreparationTestRequest] = []
+        view.available = { true }; view.request = { calls.append(PreparationTestRequest(path: $0, method: $1, body: $2, complete: $3)) }
+        view.onUpdatedDraft = { object in
+            guard let context = PreparationContext(object) else { return false }; view.bind(context, saved: true, eligible: true); return true
+        }
+        view.bind(PreparationTestData.context, saved: true, eligible: true); view.refreshForm()
+        calls.removeFirst().complete(PreparationTestData.resolutionForm(), nil)
+        guard view.resolutionReviewButton.isEnabled, !view.reviewButton.isEnabled, !view.startButton.isEnabled else { return false }
+        view.reviewForm(); guard calls.isEmpty else { return false }
+        view.reviewResolution(); guard calls.count == 1, calls[0].path == "v1/resolutions/plan", Set(calls[0].body!.keys) == ["import_id", "revision", "candidate_id", "policy"] else { return false }
+        let stale = calls.removeFirst(); view.bind(PreparationContext(importID: PreparationTestData.importID, revision: 2, sourceRevision: PreparationTestData.source), saved: true, eligible: true)
+        stale.complete(PreparationTestData.resolutionPlan(), nil); guard view.resolutionReview == nil, !view.busy else { return false }
+        view.bind(PreparationTestData.context, saved: true, eligible: true); view.refreshForm(); calls.removeFirst().complete(PreparationTestData.resolutionForm(), nil)
+        view.reviewResolution(); calls.removeFirst().complete(PreparationTestData.resolutionPlan(available: false), nil)
+        view.startResolution(); guard calls.isEmpty, !view.resolutionStartButton.isEnabled else { return false }
+        view.reviewResolution(); calls.removeFirst().complete(PreparationTestData.resolutionPlan(), nil)
+        guard view.resolutionStartButton.isEnabled, view.resolutionStatus.stringValue.contains("once") else { return false }
+        view.startResolution(); guard calls.count == 1, calls[0].path == "v1/resolutions/start", Set(calls[0].body!.keys) == ["plan_id", "plan_digest", "idempotency_key"], calls[0].body?["plan_digest"] as? String == PreparationTestData.planDigest else { return false }
+        let key = calls[0].body?["idempotency_key"] as? String; calls.removeFirst().complete(nil, "connection_unavailable")
+        guard calls.count == 1, calls[0].path == "v1/resolutions" else { return false }; calls.removeFirst().complete(["resolutions": []], nil)
+        view.startResolution(); guard calls[0].body?["idempotency_key"] as? String == key else { return false }
+        calls.removeFirst().complete(PreparationTestData.resolutionJob(), nil)
+        guard view.hasActiveJob, view.resolutionCancelButton.isEnabled, !view.refreshButton.isEnabled, view.resolutionJob?.progress["tools_discovered"] == 1 else { return false }
+        view.cancelResolution(); guard calls.count == 1, calls[0].path == "v1/resolutions/" + PreparationTestData.jobID + "/cancel", calls[0].body?.isEmpty == true else { return false }
+        calls.removeFirst().complete(PreparationTestData.resolutionJob(state: "cancel_requested", updated: 2), nil)
+        guard view.hasActiveJob, !view.resolutionCancelButton.isEnabled else { return false }
+        view.poll(); guard calls.count == 2 else { return false }
+        let preparations = calls.remove(at: 1); preparations.complete(["preparations": []], nil)
+        var foreign = PreparationTestData.resolutionJob(updated: 99); var request = foreign["request"] as! [String: Any]
+        request["source_revision"] = "foreign-source"; foreign["request"] = request; foreign["job_id"] = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"
+        let pending = PreparationTestData.resolutionJob(state: "interrupted", updated: 3)
+        calls.removeFirst().complete(["resolutions": [foreign, pending]], nil)
+        guard calls.count == 1, calls[0].path == "v1/resolutions/" + PreparationTestData.jobID else { return false }
+        calls.removeFirst().complete(pending, nil)
+        guard view.hasActiveJob, view.resolutionRecoverButton.isEnabled, !view.resolutionRecoverButton.isHidden else { return false }
+        view.recoverResolution(); guard calls.count == 1, calls[0].path == "v1/resolutions/" + PreparationTestData.jobID + "/recover" else { return false }
+        calls.removeFirst().complete(PreparationTestData.resolutionJob(state: "interrupted", updated: 4, settled: true), nil)
+        guard !view.hasActiveJob else { return false }
+        // A successful result is supplied to the host for a new generated form.
+        view.acceptResolution(PreparationResolutionJob(PreparationTestData.resolutionJob(state: "succeeded", updated: 5, settled: true))!)
+        guard calls.count == 1, calls[0].path == "v1/preparations/form", calls[0].body?["resolution_digest"] as? String == String(repeating: "f", count: 64), calls[0].body?["candidate_id"] as? String == PreparationTestData.candidate else { return false }
+        calls.removeFirst().complete(PreparationTestData.resolutionForm(resolved: true), nil)
+        guard view.reviewButton.isEnabled, view.form?.resolutionDigest != nil else { return false }
+        var carriedReview = PreparationTestData.review(revision: 2, available: true)
+        carriedReview["resolution_digest"] = String(repeating: "f", count: 64)
+        guard PreparationReview(carriedReview, form: view.form!) != nil else { return false }
+        carriedReview["resolution_digest"] = String(repeating: "0", count: 64)
+        guard PreparationReview(carriedReview, form: view.form!) == nil else { return false }
+        view.reviewForm(); guard calls.count == 1, calls[0].body?["resolution_digest"] as? String == view.form?.resolutionDigest else { return false }
+        calls.removeFirst().complete(PreparationTestData.review(revision: 2, available: true), nil)
+        guard view.review?.context.revision == 2, view.resolutionJob?.revision == 1, view.startButton.isEnabled else { return false }
+        view.bind(PreparationContext(importID: PreparationTestData.importID, revision: 3, sourceRevision: "new-source"), saved: true, eligible: true)
+        return view.resolutionJob == nil && view.resolutionReview == nil && !view.hasActiveJob
+    }
+
     static func contractSelfTest() -> Bool {
         var invalid = PreparationTestData.form()
         invalid["schema_version"] = 2; guard OnboardingFormV1(invalid) == nil else { return false }
@@ -1052,5 +1317,5 @@ func preparationFormsSelfTest(fixture: URL? = nil) -> Bool {
             guard Set(object.keys) == ["form", "review"], let form = OnboardingFormV1(formObject), PreparationReview(reviewObject, form: form) != nil else { return false }
         } else if OnboardingFormV1(object) == nil { return false }
     }
-    return PreparationWorkspaceView.contractSelfTest() && PreparationRecipesView.contractSelfTest()
+    return PreparationWorkspaceView.contractSelfTest() && PreparationWorkspaceView.resolutionContractSelfTest() && PreparationRecipesView.contractSelfTest()
 }

@@ -46,7 +46,7 @@ def policy():
                            disk_bytes=1024 * 1024 * 1024, memory_mb=128)
 
 
-@pytest.mark.parametrize("component", ["python-function-v1", "existing-mcp-v1"])
+@pytest.mark.parametrize("component", ["python-function-v1", "existing-mcp-v1", "resolved-python-v1"])
 async def test_scaffold_and_check_are_offline_with_closed_license_and_fixture_closure(tmp_path, monkeypatch, component):
     async def forbidden(*args, **kwargs):
         pytest.fail("offline recipe authoring must not access management or execution")
@@ -119,8 +119,7 @@ async def test_edit_relock_check_and_add_new_immutable_version_without_host_chan
         assert second["version"] == "2.0.0" and second["digest"] == checked["digest"]
         assert host.recipes.resolve("local.authored", "1.0.0", first["digest"], existing_job=True)["digest"] == first["digest"]
         assert host.registry.list_slots() == []
-    assert "future generated native forms" in (root / "README.md").read_text()
-    assert "Native recipe forms are not implemented" in (root / "README.md").read_text()
+    assert "rendered in generated native forms" in (root / "README.md").read_text()
 
 
 def test_lock_main_emits_static_metadata_and_retains_production_private_umask(tmp_path, capsys):
@@ -281,7 +280,7 @@ async def test_owner_add_enable_variant_and_restart_through_private_cli(tmp_path
     second = scaffold_recipe(second_path, "local.second")
     async with private_manager(tmp_path) as host:
         defaults = {record["recipe_id"] for record in host.recipes.list()}
-        assert defaults == {"mcpme.python-callable"}
+        assert defaults == {"mcpme.python-callable", "mcpme.resolved-python"}
         for path, entry in ((first_path, first), (second_path, second)):
             added = await execute(host.root, "recipes", "add", "--path", path)
             assert added["digest"] == entry["digest"] and added["state"] == "proposed"

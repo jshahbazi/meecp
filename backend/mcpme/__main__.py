@@ -159,7 +159,7 @@ async def call(state_dir: Path, method: str, path: str, body: dict | None = None
         # Reopen for every call; a removed or unsafe file never selects owner authority.
         token = read_credential(credential_file)["token"]
     timeout = 300 if path in {"/v1/install/plan", "/v1/upgrade/plan", "/v1/migrations/jevk5/plan", "/v1/imports",
-                             "/v1/preparations/plan", "/v1/preparations/inspect-source"} or path.endswith(("/attach", "/engine")) else 30
+                             "/v1/preparations/plan", "/v1/preparations/inspect-source", "/v1/resolutions/plan"} or path.endswith(("/attach", "/engine")) else 30
     async with httpx.AsyncClient(base_url=endpoint(connection), timeout=timeout, follow_redirects=False, trust_env=False,
                                  transport=private_transport(socket_path(state_dir, "manager")),
                                  headers={"Authorization": "Bearer " + token}) as client:
@@ -328,7 +328,7 @@ def parser() -> argparse.ArgumentParser:
     scaffold.add_argument("--output", type=Path, required=True)
     scaffold.add_argument("--id", dest="recipe_id", required=True)
     scaffold.add_argument("--version", default="1.0.0")
-    scaffold.add_argument("--component", choices=["python-function-v1", "existing-mcp-v1"], default="python-function-v1")
+    scaffold.add_argument("--component", choices=["python-function-v1", "existing-mcp-v1", "resolved-python-v1"], default="python-function-v1")
     scaffold.add_argument("--json", action="store_true")
     for action in ("check", "lock", "add"):
         item = recipes.add_parser(action)
@@ -364,6 +364,23 @@ def parser() -> argparse.ArgumentParser:
     preparation_recover = preparations.add_parser("recover")
     preparation_recover.add_argument("--job-id", type=uuid_argument, required=True)
     preparation_recover.add_argument("--json", action="store_true")
+    resolutions = commands.add_parser("resolutions").add_subparsers(dest="action", required=True)
+    resolution_plan = resolutions.add_parser("plan")
+    resolution_plan.add_argument("--import", dest="import_id", type=uuid_argument, required=True)
+    resolution_plan.add_argument("--revision", type=int, required=True)
+    resolution_plan.add_argument("--candidate", dest="candidate_id", type=digest_argument, required=True)
+    resolution_plan.add_argument("--policy", type=Path, required=True)
+    resolution_plan.add_argument("--json", action="store_true")
+    resolution_start = resolutions.add_parser("start")
+    resolution_start.add_argument("--plan", dest="plan_id", type=uuid_argument, required=True)
+    resolution_start.add_argument("--plan-digest", type=digest_argument, required=True)
+    resolution_start.add_argument("--idempotency-key", type=uuid_argument, required=True)
+    resolution_start.add_argument("--json", action="store_true")
+    resolutions.add_parser("list").add_argument("--json", action="store_true")
+    for action in ("get", "cancel", "recover"):
+        item = resolutions.add_parser(action)
+        item.add_argument("job_id", type=uuid_argument)
+        item.add_argument("--json", action="store_true")
     downloads = commands.add_parser("downloads").add_subparsers(dest="action", required=True)
     fetch = downloads.add_parser("fetch")
     fetch.add_argument("--url", required=True)
@@ -498,6 +515,26 @@ async def execute(args) -> dict | None:
         if args.action == "list":
             return await api("GET", "/v1/preparations")
         route = "/v1/preparations/" + args.job_id
+        return await api("GET", route) if args.action == "get" else await api("POST", route + "/" + args.action, {})
+    if args.command == "resolutions":
+        if args.action == "plan":
+            from .recipe_sdk import read_contract_file
+            from .preparation_resolution import ResolutionPolicyV1
+            from .preparation_contracts import PreparationError
+            if args.revision < 1:
+                raise PreparationError("invalid_import_revision")
+            try:
+                policy = ResolutionPolicyV1.model_validate(read_contract_file(args.policy))
+            except ValueError:
+                raise PreparationError("invalid_resolution_policy") from None
+            return await api("POST", "/v1/resolutions/plan", {"import_id": args.import_id,
+                "revision": args.revision, "candidate_id": args.candidate_id, "policy": policy.model_dump(mode="json")})
+        if args.action == "start":
+            return await api("POST", "/v1/resolutions/start", {"plan_id": args.plan_id,
+                "plan_digest": args.plan_digest, "idempotency_key": args.idempotency_key})
+        if args.action == "list":
+            return await api("GET", "/v1/resolutions")
+        route = "/v1/resolutions/" + args.job_id
         return await api("GET", route) if args.action == "get" else await api("POST", route + "/" + args.action, {})
     if args.command == "downloads":
         if args.action == "fetch":

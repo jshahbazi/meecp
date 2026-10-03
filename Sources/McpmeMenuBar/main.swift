@@ -367,6 +367,9 @@ private enum PrivateFile {
 final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate, NSTextViewDelegate {
     private var statusItem: NSStatusItem!
     private var process: Process?
+    // Assigned only by the explicit native acceptance command. The normal app
+    // continues to require its own live host Process and matching connection.
+    private var nativeAcceptanceConnection: ManagerConnection?
     private var generation: UInt64 = 0
     private var quitting = false
     private var installing = false
@@ -601,6 +604,12 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
 
     private func connection() -> ManagerConnection? {
         guard !uiPreviewMode else { return nil }
+        if let accepted = nativeAcceptanceConnection {
+            guard let object = PrivateFile.read(stateDirectory.appendingPathComponent("manager-connection.json")),
+                  let current = ManagerConnection(object), current.pid == accepted.pid,
+                  current.endpoint == accepted.endpoint, current.token == accepted.token else { return nil }
+            return current
+        }
         guard let process = process, process.isRunning,
               let object = PrivateFile.read(stateDirectory.appendingPathComponent("manager-connection.json")),
               let connection = ManagerConnection(object), connection.pid == process.processIdentifier else { return nil }
@@ -609,7 +618,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
 
     private func request(_ path: String, method: String = "GET", body: [String: Any]? = nil,
                          completion: @escaping ([String: Any]?, String?) -> Void) {
-        guard !uiPreviewMode, !quitting, !stopping, let process = process, process.isRunning, let connection = connection() else {
+        let process = self.process
+        guard !uiPreviewMode, !quitting, !stopping, process?.isRunning == true || nativeAcceptanceConnection != nil, let connection = connection() else {
             completion(nil, "host_unavailable"); return
         }
         var request = URLRequest(url: connection.endpoint.appendingPathComponent(path))
@@ -631,7 +641,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                 else if let response = response, (200...299).contains(response.statusCode) { object = parsed }
             }
             DispatchQueue.main.async {
-                guard let self = self, self.generation == expectedGeneration, self.process === process, process.isRunning else { return }
+                guard let self = self, self.generation == expectedGeneration, self.process === process,
+                      process?.isRunning == true || self.nativeAcceptanceConnection?.pid == connection.pid else { return }
                 completion(object, object == nil ? code : nil)
             }
         }
@@ -2215,6 +2226,106 @@ private func nativeSelfTest() -> Bool {
 }
 
 extension McpmeApp {
+    /// Runs the native form actions against an already launched, owner-only
+    /// host. Backend execution remains governed by that host's factory gates.
+    fileprivate static func preparationNativeAcceptance(fixture: URL) -> Bool {
+        guard fixture.isFileURL, let data = try? Data(contentsOf: fixture), data.count <= 262144,
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              Set(object.keys).isSubset(of: ["state_dir", "draft_id", "output_path", "answers_by_label", "candidate_id", "recipe_id"]),
+              let state = preparationText(object["state_dir"], maximum: 4096), state.hasPrefix("/"),
+              let draftID = preparationUUID(object["draft_id"]),
+              let output = preparationText(object["output_path"], maximum: 4096), output.hasPrefix("/"),
+              !FileManager.default.fileExists(atPath: output),
+              let answers = object["answers_by_label"] as? [String: Any], answers.count <= 256,
+              preparationJSON(answers, maximum: 262144) != nil,
+              object["candidate_id"] == nil || preparationDigest(object["candidate_id"]) != nil,
+              object["recipe_id"] == nil || preparationText(object["recipe_id"], maximum: 128) != nil else { return false }
+        let prior = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"]
+        setenv("MCPME_STATE_DIR", state, 1)
+        defer { if let prior { setenv("MCPME_STATE_DIR", prior, 1) } else { unsetenv("MCPME_STATE_DIR") } }
+        let app = McpmeApp(); _ = app.makeSetupWorkspace()
+        var stage = "connection", routes: [String] = [], pending = 0
+        var receipt: [String: Any] = ["schema_version": 1, "draft_id": draftID]
+        func report(_ passed: Bool) -> Bool {
+            receipt["passed"] = passed; receipt["stage"] = stage; receipt["routes"] = routes
+            if let code = app.preparationView.job?.error ?? app.preparationView.resolutionJob?.error { receipt["error_code"] = code }
+            guard let result = try? JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]),
+                  (try? result.write(to: URL(fileURLWithPath: output), options: .atomic)) != nil,
+                  (try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: output)) != nil else { return false }
+            return passed
+        }
+        func awaitCondition(_ seconds: Double = 330, _ condition: () -> Bool) -> Bool {
+            let deadline = Date().addingTimeInterval(seconds)
+            while !condition(), Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+            return condition()
+        }
+        guard let connectionObject = PrivateFile.read(app.stateDirectory.appendingPathComponent("manager-connection.json")),
+              let connection = ManagerConnection(connectionObject) else { return report(false) }
+        app.nativeAcceptanceConnection = connection; app.hostAvailable = true
+        let view = app.preparationView
+        view.request = { path, method, body, complete in
+            routes.append(method + " " + path); pending += 1
+            app.request(path, method: method, body: body) { object, code in pending -= 1; complete(object, code) }
+        }
+        func fetchDraft() -> ImportDraft? {
+            var completed = false, received: ImportDraft?
+            app.request("v1/imports/" + draftID) { object, _ in received = object.flatMap(ImportDraft.init); completed = true }
+            guard awaitCondition(330, { completed }) else { return nil }; return received
+        }
+        stage = "initial_draft"
+        guard let draft = fetchDraft(), draft.editable, draft.packagePath == nil else { return report(false) }
+        app.displayDraft(draft)
+        stage = "initial_form"; view.refreshForm()
+        guard awaitCondition(330, { pending == 0 && !view.busy }), view.form != nil else { return report(false) }
+        if object["candidate_id"] != nil || object["recipe_id"] != nil {
+            guard view.acceptanceSelect(candidateID: object["candidate_id"] as? String, recipeID: object["recipe_id"] as? String),
+                  awaitCondition(330, { pending == 0 && !view.busy }), view.form != nil else { return report(false) }
+        }
+        guard let initial = view.form, let selectedCandidate = initial.candidateID else { return report(false) }
+        receipt["candidate_id"] = selectedCandidate; receipt["initial_form_digest"] = initial.digest
+        if initial.resolutionRequired {
+            stage = "resolution_review"; view.reviewResolution()
+            guard awaitCondition(330, { pending == 0 && !view.busy }), let review = view.resolutionReview, review.canStart() else { return report(false) }
+            receipt["resolution_plan_id"] = review.planID; receipt["resolution_plan_digest"] = review.planDigest
+            stage = "resolution_start"; view.startResolution()
+            guard awaitCondition(330, { pending == 0 && !view.busy }), view.resolutionJob != nil else { return report(false) }
+            stage = "resolution_poll"
+            let deadline = Date().addingTimeInterval(Double(review.policy.wallSeconds) + 60)
+            while view.resolutionJob?.active == true, Date() < deadline {
+                view.poll(); guard awaitCondition(330, { pending == 0 && !view.busy }) else { return report(false) }
+                if view.resolutionJob?.needsRecovery == true { stage = "resolution_recovery"; return report(false) }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            }
+            guard let resolved = view.resolutionJob, resolved.state == "succeeded", !resolved.active,
+                  let digest = resolved.resultDigest, view.form?.resolutionDigest == digest,
+                  view.form?.resolutionRequired == false else { return report(false) }
+            receipt["resolution_job_id"] = resolved.id; receipt["resolution_digest"] = digest; receipt["resolution_progress"] = resolved.progress
+        }
+        stage = "generated_answers"
+        guard let generated = view.form, generated.candidateID == selectedCandidate, generated.recipe != nil,
+              view.acceptanceAnswers(answers) else { return report(false) }
+        receipt["generated_form_digest"] = generated.digest
+        receipt["recipe_id"] = generated.recipe?.id; receipt["recipe_digest"] = generated.recipe?.digest
+        stage = "preparation_review"; view.reviewForm()
+        guard awaitCondition(330, { pending == 0 && !view.busy }), let review = view.review,
+              review.canStart(), app.currentDraft?.revision == review.context.revision else { return report(false) }
+        receipt["reviewed_revision"] = review.context.revision; receipt["preparation_plan_id"] = review.planID; receipt["preparation_plan_digest"] = review.planDigest
+        stage = "preparation_start"; view.startPreparation()
+        guard awaitCondition(330, { pending == 0 && !view.busy }), view.job != nil else { return report(false) }
+        stage = "preparation_poll"
+        let deadline = Date().addingTimeInterval(660)
+        while view.job?.active == true, Date() < deadline {
+            view.poll(); guard awaitCondition(330, { pending == 0 && !view.busy }) else { return report(false) }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        }
+        guard let job = view.job, job.state == "succeeded", let final = fetchDraft(),
+              final.sourceRevision == draft.sourceRevision, final.revision > review.context.revision,
+              final.packagePath != nil else { return report(false) }
+        receipt["preparation_job_id"] = job.id; receipt["preparation_state"] = job.state; receipt["preparation_progress"] = job.progress
+        receipt["attached_revision"] = final.revision; receipt["source_revision"] = final.sourceRevision
+        stage = "attached"; return report(true)
+    }
+
     /// Exercises actual host form/review responses through the parent's draft callback.
     fileprivate static func preparationBindingSelfTest(fixture: URL?) -> Bool {
         guard let fixture else { return true }
@@ -2398,6 +2509,15 @@ if CommandLine.arguments.dropFirst().first == "--preparation-ui-self-test" {
     let fixture = arguments.count == 2 ? URL(fileURLWithPath: arguments[1]) : nil
     let passed = preparationFormsSelfTest(fixture: fixture) && McpmeApp.preparationBindingSelfTest(fixture: fixture)
     print(passed ? "preparation_ui_contracts_passed" : "preparation_ui_contracts_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--preparation-native-acceptance" {
+    _ = NSApplication.shared
+    let arguments = Array(CommandLine.arguments.dropFirst())
+    guard arguments.count == 2, arguments[1].hasPrefix("/") else { exit(2) }
+    let passed = McpmeApp.preparationNativeAcceptance(fixture: URL(fileURLWithPath: arguments[1]))
+    print(passed ? "preparation_native_acceptance_passed" : "preparation_native_acceptance_failed")
     exit(passed ? 0 : 1)
 }
 

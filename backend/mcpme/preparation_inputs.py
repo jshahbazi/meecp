@@ -15,6 +15,7 @@ from .contracts import Digest, StrictModel
 from .preparation_components import (
     ComponentReference, ComponentRegistry, PreparationDescriptorV2, SourceBinding,
     SourceFileBinding, parse_component_descriptor,
+    original_file_records,
 )
 from .preparation_contracts import (
     JobBinding, Name, PreparationDescriptor, PreparationError, PreparationPackage,
@@ -61,7 +62,7 @@ class OriginalSourceReference(InputContract):
 class OriginalFileReference(InputContract):
     path: Name
     sha256: Digest
-    size: int = Field(ge=0, le=16 * 1024 * 1024)
+    size: int = Field(ge=0, le=64 * 1024 * 1024 * 1024)
 
     @field_validator("path")
     @classmethod
@@ -145,7 +146,7 @@ class BoundPreparationInputsV1(InputContract):
     package: PreparationPackage
     components: tuple[ComponentReference, ...] = Field(min_length=1, max_length=32)
     source_validations: tuple[SourceValidationReference, ...] = Field(min_length=1, max_length=32)
-    captured_collection: CollectionReference
+    captured_collection: CollectionReference | None
     derived_collection: CollectionReference | None = None
     derived_inputs: tuple[DerivedInputReference, ...] = Field(default=(), max_length=128)
     original_dependency_locks: tuple[OriginalLockReference, ...] = Field(default=(), max_length=32)
@@ -168,7 +169,9 @@ class BoundPreparationInputsV1(InputContract):
                 if file.path in files and files[file.path] != file:
                     raise PreparationError("original_file_closure_mismatch")
                 files[file.path] = file
-        if self.captured_collection.kind != "captured_artifact_collection":
+        if self.captured_collection is not None and self.captured_collection.kind != "captured_artifact_collection":
+            raise PreparationError("captured_collection_required")
+        if self.captured_collection is None and self.source.kind not in {"local_folder", "document"}:
             raise PreparationError("captured_collection_required")
         if self.derived_collection is not None and self.derived_collection.kind != "derived_input_collection":
             raise PreparationError("derived_collection_required")
@@ -191,7 +194,7 @@ class BoundPreparationInputsV1(InputContract):
         if lock_keys != {key for key, item in validations.items() if item.dependency_lock_digest is not None}:
             raise PreparationError("original_dependency_lock_mismatch")
         available = {self.source.revision.removeprefix("sha256:"), self.descriptor_digest,
-                     self.captured_collection.digest, *(item.digest for item in self.runtimes),
+                     *((self.captured_collection.digest,) if self.captured_collection else ()), *(item.digest for item in self.runtimes),
                      *(file.sha256 for binding in self.source_validations for file in binding.files)}
         for item in self.derived_inputs:
             if (item.source_revision != self.source.revision or item.collection_digest != self.derived_collection.digest
@@ -207,7 +210,8 @@ class BoundPreparationInputsV1(InputContract):
     @property
     def consumed_input_digests(self):
         """Exact ordered identities a builder must acknowledge consuming."""
-        return (self.digest, *(item.digest for item in self.source_validations), self.captured_collection.digest,
+        return (self.digest, *(item.digest for item in self.source_validations),
+                *((self.captured_collection.digest,) if self.captured_collection else ()),
                 *((self.derived_collection.digest,) if self.derived_collection else ()),
                 *(item.digest for item in self.derived_inputs), *(item.digest for item in self.runtimes))
 
@@ -285,7 +289,7 @@ def adapt_descriptor(value, *, draft: dict, recipe: dict, registry: ComponentReg
     return DescriptorView(descriptor, bindings, canonical_bytes(descriptor.model_dump(exclude_none=True)))
 
 
-def bind_preparation_inputs(view: DescriptorView, *, draft: dict, captured_collection: CollectionReference,
+def bind_preparation_inputs(view: DescriptorView, *, draft: dict, captured_collection: CollectionReference | None,
                             derived_collection: CollectionReference | None = None,
                             derived_inputs=(), runtimes=(), capabilities=(), expected_package_contract: dict):
     """Bind validated identities; callers own collection/runtime byte verification."""
@@ -297,7 +301,7 @@ def bind_preparation_inputs(view: DescriptorView, *, draft: dict, captured_colle
     if expected != expected_package_contract:
         raise PreparationError("expected_package_contract_mismatch")
     validations = [SourceValidationReference.from_binding(item) for item in view.source_bindings]
-    records = {item["path"]: item for item in source.get("files", [])}
+    records = {item["path"]: item for item in original_file_records(draft)}
     locks = []
     for binding in validations:
         for file in binding.files:
@@ -314,7 +318,7 @@ def bind_preparation_inputs(view: DescriptorView, *, draft: dict, captured_colle
         "recipe": view.descriptor.recipe.model_dump(), "package": view.package.model_dump(),
         "components": [item.component.model_dump() for item in validations],
         "source_validations": [item.model_dump(mode="json") for item in validations],
-        "captured_collection": captured_collection.model_dump(),
+        "captured_collection": captured_collection.model_dump() if captured_collection else None,
         "derived_collection": derived_collection.model_dump() if derived_collection else None,
         "derived_inputs": [item.model_dump(mode="json") for item in derived_inputs],
         "original_dependency_locks": locks, "runtimes": [item.model_dump() for item in runtimes],
@@ -371,7 +375,8 @@ class PreparationReceiptV2(InputContract):
         if (self.binding.source_revision != self.inputs.source.revision
                 or self.binding.descriptor_digest != self.inputs.descriptor_digest
                 or self.binding.recipe != self.inputs.recipe
-                or self.binding.artifact_collection_digest != self.inputs.captured_collection.digest):
+                or self.binding.artifact_collection_digest != (self.inputs.captured_collection.digest
+                    if self.inputs.captured_collection else contract_digest("artifact-collection-v1", []))):
             raise PreparationError("receipt_input_binding_mismatch")
         return self
 
@@ -394,6 +399,23 @@ def _parse(model, value):
 
 def parse_bound_inputs(value) -> BoundPreparationInputsV1:
     return _parse(BoundPreparationInputsV1, value)
+
+
+def parse_preparation_descriptor(value):
+    """Version dispatch without normalizing legacy objects or identities."""
+    original = value if isinstance(value, (PreparationDescriptor, PreparationDescriptorV2)) else None
+    raw = original.model_dump(exclude_none=True) if original is not None else load_contract(value) if isinstance(value, bytes) else value
+    if not isinstance(raw, dict) or type(raw.get("schema_version")) is not int:
+        raise PreparationError("invalid_preparation_descriptor")
+    parser = {1: parse_descriptor, 2: parse_component_descriptor}.get(raw["schema_version"])
+    if parser is None:
+        raise PreparationError("unsupported_preparation_descriptor_version")
+    checked = parser(raw)
+    return original if original is not None else checked
+
+
+def descriptor_tools(value):
+    return value.interface.tools if value.schema_version == 1 else value.tools
 
 
 def parse_preparation_receipt(value) -> PreparationReceipt | PreparationReceiptV2:

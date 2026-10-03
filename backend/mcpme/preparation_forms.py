@@ -18,6 +18,7 @@ from .preparation_contracts import (Contract, Name, PreparationError, RecipeRefe
     SourceIdentity, UUID, canonical_bytes, check_schema, contract_digest,
     parse_descriptor, schema_accepts)
 from .preparation_inspection import inspect_source
+from .preparation_inputs import parse_preparation_descriptor
 
 MAX_FIELDS = 256
 MAX_CHOICES = 128
@@ -121,9 +122,21 @@ class OnboardingFormV1(Contract):
     tools: list[Tool] = Field(max_length=128)
     blockers: list[Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")]] = Field(max_length=128)
     execution_available: bool
+    resolution_required: bool = False
+    resolution_operations: list[Literal["resolve_dependencies", "discover_interface"]] = Field(default_factory=list, max_length=2)
+    resolution_digest: Digest | None = None
+    resolution_available: bool = False
+    resolution_policy: dict | None = None
 
     @model_validator(mode="after")
     def consistent(self):
+        from .preparation_resolution import ResolutionPolicyV1
+        policy = ResolutionPolicyV1.model_validate(self.resolution_policy) if self.resolution_policy is not None else None
+        if (self.resolution_operations != (list(policy.operations) if policy else [])
+                or self.resolution_available and policy is None
+                or self.resolution_required != bool(self.resolution_operations and self.resolution_digest is None)
+                or self.resolution_operations and self.candidate_id is None):
+            raise PreparationError("invalid_preparation_form")
         for items in (self.fields, self.candidate_choices, self.recipe_choices):
             if len({item.id for item in items}) != len(items):
                 raise PreparationError("invalid_preparation_form")
@@ -158,6 +171,7 @@ class FormContext:
     recipe_record: dict | None
     bindings: dict[str, tuple]
     draft: dict
+    resolution: Any = None
 
 
 class OnboardingProvider(Protocol):
@@ -169,7 +183,7 @@ class OnboardingProvider(Protocol):
 
 class PythonCallableFormProvider:
     def accepts(self, candidate, recipe):
-        return (candidate["kind"] == "python-callable" and len(recipe["manifest"]["steps"]) == 1
+        return (not candidate.get("_resolved_path") and candidate["kind"] == "python-callable" and len(recipe["manifest"]["steps"]) == 1
                 and recipe["manifest"]["steps"][0]["component"] == "python-function-v1")
 
     def fields(self, draft, candidate, recipe):
@@ -283,19 +297,110 @@ class PythonCallableFormProvider:
         return restored
 
 
+class ResolvedPythonFormProvider(PythonCallableFormProvider):
+    def accepts(self, candidate, recipe):
+        return (candidate.get("_resolved_path", False) and len(recipe["manifest"]["steps"]) == 1
+            and recipe["manifest"]["steps"][0]["component"] == "resolved-python-v1")
+
+    def fields(self, draft, candidate, recipe):
+        if not candidate.get("_resolved"):
+            return [], {}, ["resolution_required"]
+        adjusted = copy.deepcopy(candidate)
+        adjusted["unresolved"] = [code for code in candidate["unresolved"] if code not in {
+            "dependency_resolution_required", "dependency_project_required", "dynamic_mcp_discovery_required",
+            "entrypoint_launch_binding_required"}]
+        if candidate["kind"] == "python-mcp":
+            from pathlib import PurePosixPath
+            adjusted["license_candidates"] = [item["path"] for item in draft["source"]["files"]
+                if PurePosixPath(item["path"]).name.lower().split(".")[0] in {"license", "licence", "copying"} and item["size"]]
+            if not adjusted["license_candidates"]:
+                adjusted["unresolved"].append("source_license_required")
+            adjusted["fixture"] = {"arguments": None}
+            # Common questions use the first tool; replace fixture questions
+            # below with a bounded pair for every exact discovered tool.
+            adjusted["tools"][0]["output_schema"] = adjusted["tools"][0].get("output_schema") or {"type": "object"}
+        fields, bindings, blockers = super().fields(draft, adjusted, recipe)
+        if candidate["kind"] == "python-mcp":
+            fields = [field for field in fields if bindings[field.id][0] not in {"arguments", "expected"}]
+            bindings = {key: value for key, value in bindings.items() if value[0] not in {"arguments", "expected"}}
+            if len(candidate["tools"]) > 64:
+                blockers.append("preparation_fixture_limit")
+            else:
+                for tool in candidate["tools"]:
+                    for key, label, schema in (("arguments", "Test input", tool["input_schema"]),
+                            ("expected", "Expected test result", tool.get("output_schema") or {"type": "object"})):
+                        field = _field("fixture:" + tool["name"] + ":" + key, label=(label + " · " + tool["name"])[:256],
+                            kind="object", schema=schema)
+                        fields.append(field)
+                        bindings[field.id] = (key, tool["name"])
+        return fields, bindings, blockers
+
+    def resolve(self, context, values):
+        from .preparation_resolved_python import ResolvedPythonComponent
+        resolved, inputs, fixtures = {}, {}, {}
+        candidate = context.candidate
+        for field_id, binding in context.bindings.items():
+            if field_id not in values:
+                continue
+            value = values[field_id]
+            if binding[0] == "input":
+                inputs[binding[1]] = binding[2][value] if binding[2] else value
+            elif binding[0] == "license":
+                resolved["license"] = binding[1][value]
+            elif binding[0] in {"arguments", "expected"}:
+                name = binding[1] if len(binding) > 1 else candidate["tools"][0]["name"]
+                fixtures.setdefault(name, {})[binding[0]] = value
+            else:
+                resolved[binding[0]] = value
+        return {"schema_version": 2, "recipe": context.form.recipe.model_dump(),
+            "package": {"id": "local.app-" + context.form.import_id, "version": "1.0.0", "name": resolved["name"]},
+            "components": [{"component": ResolvedPythonComponent().reference.model_dump(), "input": {
+                "candidate_id": candidate["candidate_id"], "resolution_digest": context.form.resolution_digest,
+                "source_license": resolved["license"]}}], "tools": candidate["tools"], "inputs": inputs,
+            "resources": {"memory_mb": resolved["memory"]},
+            "validation": [{"id": "synthetic-" + str(index), "tool": name, **fixture, "synthetic": True}
+                for index, (name, fixture) in enumerate(fixtures.items())]}
+
+    def restore_fields(self, fields, bindings, descriptor):
+        from .preparation_resolved_python import resolved_input
+        value = parse_preparation_descriptor(descriptor)
+        selected = resolved_input(value)
+        fixtures = {item.tool: item for item in value.validation}
+        restored = []
+        for field in fields:
+            binding, default = bindings[field.id], field.value
+            key = binding[0]
+            if key == "memory":
+                default = min(value.resources.memory_mb, field.constraints["maximum"])
+            elif key == "license":
+                default = next((identity for identity, path in binding[1].items() if path == selected.source_license), None)
+            elif key in {"arguments", "expected"}:
+                fixture = fixtures.get(binding[1] if len(binding) > 1 else value.tools[0].name)
+                default = getattr(fixture, key) if fixture else None
+            elif key == "input":
+                default = value.inputs.get(binding[1])
+                if binding[2] is not None:
+                    default = next((identity for identity, option in binding[2].items() if option == default), None)
+            restored.append(FormField.model_validate({**field.model_dump(by_alias=True), "value": default}))
+        return restored
+
+
 class PreparationForms:
     def __init__(self, store, *, providers=None, preferred_recipes=()):
         self.store, self.imports, self.recipes = store, store.imports, store.recipes
-        self.providers = tuple(providers) if providers is not None else (PythonCallableFormProvider(),)
+        self.providers = tuple(providers) if providers is not None else (PythonCallableFormProvider(), ResolvedPythonFormProvider())
+        if providers is None:
+            self.providers += tuple(family.form_provider for family in store.families.values() if hasattr(family, "form_provider"))
         if len(preferred_recipes) > MAX_CHOICES:
             raise PreparationError("preparation_form_limit")
         self.preferred_recipes = tuple(RecipeReference.model_validate(value) for value in preferred_recipes)
 
-    def context(self, import_id, revision, *, candidate_id=None, recipe=None, execution_available=False):
+    def context(self, import_id, revision, *, candidate_id=None, recipe=None, execution_available=False,
+                resolution_digest=None, resolution_available=False):
         with self.imports._lock:
             draft = copy.deepcopy(self.imports._get(import_id, revision))
             self.imports._mutable(draft)
-        inspection = inspect_source(draft)
+        inspection = self.store.inspect_source(draft)
         previous = self.store.selected_descriptor(import_id)
         if previous is not None and previous["source_revision"] != inspection["source_revision"]:
             previous = None
@@ -313,6 +418,25 @@ class PreparationForms:
         candidate = next((item for item in candidates if item["candidate_id"] == candidate_id), None)
         if candidate_id is not None and candidate is None:
             raise PreparationError("preparation_candidate_mismatch")
+        resolution, operations = None, []
+        if resolution_digest is None and previous is not None and previous["revision"] == revision and previous["candidate_id"] == candidate_id:
+            resolution_digest = previous.get("resolution_digest")
+        if candidate is not None:
+            candidate = copy.deepcopy(candidate)
+            needs = candidate["kind"] == "python-mcp" or bool(set(candidate["unresolved"]) & {
+                "dependency_resolution_required", "dependency_project_required"})
+            candidate["_resolved_path"] = bool(self.store.resolutions is not None and (needs or resolution_digest))
+            if needs or resolution_digest:
+                operations = ["resolve_dependencies"] + (["discover_interface"] if candidate["kind"] == "python-mcp" else [])
+            if resolution_digest is not None:
+                if self.store.resolutions is None:
+                    raise PreparationError("resolution_result_unavailable")
+                resolution, _ = self.store.resolutions.resolve_result(import_id, revision, candidate_id, resolution_digest)
+                candidate["_resolved"] = True
+                if candidate["kind"] == "python-mcp":
+                    candidate["tools"] = [item.model_dump(exclude_none=True) for item in resolution.tools]
+        elif resolution_digest is not None:
+            raise PreparationError("resolution_candidate_mismatch")
         try:
             selected = RecipeReference.model_validate(recipe) if recipe is not None else None
         except ValidationError:
@@ -369,7 +493,12 @@ class PreparationForms:
             "recipe_choices": [item.model_dump() for item in recipe_choices],
             "fields": [item.model_dump(by_alias=True) for item in fields],
             "tools": [Tool.model_validate(item).model_dump() for item in candidate["tools"]] if candidate else [],
-            "blockers": sorted(set(blockers)), "execution_available": execution_available is True}
+            "blockers": sorted(set(blockers)), "execution_available": execution_available is True,
+            "resolution_required": bool(operations and resolution is None), "resolution_operations": operations,
+            "resolution_digest": resolution_digest, "resolution_available": bool(operations) and resolution_available is True,
+            "resolution_policy": {"schema_version": 1, "operations": operations,
+                "network": ["pypi.org", "files.pythonhosted.org"], "wall_seconds": 300,
+                "disk_bytes": 2 * 1024**3, "memory_mb": 2048} if operations else None}
         digest = contract_digest("preparation-onboarding-form-v1", payload)
         form = OnboardingFormV1.model_validate({**payload, "form_digest": digest})
         with self.imports._lock:
@@ -377,14 +506,16 @@ class PreparationForms:
             self.imports._mutable(current)
             if current["source"] != draft["source"]:
                 raise PreparationError("source_identity_mismatch")
-        return FormContext(form, candidate, record, bindings, draft)
+        return FormContext(form, candidate, record, bindings, draft, resolution)
 
     def form(self, *args, **kwargs):
         return self.context(*args, **kwargs).form.model_dump(by_alias=True)
 
-    def resolve(self, import_id, revision, *, candidate_id, recipe, form_digest, answers, execution_available=False):
+    def resolve(self, import_id, revision, *, candidate_id, recipe, form_digest, answers, execution_available=False,
+                resolution_digest=None, resolution_available=False):
         context = self.context(import_id, revision, candidate_id=candidate_id, recipe=recipe,
-                               execution_available=execution_available)
+                               execution_available=execution_available, resolution_digest=resolution_digest,
+                               resolution_available=resolution_available)
         if context.form.form_digest != form_digest:
             raise PreparationError("stale_preparation_form")
         if context.form.blockers or context.candidate is None or context.recipe_record is None:
@@ -408,6 +539,6 @@ class PreparationForms:
             raise PreparationError("ambiguous_preparation_provider")
         # A provider receives a private immutable draft copy, never host/API or
         # installation authority. It cannot be registered by a recipe bundle.
-        descriptor = parse_descriptor(providers[0].resolve(context, values))
+        descriptor = parse_preparation_descriptor(providers[0].resolve(context, values))
         self.store._bound_descriptor(import_id, revision, descriptor.model_dump(exclude_none=True), enforce_selection=False)
         return descriptor, context

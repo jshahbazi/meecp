@@ -13,6 +13,7 @@ import time
 import uuid
 
 from .ownership_receipts import verify_receipt
+from .preparation_inputs import parse_preparation_descriptor, descriptor_tools
 from .preparation_contracts import ExecutionPolicy, PreparationError, canonical_bytes, contract_digest
 
 MAX_EXECUTION_PLANS = 1024
@@ -115,7 +116,7 @@ class PreparationAuthority:
                    authority_expires_at=plan["expires_at"], execution_started_at=None,
                    runtime_digest=plan["runtime_digest"], workspace=None, verification=None,
                    verification_publication_pending=False,
-                   expected_tools=len(value.interface.tools), expected_fixtures=len(value.validation),
+                   expected_tools=len(descriptor_tools(value)), expected_fixtures=len(value.validation),
                    probe_memory_mb=value.resources.memory_mb)
         inputs = {"descriptor": value.model_dump(exclude_none=True), "execution_policy": policy.model_dump()}
         self.db.execute("INSERT INTO preparation_job_inputs VALUES (?,?)", (job["job_id"], canonical_bytes(inputs).decode()))
@@ -147,7 +148,6 @@ class PreparationAuthority:
             return job
 
     def job_inputs(self, job_id):
-        from .preparation_contracts import parse_descriptor
         with self.imports._lock:
             job = self._get(job_id)
             self._current_inputs(job)
@@ -156,7 +156,7 @@ class PreparationAuthority:
                 raise PreparationError("preparation_authority_required")
             value = json.loads(row["data"])
             draft = self.imports._get(job["binding"]["import_id"], job["binding"]["revision"])
-            descriptor = parse_descriptor(value["descriptor"])
+            descriptor = parse_preparation_descriptor(value["descriptor"])
             policy = ExecutionPolicy.model_validate(value["execution_policy"])
             if descriptor.digest != job["binding"]["descriptor_digest"] or policy.digest != job["binding"]["policy_digest"]:
                 raise PreparationError("preparation_authority_mismatch")

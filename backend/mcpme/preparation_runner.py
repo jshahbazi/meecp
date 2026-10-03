@@ -31,6 +31,7 @@ from .preparation_acquisition import WheelAcquirer
 from .preparation_builder import CommandSpec, PrivateToolchain, load_private_toolchain, prepare_bound
 from .preparation_components import read_snapshot
 from .preparation_contracts import ExecutionPolicy, PreparationError, PreparationReceipt, canonical_bytes, contract_digest
+from .preparation_inputs import PreparationReceiptV2
 from .preparation_processes import PreparationExecutor
 from .preparation_verifier import verify_prepared_package
 from .preparations import RECEIPT_NAME, TERMINAL
@@ -41,7 +42,8 @@ MAX_WORKSPACE_ENTRIES = 200000
 RUNNER_FILES = ("preparation_runner.py", "preparation_builder.py", "preparation_acquisition.py",
                 "preparation_components.py", "preparation_processes.py", "preparations.py",
                 "preparation_authority.py", "preparation_contracts.py", "processes.py", "ownership_receipts.py",
-                "imports.py", "private.py", "recipes.py", "contracts.py")
+                "imports.py", "private.py", "recipes.py", "contracts.py", "preparation_inputs.py",
+                "preparation_resolved_python.py", "preparation_resolution.py")
 VERIFIER_FILES = ("preparation_verifier.py", "preparation_processes.py", "preparation_contracts.py",
                   "contracts.py", "processes.py", "ownership_receipts.py")
 
@@ -205,10 +207,14 @@ def _remove_workspace(state: Path, job_id: str, workspace: Path):
 
 def seal_receipt(package, job: dict):
     """Lock the authority receipt before the independent probe sees the package."""
-    receipt = PreparationReceipt(schema_version=1, binding=job["binding"],
-        dependency_lock_digest=job["dependency_lock_digest"], runtime_digest=job["runtime_digest"],
-        fixture_digest=job["fixture_digest"])
-    data = canonical_bytes(receipt.model_dump())
+    if job.get("bound_inputs") is not None:
+        receipt = PreparationReceiptV2(schema_version=2, binding=job["binding"], inputs=job["bound_inputs"],
+            fixture_digest=job["fixture_digest"])
+    else:
+        receipt = PreparationReceipt(schema_version=1, binding=job["binding"],
+            dependency_lock_digest=job["dependency_lock_digest"], runtime_digest=job["runtime_digest"],
+            fixture_digest=job["fixture_digest"])
+    data = canonical_bytes(receipt.model_dump(mode="json"))
     path = package.root / RECEIPT_NAME
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(descriptor, "wb") as output:
@@ -303,6 +309,8 @@ class PreparationRunner:
         self._close_task = None
         self._recovery_task = None
         self._serial = asyncio.Semaphore(1)
+        self._control = asyncio.Lock()
+        self._admission_active = False
         self._planning: set[asyncio.Task] = set()
         self._admissions: set[asyncio.Task] = set()
         self._startup_recovered = False
@@ -361,15 +369,21 @@ class PreparationRunner:
 
     async def _start(self, plan_id, plan_digest, idempotency_key):
         await self.recover()
-        job = await asyncio.to_thread(self.store.authorize_start, plan_id, plan_digest, idempotency_key)
-        identifier = job["job_id"]
-        if identifier not in self.tasks and job["state"] == "queued":
-            attempt = _Attempt(identifier)
-            self.attempts[identifier] = attempt
-            task = asyncio.create_task(self._work(attempt))
-            attempt.worker = task
-            self.tasks[identifier] = task
-        return job
+        async with self._control:
+            self._admission_active = True
+            try:
+                job = await asyncio.to_thread(self.store.authorize_start, plan_id, plan_digest, idempotency_key)
+                identifier = job["job_id"]
+                job = self.store.get(identifier)
+                if identifier not in self.tasks and job["state"] == "queued":
+                    attempt = _Attempt(identifier)
+                    self.attempts[identifier] = attempt
+                    task = asyncio.create_task(self._work(attempt))
+                    attempt.worker = task
+                    self.tasks[identifier] = task
+                return job
+            finally:
+                self._admission_active = False
 
     async def cancel(self, job_id):
         job = self.store.cancel(job_id)
@@ -383,9 +397,18 @@ class PreparationRunner:
         return self.store.get(job_id)
 
     async def recover(self):
+        # Status readers may observe the durable queued row while its owned
+        # admission is finishing. They must neither interrupt it nor wait on
+        # potentially large off-loop input checks to read bounded metadata.
+        if self._admission_active:
+            return self.store.list_summaries()
         if self._recovery_task is None or self._recovery_task.done():
-            self._recovery_task = asyncio.create_task(self._recover())
+            self._recovery_task = asyncio.create_task(self._reconcile())
         return await _await_ownership(self._recovery_task)
+
+    async def _reconcile(self):
+        async with self._control:
+            return await self._recover()
 
     async def _recover(self):
         # No PID discovery, adoption or automatic replay. Native proofs alone
@@ -404,6 +427,7 @@ class PreparationRunner:
             if not self.store.ownership_receipts(job["job_id"]):
                 job = self.store.settle(job["job_id"])
             if job["ownership_settled"] and not job["reservation_retained"]:
+                await asyncio.to_thread(self.store.release_family_inputs, job["job_id"])
                 if workspace is not None and Path(workspace).exists():
                     await asyncio.to_thread(_remove_workspace, self.store.imports.root, job["job_id"], Path(workspace))
                 await self._release(job["job_id"])
@@ -423,14 +447,26 @@ class PreparationRunner:
         for task in tuple(self._admissions):
             await _await_ownership(asyncio.gather(task, return_exceptions=True))
         if self._recovery_task is not None:
-            await _joined(self._recovery_task)
+            try:
+                await _joined(self._recovery_task)
+            except Exception:
+                # Consume the old failure, join current owned work, then retry
+                # exact durable reconciliation below. A failed earlier attempt
+                # must not permanently poison cleanup or close retries.
+                pass
         for identifier, task in self.tasks.items():
             if not task.done():
                 self.store.cancel(identifier)
                 self.attempts[identifier].stop.set()
                 task.cancel()
         for task in self.tasks.values():
-            await _joined(task)
+            try:
+                await _joined(task)
+            except Exception:
+                # A completed worker can retain an earlier cleanup exception.
+                # Join every worker, then judge shutdown by fresh durable proof
+                # and cleanup below, not by replaying an obsolete task result.
+                pass
         # A previous shutdown may have retained a pending proof that the native
         # owner completes later. Retry shutdown can reconcile that exact proof
         # without reopening public controls or discovering a process identity.
@@ -558,6 +594,9 @@ class PreparationRunner:
         def wheels(requests, destination, check):
             attempt.check()
             return asyncio.run_coroutine_threadsafe(acquire(requests, destination, check), loop).result()
+        if descriptor.schema_version == 2:
+            return await self._thread(attempt, self.store.family_for(descriptor).prepare,
+                descriptor, draft, toolchain, candidate, command, attempt.check, acquire_wheels=wheels, job_id=attempt.job_id)
         return await self._thread(attempt, prepare_bound, descriptor, draft, toolchain, candidate,
                                   command, attempt.check, acquire_wheels=wheels)
 
@@ -581,8 +620,11 @@ class PreparationRunner:
                     return attempt.workspace
                 await self._thread(attempt, workspace)
                 self.store.set_workspace(attempt.job_id, attempt.workspace)
-                snapshot = await self._thread(attempt, read_snapshot, draft)
-                self.store.record_progress(attempt.job_id, "snapshotting", files_checked=len(snapshot.files))
+                if descriptor.schema_version == 1 or draft["source"]["kind"] in {"local_folder", "document"}:
+                    snapshot = await self._thread(attempt, read_snapshot, draft)
+                    self.store.record_progress(attempt.job_id, "snapshotting", files_checked=len(snapshot.files))
+                else:
+                    await self._thread(attempt, self.store.resolved_inputs, descriptor, draft)
                 toolchain = await self._thread(attempt, load_private_toolchain, self.host_root, attempt.check)
                 job = self.store.get(attempt.job_id)
                 dependencies = await self._thread(attempt, dependency_identity, self.host_root, attempt.check)
@@ -685,6 +727,7 @@ class PreparationRunner:
         if job["state"] not in TERMINAL:
             self.store.record_progress(attempt.job_id, "settling")
         if settled:
+            await asyncio.to_thread(self.store.release_family_inputs, attempt.job_id)
             self.store.settle(attempt.job_id)
             job = self.store.get(attempt.job_id)
             if job["state"] not in TERMINAL:

@@ -135,7 +135,12 @@ class PinnedHTTPSNetwork:
     """No proxy, authentication, cookies, redirect, or DNS re-resolution on connect."""
 
     @contextlib.asynccontextmanager
-    async def stream(self, url: str) -> AsyncIterator[AsyncIterator[bytes]]:
+    async def stream(self, url: str, *, accept: str = "application/zip", gzip_limit: int | None = None) -> AsyncIterator[AsyncIterator[bytes]]:
+        if accept not in {"application/zip", "application/vnd.pypi.simple.v1+json", "application/octet-stream"}:
+            raise DownloadError("download_response_invalid")
+        if gzip_limit is not None and (accept != "application/vnd.pypi.simple.v1+json"
+                or type(gzip_limit) is not int or not 1 <= gzip_limit <= 16 * 1024**2):
+            raise DownloadError("download_response_invalid")
         parsed = urlsplit(url)
         host = parsed.hostname
         writer = None
@@ -160,12 +165,13 @@ class PinnedHTTPSNetwork:
                     resolved[0][1], 443, family=resolved[0][0], ssl=context,
                     server_hostname=host, limit=8192)
                 request = (f"GET {parsed.path or '/'} HTTP/1.1\r\nHost: {parsed.netloc}\r\n"
-                           "Accept: application/zip\r\nAccept-Encoding: identity\r\n"
-                           "Connection: close\r\nUser-Agent: mcpme/1\r\n\r\n")
+                           f"Accept: {accept}\r\nAccept-Encoding: {'gzip' if gzip_limit else 'identity'}\r\n"
+                           f"Connection: {'keep-alive' if gzip_limit else 'close'}\r\nUser-Agent: mcpme/1\r\n\r\n")
                 writer.write(request.encode("ascii"))
                 await writer.drain()
-                headers = await self._headers(reader)
-            yield self._body(reader, headers)
+                headers = await self._headers(reader, allow_gzip=gzip_limit is not None)
+            chunks = self._body(reader, headers, closing=gzip_limit is None)
+            yield self._gunzip(chunks, gzip_limit) if headers.get(b"content-encoding", b"").lower() == b"gzip" else chunks
         except DownloadError:
             raise
         except (OSError, ValueError, asyncio.TimeoutError, asyncio.IncompleteReadError):
@@ -186,7 +192,7 @@ class PinnedHTTPSNetwork:
             raise DownloadError("download_response_invalid")
         return value
 
-    async def _headers(self, reader: asyncio.StreamReader) -> dict[bytes, bytes]:
+    async def _headers(self, reader: asyncio.StreamReader, *, allow_gzip: bool = False) -> dict[bytes, bytes]:
         first = await self._line(reader)
         if not re.fullmatch(rb"HTTP/1\.[01] [0-9]{3}(?: [\x20-\x7e]*)?\r\n", first):
             raise DownloadError("download_response_invalid")
@@ -214,7 +220,7 @@ class PinnedHTTPSNetwork:
             headers[name] = raw.strip()
         else:
             raise DownloadError("download_response_invalid")
-        if headers.get(b"content-encoding", b"identity").lower() != b"identity":
+        if headers.get(b"content-encoding", b"identity").lower() not in ({b"identity", b"gzip"} if allow_gzip else {b"identity"}):
             raise DownloadError("download_response_invalid")
         if b"transfer-encoding" in headers:
             if headers[b"transfer-encoding"].lower() != b"chunked" or b"content-length" in headers:
@@ -225,11 +231,27 @@ class PinnedHTTPSNetwork:
                 raise DownloadError("download_response_invalid")
         return headers
 
+    async def _gunzip(self, chunks, limit):
+        import zlib
+        decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        total = 0
+        try:
+            async for chunk in chunks:
+                output = decoder.decompress(chunk, limit - total + 1)
+                total += len(output)
+                if total > limit or decoder.unconsumed_tail or decoder.unused_data:
+                    raise DownloadError("download_response_invalid")
+                yield output
+            if not decoder.eof or decoder.unused_data:
+                raise DownloadError("download_response_invalid")
+        except zlib.error:
+            raise DownloadError("download_response_invalid") from None
+
     async def _read(self, reader: asyncio.StreamReader, amount: int, *, exact: bool = False) -> bytes:
         async with asyncio.timeout(NETWORK_IDLE_SECONDS):
             return await (reader.readexactly(amount) if exact else reader.read(amount))
 
-    async def _body(self, reader: asyncio.StreamReader, headers: dict[bytes, bytes]) -> AsyncIterator[bytes]:
+    async def _body(self, reader: asyncio.StreamReader, headers: dict[bytes, bytes], *, closing: bool = True) -> AsyncIterator[bytes]:
         if b"transfer-encoding" in headers:
             while True:
                 line = await self._line(reader)
@@ -256,7 +278,7 @@ class PinnedHTTPSNetwork:
                 remaining -= len(data)
                 yield data
             # Closing framing cannot conceal bytes following the selected body.
-            if await self._read(reader, 1):
+            if closing and await self._read(reader, 1):
                 raise DownloadError("download_response_invalid")
         else:
             while data := await self._read(reader, CHUNK_BYTES):

@@ -45,6 +45,7 @@ from .preparation_artifacts import ArtifactError, ArtifactStore
 from .preparation_capture import (ArtifactCaptureCoordinator, ArtifactCaptureStore,
                                   ArtifactStoragePolicyV1, AttachImportTargetV1, CapturePolicyV1)
 from .preparation_inspection import inspect_source
+from .preparation_resolution import MAX_RESOLUTIONS, ResolutionPolicyV1, ResolutionRequestV1, ResolutionStore
 from .preparations import MAX_JOBS, PreparationStore
 from .recipes import RecipeStore
 from .settings import SecretStore, SettingsError, normalize_settings, settings_digest, validate_settings_choices
@@ -84,6 +85,8 @@ def capabilities() -> dict:
             "preparation_descriptor_schema_versions": [1], "recipe_bundle_schema_versions": [1],
             "recipe_management": "local_static_declarative", "recipe_execution": False,
             "automatic_preparation": False,
+            "preparation_resolution": {"schema_versions": [1], "credentials": "owner_only", "execution": False,
+                                       "operations": ["resolve_dependencies", "discover_interface"]},
             "configuration": {"schema_versions": [1], "types": ["string", "integer", "boolean"],
                               "delivery": "private_inherited_descriptor", "mutable_installed_settings": True,
                               "updates": "reviewed_generation_upgrade"},
@@ -148,7 +151,7 @@ class Resident:
 
 
 class Supervisor(UpgradeHost):
-    def __init__(self, state_dir: Path, reaper: Path, *, preparation_runner_factory=None):
+    def __init__(self, state_dir: Path, reaper: Path, *, preparation_runner_factory=None, resolution_runner_factory=None):
         self.root = ensure_private_directory(state_dir.absolute())
         self.lock_fd = os.open(self.root / "supervisor.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         try:
@@ -179,10 +182,12 @@ class Supervisor(UpgradeHost):
         self.reservations: dict[str, dict] = {}
         self.preparation_reservations: dict[str, dict] = {}
         self.capture_reservations: dict[str, dict] = {}
+        self.resolution_reservations: dict[str, dict] = {}
         self.resource_lock = asyncio.Lock()
         self._preparation_recovery_task: asyncio.Task | None = None
         self._preparation_close_task: asyncio.Task | None = None
         self._capture_recovery_task: asyncio.Task | None = None
+        self._resolution_recovery_task: asyncio.Task | None = None
         self.legacy_locks: dict[str, int] = {}
         self.migration_blocked: set[str] = set()
         self.package_cache: dict[str, tuple[object, tuple]] = {}
@@ -191,10 +196,11 @@ class Supervisor(UpgradeHost):
         self.upgrade_cancels = {}
         try:
             self.imports = ImportStore(self.root)
+            self.resolutions = ResolutionStore(self.imports)
             self.recipes = RecipeStore(self.imports)
             from .preparation_builtin_recipes import seed_builtin_recipes
             self.builtin_recipe_metadata = seed_builtin_recipes(self.recipes)
-            self.preparations = PreparationStore(self.imports, self.recipes)
+            self.preparations = PreparationStore(self.imports, self.recipes, resolutions=self.resolutions)
             from .preparation_forms import PreparationForms
             self.preparation_forms = PreparationForms(self.preparations, preferred_recipes=tuple(
                 record["recipe"] for record in self.builtin_recipe_metadata["recipes"] if record["ready"]))
@@ -216,6 +222,8 @@ class Supervisor(UpgradeHost):
                 admit_target=self.admit_captured_target, validate_target=self.validate_capture_target,
                 reserve_resources=self.reserve_capture, release_resources=self.release_capture)
             self.capture_reservations.update(self.capture_reservation_values())
+            self.resolution_reservation_root = ensure_private_directory(self.root / "resolution-reservations")
+            self.resolution_reservations.update(self.resolution_reservation_values())
             self.preparation_reservation_root = ensure_private_directory(self.root / "preparation-reservations")
             self.load_preparation_reservations()
             if preparation_runner_factory is None:
@@ -224,6 +232,12 @@ class Supervisor(UpgradeHost):
             self.preparation_runner = preparation_runner_factory(
                 self.preparations, self.reaper.parent.parent, self.reaper,
                 reserve_resources=self.reserve_preparation, release_resources=self.release_preparation, enabled=False)
+            if resolution_runner_factory is None:
+                from .preparation_resolution_runner import OwnedResolutionRunner
+                resolution_runner_factory = OwnedResolutionRunner
+            self.resolution_runner = resolution_runner_factory(
+                self.resolutions, self.reaper.parent.parent, self.reaper,
+                reserve_resources=self.reserve_resolution, release_resources=self.release_resolution, enabled=False)
             self.secrets = SecretStore(self.root)
             self.downloads = DownloadManager(self.root)
             self.upgrades = UpgradeStore(self.root)
@@ -305,6 +319,103 @@ class Supervisor(UpgradeHost):
             self._preparation_recovery_task = asyncio.create_task(self.preparation_runner.recover())
         return await asyncio.shield(self._preparation_recovery_task)
 
+    def resolution_reservation(self, policy):
+        return {"memory_mb": policy.memory_mb + self.resource_policy["headroom_mb"],
+                "disk_bytes": policy.disk_bytes, "policy_digest": policy.digest}
+
+    def resolution_reservation_values(self):
+        """Restore exact costs; only joined settlement removes a persisted charge."""
+        result = {}
+        jobs = {job["job_id"]: job for job in self.resolutions.list()}
+        try:
+            for index, path in enumerate(self.resolution_reservation_root.iterdir()):
+                job_id = path.stem
+                if index >= MAX_RESOLUTIONS or path.name != job_id + ".json" or str(uuid.UUID(job_id)) != job_id:
+                    raise ValueError()
+                value = read_private_json(path, max_bytes=65536)
+                if (set(value) != {"schema_version", "job_id", "policy"}
+                        or type(value["schema_version"]) is not int or value["schema_version"] != 1 or value["job_id"] != job_id):
+                    raise ValueError()
+                policy = ResolutionPolicyV1.model_validate(value["policy"])
+                request = ResolutionRequestV1.model_validate(jobs[job_id]["request"])
+                if policy.digest != request.policy.digest:
+                    raise ValueError()
+                result[job_id] = self.resolution_reservation(policy)
+            for job_id, job in jobs.items():
+                if job["reservation_retained"]:
+                    request = ResolutionRequestV1.model_validate(job["request"])
+                    result[job_id] = self.resolution_reservation(request.policy)
+        except (OSError, ValueError, TypeError, KeyError, PreparationError, PrivateStateError):
+            raise HostError("invalid_resource_reservation") from None
+        return result
+
+    async def refresh_resolution_reservations(self):
+        values = await self.capture_work(self.resolution_reservation_values)
+        self.resolution_reservations.update(values)
+
+    @staticmethod
+    def resolution_resource_id(resource_id):
+        try:
+            if not isinstance(resource_id, str) or not resource_id.startswith("resolution:"):
+                raise ValueError()
+            job_id = resource_id.removeprefix("resolution:")
+            if str(uuid.UUID(job_id)) != job_id:
+                raise ValueError()
+            return job_id
+        except (ValueError, TypeError, AttributeError):
+            raise PreparationError("invalid_resolution_identity") from None
+
+    async def reserve_resolution(self, resource_id, policy):
+        job_id = self.resolution_resource_id(resource_id)
+        if not isinstance(policy, ResolutionPolicyV1):
+            raise PreparationError("invalid_resolution_policy")
+        async with self.resource_lock:
+            job = await self.capture_work(self.resolutions.get, job_id)
+            request = ResolutionRequestV1.model_validate(job["request"])
+            if request.policy.digest != policy.digest:
+                raise PreparationError("resolution_policy_mismatch")
+            await self.refresh_capture_reservations()
+            await self.refresh_resolution_reservations()
+            reservation = self.resolution_reservation(policy)
+            previous = self.resolution_reservations.get(job_id)
+            if previous is not None:
+                if previous != reservation:
+                    raise PreparationError("resolution_policy_mismatch")
+                if job["state"] != "queued":
+                    return
+            if self.closing:
+                raise HostError("host_closing", 409)
+            if job["state"] != "queued" and not job["reservation_retained"]:
+                raise PreparationError("resolution_authority_mismatch")
+            memory = sum(value["memory_mb"] for value in [*self.reservations.values(),
+                *self.preparation_reservations.values(), *self.capture_reservations.values(), *self.resolution_reservations.values()])
+            disk = sum(value["disk_bytes"] for value in [*self.preparation_reservations.values(),
+                *self.capture_reservations.values(), *self.resolution_reservations.values()])
+            if (memory + (0 if previous is not None else reservation["memory_mb"]) > self.resource_policy["memory_budget_mb"]
+                    or disk + (0 if previous is not None else reservation["disk_bytes"]) + 256 * 1024**2 > shutil.disk_usage(self.root).free):
+                raise HostError("resource_blocked", 409)
+            if previous is not None:
+                return
+            await self.capture_work(write_private_json, self.resolution_reservation_root / (job_id + ".json"),
+                {"schema_version": 1, "job_id": job_id, "policy": policy.model_dump(mode="json")})
+            self.resolution_reservations[job_id] = reservation
+
+    async def release_resolution(self, resource_id, *, ownership_settled=True):
+        job_id = self.resolution_resource_id(resource_id)
+        async with self.resource_lock:
+            job = await self.capture_work(self.resolutions.get, job_id, settlement=True)
+            if not ownership_settled or not job["ownership_settled"] or job["reservation_retained"]:
+                return
+            await self.capture_work((self.resolution_reservation_root / (job_id + ".json")).unlink, True, settlement=True)
+            self.resolution_reservations.pop(job_id, None)
+
+    async def recover_resolutions(self):
+        if self.closing:
+            raise HostError("host_closing", 409)
+        if self._resolution_recovery_task is None or self._resolution_recovery_task.done():
+            self._resolution_recovery_task = asyncio.create_task(self.resolution_runner.recover())
+        return await asyncio.shield(self._resolution_recovery_task)
+
     def validate_capture_target(self, target):
         if isinstance(target, AttachImportTargetV1):
             draft = self.imports._get(target.import_id, target.revision)
@@ -374,6 +485,7 @@ class Supervisor(UpgradeHost):
                 raise ArtifactError("artifact_capture_scope_mismatch")
             previous = self.capture_reservations.get(capture_id)
             await self.refresh_capture_reservations()
+            await self.refresh_resolution_reservations()
             reservation = self.capture_reservations[capture_id]
             if previous is not None:
                 if previous != reservation:
@@ -381,8 +493,9 @@ class Supervisor(UpgradeHost):
             if self.closing:
                 raise HostError("host_closing", 409)
             memory = sum(value["memory_mb"] for value in [*self.reservations.values(),
-                *self.preparation_reservations.values(), *self.capture_reservations.values()])
-            disk = sum(value["disk_bytes"] for value in [*self.preparation_reservations.values(), *self.capture_reservations.values()])
+                *self.preparation_reservations.values(), *self.capture_reservations.values(), *self.resolution_reservations.values()])
+            disk = sum(value["disk_bytes"] for value in [*self.preparation_reservations.values(),
+                *self.capture_reservations.values(), *self.resolution_reservations.values()])
             if memory > self.resource_policy["memory_budget_mb"] or disk + 256 * 1024**2 > shutil.disk_usage(self.root).free:
                 raise HostError("resource_blocked", 409)
 
@@ -415,29 +528,35 @@ class Supervisor(UpgradeHost):
     def import_preparation_views(self, drafts):
         """Project job status without changing the draft's persisted identity."""
         latest = {job["import_id"]: job for job in self.preparations.list_summaries()}
-        return [{**draft, "preparation": ({key: value for key, value in latest[draft["draft_id"]].items()
+        latest_resolution = {job["import_id"]: job for job in self.resolutions.list_summaries()}
+        return [{**draft, "resolution": (latest_resolution[draft["draft_id"]]
+                    if draft["draft_id"] in latest_resolution and latest_resolution[draft["draft_id"]]["source_revision"] == draft["source"]["revision"] else None),
+                 "preparation": ({key: value for key, value in latest[draft["draft_id"]].items()
                                           if key != "import_id"} if draft["draft_id"] in latest else None)}
                 for draft in drafts]
 
     async def plan_preparation_form(self, payload):
         """Resolve opaque answers, persist their revision, then review authority."""
+        from .preparation_inputs import descriptor_tools
         from .preparation_runner import _policy
         available = self.preparation_runner.enabled is True
         value, context = await self.static_work(lambda: self.preparation_forms.resolve(
             payload["import_id"], payload["revision"], candidate_id=payload["candidate_id"],
             recipe=payload["recipe"], form_digest=payload["form_digest"], answers=payload["answers"],
-            execution_available=available))
+            execution_available=available, resolution_digest=payload.get("resolution_digest"),
+            resolution_available=self.resolution_runner.enabled is True))
         policy = _policy(payload.get("execution_policy"), value)
         draft = await self.static_work(lambda: self.preparations.select_descriptor(
-            payload["import_id"], payload["revision"], value.model_dump(exclude_none=True),
-            candidate_id=payload["candidate_id"], form_digest=context.form.form_digest))
+            payload["import_id"], payload["revision"], value.model_dump(mode="json", exclude_none=True),
+            candidate_id=payload["candidate_id"], form_digest=context.form.form_digest,
+            resolution_digest=context.form.resolution_digest))
         await self.capture_work(self.captures.reconcile_draft_references)
         self.invalidate_import_plans(payload["import_id"])
         plan, blockers = None, ["preparation_runner_unavailable", "independent_runtime_verifier_unavailable"]
         if available:
             try:
                 plan = await self.preparation_runner.plan(payload["import_id"], draft["revision"],
-                    value.model_dump(exclude_none=True), policy)
+                    value.model_dump(mode="json", exclude_none=True), policy)
                 blockers = []
             except PreparationError as error:
                 blockers = [error.code]
@@ -450,7 +569,7 @@ class Supervisor(UpgradeHost):
             "recipe": value.recipe.model_dump(), "descriptor_digest": value.digest,
             "execution_available": plan is not None, "plan_id": plan["plan_id"] if plan else None,
             "plan_digest": plan["plan_digest"] if plan else None, "expires_at": plan["expires_at"] if plan else None,
-            "tools": [tool.model_dump(exclude_none=True) for tool in value.interface.tools],
+            "tools": [tool.model_dump(mode="json", exclude_none=True) for tool in descriptor_tools(value)],
             "access": value.access.model_dump(), "resources": value.resources.model_dump(),
             "downloads": [], "execution_policy": policy.model_dump(), "blockers": blockers,
             "draft": self.import_preparation_views([current])[0]}
@@ -738,11 +857,13 @@ class Supervisor(UpgradeHost):
     async def reserve_model(self, slot, package):
         async with self.resource_lock:
             await self.refresh_capture_reservations()
+            await self.refresh_resolution_reservations()
             if slot.id in self.reservations:
                 return
             memory = package.manifest.resources.memory_mb + self.resource_policy["headroom_mb"]
             gpu = package.manifest.resources.gpu
-            if (sum(value["memory_mb"] for value in [*self.reservations.values(), *self.preparation_reservations.values(), *self.capture_reservations.values()])
+            if (sum(value["memory_mb"] for value in [*self.reservations.values(), *self.preparation_reservations.values(),
+                    *self.capture_reservations.values(), *self.resolution_reservations.values()])
                     + memory > self.resource_policy["memory_budget_mb"]
                     or gpu and any(value["gpu"] for value in self.reservations.values())):
                 raise HostError("resource_blocked", 409)
@@ -755,6 +876,7 @@ class Supervisor(UpgradeHost):
             raise PreparationError("invalid_preparation_policy")
         async with self.resource_lock:
             await self.refresh_capture_reservations()
+            await self.refresh_resolution_reservations()
             job = self.preparations.get(job_id)
             if not job.get("managed") or policy.digest != job["binding"]["policy_digest"] or not job["reservation_retained"]:
                 raise PreparationError("preparation_authority_mismatch")
@@ -765,8 +887,10 @@ class Supervisor(UpgradeHost):
                 return
             if self.closing:
                 raise HostError("host_closing", 409)
-            memory = sum(value["memory_mb"] for value in [*self.reservations.values(), *self.preparation_reservations.values(), *self.capture_reservations.values()])
-            disk = sum(value["disk_bytes"] for value in [*self.preparation_reservations.values(), *self.capture_reservations.values()])
+            memory = sum(value["memory_mb"] for value in [*self.reservations.values(), *self.preparation_reservations.values(),
+                *self.capture_reservations.values(), *self.resolution_reservations.values()])
+            disk = sum(value["disk_bytes"] for value in [*self.preparation_reservations.values(),
+                *self.capture_reservations.values(), *self.resolution_reservations.values()])
             if (memory + reservation["memory_mb"] > self.resource_policy["memory_budget_mb"]
                     or disk + reservation["disk_bytes"] + 256 * 1024**2 > shutil.disk_usage(self.root).free):
                 raise HostError("resource_blocked", 409)
@@ -1459,6 +1583,7 @@ class Supervisor(UpgradeHost):
 
     async def initialize(self):
         await self.recover_captures()
+        await self.recover_resolutions()
         await self.recover_preparations()
         self.reconcile_imports()
         await self.capture_work(self.captures.reconcile_draft_references)
@@ -1815,16 +1940,20 @@ class Supervisor(UpgradeHost):
         if (self._preparation_close_task is None or self._preparation_close_task.done()
                 and (self._preparation_close_task.cancelled() or self._preparation_close_task.exception() is not None)):
             async def close_preparations():
-                if self._preparation_recovery_task is not None:
-                    await _await_ownership(self._preparation_recovery_task)
+                for task in (self._preparation_recovery_task, self._capture_recovery_task, self._resolution_recovery_task):
+                    if task is not None:
+                        # Join the prior attempt; runners must reconcile afresh
+                        # during close rather than replay its terminal failure.
+                        with contextlib.suppress(Exception, asyncio.CancelledError):
+                            await _await_ownership(task)
                 failures = []
-                for runner in (self.preparation_runner, self.capture_runner):
+                for runner in (self.preparation_runner, self.capture_runner, self.resolution_runner):
                     try:
                         await runner.close()
-                    except (OwnershipLost, ArtifactError) as error:
+                    except (OwnershipLost, ArtifactError, PreparationError) as error:
                         failures.append(error)
-                if self._capture_recovery_task is not None:
-                    await _await_ownership(self._capture_recovery_task)
+                    except Exception:
+                        failures.append(HostError("preparation_shutdown_failed", 409))
                 if failures:
                     raise failures[0]
             self._preparation_close_task = asyncio.create_task(close_preparations())
@@ -1835,7 +1964,7 @@ class Supervisor(UpgradeHost):
             # retain the database/lock for a later full shutdown retry.
             await _await_ownership(self._preparation_close_task)
             raise
-        except (OwnershipLost, ArtifactError) as error:
+        except (OwnershipLost, ArtifactError, PreparationError, HostError) as error:
             preparation_error = error
         # Downloads own network and extraction work independently of callers.
         # Keep the state lock until every owned writer has settled.
@@ -1909,7 +2038,7 @@ def management_app(host: Supervisor, token: str, port: int):
                 if not isinstance(payload, dict):
                     raise HostError("invalid_request")
             if grant_id is not None:
-                if (route.startswith(("/v1/recipes", "/v1/preparations", "/v1/downloads", "/v1/secrets", "/v1/upgrade", "/v1/artifact-captures", "/v1/artifacts"))
+                if (route.startswith(("/v1/recipes", "/v1/preparations", "/v1/resolutions", "/v1/downloads", "/v1/secrets", "/v1/upgrade", "/v1/artifact-captures", "/v1/artifacts"))
                         or route.startswith("/v1/operations/") and request.method != "GET"):
                     # Existing metadata/attachment grants retain their scope.
                     # This foundation introduces no scoped execution authority.
@@ -1934,6 +2063,12 @@ def management_app(host: Supervisor, token: str, port: int):
                 elif route.startswith("/v1/artifact-captures/"):
                     await host.recover_captures()
                     result = await host.capture_work(host.captures.get, request.path_params["capture_id"])
+                elif route == "/v1/resolutions":
+                    await host.recover_resolutions()
+                    result = {"resolutions": await host.capture_work(host.resolutions.list_summaries)}
+                elif route.startswith("/v1/resolutions/"):
+                    await host.recover_resolutions()
+                    result = await host.capture_work(host.resolutions.get, request.path_params["job_id"])
                 elif route == "/v1/preparations":
                     await host.recover_preparations()
                     result = {"preparations": host.preparations.list_summaries()}
@@ -1946,7 +2081,8 @@ def management_app(host: Supervisor, token: str, port: int):
                               "resource_policy": host.resource_policy,
                               "reservations": {slot_id: dict(value) for slot_id, value in host.reservations.items()},
                               "preparation_reservations": {job_id: dict(value) for job_id, value in host.preparation_reservations.items()},
-                              "capture_reservations": {capture_id: dict(value) for capture_id, value in host.capture_reservations.items()}}
+                              "capture_reservations": {capture_id: dict(value) for capture_id, value in host.capture_reservations.items()},
+                              "resolution_reservations": {job_id: dict(value) for job_id, value in host.resolution_reservations.items()}}
                 elif route == "/v1/slots":
                     result = {"slots": [host.slot_snapshot(slot) for slot in host.registry.list_slots()]}
                     if grant_id is not None:
@@ -2025,6 +2161,26 @@ def management_app(host: Supervisor, token: str, port: int):
                     await host.capture_work(host.captures.reconcile_draft_references)
                     await host.static_work(host.captures.collect, request.path_params["collection_digest"])
                     result = {"collection_digest": request.path_params["collection_digest"], "collected": True}
+                elif route == "/v1/resolutions/plan":
+                    if set(payload) != {"import_id", "revision", "candidate_id", "policy"}:
+                        raise HostError("invalid_resolution_request")
+                    await host.recover_resolutions()
+                    result = {**await host.resolution_runner.plan(payload["import_id"], payload["revision"],
+                        payload["candidate_id"], payload["policy"]), "execution_available": host.resolution_runner.enabled is True}
+                elif route == "/v1/resolutions/start":
+                    if set(payload) != {"plan_id", "plan_digest", "idempotency_key"}:
+                        raise HostError("invalid_resolution_request")
+                    result = await host.resolution_runner.start(payload["plan_id"], payload["plan_digest"], payload["idempotency_key"])
+                elif route.startswith("/v1/resolutions/"):
+                    if payload:
+                        raise HostError("invalid_resolution_request")
+                    job_id = request.path_params["job_id"]
+                    if route.endswith("/cancel"):
+                        result = await host.resolution_runner.cancel(job_id)
+                    else:
+                        await host.capture_work(host.resolutions.get, job_id)
+                        await host.recover_resolutions()
+                        result = await host.capture_work(host.resolutions.get, job_id)
                 elif route == "/v1/recipes":
                     if set(payload) != {"path"} or not isinstance(payload["path"], str) or not Path(payload["path"]).is_absolute():
                         raise HostError("invalid_recipe_request")
@@ -2037,15 +2193,17 @@ def management_app(host: Supervisor, token: str, port: int):
                     result = await host.static_work(getattr(host.recipes, action), payload["recipe_id"], payload["version"])
                 elif route == "/v1/preparations/form":
                     if ({"import_id", "revision"} - set(payload) or
-                            set(payload) - {"import_id", "revision", "candidate_id", "recipe"}):
+                            set(payload) - {"import_id", "revision", "candidate_id", "recipe", "resolution_digest"}):
                         raise HostError("invalid_preparation_request")
                     await host.recover_preparations()
                     result = await host.static_work(lambda: host.preparation_forms.form(
                         payload["import_id"], payload["revision"], candidate_id=payload.get("candidate_id"),
-                        recipe=payload.get("recipe"), execution_available=host.preparation_runner.enabled is True))
+                        recipe=payload.get("recipe"), execution_available=host.preparation_runner.enabled is True,
+                        resolution_digest=payload.get("resolution_digest"),
+                        resolution_available=host.resolution_runner.enabled is True))
                 elif route == "/v1/preparations/plan-form":
                     required = {"import_id", "revision", "candidate_id", "recipe", "form_digest", "answers"}
-                    if required - set(payload) or set(payload) - (required | {"execution_policy"}):
+                    if required - set(payload) or set(payload) - (required | {"execution_policy", "resolution_digest"}):
                         raise HostError("invalid_preparation_request")
                     await host.recover_preparations()
                     result = await host.plan_preparation_form(payload)
@@ -2158,7 +2316,7 @@ def management_app(host: Supervisor, token: str, port: int):
                     raise HostError("invalid_request")
             return JSONResponse({"api_version": 1, **result})
         except (HostError, PackageError, RegistryError, ImportDraftError, GrantError, PreparationError, DownloadError, SettingsError, UpgradeError) as error:
-            status = 409 if error.code == "preparation_runner_unavailable" else getattr(error, "status", 400)
+            status = 409 if error.code in {"preparation_runner_unavailable", "resolution_runner_unavailable"} else getattr(error, "status", 400)
             return JSONResponse({"api_version": 1, "error": {"code": error.code}}, status_code=status)
         except Exception:
             return JSONResponse({"api_version": 1, "error": {"code": "invalid_request"}}, status_code=400)
@@ -2172,6 +2330,12 @@ def management_app(host: Supervisor, token: str, port: int):
         Route("/v1/artifact-captures/{capture_id}/cancel", dispatch, methods=["POST"]),
         Route("/v1/artifact-captures/{capture_id}/recover", dispatch, methods=["POST"]),
         Route("/v1/artifacts/{collection_digest}/collect", dispatch, methods=["POST"]),
+        Route("/v1/resolutions", dispatch),
+        Route("/v1/resolutions/plan", dispatch, methods=["POST"]),
+        Route("/v1/resolutions/start", dispatch, methods=["POST"]),
+        Route("/v1/resolutions/{job_id}", dispatch),
+        Route("/v1/resolutions/{job_id}/cancel", dispatch, methods=["POST"]),
+        Route("/v1/resolutions/{job_id}/recover", dispatch, methods=["POST"]),
         Route("/v1/secrets", dispatch, methods=["GET", "POST"]),
         Route("/v1/secrets/{secret_id}", dispatch),
         Route("/v1/secrets/{secret_id}/revoke", dispatch, methods=["POST"]),
@@ -2207,13 +2371,14 @@ def management_app(host: Supervisor, token: str, port: int):
     return LocalPolicy(app, token=token, port=port, authenticate=authenticate)
 
 
-async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None, *, preparation_runner_factory=None):
+async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None, *, preparation_runner_factory=None, resolution_runner_factory=None):
     if platform.system() != "Darwin" or platform.machine() != "arm64" or int(platform.mac_ver()[0].split(".")[0]) < 26:
         raise HostError("unsupported_platform")
     # Trusted development acceptance may inject an explicitly enabled runner.
     # The CLI and ordinary native launch supply no factory; production remains
     # disabled by Supervisor's default. No payload or environment selects one.
-    host = Supervisor(state_dir, reaper, preparation_runner_factory=preparation_runner_factory)
+    host = Supervisor(state_dir, reaper, preparation_runner_factory=preparation_runner_factory,
+                      resolution_runner_factory=resolution_runner_factory)
     listener = bind_listener()
     token = secrets.token_urlsafe(32)
     port = listener.getsockname()[1]

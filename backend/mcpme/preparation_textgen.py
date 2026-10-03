@@ -258,8 +258,9 @@ class TextGenerationFamily:
 
     async def verify(self, package_root, descriptor, reaper, workspace, *, timeout_seconds=60, owner=None):
         from .preparation_textgen_verifier import verify_textgen_package
+        from .preparation_textgen_probe_confinement import TextgenProbeConfinementV1
         return await verify_textgen_package(package_root, descriptor, reaper, workspace,
-                                           timeout_seconds=timeout_seconds, owner=owner)
+            timeout_seconds=timeout_seconds, owner=owner, confinement_factory=TextgenProbeConfinementV1.from_host)
 
     def release(self, job_id, descriptor=None):
         with self.capture_store.imports._lock:

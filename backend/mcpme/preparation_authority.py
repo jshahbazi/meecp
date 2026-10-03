@@ -234,12 +234,8 @@ class PreparationAuthority:
                 or [item.model_dump() for item in package.lock.artifacts if item.path != "mcpme.preparation.json"]
                 != expected["source_artifacts"]):
             raise PreparationError("invalid_command_ownership")
-        state = workspace / "command-probe-v3"
-        check_private_file(state / "command-v2.lock")
-        if (read_private_json(state / "owner.json") != metadata
-                or read_private_json(state / "invocations.json") != {"version": 1, "entries": []}
-                or read_private_json(state / "command-v2.json") != {"version": 3, "entries": []}):
-            raise PreparationError("invalid_command_ownership")
+        from .preparation_command_owner import validate_initial_command_owner
+        validate_initial_command_owner(workspace, metadata)
         with self.imports._transaction():
             current = self._get(job_id)
             self._current_inputs(current)

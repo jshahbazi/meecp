@@ -41,6 +41,9 @@ from .upgrade_host import UpgradeHost
 from .upgrades import UpgradeError, UpgradeStore
 from .grants import GrantError, GrantStore, plan_digest
 from .preparation_contracts import ExecutionPolicy, PreparationError
+from .preparation_artifacts import ArtifactError, ArtifactStore
+from .preparation_capture import (ArtifactCaptureCoordinator, ArtifactCaptureStore,
+                                  ArtifactStoragePolicyV1, AttachImportTargetV1, CapturePolicyV1)
 from .preparation_inspection import inspect_source
 from .preparations import MAX_JOBS, PreparationStore
 from .recipes import RecipeStore
@@ -76,7 +79,7 @@ def capabilities() -> dict:
                        "max_request_bytes": MAX_REQUEST_BYTES, "idle_seconds": 300},
             "installation": "prepared_local_packages_and_imports", "management_credentials": "owner_and_scoped_grants",
             "management_grant_modes": ["read", "prepare", "lifecycle", "install"], "management_mcp": "scoped_stdio",
-            "import_schema_versions": [1], "import_sources": ["local_folder", "markdown", "text", "prepared_package", "artifact_collection"],
+            "import_schema_versions": [1], "import_sources": ["local_folder", "markdown", "text", "prepared_package", "artifact_collection", "captured_artifact_collection"],
             "preparation_templates": ["python-function-v1", "existing-mcp-v1", "jevk5-llamacpp-v1"],
             "preparation_descriptor_schema_versions": [1], "recipe_bundle_schema_versions": [1],
             "recipe_management": "local_static_declarative", "recipe_execution": False,
@@ -92,6 +95,8 @@ def capabilities() -> dict:
                          "rollback_policy": "before_exposure_only", "recovery": "selected_generation"},
             "model_intake": {"contract_versions": [1], "kind": "artifact_collection", "weights": ["gguf"],
                              "profiles": ["jevk5-llamacpp-v1"], "max_artifact_bytes": 64 * 1024**3},
+            "artifact_intake": {"contract_versions": [1], "credentials": "owner_only", "execution": False,
+                                "max_files": 64, "max_artifact_bytes": 32 * 1024**3},
             "unsupported": ["first_call", "reference_document_service", "integrated_preparation"]}
 
 
@@ -173,9 +178,11 @@ class Supervisor(UpgradeHost):
         self.stopping_residents: set[str] = set()
         self.reservations: dict[str, dict] = {}
         self.preparation_reservations: dict[str, dict] = {}
+        self.capture_reservations: dict[str, dict] = {}
         self.resource_lock = asyncio.Lock()
         self._preparation_recovery_task: asyncio.Task | None = None
         self._preparation_close_task: asyncio.Task | None = None
+        self._capture_recovery_task: asyncio.Task | None = None
         self.legacy_locks: dict[str, int] = {}
         self.migration_blocked: set[str] = set()
         self.package_cache: dict[str, tuple[object, tuple]] = {}
@@ -194,6 +201,21 @@ class Supervisor(UpgradeHost):
             self.preparations.recover()
             self.grants = GrantStore(self.registry)
             self.resource_policy = self.load_resource_policy()
+            self.artifacts = ArtifactStore(self.root / "captured-artifacts")
+            storage_path = self.root / "artifact-storage-policy.json"
+            try:
+                if storage_path.exists():
+                    storage_policy = ArtifactStoragePolicyV1.model_validate(read_private_json(storage_path))
+                else:
+                    storage_policy = ArtifactStoragePolicyV1()
+                    write_private_json(storage_path, storage_policy.model_dump(mode="json"))
+            except ValueError:
+                raise HostError("invalid_artifact_storage_policy") from None
+            self.captures = ArtifactCaptureStore(self.imports, self.artifacts, storage_policy=storage_policy)
+            self.capture_runner = ArtifactCaptureCoordinator(self.captures,
+                admit_target=self.admit_captured_target, validate_target=self.validate_capture_target,
+                reserve_resources=self.reserve_capture, release_resources=self.release_capture)
+            self.capture_reservations.update(self.capture_reservation_values())
             self.preparation_reservation_root = ensure_private_directory(self.root / "preparation-reservations")
             self.load_preparation_reservations()
             if preparation_runner_factory is None:
@@ -283,6 +305,99 @@ class Supervisor(UpgradeHost):
             self._preparation_recovery_task = asyncio.create_task(self.preparation_runner.recover())
         return await asyncio.shield(self._preparation_recovery_task)
 
+    def validate_capture_target(self, target):
+        if isinstance(target, AttachImportTargetV1):
+            draft = self.imports._get(target.import_id, target.revision)
+            self.imports._mutable(draft)
+            if draft["source"]["kind"] not in {"local_folder", "document", "captured_artifact_collection"}:
+                raise ArtifactError("artifact_capture_target_unsupported")
+
+    def admit_captured_target(self, target, collection, capture_id):
+        # The coordinator invokes this after verification, inside its import
+        # transaction. Its reference and success record commit with this draft.
+        if isinstance(target, AttachImportTargetV1):
+            draft = self.imports._admit_captured(collection, draft_id=target.import_id, revision=target.revision)
+        else:
+            choices = target.model_dump(mode="json", exclude={"kind"})
+            draft = self.imports._admit_captured(collection, choices=choices)
+        self.captures._reconcile_draft_references()
+        return {"import_id": draft["draft_id"], "revision": draft["revision"]}
+
+    async def recover_captures(self):
+        if self.closing:
+            raise HostError("host_closing", 409)
+        if self._capture_recovery_task is None or self._capture_recovery_task.done():
+            self._capture_recovery_task = asyncio.create_task(self.capture_runner.recover())
+        return await asyncio.shield(self._capture_recovery_task)
+
+    def capture_reservation_values(self):
+        result = {}
+        for value in self.captures.unsettled_reservations():
+            policy = CapturePolicyV1.model_validate(value["policy"])
+            result[value["capture_id"]] = {
+                "memory_mb": policy.memory_mb + self.resource_policy["headroom_mb"],
+                "disk_bytes": policy.disk_ceiling_bytes, "policy_digest": policy.digest}
+        return result
+
+    async def capture_work(self, function, *args, settlement=False):
+        """Keep capture metadata and file work joined under caller locks."""
+        # Already-owned capture settlement cannot be refused by new-work capacity.
+        # The coordinator bounds capture attempts and joins these tracked tasks.
+        if not settlement and len(self.static_tasks) >= 4:
+            raise HostError("static_work_busy", 429)
+        task = asyncio.create_task(asyncio.to_thread(function, *args))
+        self.static_tasks.add(task)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # The admission lock cannot be released while its metadata lookup
+            # still runs. A worker returns data; only this loop mutates budgets.
+            with contextlib.suppress(Exception):
+                await _await_ownership(task)
+            raise
+        finally:
+            if task.done():
+                self.static_tasks.discard(task)
+
+    async def refresh_capture_reservations(self):
+        values = await self.capture_work(self.capture_reservation_values)
+        self.capture_reservations.update(values)
+
+    async def reserve_capture(self, capture_id, policy):
+        if not isinstance(policy, CapturePolicyV1):
+            raise ArtifactError("artifact_capture_policy_invalid")
+        async with self.resource_lock:
+            def authority():
+                return self.captures.get(capture_id), self.captures.recovery_policy(capture_id).digest
+            record, actual_digest = await self.capture_work(authority)
+            if not record["reservation_retained"] or actual_digest != policy.digest:
+                raise ArtifactError("artifact_capture_scope_mismatch")
+            previous = self.capture_reservations.get(capture_id)
+            await self.refresh_capture_reservations()
+            reservation = self.capture_reservations[capture_id]
+            if previous is not None:
+                if previous != reservation:
+                    raise ArtifactError("artifact_capture_scope_mismatch")
+            if self.closing:
+                raise HostError("host_closing", 409)
+            memory = sum(value["memory_mb"] for value in [*self.reservations.values(),
+                *self.preparation_reservations.values(), *self.capture_reservations.values()])
+            disk = sum(value["disk_bytes"] for value in [*self.preparation_reservations.values(), *self.capture_reservations.values()])
+            if memory > self.resource_policy["memory_budget_mb"] or disk + 256 * 1024**2 > shutil.disk_usage(self.root).free:
+                raise HostError("resource_blocked", 409)
+
+    async def release_capture(self, capture_id, *, ownership_settled=True):
+        record = await self.capture_work(self.captures.get, capture_id, settlement=True)
+        if ownership_settled and record["ownership_settled"] and record["state"] == "succeeded" and record["result"] is not None:
+            result = record["result"]
+            await self.capture_work(self.imports.discard_previous_capture_attachment, result["import_id"], result["revision"], settlement=True)
+        async with self.resource_lock:
+            record = await self.capture_work(self.captures.get, capture_id, settlement=True)
+            if ownership_settled and record["ownership_settled"] and not record["reservation_retained"]:
+                self.capture_reservations.pop(capture_id, None)
+                if record["state"] == "succeeded" and record["result"] is not None:
+                    self.invalidate_import_plans(record["result"]["import_id"])
+
     def inspect_preparation_source(self, import_id, revision):
         if type(revision) is not int or revision < 1:
             raise PreparationError("invalid_import_revision")
@@ -316,6 +431,7 @@ class Supervisor(UpgradeHost):
         draft = await self.static_work(lambda: self.preparations.select_descriptor(
             payload["import_id"], payload["revision"], value.model_dump(exclude_none=True),
             candidate_id=payload["candidate_id"], form_digest=context.form.form_digest))
+        await self.capture_work(self.captures.reconcile_draft_references)
         self.invalidate_import_plans(payload["import_id"])
         plan, blockers = None, ["preparation_runner_unavailable", "independent_runtime_verifier_unavailable"]
         if available:
@@ -621,11 +737,12 @@ class Supervisor(UpgradeHost):
 
     async def reserve_model(self, slot, package):
         async with self.resource_lock:
+            await self.refresh_capture_reservations()
             if slot.id in self.reservations:
                 return
             memory = package.manifest.resources.memory_mb + self.resource_policy["headroom_mb"]
             gpu = package.manifest.resources.gpu
-            if (sum(value["memory_mb"] for value in [*self.reservations.values(), *self.preparation_reservations.values()])
+            if (sum(value["memory_mb"] for value in [*self.reservations.values(), *self.preparation_reservations.values(), *self.capture_reservations.values()])
                     + memory > self.resource_policy["memory_budget_mb"]
                     or gpu and any(value["gpu"] for value in self.reservations.values())):
                 raise HostError("resource_blocked", 409)
@@ -637,6 +754,7 @@ class Supervisor(UpgradeHost):
         if not isinstance(policy, ExecutionPolicy):
             raise PreparationError("invalid_preparation_policy")
         async with self.resource_lock:
+            await self.refresh_capture_reservations()
             job = self.preparations.get(job_id)
             if not job.get("managed") or policy.digest != job["binding"]["policy_digest"] or not job["reservation_retained"]:
                 raise PreparationError("preparation_authority_mismatch")
@@ -647,8 +765,8 @@ class Supervisor(UpgradeHost):
                 return
             if self.closing:
                 raise HostError("host_closing", 409)
-            memory = sum(value["memory_mb"] for value in [*self.reservations.values(), *self.preparation_reservations.values()])
-            disk = sum(value["disk_bytes"] for value in self.preparation_reservations.values())
+            memory = sum(value["memory_mb"] for value in [*self.reservations.values(), *self.preparation_reservations.values(), *self.capture_reservations.values()])
+            disk = sum(value["disk_bytes"] for value in [*self.preparation_reservations.values(), *self.capture_reservations.values()])
             if (memory + reservation["memory_mb"] > self.resource_policy["memory_budget_mb"]
                     or disk + reservation["disk_bytes"] + 256 * 1024**2 > shutil.disk_usage(self.root).free):
                 raise HostError("resource_blocked", 409)
@@ -1340,8 +1458,10 @@ class Supervisor(UpgradeHost):
             return {"status": await self.legacy_status(slot_id), "runtime": self.model_runtime(slot_id)}
 
     async def initialize(self):
+        await self.recover_captures()
         await self.recover_preparations()
         self.reconcile_imports()
+        await self.capture_work(self.captures.reconcile_draft_references)
         await self.reconcile_owned_receipts()
         try:
             from .migrations import initialize_transfers
@@ -1697,7 +1817,16 @@ class Supervisor(UpgradeHost):
             async def close_preparations():
                 if self._preparation_recovery_task is not None:
                     await _await_ownership(self._preparation_recovery_task)
-                await self.preparation_runner.close()
+                failures = []
+                for runner in (self.preparation_runner, self.capture_runner):
+                    try:
+                        await runner.close()
+                    except (OwnershipLost, ArtifactError) as error:
+                        failures.append(error)
+                if self._capture_recovery_task is not None:
+                    await _await_ownership(self._capture_recovery_task)
+                if failures:
+                    raise failures[0]
             self._preparation_close_task = asyncio.create_task(close_preparations())
         try:
             await asyncio.shield(self._preparation_close_task)
@@ -1706,7 +1835,7 @@ class Supervisor(UpgradeHost):
             # retain the database/lock for a later full shutdown retry.
             await _await_ownership(self._preparation_close_task)
             raise
-        except OwnershipLost as error:
+        except (OwnershipLost, ArtifactError) as error:
             preparation_error = error
         # Downloads own network and extraction work independently of callers.
         # Keep the state lock until every owned writer has settled.
@@ -1780,7 +1909,7 @@ def management_app(host: Supervisor, token: str, port: int):
                 if not isinstance(payload, dict):
                     raise HostError("invalid_request")
             if grant_id is not None:
-                if (route.startswith(("/v1/recipes", "/v1/preparations", "/v1/downloads", "/v1/secrets", "/v1/upgrade"))
+                if (route.startswith(("/v1/recipes", "/v1/preparations", "/v1/downloads", "/v1/secrets", "/v1/upgrade", "/v1/artifact-captures", "/v1/artifacts"))
                         or route.startswith("/v1/operations/") and request.method != "GET"):
                     # Existing metadata/attachment grants retain their scope.
                     # This foundation introduces no scoped execution authority.
@@ -1799,6 +1928,12 @@ def management_app(host: Supervisor, token: str, port: int):
                     result = host.secrets.get(request.path_params["secret_id"])
                 elif route.startswith("/v1/downloads/"):
                     result = host.downloads.get(request.path_params["download_id"])
+                elif route == "/v1/artifact-captures":
+                    await host.recover_captures()
+                    result = {"captures": await host.capture_work(host.captures.list_summaries)}
+                elif route.startswith("/v1/artifact-captures/"):
+                    await host.recover_captures()
+                    result = await host.capture_work(host.captures.get, request.path_params["capture_id"])
                 elif route == "/v1/preparations":
                     await host.recover_preparations()
                     result = {"preparations": host.preparations.list_summaries()}
@@ -1810,7 +1945,8 @@ def management_app(host: Supervisor, token: str, port: int):
                               "operations": [host.operation_snapshot(operation) for operation in host.registry.list_operations()],
                               "resource_policy": host.resource_policy,
                               "reservations": {slot_id: dict(value) for slot_id, value in host.reservations.items()},
-                              "preparation_reservations": {job_id: dict(value) for job_id, value in host.preparation_reservations.items()}}
+                              "preparation_reservations": {job_id: dict(value) for job_id, value in host.preparation_reservations.items()},
+                              "capture_reservations": {capture_id: dict(value) for capture_id, value in host.capture_reservations.items()}}
                 elif route == "/v1/slots":
                     result = {"slots": [host.slot_snapshot(slot) for slot in host.registry.list_slots()]}
                     if grant_id is not None:
@@ -1870,6 +2006,25 @@ def management_app(host: Supervisor, token: str, port: int):
                     if payload:
                         raise HostError("invalid_download_spec")
                     result = await host.downloads.cancel(request.path_params["download_id"])
+                elif route == "/v1/artifact-captures":
+                    if set(payload) != {"request", "policy", "target", "idempotency_key"}:
+                        raise ArtifactError("artifact_capture_contract_invalid")
+                    result = await host.capture_runner.start(payload["request"], payload["policy"], payload["target"], payload["idempotency_key"])
+                elif route.startswith("/v1/artifact-captures/"):
+                    if payload:
+                        raise ArtifactError("artifact_capture_contract_invalid")
+                    if route.endswith("/cancel"):
+                        result = await host.capture_runner.cancel(request.path_params["capture_id"])
+                    else:
+                        await host.capture_work(host.captures.get, request.path_params["capture_id"])
+                        await host.recover_captures()
+                        result = await host.capture_work(host.captures.get, request.path_params["capture_id"])
+                elif "collection_digest" in request.path_params and route.endswith("/collect"):
+                    if payload:
+                        raise ArtifactError("artifact_capture_contract_invalid")
+                    await host.capture_work(host.captures.reconcile_draft_references)
+                    await host.static_work(host.captures.collect, request.path_params["collection_digest"])
+                    result = {"collection_digest": request.path_params["collection_digest"], "collected": True}
                 elif route == "/v1/recipes":
                     if set(payload) != {"path"} or not isinstance(payload["path"], str) or not Path(payload["path"]).is_absolute():
                         raise HostError("invalid_recipe_request")
@@ -1962,6 +2117,7 @@ def management_app(host: Supervisor, token: str, port: int):
                         if "revision" not in payload:
                             raise HostError("invalid_import_request")
                         result = host.imports.revise(draft_id, revision, **{key: value for key, value in payload.items() if key != "revision"})
+                        await host.capture_work(host.captures.reconcile_draft_references)
                         host.invalidate_import_plans(draft_id)
                     elif action == "attach" and set(payload) == {"revision", "package"} and isinstance(payload["package"], str):
                         result = await host.static_work(host.imports.attach, draft_id, revision, Path(payload["package"]))
@@ -1973,6 +2129,7 @@ def management_app(host: Supervisor, token: str, port: int):
                     elif action in {"export", "cancel", "expire"} and set(payload) == {"revision"}:
                         result = getattr(host.imports, action)(draft_id, revision)
                         if action in {"cancel", "expire"}:
+                            await host.capture_work(host.captures.reconcile_draft_references)
                             host.invalidate_import_plans(draft_id)
                     else:
                         raise HostError("invalid_import_request")
@@ -2010,6 +2167,11 @@ def management_app(host: Supervisor, token: str, port: int):
         Route("/v1/downloads", dispatch, methods=["GET", "POST"]),
         Route("/v1/downloads/{download_id}", dispatch),
         Route("/v1/downloads/{download_id}/cancel", dispatch, methods=["POST"]),
+        Route("/v1/artifact-captures", dispatch, methods=["GET", "POST"]),
+        Route("/v1/artifact-captures/{capture_id}", dispatch),
+        Route("/v1/artifact-captures/{capture_id}/cancel", dispatch, methods=["POST"]),
+        Route("/v1/artifact-captures/{capture_id}/recover", dispatch, methods=["POST"]),
+        Route("/v1/artifacts/{collection_digest}/collect", dispatch, methods=["POST"]),
         Route("/v1/secrets", dispatch, methods=["GET", "POST"]),
         Route("/v1/secrets/{secret_id}", dispatch),
         Route("/v1/secrets/{secret_id}/revoke", dispatch, methods=["POST"]),
@@ -2045,10 +2207,13 @@ def management_app(host: Supervisor, token: str, port: int):
     return LocalPolicy(app, token=token, port=port, authenticate=authenticate)
 
 
-async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None):
+async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None, *, preparation_runner_factory=None):
     if platform.system() != "Darwin" or platform.machine() != "arm64" or int(platform.mac_ver()[0].split(".")[0]) < 26:
         raise HostError("unsupported_platform")
-    host = Supervisor(state_dir, reaper)
+    # Trusted development acceptance may inject an explicitly enabled runner.
+    # The CLI and ordinary native launch supply no factory; production remains
+    # disabled by Supervisor's default. No payload or environment selects one.
+    host = Supervisor(state_dir, reaper, preparation_runner_factory=preparation_runner_factory)
     listener = bind_listener()
     token = secrets.token_urlsafe(32)
     port = listener.getsockname()[1]

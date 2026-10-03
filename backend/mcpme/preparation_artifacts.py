@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import codecs
 import ctypes
+from dataclasses import dataclass
 import errno
 import fcntl
 import hashlib
@@ -19,7 +20,7 @@ import re
 import stat
 import threading
 import time
-from typing import Annotated, Iterator, Literal
+from typing import Annotated, Callable, Iterator, Literal
 import uuid
 
 from pydantic import Field, ValidationError, model_validator
@@ -50,6 +51,28 @@ _CREDENTIAL_BYTES = re.compile(rb"-----BEGIN (?:[A-Z ]{1,32} )?PRIVATE KEY-----|
 
 class ArtifactError(PreparationError):
     """Content-free failures suitable for the host's sanitized progress journal."""
+
+
+@dataclass(frozen=True)
+class CaptureHooks:
+    """Host ownership hooks; never accepted from acquisition/recipe JSON.
+
+    The journal records ``stage_name`` before capture starts. Callbacks persist
+    its held inode before writing, and the exact candidate before publication.
+    A callback failure aborts the attempt and follows normal owned cleanup.
+    """
+    stage_name: str
+    on_stage_created: Callable[[tuple[int, ...]], None]
+    on_candidate_ready: Callable[["CapturedArtifactCollectionV1", tuple[int, ...]], None]
+
+    def __post_init__(self):
+        try:
+            if str(uuid.UUID(self.stage_name)) != self.stage_name:
+                raise ValueError()
+        except (ValueError, TypeError, AttributeError):
+            raise ArtifactError("artifact_capture_hooks_invalid") from None
+        if not callable(self.on_stage_created) or not callable(self.on_candidate_ready):
+            raise ArtifactError("artifact_capture_hooks_invalid")
 
 
 class _ArtifactContract(StrictModel):
@@ -553,7 +576,8 @@ class ArtifactStore:
         return chain
 
     def capture(self, request: AcquisitionRequestV1, *, disk_ceiling_bytes: int,
-                cancel_event: threading.Event | None = None, deadline: float | None = None) -> CapturedArtifactCollectionV1:
+                cancel_event: threading.Event | None = None, deadline: float | None = None,
+                hooks: CaptureHooks | None = None) -> CapturedArtifactCollectionV1:
         """Copy selected bytes, recheck, seal and publish without executing them.
 
         ``deadline`` is an absolute monotonic timestamp. Disk ceiling includes
@@ -564,6 +588,8 @@ class ArtifactStore:
             if not isinstance(request, AcquisitionRequestV1):
                 raise ArtifactError("artifact_request_invalid")
             request = AcquisitionRequestV1.model_validate(request.model_dump(mode="json"))
+            if hooks is not None and not isinstance(hooks, CaptureHooks):
+                raise ArtifactError("artifact_capture_hooks_invalid")
             budget = _Budget(disk_ceiling_bytes, cancel_event, deadline)
             budget.check()
             with self._root() as chain:
@@ -571,7 +597,7 @@ class ArtifactStore:
                 try:
                     staging = _open_directory(chain.fd, "staging")
                     try:
-                        return self._capture(request, chain, objects, staging, budget)
+                        return self._capture(request, chain, objects, staging, budget, hooks)
                     finally:
                         os.close(staging)
                 finally:
@@ -583,18 +609,21 @@ class ArtifactStore:
         except OSError:
             raise ArtifactError("artifact_capture_failed") from None
 
-    def _capture(self, request, chain, objects, staging, budget):
+    def _capture(self, request, chain, objects, staging, budget, hooks=None):
         with contextlib.ExitStack() as owned:
-            return self._capture_owned(request, chain, objects, staging, budget, owned)
+            return self._capture_owned(request, chain, objects, staging, budget, owned, hooks)
 
-    def _capture_owned(self, request, chain, objects, staging, budget, owned):
-        name = str(uuid.uuid4())
+    def _capture_owned(self, request, chain, objects, staging, budget, owned, hooks=None):
+        name = hooks.stage_name if hooks else str(uuid.uuid4())
         stage = _new_directory(staging, name)
         owned.callback(os.close, stage)
         files = -1
         moved = False
         collection = None
         try:
+            if hooks:
+                hooks.on_stage_created(_directory_identity(os.fstat(stage)))
+            budget.check()
             files = _open_directory(stage, "files", create=True)
             owned.callback(os.close, files)
             records = []
@@ -626,6 +655,9 @@ class ArtifactStore:
             os.fsync(files)
             os.fsync(stage)
             self._verify_fd(stage, collection.digest, budget)
+            if hooks:
+                hooks.on_candidate_ready(collection, _directory_identity(os.fstat(stage)))
+            budget.check()
             chain.check()
             _same_directory(chain.fd, "objects", objects)
             _same_directory(chain.fd, "staging", staging)

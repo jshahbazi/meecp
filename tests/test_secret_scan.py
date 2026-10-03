@@ -2,10 +2,13 @@
 import hashlib
 import importlib.util
 import io
+import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tarfile
+import tomllib
 
 import pytest
 
@@ -94,6 +97,17 @@ def test_history_scan_uses_all_refs_and_blocks_config_and_ignore_overrides(monke
     assert not any(key.startswith("GITLEAKS_") for key in options["env"])
 
 
+def test_directory_scan_uses_same_exact_relative_paths_as_history(monkeypatch, tmp_path):
+    captured = []
+    def run(arguments, **kwargs):
+        captured.append((arguments, kwargs))
+        return subprocess.CompletedProcess(arguments, 0)
+    monkeypatch.setattr(scanner.subprocess, "run", run)
+    scanner.run_scanner(tmp_path / "gitleaks", "dir", tmp_path, tmp_path / "config", tmp_path / "ignore")
+    arguments, options = captured[0]
+    assert arguments[1:3] == ["dir", "."] and options["cwd"] == tmp_path
+
+
 def test_current_source_includes_tracked_edits_and_excludes_untracked_artifacts(monkeypatch, tmp_path):
     repository = tmp_path / "repo"
     repository.mkdir()
@@ -141,7 +155,7 @@ def test_temporary_binary_and_config_are_removed_on_scanner_failure(monkeypatch,
         return binary
 
     def failed(*args):
-        assert args[3].read_text() == "[extend]\nuseDefault = true\n"
+        assert args[3].read_text() == scanner.trusted_config()
         raise scanner.ScanFailure("secret_scan_detected_credentials")
 
     monkeypatch.setattr(scanner, "scanner_binary", download)
@@ -163,3 +177,66 @@ def test_cli_errors_contain_only_fixed_status(monkeypatch, capsys, error, code, 
     monkeypatch.setattr(scanner, "scan", failed)
     assert scanner.main() == code
     assert capsys.readouterr() == (message + "\n", "")
+
+
+def test_public_metadata_exception_is_exact_value_and_path_for_one_rule_only():
+    config = tomllib.loads(scanner.trusted_config())
+    assert set(config) == {"extend", "rules"}
+    assert config["extend"] == {"useDefault": True}
+    assert len(config["rules"]) == 1
+    rule = config["rules"][0]
+    assert set(rule) == {"id", "allowlists"} and rule["id"] == "generic-api-key"
+    assert len(rule["allowlists"]) == 1
+    exception = rule["allowlists"][0]
+    assert set(exception) == {"description", "condition", "regexTarget", "paths", "regexes"}
+    assert exception["condition"] == "AND" and exception["regexTarget"] == "secret"
+    assert len(exception["paths"]) == len(exception["regexes"]) == 1
+    assert re.fullmatch("[0-9a-f]{64}", scanner.PUBLIC_GGUF_METADATA_DIGEST)
+    for path in scanner.PUBLIC_GGUF_METADATA_PATHS:
+        assert re.fullmatch(exception["paths"][0], path)
+        assert not re.fullmatch(exception["paths"][0], "other/" + path)
+        assert not re.fullmatch(exception["paths"][0], path + ".backup")
+    assert re.fullmatch(exception["regexes"][0], scanner.PUBLIC_GGUF_METADATA_DIGEST)
+    assert not re.fullmatch(exception["regexes"][0], scanner.PUBLIC_GGUF_METADATA_DIGEST + "0")
+    assert not re.fullmatch(exception["regexes"][0], "0" + scanner.PUBLIC_GGUF_METADATA_DIGEST)
+
+
+@pytest.fixture(scope="module")
+def actual_scanner(tmp_path_factory):
+    if os.environ.get("MCPME_RUN_SECRET_SCANNER_INTEGRATION") != "1":
+        pytest.skip("explicit pinned scanner integration run required")
+    workspace = tmp_path_factory.mktemp("actual-scanner")
+    binary = scanner.scanner_binary(workspace)
+    config = workspace / "trusted.toml"
+    config.write_text(scanner.trusted_config())
+    ignore = workspace / "ignore"
+    ignore.mkdir()
+    return binary, config, ignore
+
+
+@pytest.mark.parametrize("path", scanner.PUBLIC_GGUF_METADATA_PATHS)
+@pytest.mark.parametrize("case", ["reviewed", "different_value", "same_value_other_path", "extra_value_same_file"])
+@pytest.mark.parametrize("mode", ["dir", "git"])
+def test_actual_pinned_scanner_preserves_detection_at_excepted_paths(actual_scanner, tmp_path, path, case, mode, capsys):
+    binary, config, ignore = actual_scanner
+    value = scanner.PUBLIC_GGUF_METADATA_DIGEST
+    synthetic = hashlib.sha256(b"mcpme non-credential scanner negative fixture").hexdigest()
+    if case == "different_value": value = synthetic
+    if case == "same_value_other_path": path = "unreviewed/" + path
+    target = tmp_path / path
+    target.parent.mkdir(parents=True)
+    content = 'TOKENIZER_SHA256 = "' + value + '"\n'
+    if case == "extra_value_same_file": content += 'API_KEY = "' + synthetic + '"\n'
+    target.write_text(content)
+    if mode == "git":
+        for arguments in (("init", "--quiet"), ("add", "."),
+                          ("-c", "user.name=Scanner test", "-c", "user.email=scanner@example.invalid",
+                           "commit", "--quiet", "-m", "test: synthetic scanner fixture")):
+            subprocess.run(["git", "-C", str(tmp_path), *arguments], check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if case == "reviewed":
+        scanner.run_scanner(binary, mode, tmp_path, config, ignore)
+    else:
+        with pytest.raises(scanner.ScanFailure, match="secret_scan_detected_credentials"):
+            scanner.run_scanner(binary, mode, tmp_path, config, ignore)
+    assert capsys.readouterr() == ("", "")

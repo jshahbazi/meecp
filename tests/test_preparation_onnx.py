@@ -130,6 +130,24 @@ def test_pinned_notices_and_model_provenance_match_current_export():
     assert "mcp==1.30.0" in (root / "pyproject.toml").read_text()
 
 
+def test_wheel_notices_are_indexed_without_importing_runtime(tmp_path):
+    site = tmp_path / "site"
+    for distribution in ("flatbuffers-25.12.19", "httpx-0.28.1", "onnxruntime-1.30.0"):
+        (site / (distribution + ".dist-info")).mkdir(parents=True)
+    wheel = site / "onnxruntime"; wheel.mkdir()
+    (wheel / "LICENSE").write_bytes(b"Exact frozen wheel license\n")
+    (wheel / "ThirdPartyNotices.txt").write_bytes(b"Exact frozen wheel native notices\n")
+    assets = {"LICENSE-FLATBUFFERS":b"Pinned FlatBuffers\n", "LICENSE-HTTPX":b"Pinned HTTPX\n"}
+    onnx._supplement_dependency_notices(site, assets, lambda: None)
+    metadata = site / "onnxruntime-1.30.0.dist-info"
+    assert (metadata / "LICENSE-mcpme-wheel.txt").read_bytes() == (wheel / "LICENSE").read_bytes()
+    assert (metadata / "NOTICE-mcpme-wheel.txt").read_bytes() == (wheel / "ThirdPartyNotices.txt").read_bytes()
+    (wheel / "LICENSE").unlink()
+    (wheel / "LICENSE").symlink_to(wheel / "ThirdPartyNotices.txt")
+    with pytest.raises(PreparationError):
+        onnx._supplement_dependency_notices(site, assets, lambda: None)
+
+
 def test_immutable_builtin_recipe_uses_exact_host_component(tmp_path):
     bundle = onnx.write_onnx_recipe(tmp_path.resolve() / "recipe")
     assert bundle["manifest"]["id"] == "mcpme.onnx-hotdog"

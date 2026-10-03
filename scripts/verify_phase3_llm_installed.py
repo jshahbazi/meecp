@@ -19,13 +19,25 @@ import sys
 import tempfile
 import time
 
+# Direct CLI runs must import the selected private host's implementation and
+# locked client dependencies. An importing managed harness already sets these.
+if __name__ == "__main__":
+    try:
+        from verify_phase3_primitives import _host_imports, _host_paths
+        bootstrap = argparse.ArgumentParser(add_help=False)
+        bootstrap.add_argument("--host", type=Path, required=True)
+        selected, _ = bootstrap.parse_known_args()
+        _host_paths(selected.host)
+        _host_imports(selected.host)
+    except Exception:
+        raise SystemExit("invalid_private_host") from None
+
 import httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "backend"))
 sys.dont_write_bytecode = True
 logging.disable(logging.CRITICAL)
 
@@ -74,10 +86,13 @@ async def verify(args, report):
     with isolated_workspace() as workspace:
         root = workspace["root"]
         host, package, state, home = (root / name for name in ("relocated host", "selected package", "state", "home"))
+        if getattr(args, "prepared_state", None) is not None:
+            state = args.prepared_state.resolve()
+            require(args.import_id is not None and args.revision is not None and state.is_dir())
         await asyncio.to_thread(shutil.copytree, args.host.resolve(), host, symlinks=True)
         await asyncio.to_thread(shutil.copytree, args.package.resolve(), package, symlinks=False)
         require(validate_package(package).digest == package_identity.digest)
-        state.mkdir(mode=0o700)
+        state.mkdir(mode=0o700, exist_ok=getattr(args, "prepared_state", None) is not None)
         home.mkdir(mode=0o700)
         policy = state / "resource-policy.json"
         policy.write_text(json.dumps({"memory_budget_mb": 1088, "headroom_mb": 64,
@@ -157,11 +172,19 @@ async def verify(args, report):
             report["stage"] = "install"
             await start()
             slots = []
-            for _ in range(2):
-                plan = await cli("install", "plan", "--package", str(package), "--json")
+            for index in range(2):
+                if index == 0 and getattr(args, "prepared_state", None) is not None:
+                    plan = await cli("install", "plan", "--import", args.import_id,
+                                     "--revision", str(args.revision), "--json")
+                else:
+                    plan = await cli("install", "plan", "--package", str(package), "--json")
                 installed = await finish(await cli("install", "apply", "--plan", plan["plan_id"], "--json"))
                 slots.append(installed["slot_id"])
             first, second = slots
+            if getattr(args, "prepared_state", None) is not None:
+                imported = await cli("imports", "inspect", args.import_id, "--json")
+                require(imported["revision"] == args.revision and imported["result_slot_id"] == first)
+                checks["same_revision_managed_import_installed"] = True
             shutil.rmtree(package)
             checks["installed_relocated_package"] = True
             await finish(await cli("slots", "start", first, "--json"))
@@ -274,6 +297,9 @@ def main():
     parser.add_argument("--host", type=Path, required=True)
     parser.add_argument("--package", type=Path, required=True)
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--prepared-state", type=Path)
+    parser.add_argument("--import-id")
+    parser.add_argument("--revision", type=int)
     args = parser.parse_args()
     report = {"stage": "start", "checks": {}, "harness_sha256": file_hash(Path(__file__))}
     code = 0

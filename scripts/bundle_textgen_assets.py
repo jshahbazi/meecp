@@ -37,7 +37,7 @@ def bundle(host: Path, engine: Path):
         for name in POLICY_FILES:
             shutil.copyfile(ROOT / "backend/jevk5_app" / name, destination / "jevk5_app" / name)
     (target / "bin").mkdir()
-    source = ROOT / "scripts/textgen-package-launcher.c"
+    source = ROOT / "templates/text-generate-v1/launcher.c"
     for arguments in (("/usr/bin/cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                        str(source), "-o", str(target / "bin/textgen-engine")),
                       ("/usr/bin/codesign", "--force", "--sign", "-", str(target / "bin/textgen-engine"))):

@@ -57,7 +57,7 @@ async def verify_textgen_package(package_root: Path, descriptor, reaper: Path, w
     started = time.monotonic()
     async with asyncio.timeout(timeout_seconds):
         package = await _validate_joined(package_root)
-        validate_model_package(package, descriptor)
+        validate_model_package(package, descriptor, require_receipt=True)
     require([f.model_dump(exclude_none=True) for f in descriptor.validation] == task_fixtures(),
             "textgen_fixture_contract_mismatch")
     owner = owner if owner is not None else ProcessOwner(reaper)

@@ -132,7 +132,10 @@ class LiteralTextMetadata(FuncMetadata):
 
 def make_app(manager, token, *, port):
     mcp = SafeTextMCP("Local text generation", instructions=DESCRIPTION, host="127.0.0.1", port=port,
-        log_level="CRITICAL", stateless_http=True, json_response=True, max_request_body_size=32768,
+        # Cancellation is a separate HTTP POST. Keep its request identity in
+        # the same bounded session until the inference owner has joined.
+        log_level="CRITICAL", stateless_http=False, json_response=True, max_request_body_size=32768,
+        max_sessions=8, session_idle_timeout=300,
         transport_security=TransportSecuritySettings(
             allowed_hosts=[f"127.0.0.1:{port}", f"localhost:{port}"],
             allowed_origins=[f"http://127.0.0.1:{port}", f"http://localhost:{port}"]))

@@ -11,6 +11,7 @@ import shutil
 import subprocess
 
 from build_mcpme_host import ROOT, BuildCommandError, build as build_host, project_version, run
+from build_preparation_toolchain import refresh_toolchain_manifest
 from prepare_json_package import prepare as prepare_json_package
 
 MACHO_MAGIC = {b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xce",
@@ -193,6 +194,8 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
         shutil.copyfile(ROOT / name, resources / name)
     native_input_hash = sha256(native)
     signed_files = sign_runtime(staged, identity, release, keychain)
+    if (host / "preparation-toolchain/toolchain.json").is_file():
+        refresh_toolchain_manifest(host / "preparation-toolchain")
     starter_receipt = finalize_starter_package(starter, host, release=release)
     # Signing changes the reaper hash recorded by the host builder. Refresh that
     # receipt before sealing Resources; never leave development labels on a release.

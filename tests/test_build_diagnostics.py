@@ -196,6 +196,7 @@ def test_host_build_preserves_nested_document_links_and_binds_all_document_hashe
     monkeypatch.setattr(host_builder.platform, "machine", lambda: "arm64")
     monkeypatch.setattr(host_builder, "run", run)
     monkeypatch.setattr(host_builder, "bundle_model_template_assets", lambda destination: None)
+    monkeypatch.setattr(host_builder, "bundle_preparation_toolchain", lambda destination, runtime: None)
     host = host_builder.build(tmp_path / "host")
     receipt = json.loads((host / "build.json").read_text())
     included = {"docs/AUTOMATIC_PREPARATION.md", "docs/reviews/DIRECTORY_ONBOARDING_REVIEW.md", "docs/reviews/figure.svg"}

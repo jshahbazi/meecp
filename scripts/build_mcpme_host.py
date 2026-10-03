@@ -161,6 +161,12 @@ def bundle_model_template_assets(destination: Path) -> None:
     shutil.copyfile(ROOT / "scripts/jevk5-package-launcher.c", assets / "scripts/jevk5-package-launcher.c")
 
 
+def bundle_preparation_toolchain(destination: Path, runtime: Path) -> None:
+    """Bundle deterministic installed-host build tools without PATH discovery."""
+    from build_preparation_toolchain import bundle
+    bundle(destination / "preparation-toolchain", runtime, template_root=ROOT / "templates")
+
+
 def build(destination: Path, version: str | None = None):
     version = project_version(version)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
@@ -189,6 +195,7 @@ def build(destination: Path, version: str | None = None):
     shutil.copytree(ROOT / "templates", destination / "templates",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     bundle_model_template_assets(destination)
+    bundle_preparation_toolchain(destination, runtime)
     shutil.copyfile(ROOT / "README.md", destination / "README.md")
     shutil.copytree(ROOT / "assets/brand", destination / "assets/brand")
     shutil.copytree(ROOT / "docs", destination / "docs",
@@ -203,6 +210,7 @@ def build(destination: Path, version: str | None = None):
                     *[path for path in sorted((destination / "docs").rglob("*")) if path.is_file()], destination / "uv.lock",
                     destination / "pyproject.toml", *[path for path in sorted((destination / "templates").rglob("*")) if path.is_file()],
                     destination / "requirements.txt", destination / "README.md", destination / "bin/mcpme-reap"]
+    source_files.extend(path for path in sorted((destination / "preparation-toolchain").rglob("*")) if path.is_file())
     source_hashes = {str(path.relative_to(destination)): hashlib.sha256(path.read_bytes()).hexdigest()
                      for path in source_files}
     (destination / "build.json").write_text(json.dumps({"host_version": version, "artifact_sha256": source_hashes,

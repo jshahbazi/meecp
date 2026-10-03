@@ -1,8 +1,10 @@
 """The installed acceptance harness must join children and preserve lost ownership."""
 import importlib
+import logging
 from pathlib import Path
 import shutil
 import sqlite3
+import sys
 
 import pytest
 
@@ -11,6 +13,35 @@ import pytest
 def harness_module(monkeypatch):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))
     return importlib.import_module("verify_phase3_native_onboarding")
+
+
+def test_native_factory_admits_only_exact_bundled_python_family(tmp_path, monkeypatch, harness_module):
+    from mcpme.preparation_resolved_python import ResolvedPythonComponent
+    from mcpme.supervisor import Supervisor
+
+    observed = {}
+
+    async def serve(state, reaper, port, **factories):
+        host = Supervisor(state, reaper, **factories)
+        try:
+            runner = host.preparation_runner
+            observed["enabled"] = runner.enabled
+            observed["families"] = runner.enabled_families
+            observed["registered"] = frozenset(host.preparations.families)
+        finally:
+            await host.close()
+
+    monkeypatch.setattr("mcpme.supervisor.serve", serve)
+    backend = str(Path(__file__).resolve().parents[1] / "backend")
+    monkeypatch.setattr(sys, "argv", ["acceptance", backend, backend,
+        str(tmp_path / "state"), str(tmp_path / "unused-reaper"), "0"])
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(logging.root.manager, "disable", logging.root.manager.disable)
+    exec(harness_module.ENABLED_HOST, {})
+    selected = ResolvedPythonComponent().reference.key
+    assert observed["enabled"] is True
+    assert observed["families"] == frozenset({selected})
+    assert selected in observed["registered"] and observed["registered"] - {selected}
 
 
 @pytest.mark.asyncio

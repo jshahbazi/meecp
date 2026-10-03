@@ -116,12 +116,14 @@ async def verify(host, model, base, *, source_mode="captured", install_lifecycle
                 original = base / "instructions"
                 original.mkdir(mode=0o700)
                 (original / "README.md").write_text("Prepare bounded local CPU text generation from the selected model.\n")
-                previous = await files(imports.create, original, name="Local text generation")
+                previous = await files(imports.create, original, name="Local text generation",
+                    intent="Generate bounded text with the selected local CPU model.")
                 original_source = previous["source"]
                 target = AttachImportTargetV1(import_id=previous["draft_id"], revision=previous["revision"])
             else:
                 original_source = None
-                target = CreateImportTargetV1(name="Local text generation",requirements={
+                target = CreateImportTargetV1(name="Local text generation",
+                    intent="Generate bounded text with the selected local CPU model.", requirements={
                     "tools":["text_generate","text_status"], "memory_mb":1024, "profile":"model-service"})
             captured = await coordinator.start(request,CapturePolicyV1(disk_ceiling_bytes=1024**3), target,"actual-textgen")
             await asyncio.shield(coordinator.tasks[captured["capture_id"]])
@@ -163,6 +165,8 @@ async def verify(host, model, base, *, source_mode="captured", install_lifecycle
                     or store.ownership_receipts(job["job_id"]) or Path(final["workspace"]).exists()
                     or any(item["kind"]=="job" for item in capture_store.references(completed["collection_digest"]))):
                 raise PreparationError("phase3_textgen_settlement_failed")
+            if attached["state"] != "ready_to_plan" or attached["blockers"]:
+                raise PreparationError("phase3_textgen_import_not_ready")
             package = await files(validate_package,Path(attached["attachment"]["path"]))
             sealed = parse_preparation_receipt((package.root / RECEIPT_NAME).read_bytes())
             expected_files = draft["source"]["files"] if source_mode == "folder" else [

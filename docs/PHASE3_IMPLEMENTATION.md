@@ -53,7 +53,7 @@ Draft, job and reader references protect committed objects. Draft changes transf
 | A1 | Separate Python callable and foreground MCP native/API paths; private closure; full MCP probes; relocation; matching attachment; install/invoke/restart; cancellation/crash/revision races | Three actual native Python cases prepared, attached, installed, invoked over HTTP/stdio and restarted at the ONNX checkpoint; complete integrated race, isolation and resource gates remain open |
 | A2 | Explicit ONNX artifact; exact CPU detector compatibility; real inference; tensor tests; complete notices; maximum image limits measured | Default-host and native captured/folder-supplement preparation, exact receipts, installed HTTP/stdio inference, restart and source-free relocation have checkpoint evidence. Later combined-host rechecks and inherited common isolation/resource/race gates remain open |
 | A3 | Bounded supervised CLI; argv/input/output/exit contract; descendants, cancellation, crash/restart and closure | Reviewed host-owned installed CLI checkpoint is pushed in isolated branch codex/phase3-command-installed at 7c85ef0. Independent native/installed checks and lifecycle repairs passed. Combined-host integration, aggregate OS resource enforcement and signed/relocated native app acceptance remain open; default admission is closed |
-| A4 | Pinned general model/engine/template; actual inference; token limits; shared serialized queue; resource/cancellation settlement; JevK5 parity | Exact CPU compatibility, direct installed inference/lifecycle and JevK5 regressions passed. Actual composed construction/inference exposed receipt profile/count mismatches; source repairs and immutable version 1.0.3 passed complete regression. Fresh composed installation/native, isolation/resource and signed-closure gates remain open |
+| A4 | Pinned general model/engine/template; actual inference; token limits; shared serialized queue; resource/cancellation settlement; JevK5 parity | Exact CPU compatibility, JevK5 regressions and fresh captured/folder managed build, matching-import installation, HTTP/stdio inference, crash/restart and source-free relocation have checkpoint evidence. One earlier folder lifecycle verifier RuntimeError remains unexplained. Complete combined-host closure, native, isolation/resource and signed-app gates remain open |
 | A5 | Concrete programmatic agent backend; unfamiliar source end to end; scoped transfer/execution; bounded usage; parallel integration; cancellation/restart; stale-result rejection | Additive provider backend/coordinator checkpoint has simulated transport and real local journal/race tests in an isolated branch. No configured credential for a concrete live run; unfamiliar-source generation and host/native integration remain open |
 | A6 | Each additional runtime/provider/family has its own compatibility and authority evidence before advertisement | Schema-2 fake component is a contract test; no additional runtime/provider capability advertised |
 
@@ -160,8 +160,8 @@ generated forms and package construction without hand-authored descriptors or lo
 Their recorded native checkpoint passes; containment/resource/race requirements
 remain independently gated.
 
-Freeze the repaired complete host and run captured and folder-supplement LLM
-construction, installation, invocation and native acceptance. Independently
+Freeze the repaired complete host and recheck captured and folder-supplement LLM
+construction, installation and invocation, then run native acceptance. Independently
 recheck Python and ONNX against that same combined artifact. Preserve legacy
 GGUF and folder identities. Integrate the separately reviewed CLI checkpoint
 with fresh immutable component identities, then complete its aggregate resource

@@ -282,3 +282,34 @@ The repaired complete source suite passed 2,206 tests with 12 skips, including
 the actual pinned secret scanner. Independent focused verification passed 102
 tests with five opt-in skips and confirmed unchanged protocol assertions,
 deadlines and owned cleanup.
+
+## Managed installed checkpoint
+
+The frozen `6a26f7b` host completed real construction, inference verification
+and same-revision attachment. The first installed attempt correctly rejected
+`intent_required`: the development driver omitted its chosen app purpose at
+both captured and folder intake. The driver now supplies that purpose before
+capture and requires an attached draft with no installation blockers.
+
+A fresh captured case passed the complete driver in 226.306 seconds. A fresh
+folder case passed the same complete `verify` pipeline in 191.913 seconds,
+with the driver's bytes unchanged before and after execution. Each used five
+owned build commands and 30 wheels, installed its matching import revision,
+passed all 12 installed lifecycle checks over actual HTTP/stdio clients, and
+performed a source-free relocation probe after deleting captured state.
+No work, pending receipt, reader/job reference or reservation remained.
+Bounded receipts are retained for [captured intake](evidence/managed-installed-textgen-6a26f7b-captured.json)
+and [folder intake](evidence/managed-installed-textgen-6a26f7b-folder.json).
+
+An earlier folder CLI run installed its matching draft but raised an
+unclassified `RuntimeError` during lifecycle verification. Its private artifacts
+remain retained; both slot ledgers and reservations were settled. The later
+fresh pipeline pass does not explain that failure. Native acceptance and
+independent investigation remain required.
+
+These runs checked all 1,785 hashes recorded by this host. That older build
+inventory excludes the top-level Python runtime/dependency bytes, so it is not
+complete host-closure evidence. The corrected distribution builder must supply
+a new complete manifest for combined-family rechecks. This checkpoint does not
+close native onboarding, filesystem/network denial, aggregate resource limits
+or signed-app acceptance. Public execution remains disabled and A4 remains open.

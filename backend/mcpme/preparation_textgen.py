@@ -27,7 +27,7 @@ ENGINE_ID = "llamacpp-cpu-v1"
 TASK_ID = "text-generate-v1"
 VERSION = "1.0.0"
 MIN_MEMORY_MB = 1024
-ASSETS = ("LICENSE", "LICENSE-MODEL", "engine-closure.json", "fixtures.json", "model.json", "model-provenance.json",
+ASSETS = ("LICENSE", "LICENSE-MODEL", "engine-closure.json", "fixtures.json", "model.json", "model-provenance.json", "launcher.c",
           "tools.json", "pyproject.toml", "uv.lock")
 ENGINE_SCHEMA = {"type": "object", "additionalProperties": False,
     "required": ["model_name", "license_name", "profile"], "properties": {
@@ -66,10 +66,12 @@ def model_contract():
 
 def builtin_textgen_components():
     root = Path(__file__).resolve().parents[1]
-    sources = [*[root / "mcpme" / name for name in (
-        "preparation_textgen.py", "preparation_textgen_verifier.py", "preparation_builder.py",
-        "preparation_verifier.py", "preparation_processes.py", "processes.py", "contracts.py",
-        "preparation_inputs.py", "preparation_components.py", "preparation_artifacts.py", "preparation_capture.py")],
+    # Include the complete reviewed host module closure: the builder/verifier
+    # transitively use contracts, recipes, capture, receipt and ownership code.
+    # A hand-maintained direct-import list silently missed those dependencies.
+    # Exact wheel/private-Python/native-reaper bytes are independently bound by
+    # the job's dependency, toolchain and verifier runtime identities.
+    sources = [*sorted((root / "mcpme").glob("*.py")), root / "mcpme_local_transport.py",
         *sorted((root / "mcpme_textgen").glob("*.py")),
         *[root / "jevk5_app" / name for name in ("__init__.py", "server.py", "contracts.py", "state.py")]]
     identity = {"implementation": {p.relative_to(root).as_posix(): hashlib.sha256(_read(p, 1024**2)).hexdigest()
@@ -330,7 +332,7 @@ def _copy_capture(store, collection, entry, destination, check):
         raise PreparationError("artifact_identity_mismatch")
 
 
-def validate_model_package(package, descriptor):
+def validate_model_package(package, descriptor, *, require_receipt=False):
     """Bind topology/model/runtime to the component, beyond the base contract."""
     selected = {item.component.key: item.input for item in descriptor.components}
     engine, task = references()
@@ -366,6 +368,30 @@ def validate_model_package(package, descriptor):
     license = records.get("licenses/Qwen-LICENSE")
     if license is None or license.sha256 != LICENSE_SHA256:
         raise PreparationError("textgen_model_identity_unsupported")
+    root = Path(__file__).resolve().parents[1]
+    source_paths = [*sorted((root / "mcpme_textgen").glob("*.py")),
+                   *[root / "jevk5_app" / name for name in ("__init__.py", "server.py", "contracts.py", "state.py")]]
+    expected_sources = {"backend/" + path.relative_to(root).as_posix(): hashlib.sha256(_read(path, 1024**2)).hexdigest()
+                        for path in source_paths}
+    if {path for path in records if path.startswith("backend/")} != set(expected_sources):
+        raise PreparationError("textgen_adapter_identity_mismatch")
+    if any(records[path].sha256 != expected for path, expected in expected_sources.items()):
+        raise PreparationError("textgen_adapter_identity_mismatch")
+    origin = json.loads(_read(package.root / "origin.json", 1024**2))
+    if (origin.get("engine_closure") != closure
+            or origin.get("launcher_source_sha256") != hashlib.sha256(assets()["launcher.c"]).hexdigest()):
+        raise PreparationError("textgen_launcher_identity_mismatch")
+    if require_receipt:
+        from .preparation_inputs import parse_preparation_receipt
+        from .preparations import RECEIPT_NAME
+        receipt = parse_preparation_receipt(_read(package.root / RECEIPT_NAME, 1024**2))
+        if (receipt.schema_version != 2 or receipt.inputs.descriptor_digest != descriptor.digest
+                or receipt.inputs.recipe != descriptor.recipe
+                or receipt.binding.source_revision != manifest.source_revision
+                or receipt.inputs.captured_collection is None
+                or receipt.inputs.captured_collection.digest != collection.digest
+                or {item.key for item in receipt.inputs.components} != set(selected)):
+            raise PreparationError("textgen_receipt_binding_mismatch")
 
 
 def prepare_textgen_bound(descriptor, draft, toolchain, output, run, check, *, capture_store, job_id, acquire_wheels):

@@ -23,7 +23,7 @@ async def test_repeated_cancel_retains_both_instances_until_native_settlement(tm
     package = SimpleNamespace(root=tmp_path, digest="a" * 64)
     async def validated(path): return package
     monkeypatch.setattr(verifier, "_validate_joined", validated)
-    monkeypatch.setattr(verifier, "validate_model_package", lambda *args: None)
+    monkeypatch.setattr(verifier, "validate_model_package", lambda *args, **kwargs: None)
 
     class Process:
         def __init__(self, owner, config, identifier):

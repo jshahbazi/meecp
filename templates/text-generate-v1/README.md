@@ -10,7 +10,10 @@ The engine component supplies the exact private CPU runtime and single slot.
 The task component supplies bounded nonstreaming text generation, the MCP
 schemas, one shared serialized queue, and the authenticated adapter. Component
 identities bind trusted builder/verifier code, adapter/policy source, frozen
-Python dependencies and these assets. The declarative recipe contains those
+Python dependencies, the complete reviewed host Python module closure, shared
+transport, and these assets including the managed launcher's C source. Native
+reaper and actual private dependency bytes are also bound by the durable job's
+runtime identities. The declarative recipe contains those
 two exact component references and no executable hooks.
 
 Model bytes and license text enter through durable artifact capture. For a
@@ -35,6 +38,16 @@ token boundary and bounded concurrent queue, and validates status/authentication
 Both processes settle before package rehashing and a report. Reported memory is
 the conservative sum of their individual native `wait4` peaks, not a simultaneous
 aggregate or an OS memory limit.
+
+The managed acceptance harness supports `--source-mode captured` and
+`--source-mode folder`. The latter captures a real original instructions
+snapshot, then supplements it with the model collection. Both check source,
+capture, descriptor and recipe bindings in the sealed preparation receipt.
+`--install-lifecycle` installs the same attached import revision through the
+normal plan/apply flow, then exercises inference, memory contention, transport
+failure retention, native reap and host crash/restart. Those CLI lifecycle
+checks do not establish menu/UI acceptance. Actual composed runs require the
+fresh immutable integrated host and independently admitted family.
 
 The core family registration, capability admission, distribution wiring and
 managed native acceptance remain separate gates. Recipe visibility alone must

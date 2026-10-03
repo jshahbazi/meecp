@@ -181,7 +181,7 @@ The first package, `local.jevk5`, carries the existing [model manifest](../model
   packages/<package-id>/<digest>/         immutable verified package contents
   staging/<operation-id>/                 inactive installation candidates
   slots/<slot-uuid>/
-    config.json                          nonsecret configuration
+    settings.json                        typed nonsecret configuration and opaque secret references
     connection.json                      endpoint and invocation credential
     data/                                package-owned persistent data
     runtime/                             temporary files and private engine keys
@@ -268,6 +268,7 @@ The bootstrap is a local owner action through the UI or `mcpme authorize --plan 
 ### Transaction and recovery rules
 
 - Plan IDs bind the exact package/lock/configuration digest and proposed effects. Changes invalidate the plan. Recheck disk space, resource availability, and port reservation at apply time.
+- [The configuration implementation](CONFIGURATION_SECRETS.md) extends package schema 1 with a closed versioned primitive contract and logical `access.secrets` names. Plans bind effective nonsecret choices and immutable owner-managed reference UUIDs. Registry schema 3 binds each generation to its private settings digest; old rows retain no settings binding. Selected package children receive resolved values through `MCPME_SETTINGS_FD`, with rechecks after spawn acknowledgment and before exposure. Store administration remains owner-only. Native configuration forms, installed-settings edits, Keychain storage, and automatic secret rotation remain pending.
 - Apply accepts an idempotency key and records its intent before side effects. Retrying returns the same operation/slot instead of installing duplicates. Serialize mutations per slot and use registry generation checks to reject stale updates.
 - Download to staging with size limits, verify every digest before execution, reject path traversal and links escaping the package root, and seal the resolved execution tree. Local package paths are snapshotted into staging; execution never follows an editable external source tree.
 - The [pinned-download implementation](PINNED_DOWNLOADS.md) accepts root-level prepared ZIP packages with exact archive size and SHA-256, optionally an exact package digest. It exposes owner-only durable download jobs separately from installation operations. Fetch, cancel, and retry never install or execute a package; a completed sealed tree enters the existing plan/apply flow. HTTPS redirects, credential-bearing URLs, private network destinations, byte-range resume, and native download controls remain unavailable in this slice.

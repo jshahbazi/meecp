@@ -293,7 +293,7 @@ async def test_native_ack_uses_remaining_graph_deadline(tmp_path, prepared, monk
     package_path, reaper = prepared
     package = validate_package(package_path)
     host = Supervisor(tmp_path.resolve() / "host", reaper)
-    slot = SimpleNamespace(id=str(__import__("uuid").uuid4()), generation=1, public_port=19496)
+    slot = SimpleNamespace(id=str(__import__("uuid").uuid4()), generation=1, public_port=19496, settings_digest=None)
     engine = package.manifest.processes[0]
     captured = []
     async def launch(_slot, **kwargs):

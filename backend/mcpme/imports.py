@@ -20,6 +20,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Iterator
 
 from .contracts import LOCK_NAME, MANIFEST_NAME, PackageError, package_relative_path, validate_package
@@ -143,15 +144,24 @@ def _choices(data: dict[str, Any]) -> None:
         raise ImportError("invalid_start_policy")
     requirements = data["requirements"]
     if (not isinstance(requirements, dict)
-            or set(requirements) - {"tools", "profile", "memory_mb", "secret_references"}):
+            or set(requirements) - {"tools", "profile", "memory_mb", "secret_references", "configuration"}):
         raise ImportError("invalid_import_requirements")
     for field in ("tools", "secret_references"):
         values = requirements.get(field, [])
+        if field == "secret_references" and isinstance(values, dict):
+            continue
         if not isinstance(values, list) or len(values) > 128 or len(set(map(str, values))) != len(values):
             raise ImportError("invalid_import_requirements")
         for value in values:
             if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", value):
                 raise ImportError("invalid_import_requirements")
+    from .settings import SettingsError, validate_settings_choices
+    try:
+        references = requirements.get("secret_references", {})
+        validate_settings_choices({"configuration": requirements.get("configuration", {}),
+                                   "secret_references": references if isinstance(references, dict) else {}})
+    except SettingsError:
+        raise ImportError("invalid_import_requirements") from None
     if requirements.get("profile") not in (None, "mcp-stdio", "model-service"):
         raise ImportError("invalid_import_requirements")
     memory = requirements.get("memory_mb")
@@ -326,7 +336,8 @@ def _attachment(package) -> dict[str, Any]:
             "source_revision": package.manifest.source_revision,
             "tools": [tool.mcp_schema() for tool in package.manifest.tools],
             "profile": package.manifest.profile, "access": package.manifest.access.model_dump(),
-            "resources": package.manifest.resources.model_dump()}
+            "resources": package.manifest.resources.model_dump(),
+            "configuration": package.manifest.configuration.model_dump()}
 
 
 def _blockers(draft: dict[str, Any]) -> list[dict[str, str]]:
@@ -344,9 +355,19 @@ def _blockers(draft: dict[str, Any]) -> list[dict[str, str]]:
     if attachment is None:
         add("prepared_package_required", "attachment")
     requirements = draft["requirements"]
-    if requirements.get("secret_references"):
+    if requirements.get("secret_references") and not isinstance(requirements["secret_references"], dict):
         add("secret_reference_unavailable", "requirements.secret_references")
     if attachment is not None:
+        from .contracts import Access, Configuration
+        from .settings import SettingsError, normalize_settings
+        references = requirements.get("secret_references", {})
+        try:
+            manifest = SimpleNamespace(configuration=Configuration.model_validate(attachment.get("configuration", {})),
+                                       access=Access.model_validate(attachment["access"]))
+            normalize_settings(manifest, {"configuration": requirements.get("configuration", {}),
+                                         "secret_references": references if isinstance(references, dict) else {}})
+        except SettingsError as error:
+            add(error.code, "requirements.configuration" if error.code == "configuration_required" else "requirements")
         expected_tools = requirements.get("tools", [])
         if expected_tools and set(expected_tools) != {tool["name"] for tool in attachment["tools"]}:
             add("tool_contract_mismatch", "requirements.tools")
@@ -654,6 +675,9 @@ class ImportStore:
                 "validation fixtures. Supported preparation templates: " + ", ".join(TEMPLATE_IDS) + ". "
                 "The host supports macOS arm64, package schema 1, MCP 2025-11-25 tools, mcp-stdio and model-service "
                 "profiles. Do not include credentials or production inputs. Bind manifest.source_revision to the "
+                "resolved source identity. Declare typed nonsecret configuration in manifest.configuration and "
+                "logical secret names in access.secrets. Read selected values only from MCPME_SETTINGS_FD at runtime; "
+                "never put secret material in the package, source snapshot, fixtures, or agent instructions. Bind to the "
                 "resolved source identity. Return with "
                 f"mcpme imports attach {draft_id} --revision {revision} --package /absolute/path/to/package --json. "
                 "Attachment validates the package statically; installation requires a separate authorized plan."

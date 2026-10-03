@@ -73,6 +73,8 @@ The agent does the work of exposing your code through MCP. mcpme snapshots and i
 
 The owner CLI also supports [pinned prepared-package downloads](docs/PINNED_DOWNLOADS.md): fetch a ZIP by its exact size and SHA-256, then review and install the verified package.
 
+Packages can declare [typed configuration and secret references](docs/CONFIGURATION_SECRETS.md). The owner selects nonsecret settings and private credential references in the installation plan; package processes receive the selected values through a private descriptor.
+
 Reference-document services and dropping in raw model weights aren't supported yet. Native download controls, raw model downloads, package upgrades and rollback, and preparation through a provider inside the app remain planned; see the [onboarding delivery plan](docs/PROJECT_ONBOARDING.md).
 
 ## Let an assistant manage apps

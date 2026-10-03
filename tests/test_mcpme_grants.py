@@ -296,7 +296,7 @@ def test_registry_version_one_migration_preserves_records(tmp_path):
         registry._connection.execute("PRAGMA user_version=1")
     with Registry(state) as migrated:
         assert migrated.get_operation(operation.id) == operation
-        assert migrated._connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert migrated._connection.execute("PRAGMA user_version").fetchone()[0] == 3
         assert migrated._connection.execute("SELECT count(*) FROM management_grants").fetchone()[0] == 0
 
 

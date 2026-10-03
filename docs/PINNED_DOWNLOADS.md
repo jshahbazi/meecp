@@ -48,4 +48,4 @@ The helper emits the archive SHA-256, byte size, and package digest. It preserve
 
 The repeatable bundled-host check is `uv run --locked python scripts/verify_downloads.py --host /absolute/path/to/host --package /absolute/path/to/json-utilities-package`. It uses a synthetic byte transport inside the relocated private runtime, then normal owner CLI and real MCP clients in a temporary installation. This tests packaged download staging and installation without relying on a live publisher. Network policy and TLS framing have separate focused tests; the synthetic transport does not establish public publisher availability.
 
-Broader configuration and secret-reference injection, upgrades and rollback, raw model intake, and the full Phase 2 recovery matrix remain pending.
+[Typed configuration and secret-reference injection](CONFIGURATION_SECRETS.md) are available through owner CLI/API installation planning. Upgrades and rollback, raw model intake, and the full Phase 2 recovery matrix remain pending.

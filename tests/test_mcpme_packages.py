@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from mcpme.contracts import PackageError, validate_package
+from mcpme.contracts import Configuration, PackageError, PackageManifest, validate_package
 from mcpme.private import PrivateStateError, read_private_json, snapshot_package, write_private_json
 
 
@@ -91,7 +91,7 @@ def test_unsupported_profiles(tmp_path, profile):
     ({"entrypoint": {"executable": "../private", "cwd": "."}}, "unsafe_package_path"),
     ({"entrypoint": {"executable": "LICENSE", "cwd": "."}}, "entrypoint_not_executable"),
     ({"protocol": {"version": "2025-11-25", "capabilities": ["resources"]}}, "invalid_package_schema"),
-    ({"access": {"secrets": ["unavailable"]}}, "invalid_package_schema"),
+    ({"access": {"secrets": ["invalid-name"]}}, "invalid_package_schema"),
 ])
 def test_rejected_schema_has_content_free_error(tmp_path, changes, code):
     root = make_package(tmp_path / "package")
@@ -207,3 +207,75 @@ def test_new_private_ancestors_and_duplicate_json(tmp_path):
     path.chmod(0o600)
     with pytest.raises(PrivateStateError):
         read_private_json(path)
+
+
+def test_optional_configuration_contract_and_logical_secrets(tmp_path):
+    root = make_package(tmp_path / "package")
+    old = validate_package(root)
+    assert old.manifest.configuration.fields == {}
+    assert old.manifest.access.secrets == []
+    edit_manifest(root, configuration={"schema_version": 1, "fields": {
+        "label": {"type": "string", "default": "fixture", "min_length": 1, "max_length": 20},
+        "limit": {"type": "integer", "default": 3, "minimum": 1, "maximum": 8},
+        "enabled": {"type": "boolean", "required": True, "enum": [True, False]},
+    }}, access={"secrets": ["API_KEY", "secondary"]})
+    prepared = validate_package(root)
+    assert prepared.digest != old.digest
+    assert prepared.manifest.configuration.fields["label"].default == "fixture"
+    assert prepared.manifest.access.secrets == ["API_KEY", "secondary"]
+    serialized = prepared.manifest.model_dump()
+    assert "default" not in serialized["configuration"]["fields"]["enabled"]
+    reparsed = PackageManifest.model_validate(serialized)
+    assert reparsed.configuration == prepared.manifest.configuration
+    assert Configuration.model_validate(reparsed.configuration.model_dump()) == reparsed.configuration
+
+
+@pytest.mark.parametrize("declaration", [
+    {"type": "object"}, {"type": "array"}, {"type": "number"}, {"type": "string", "$ref": "private"},
+    {"type": "integer", "default": True}, {"type": "integer", "default": 1.0},
+    {"type": "boolean", "default": 1}, {"type": "string", "default": None},
+    {"type": "string", "default": "\x00"}, {"type": "string", "default": "\ud800"},
+    {"type": "integer", "default": 2 ** 53 + 1}, {"type": "integer", "minimum": -(2 ** 53) - 1},
+    {"type": "integer", "maximum": True}, {"type": "integer", "minimum": None},
+    {"type": "string", "minimum": 1}, {"type": "boolean", "max_length": 2},
+    {"type": "string", "min_length": -1}, {"type": "string", "max_length": 4097},
+    {"type": "string", "min_length": 4, "max_length": 3},
+    {"type": "integer", "minimum": 4, "maximum": 3},
+    {"type": "integer", "default": 2, "minimum": 3},
+    {"type": "string", "default": "x", "min_length": 2},
+    {"type": "string", "enum": []}, {"type": "string", "enum": None},
+    {"type": "string", "enum": ["x", "x"]}, {"type": "string", "enum": ["x", 1]},
+    {"type": "integer", "enum": [True]}, {"type": "boolean", "enum": [1]},
+    {"type": "integer", "enum": [1, 2], "maximum": 1},
+    {"type": "string", "enum": ["x"], "default": "y"},
+    {"type": "string", "enum": [str(index) for index in range(33)]},
+    {"type": "boolean", "required": 1},
+])
+def test_configuration_declarations_reject_invalid_constraints(tmp_path, declaration):
+    root = make_package(tmp_path / "package")
+    edit_manifest(root, configuration={"schema_version": 1, "fields": {"setting": declaration}})
+    with pytest.raises(PackageError, match="^invalid_package_schema$"):
+        validate_package(root)
+
+
+@pytest.mark.parametrize("configuration", [
+    {"schema_version": True, "fields": {}}, {"schema_version": 2, "fields": {}},
+    {"schema_version": 1, "fields": {}, "additionalProperties": True},
+    {"fields": {"bad-name": {"type": "string"}}}, {"fields": {"_bad": {"type": "string"}}},
+    {"fields": {"a" * 65: {"type": "string"}}},
+    {"fields": {"name" + str(index): {"type": "string"} for index in range(33)}},
+])
+def test_configuration_schema_and_names_are_closed(tmp_path, configuration):
+    root = make_package(tmp_path / "package")
+    edit_manifest(root, configuration=configuration)
+    with pytest.raises(PackageError, match="^invalid_package_schema$"):
+        validate_package(root)
+
+
+@pytest.mark.parametrize("names", [["x", "x"], ["bad-name"], ["x\x00"], [""], [1],
+                                  ["name" + str(index) for index in range(17)]])
+def test_secret_declarations_are_unique_logical_names(tmp_path, names):
+    root = make_package(tmp_path / "package")
+    edit_manifest(root, access={"secrets": names})
+    with pytest.raises(PackageError, match="^invalid_package_schema$"):
+        validate_package(root)

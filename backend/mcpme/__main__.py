@@ -8,6 +8,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 import uuid
 from urllib.parse import urlsplit
@@ -18,9 +19,24 @@ from mcpme_local_transport import private_transport, socket_path
 from .contracts import PackageError, validate_package
 from .connections import connection_names
 from .grants import GrantError
-from .private import read_private_json
+from .private import PrivateStateError, check_private_file, read_private_json
 
 DEFAULT_STATE = Path.home() / "Library/Application Support/mcpme"
+
+
+class OwnerArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        if "secrets" in self.prog.split()[1:]:
+            message = "invalid_secret_arguments"
+        super().error(message)
+
+    def parse_args(self, args=None, namespace=None):
+        parsed, remaining = self.parse_known_args(args, namespace)
+        if remaining:
+            message = ("invalid_secret_arguments" if getattr(parsed, "command", None) == "secrets"
+                       else "unrecognized arguments: " + " ".join(remaining))
+            self.error(message)
+        return parsed
 
 
 def emit(value: dict):
@@ -50,6 +66,79 @@ def positive_size_argument(value: str) -> int:
     if size < 1:
         raise argparse.ArgumentTypeError("expected_positive_size")
     return size
+
+
+def read_secret_file(path: Path) -> str:
+    """Read an owner-only input without following links or displaying its bytes."""
+    path = path.absolute()
+    try:
+        check_private_file(path)
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as source:
+            before = os.fstat(source.fileno())
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
+                    or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1
+                    or not 1 <= before.st_size <= 4096):
+                raise PrivateStateError()
+            data = source.read(4097)
+            after = os.fstat(source.fileno())
+            current = path.lstat()
+            attributes = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_mode", "st_uid", "st_nlink")
+            if (not 1 <= len(data) <= 4096 or any(getattr(before, key) != getattr(after, key)
+                    or getattr(after, key) != getattr(current, key) for key in attributes)):
+                raise PrivateStateError()
+        return data.decode("utf-8")
+    except (OSError, ValueError, UnicodeError):
+        raise PrivateStateError("invalid_secret_file") from None
+
+
+def read_settings_file(path: Path) -> dict:
+    try:
+        return read_private_json(path.absolute(), max_bytes=65536)
+    except PrivateStateError:
+        raise PrivateStateError("invalid_settings_file") from None
+
+
+def read_requirements_file(path: Path) -> dict:
+    """Keep legacy nonsecret requirements readable; require private references."""
+    path = path.absolute()
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as source:
+            details = os.fstat(source.fileno())
+            if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
+                raise PrivateStateError()
+            data = source.read(65537)
+        if len(data) > 65536:
+            raise PrivateStateError("requirements_limit")
+        from .policy import load_json
+        value = load_json(data)
+        if not isinstance(value, dict):
+            raise PrivateStateError()
+        if isinstance(value.get("secret_references"), dict) and value["secret_references"]:
+            # Reopen under the private-file contract and use that read as authority.
+            value = read_private_json(path, max_bytes=65536)
+        return value
+    except PrivateStateError as error:
+        raise PrivateStateError(error.code if error.code == "requirements_limit" else "invalid_requirements_file") from None
+    except (OSError, ValueError, UnicodeError):
+        raise PrivateStateError("invalid_requirements_file") from None
+
+
+def secret_metadata(value: dict) -> dict:
+    """Keep secret bytes and derived details out of owner CLI output."""
+    if "error" in value:
+        error = value["error"]
+        code = error.get("code") if isinstance(error, dict) else None
+        return {"error": {"code": code if isinstance(code, str) else "invalid_secret_response"}}
+    allowed = {"secret_id", "name", "status", "created_at", "updated_at", "revoked_at"}
+    if "secrets" in value:
+        records = value["secrets"]
+        if not isinstance(records, list) or any(not isinstance(item, dict) for item in records):
+            return {"error": {"code": "invalid_secret_response"}}
+        return {"secrets": [{key: item[key] for key in allowed if key in item} for item in records],
+                **({"count": value["count"]} if "count" in value else {})}
+    return {key: value[key] for key in allowed if key in value}
 
 
 def endpoint(connection: dict) -> str:
@@ -123,7 +212,7 @@ async def ensure_host(state: Path):
 
 
 def parser() -> argparse.ArgumentParser:
-    cli = argparse.ArgumentParser(prog="mcpme")
+    cli = OwnerArgumentParser(prog="mcpme")
     cli.add_argument("--state-dir", type=Path, default=DEFAULT_STATE)
     cli.add_argument("--credential-file", type=Path,
                      help="Use this scoped management credential, without owner fallback.")
@@ -155,6 +244,7 @@ def parser() -> argparse.ArgumentParser:
     plan.add_argument("--name")
     plan.add_argument("--start-policy", choices=["manual", "host"], default="manual")
     plan.add_argument("--start", action="store_true", help="Bind install-and-start authority into this plan.")
+    plan.add_argument("--settings", type=Path, help="Owner-only JSON configuration and opaque secret references.")
     plan.add_argument("--json", action="store_true")
     apply = install.add_parser("apply")
     apply.add_argument("--plan", type=uuid_argument, required=True)
@@ -176,6 +266,17 @@ def parser() -> argparse.ArgumentParser:
     for name in ("inspect", "revoke"):
         item = grants.add_parser(name)
         item.add_argument("grant_id", type=uuid_argument)
+        item.add_argument("--json", action="store_true")
+    secrets = commands.add_parser("secrets").add_subparsers(dest="action", required=True)
+    secret_create = secrets.add_parser("create")
+    secret_create.add_argument("--name", required=True)
+    secret_create.add_argument("--file", type=Path, required=True,
+                               help="Owner-only UTF-8 file; secret values are never command arguments.")
+    secret_create.add_argument("--json", action="store_true")
+    secrets.add_parser("list").add_argument("--json", action="store_true")
+    for name in ("inspect", "revoke"):
+        item = secrets.add_parser(name)
+        item.add_argument("secret_id", type=uuid_argument)
         item.add_argument("--json", action="store_true")
     management = commands.add_parser("management").add_subparsers(dest="action", required=True)
     management.add_parser("connect")
@@ -204,7 +305,7 @@ def parser() -> argparse.ArgumentParser:
             item.add_argument("--document-role", choices=["instructions", "reference"])
             item.add_argument("--start", action=argparse.BooleanOptionalAction, default=None)
             item.add_argument("--start-policy", choices=["manual", "host"])
-            item.add_argument("--requirements", type=Path, help="JSON file of nonsecret tool/profile/resource requirements.")
+            item.add_argument("--requirements", type=Path, help="JSON file of tool/profile/resource requirements and settings references.")
         item.add_argument("--json", action="store_true")
     recipes = commands.add_parser("recipes").add_subparsers(dest="action", required=True)
     scaffold = recipes.add_parser("scaffold")
@@ -314,6 +415,19 @@ async def execute(args) -> dict | None:
             return await api("GET", "/v1/grants")
         route = "/v1/grants/" + args.grant_id
         return await api("GET", route) if args.action == "inspect" else await api("POST", route + "/revoke", {})
+    if args.command == "secrets":
+        if args.action == "create":
+            try:
+                value = read_secret_file(args.file)
+            except PrivateStateError as error:
+                return {"error": {"code": error.code}}
+            result = await api("POST", "/v1/secrets", {"name": args.name, "value": value})
+        elif args.action == "list":
+            result = await api("GET", "/v1/secrets")
+        else:
+            route = "/v1/secrets/" + args.secret_id
+            result = await api("GET", route) if args.action == "inspect" else await api("POST", route + "/revoke", {})
+        return secret_metadata(result)
     if args.command == "serve":
         from .supervisor import serve
         await serve(state, args.reaper, args.parent_pid)
@@ -374,7 +488,8 @@ async def execute(args) -> dict | None:
         if args.action == "apply":
             return await api("POST", "/v1/install/apply", {"plan_id": args.plan})
         if args.import_id is not None:
-            if args.revision is None or args.name is not None or args.start or args.start_policy != "manual":
+            if (args.revision is None or args.name is not None or args.start or args.start_policy != "manual"
+                    or args.settings is not None):
                 return {"error": {"code": "invalid_import_plan"}}
             return await api("POST", "/v1/install/plan", {"import_id": args.import_id, "revision": args.revision})
         if args.revision is not None:
@@ -382,6 +497,11 @@ async def execute(args) -> dict | None:
         body = {"package": str(args.package.absolute()), "start_policy": args.start_policy, "start": args.start}
         if args.name is not None:
             body["name"] = args.name
+        if args.settings is not None:
+            try:
+                body["settings"] = read_settings_file(args.settings)
+            except PrivateStateError as error:
+                return {"error": {"code": error.code}}
         return await api("POST", "/v1/install/plan", body)
     if args.command == "imports":
         if args.action == "list":
@@ -405,9 +525,10 @@ async def execute(args) -> dict | None:
                 if getattr(args, key) is not None:
                     body[key] = getattr(args, key)
             if args.requirements is not None:
-                if args.requirements.stat().st_size > 65536:
-                    return {"error": {"code": "requirements_limit"}}
-                body["requirements"] = json.loads(args.requirements.read_text())
+                try:
+                    body["requirements"] = read_requirements_file(args.requirements)
+                except PrivateStateError as error:
+                    return {"error": {"code": error.code}}
         return await api("POST", route + "/" + args.action, body)
     if args.command == "operations":
         return await api("GET", "/v1/operations/" + args.operation_id)

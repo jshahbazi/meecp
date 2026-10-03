@@ -42,6 +42,7 @@ class Slot:
     wake_suppressed: bool
     error_code: str | None
     credential_ref: str | None
+    settings_digest: str | None = None
 
     @property
     def id(self) -> str:
@@ -103,9 +104,11 @@ def _slot_values(values: dict[str, Any]) -> None:
         raise RegistryError("invalid_slot_state")
     if "error_code" in values:
         _error_code(values["error_code"])
-    if "package_digest" in values and (not isinstance(values["package_digest"], str)
-            or not re.fullmatch(r"[0-9a-f]{64}", values["package_digest"])):
-        raise RegistryError("invalid_package_digest")
+    for key in ("package_digest", "settings_digest"):
+        if key == "settings_digest" and values.get(key) is None:
+            continue
+        if key in values and (not isinstance(values[key], str) or not re.fullmatch(r"[0-9a-f]{64}", values[key])):
+            raise RegistryError("invalid_package_digest" if key == "package_digest" else "invalid_settings_digest")
     for key in ("package_path", "credential_ref"):
         if key in values and values[key] is not None:
             value = values[key]
@@ -117,12 +120,12 @@ def _slot_values(values: dict[str, Any]) -> None:
 def _operation_details(details: dict[str, Any]) -> None:
     # Explicit metadata allowlist: never persist arbitrary package/client inputs.
     if not isinstance(details, dict) or set(details) - {"plan_id", "package_digest", "package_path", "result_slot_id",
-                                                    "import_id", "import_revision", "import_digest"}:
+                                                    "import_id", "import_revision", "import_digest", "settings_digest"}:
         raise RegistryError("invalid_operation_details")
     for key in ("plan_id", "result_slot_id", "import_id"):
         if key in details:
             _uuid(details[key])
-    _slot_values({key: value for key, value in details.items() if key in ("package_digest", "package_path")})
+    _slot_values({key: value for key, value in details.items() if key in ("package_digest", "package_path", "settings_digest")})
     import_fields = {"import_id", "import_revision", "import_digest"}
     if import_fields & details.keys():
         if not import_fields <= details.keys() or type(details["import_revision"]) is not int or details["import_revision"] < 1:
@@ -148,7 +151,7 @@ class Registry:
             self._connection.execute("PRAGMA journal_mode = DELETE")
             self._connection.execute("PRAGMA synchronous = FULL")
             version = self._connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2):
+            if version not in (0, 1, 2, 3):
                 self._connection.close()
                 raise RegistryError("unsupported_registry_schema")
             self._connection.executescript("""
@@ -188,8 +191,14 @@ class Registry:
                     scope TEXT NOT NULL,
                     operation_id TEXT
                 );
-                PRAGMA user_version = 2;
             """)
+            # Old rows have no user settings. Preserve that boundary explicitly;
+            # new installations bind their immutable settings to the generation.
+            with self.transaction():
+                columns = {row[1] for row in self._connection.execute("PRAGMA table_info(slots)")}
+                if "settings_digest" not in columns:
+                    self._connection.execute("ALTER TABLE slots ADD COLUMN settings_digest TEXT")
+                self._connection.execute("PRAGMA user_version = 3")
         except sqlite3.Error:
             if hasattr(self, "_connection"):
                 self._connection.close()
@@ -236,18 +245,19 @@ class Registry:
 
     def add_slot(self, *, package_digest: str, package_path: Path | str, name: str,
                  public_port: int, start_policy: str = "manual", credential_ref: Path | str | None = None,
-                 slot_id: str | None = None) -> Slot:
+                 slot_id: str | None = None, settings_digest: str | None = None) -> Slot:
         slot_id = slot_id or str(uuid.uuid4())
         _uuid(slot_id)
         if type(public_port) is not int or not 1024 <= public_port <= 65535:
             raise RegistryError("invalid_public_port")
         values = dict(package_digest=package_digest, package_path=str(package_path), name=name,
-                      start_policy=start_policy, credential_ref=str(credential_ref) if credential_ref else None)
+                      start_policy=start_policy, credential_ref=str(credential_ref) if credential_ref else None,
+                      settings_digest=settings_digest)
         _slot_values(values)
         slot = Slot(slot_id=slot_id, public_port=public_port, desired_state="stopped", observed_state="stopped",
                     generation=1, wake_suppressed=False, error_code=None, **values)
         try:
-            self._connection.execute("INSERT INTO slots VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", tuple(asdict(slot).values()))
+            self._connection.execute("INSERT INTO slots VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", tuple(asdict(slot).values()))
         except sqlite3.IntegrityError:
             raise RegistryError("slot_conflict") from None
         except sqlite3.Error:
@@ -259,7 +269,7 @@ class Registry:
         if expected_generation is not None and (type(expected_generation) is not int or expected_generation < 1):
             raise RegistryError("invalid_generation")
         allowed = {"name", "start_policy", "desired_state", "observed_state", "generation", "wake_suppressed",
-                   "error_code", "package_digest", "package_path", "credential_ref"}
+                   "error_code", "package_digest", "package_path", "credential_ref", "settings_digest"}
         if not changes or set(changes) - allowed:
             raise RegistryError("invalid_slot_update")
         for key in ("package_path", "credential_ref"):
@@ -273,7 +283,7 @@ class Registry:
                 raise RegistryError("stale_generation")
             if "generation" in changes and changes["generation"] != current.generation + 1:
                 raise RegistryError("invalid_generation")
-            if ({"package_digest", "package_path"} & changes.keys()) and changes.get("generation") != current.generation + 1:
+            if ({"package_digest", "package_path", "settings_digest"} & changes.keys()) and changes.get("generation") != current.generation + 1:
                 raise RegistryError("generation_required")
             if current.observed_state == "ownership_lost" and changes.get("observed_state", "ownership_lost") != "ownership_lost":
                 raise RegistryError("ownership_reconciliation_required")

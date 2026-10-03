@@ -60,7 +60,9 @@ Scoped owner-issued grants and a separate management MCP facade are implemented 
 
 Pinned prepared-package ZIP downloads are implemented through the owner CLI and API; see [pinned downloads](PINNED_DOWNLOADS.md). They return a statically verified package for the existing install plan, with exact byte/hash pins, durable progress, cancellation, and retry. Native download controls and byte-range resume remain pending.
 
-- Broader package/configuration/secret-reference support.
+Typed nonsecret configuration and immutable owner-managed secret references are implemented through owner CLI/API planning and private runtime descriptors; see [configuration and secrets](CONFIGURATION_SECRETS.md). Import requirements bind the same choices to the draft revision. Native configuration forms and installed-settings edits remain pending.
+
+- Broader package profiles and native configuration/download controls.
 - Upgrades with candidate data snapshots, exposure-aware recovery, and rollback. Installed-app removal now preserves data; see [app management](MCPME_STATUS.md#manage-installed-apps).
 - Raw model/engine intake and end-to-end model preparation acceptance.
 - Supported reference-document services and integrated provider preparation.

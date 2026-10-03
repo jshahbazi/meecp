@@ -804,10 +804,10 @@ def test_nonsecret_requirements_block_incompatible_return(tmp_path, requirements
             store.validate_binding(draft["draft_id"], 2, draft["attachment"]["digest"])
 
 
-def test_arbitrary_configuration_and_secret_values_are_rejected(tmp_path):
+def test_nested_configuration_and_secret_values_are_rejected(tmp_path):
     with ImportStore(tmp_path / "state") as store:
         draft = store.create(source_folder(tmp_path), name="Validator")
-        for requirements in ({"configuration": {"api_key": "synthetic"}}, {"secret_references": [{"value": "synthetic"}]}):
+        for requirements in ({"configuration": {"api_key": {"value": "synthetic"}}}, {"secret_references": [{"value": "synthetic"}]}):
             with pytest.raises(ImportError, match="^invalid_import_requirements$"):
                 store.revise(draft["draft_id"], 1, requirements=requirements)
         assert store.inspect(draft["draft_id"])["revision"] == 1

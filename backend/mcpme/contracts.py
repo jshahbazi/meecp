@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (BaseModel, ConfigDict, Field, ValidationError, field_validator,
+                      model_serializer, model_validator)
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 
@@ -26,6 +27,8 @@ MAX_ARTIFACTS = 20_000
 MAX_PACKAGE_BYTES = 64 * 1024 * 1024 * 1024
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$", strict=True)]
 Label = Annotated[str, Field(min_length=1, max_length=256, strict=True)]
+SettingName = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,63}$", strict=True)]
+MAX_CONFIGURATION_INTEGER = 2 ** 53
 
 
 class PackageError(ValueError):
@@ -83,8 +86,93 @@ class Tool(StrictModel):
 class Access(StrictModel):
     filesystem: list[Label] = Field(default_factory=list, max_length=128)
     network: list[Label] = Field(default_factory=list, max_length=128)
-    secrets: list[Label] = Field(default_factory=list, max_length=0)
+    secrets: list[SettingName] = Field(default_factory=list, max_length=16)
     writes: bool = False
+
+    @field_validator("secrets")
+    @classmethod
+    def unique_secrets(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("invalid_secret_declaration")
+        return value
+
+
+class ConfigurationField(StrictModel):
+    """A bounded primitive setting; package schemas cannot select arbitrary validators."""
+
+    type: Literal["string", "integer", "boolean"]
+    required: bool = False
+    default: str | int | bool | None = None
+    enum: list[str | int | bool] | None = Field(default=None, min_length=1, max_length=32)
+    min_length: int | None = Field(default=None, ge=0, le=4096)
+    max_length: int | None = Field(default=None, ge=0, le=4096)
+    minimum: int | None = Field(default=None, ge=-MAX_CONFIGURATION_INTEGER, le=MAX_CONFIGURATION_INTEGER)
+    maximum: int | None = Field(default=None, ge=-MAX_CONFIGURATION_INTEGER, le=MAX_CONFIGURATION_INTEGER)
+
+    @model_serializer(mode="wrap")
+    def serialize_declaration(self, handler):
+        result = handler(self)
+        # Omitted constraints/defaults stay omitted when a manifest is exported.
+        # Explicit null is invalid, so a model dump must never invent it.
+        for name in ("default", "enum", "min_length", "max_length", "minimum", "maximum"):
+            if name not in self.model_fields_set:
+                result.pop(name, None)
+        return result
+
+    def accepts(self, value: Any) -> bool:
+        expected = {"string": str, "integer": int, "boolean": bool}[self.type]
+        if type(value) is not expected:
+            return False
+        if self.type == "string":
+            try:
+                value.encode("utf-8")
+            except UnicodeError:
+                return False
+            if "\x00" in value or not (self.min_length or 0) <= len(value) <= (
+                    self.max_length if self.max_length is not None else 4096):
+                return False
+        elif self.type == "integer":
+            if not (self.minimum if self.minimum is not None else -MAX_CONFIGURATION_INTEGER) <= value <= (
+                    self.maximum if self.maximum is not None else MAX_CONFIGURATION_INTEGER):
+                return False
+        if self.enum is not None and not any(type(item) is type(value) and item == value for item in self.enum):
+            return False
+        return True
+
+    @model_validator(mode="after")
+    def closed_constraints(self) -> ConfigurationField:
+        supplied = self.model_fields_set
+        optional = {"default", "enum", "min_length", "max_length", "minimum", "maximum"}
+        if any(getattr(self, name) is None for name in supplied & optional):
+            raise ValueError("invalid_configuration_declaration")
+        if ({"minimum", "maximum"} & supplied and self.type != "integer"
+                or {"min_length", "max_length"} & supplied and self.type != "string"):
+            raise ValueError("invalid_configuration_declaration")
+        if (self.min_length is not None and self.max_length is not None and self.min_length > self.max_length
+                or self.minimum is not None and self.maximum is not None and self.minimum > self.maximum):
+            raise ValueError("invalid_configuration_declaration")
+        if self.enum is not None:
+            expected = {"string": str, "integer": int, "boolean": bool}[self.type]
+            if any(type(item) is not expected for item in self.enum) or len(set(self.enum)) != len(self.enum):
+                raise ValueError("invalid_configuration_declaration")
+            # The declared choices must satisfy the same bounds as supplied values.
+            if any(not self.accepts(item) for item in self.enum):
+                raise ValueError("invalid_configuration_declaration")
+        if "default" in supplied and not self.accepts(self.default):
+            raise ValueError("invalid_configuration_declaration")
+        return self
+
+
+class Configuration(StrictModel):
+    schema_version: Literal[1] = 1
+    fields: dict[SettingName, ConfigurationField] = Field(default_factory=dict, max_length=32)
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def exact_schema_version(cls, value: Any) -> Any:
+        if type(value) is not int:
+            raise ValueError("invalid_configuration_declaration")
+        return value
 
 
 class Resources(StrictModel):
@@ -133,6 +221,7 @@ class PackageManifest(StrictModel):
     lifecycle: Lifecycle = Field(default_factory=Lifecycle)
     tools: list[Tool] = Field(min_length=1, max_length=128)
     access: Access = Field(default_factory=Access)
+    configuration: Configuration = Field(default_factory=Configuration)
     resources: Resources
     licenses: list[Label] = Field(min_length=1, max_length=128)
 

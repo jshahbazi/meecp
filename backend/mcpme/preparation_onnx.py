@@ -17,11 +17,14 @@ from .preparation_artifacts import CapturedArtifactCollectionV1
 from .preparation_builder import CommandSpec, _copy, _digest, _runtime, load_private_toolchain
 from .preparation_capture import ArtifactReferenceV1
 from .preparation_components import (ComponentReference, PreparationDescriptorV2,
-    SourceBinding, SourceFileBinding, parse_component_descriptor)
+    SourceBinding, parse_component_descriptor)
 from .preparation_contracts import PreparationError, canonical_bytes, contract_digest
+from .preparation_onnx_runtime import (OnnxRuntimeCpuComponent, INPUT as RUNTIME_INPUT,
+    COMPONENT_ID as RUNTIME_COMPONENT_ID, component_reference as runtime_component_reference,
+    component_catalog as runtime_component_catalog, source_files)
 from .recipes import _read
 
-COMPONENT_ID = "onnx-hotdog-v1"
+COMPONENT_ID = "yolo11-coco-detect-v1"
 COMPONENT_VERSION = "1.0.0"
 MODEL_SHA256 = "121b1f682e2df1aff1c16dacb7ce4bedc26df016a500b18743349c16724ad85d"
 MODEL_BYTES = 10701557
@@ -73,13 +76,16 @@ def _supplement_dependency_notices(site, assets, check_canceled):
 
 def builtin_onnx_components():
     assets = _assets(_asset_root())
+    runtime = runtime_component_reference()
     identity = contract_digest("mcpme-onnx-hotdog-component-v1", {
         "implementation": hashlib.sha256(_read(Path(__file__), 1024 * 1024)).hexdigest(),
+        "runtime": runtime.model_dump(),
         "assets": {name: hashlib.sha256(data).hexdigest() for name, data in sorted(assets.items())}})
-    return {COMPONENT_ID + "@" + COMPONENT_VERSION: {
+    return {**runtime_component_catalog(), COMPONENT_ID + "@" + COMPONENT_VERSION: {
         # Recipe step config is distinct from the component's captured-input
         # selection schema. No recipe bundle can configure executable hooks.
-        "digest": identity, "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []}}
+        "digest": identity, "input_schema": {"type": "object", "additionalProperties": False},
+        "dependencies": [{"component": runtime.id, "version": runtime.version, "digest": runtime.digest}]}}
 
 
 def component_reference():
@@ -95,10 +101,12 @@ def write_onnx_recipe(destination):
             or destination.exists() or destination.is_symlink()):
         raise PreparationError("recipe_destination_exists")
     reference = component_reference()
+    runtime = runtime_component_reference()
     manifest = RecipeManifest.model_validate({"schema_version": 1, "id": "mcpme.onnx-hotdog", "version": "1.0.0",
         "kind": "declarative", "worker_api_version": 1,
         "input_schema": {"type": "object", "additionalProperties": False}, "form": [],
-        "steps": [{"component": reference.id, "version": reference.version, "digest": reference.digest}],
+        "steps": [{"component": runtime.id, "version": runtime.version, "digest": runtime.digest},
+                  {"component": reference.id, "version": reference.version, "digest": reference.digest}],
         "requirements": {"capabilities": ["declarative-composition"]}, "licenses": ["LICENSE", "LICENSE-MODEL"],
         "provenance": {"origin": "mcpme host-owned pinned ONNX hotdog component", "publisher": "mcpme contributors"}})
     assets = _assets(_asset_root())
@@ -187,8 +195,10 @@ class OnnxHotdogComponent:
             raise PreparationError("unsupported_component_descriptor")
         collection = captured_collection(draft)
         selection = validate_captured_model(collection)
-        if (len(descriptor.components) != 1 or descriptor.components[0].component != self.reference
-                or descriptor.components[0].input != selection):
+        selected = [item for item in descriptor.components if item.component == self.reference]
+        if (len(selected) != 1 or selected[0].input != selection
+                or {item.component.key for item in descriptor.components} !=
+                    {self.reference.key, runtime_component_reference().key}):
             raise PreparationError("component_input_mismatch")
         if descriptor.tools != [onnx_hotdog_tool()]:
             raise PreparationError("onnx_task_schema_mismatch")
@@ -200,7 +210,7 @@ class OnnxHotdogComponent:
             raise PreparationError("onnx_resource_contract_mismatch")
         if [item.model_dump(exclude_none=True) for item in descriptor.validation] != onnx_hotdog_fixtures():
             raise PreparationError("onnx_fixture_contract_mismatch")
-        records = tuple(SourceFileBinding(entry.path, entry.sha256, entry.size) for entry in collection.entries)
+        records = source_files(draft, collection)
         return SourceBinding(*self.reference.key, draft["source"]["revision"], records,
             contract_digest("onnx-hotdog-interface-v1", {"tools": [tool.model_dump(exclude_none=True) for tool in descriptor.tools],
                                                       "input": selection}), None,
@@ -215,7 +225,8 @@ def onnx_hotdog_descriptor(draft, recipe, *, name="Hotdog Detector", memory_mb=M
     recipe_ref = {"id": recipe["manifest"]["id"], "version": recipe["manifest"]["version"], "digest": recipe["digest"]}
     return {"schema_version": 2, "recipe": recipe_ref,
         "package": {"id": "local.app-" + draft["draft_id"], "version": "1.0.0", "name": name},
-        "components": [{"component": component_reference().model_dump(), "input": selection}],
+        "components": [{"component": runtime_component_reference().model_dump(), "input": RUNTIME_INPUT},
+                       {"component": component_reference().model_dump(), "input": selection}],
         "tools": [onnx_hotdog_tool().model_dump(exclude_none=True)], "resources": {"memory_mb": memory_mb},
         "lifecycle": {"max_sessions": 1, "max_request_bytes": 2 * 1024 * 1024, "operation_timeout_seconds": 60},
         "validation": onnx_hotdog_fixtures()}
@@ -223,8 +234,9 @@ def onnx_hotdog_descriptor(draft, recipe, *, name="Hotdog Detector", memory_mb=M
 
 class OnnxHotdogFormProvider:
     def accepts(self, candidate, recipe):
-        return (candidate["kind"] == "onnx-hotdog" and len(recipe["manifest"]["steps"]) == 1
-                and recipe["manifest"]["steps"][0]["component"] == COMPONENT_ID)
+        return (candidate["kind"] == "onnx-hotdog" and len(recipe["manifest"]["steps"]) == 2
+                and {step["component"] for step in recipe["manifest"]["steps"]} ==
+                    {COMPONENT_ID, RUNTIME_COMPONENT_ID})
 
     def fields(self, draft, candidate, recipe):
         from .preparation_forms import _field
@@ -232,7 +244,7 @@ class OnnxHotdogFormProvider:
         requirements = draft.get("requirements", {})
         ceiling = min(4096, requirements.get("memory_mb", 4096))
         blockers = ["resource_requirement_mismatch"] if ceiling < MIN_MEMORY_MB else []
-        fields = [_field("onnx-name", label="App name", kind="string", value="Hotdog Detector",
+        fields = [_field("onnx-name", label="App name", kind="string", value=draft["name"],
                          constraints={"min_length": 1, "max_length": 256}),
                   _field("onnx-memory", label="Reserved memory (MiB)", kind="integer", value=MIN_MEMORY_MB,
                          constraints={"minimum": MIN_MEMORY_MB, "maximum": max(MIN_MEMORY_MB, ceiling)})]
@@ -251,8 +263,8 @@ class OnnxHotdogFormProvider:
 
     def restore_fields(self, fields, bindings, descriptor):
         value = parse_component_descriptor(descriptor)
-        return [field.model_copy(update={"value": value.package.name if bindings[field.id][0] == "name"
-                    else value.resources.memory_mb}) for field in fields]
+        return [field.model_copy(update={"value": min(value.resources.memory_mb, field.constraints["maximum"])})
+                if bindings[field.id][0] == "memory" else field for field in fields]
 
 
 def release_onnx_inputs(capture_store, job_id, collection_digest):
@@ -263,14 +275,21 @@ def release_onnx_inputs(capture_store, job_id, collection_digest):
 class OnnxPreparationFamily:
     """Small host registration seam; the generic runner retains job authority."""
     source_kind = "captured_artifact_collection"
+    target_profile = "mcp-stdio"
 
     def __init__(self, capture_store):
         self.capture_store = capture_store
         self.component = OnnxHotdogComponent()
+        self.components = (OnnxRuntimeCpuComponent(), self.component)
         self.form_provider = OnnxHotdogFormProvider()
+
+    def supports_source(self, draft):
+        return (draft["source"]["kind"] == self.source_kind or
+                (draft["source"]["kind"] in {"local_folder", "document"} and "captured_artifacts" in draft))
 
     def validate_inputs(self, descriptor, draft):
         self.component.validate_source(descriptor, draft, {})
+        self.components[0].validate_source(descriptor, draft, {})
         collection = captured_collection(draft)
         selection = validate_captured_model(collection)
         # The durable read lease guards GC while the entire actual closed tree
@@ -348,6 +367,7 @@ def prepare_onnx_bound(descriptor, draft, toolchain, output, run, check_canceled
         value = descriptor if isinstance(descriptor, PreparationDescriptorV2) else parse_component_descriptor(descriptor)
         component = OnnxHotdogComponent()
         component.validate_source(value, draft, {})
+        OnnxRuntimeCpuComponent().validate_source(value, draft, {})
         collection = captured_collection(draft)
         if (not output.is_absolute() or output.parent.resolve() != output.parent or output.exists()
                 or output.parent.is_symlink()):

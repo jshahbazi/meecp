@@ -128,8 +128,40 @@ The independent review reproduced an additional network-scope defect in upstream
 
 The repaired transport independently passed trusted and untrusted missing-intermediate checks with zero issuer/application requests, a valid full-chain positive control, wrong-hostname/expired/untrusted negative checks, 16 concurrent transfers using distinct verified contexts, and a native policy-set failure that stops before evaluation. Existing real TLS framing tests use the production context with a private fixture anchor. The checked-in native TLS suite preserves these certificate, policy-failure and concurrent-transfer cases. Packaged/native installed acceptance remains the next gate; this source checkpoint does not enable public preparation or complete Phase 3.
 
+## Modular ONNX integration checkpoint
+
+The cold host registers the pinned CPU ONNX runtime and YOLO11 detector as two
+independent components with an exact dependency. The additive default recipe
+preserves previous recipe evidence and user lifecycle decisions. Folder/document
+inspection merges eligible Python and captured-model candidates; component
+bindings retain original snapshot files and bind captured model bytes separately.
+The generated detector form preserves app renames and reduced memory ceilings.
+Native progress parsing accepts the detector validation stage.
+
+The ONNX builder streams captured FDs, retains model and dependency licenses,
+validates the exact graph in the owned runtime, and seals a relocatable MCP app.
+Its development harness uses actual default Supervisor registration and resource
+reservation callbacks. Public automatic execution remains disabled. Native ONNX
+installation/invocation/restart and the broader containment gates remain open.
+
+Installed native Python acceptance is recorded in
+[Native installed onboarding acceptance](NATIVE_INSTALLED_ONBOARDING_ACCEPTANCE.md).
+It covers ordinary callable, declared foreground MCP and independently scaffolded
+recipe paths through resolve, build, attach, installation, HTTP/stdio invocation,
+source removal and restart against the exact recorded host/native pair. That
+receipt belongs to its stated immutable checkpoint and does not close ONNX or
+other-family acceptance.
+
 ## Next acceptance work
 
-Verify callable and foreground MCP independently through actual native/API preparation, installation, invocation and restart from a relocated host with an empty private cache. Owned dependency and MCP interface resolution now allow ordinary directories to reach generated forms and package construction without hand-authored descriptors or locks. The private derived-build tests resolve and discover the interface through the owned runner; installed/native acceptance remains required.
+Recheck callable and foreground MCP against later integrated installed artifacts.
+Owned dependency and MCP interface resolution allow ordinary directories to reach
+generated forms and package construction without hand-authored descriptors or locks.
+Their recorded native checkpoint passes; containment/resource/race requirements
+remain independently gated.
 
-Add the real ONNX recipe/worker using durable captured inputs. Binary materialization must stream verified captured FDs and survive removal of original paths. Preserve legacy GGUF and folder identities. Continue CLI, general LLM/service connectors and integrated-agent work under the original independent acceptance gates. Full Phase 3 and its final adversarial review remain required.
+Complete native ONNX prepare/install/invoke/restart acceptance from a relocated
+artifact and independently recheck the integrated runtime. Preserve legacy GGUF
+and folder identities. Continue CLI, general LLM/service connectors and
+integrated-agent work under the original independent acceptance gates. Full
+Phase 3 and its final adversarial review remain required.

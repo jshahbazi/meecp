@@ -45,7 +45,8 @@ def builtin_components() -> dict:
     paths = {"python-function-v1": root / "templates/python-function-v1/adapter.py",
              "existing-mcp-v1": root / "templates/prepare.py"}
     from .preparation_resolved_python import component_catalog
-    return {**component_catalog(), **{name + "@1.0.0": {"digest": hashlib.sha256(path.read_bytes()).hexdigest(),
+    from .preparation_onnx import builtin_onnx_components
+    return {**component_catalog(), **builtin_onnx_components(), **{name + "@1.0.0": {"digest": hashlib.sha256(path.read_bytes()).hexdigest(),
                               "input_schema": {"type": "object", "additionalProperties": False},
                               "dependencies": []} for name, path in paths.items()}}
 

@@ -30,7 +30,7 @@ def collection(**model_changes):
 
 
 def source(value):
-    return {"draft_id": str(uuid.uuid4()), "revision": 1, "requirements": {}, "source": {
+    return {"draft_id": str(uuid.uuid4()), "name": "Synthetic detector", "revision": 1, "requirements": {}, "source": {
         "kind": "captured_artifact_collection", "contract_version": 1, "revision": "sha256:" + value.digest,
         "digest": value.digest, "collection": value.model_dump(mode="json"), "files": []}}
 
@@ -81,14 +81,21 @@ def test_source_collection_binding_rejects_tampered_reference(mutation):
         onnx.captured_collection(draft)
 
 
-def test_folder_supplement_preserves_original_folder_revision():
-    value = collection(); draft = source(value)
-    draft["captured_artifacts"] = {"schema_version":1,"kind": "captured_artifact_collection", "digest": value.digest,
-                                  "collection": value.model_dump(mode="json")}
-    draft["source"] = {"kind": "local_folder", "revision": "sha256:" + "b" * 64, "files": []}
-    binding = onnx.OnnxHotdogComponent().validate_source(descriptor(draft), draft, {})
-    assert binding.source_revision == "sha256:" + "b" * 64
-    assert json.loads(binding.metadata_bytes)["collection_digest"] == value.digest
+def test_folder_supplement_preserves_original_folder_revision_and_file_namespace(tmp_path):
+    from mcpme.imports import ImportStore
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    (folder / "README.md").write_text("Synthetic detector directory.\n")
+    with ImportStore(tmp_path / "state") as imports:
+        draft = imports.create(folder, name="Synthetic detector")
+        original = json.loads(json.dumps(draft["source"]))
+        value = collection()
+        draft["captured_artifacts"] = {"schema_version":1,"kind": "captured_artifact_collection", "digest": value.digest,
+                                      "collection": value.model_dump(mode="json")}
+        binding = onnx.OnnxHotdogComponent().validate_source(descriptor(draft), draft, {})
+        assert draft["source"] == original and binding.source_revision == original["revision"]
+        assert [{"path": item.path, "sha256": item.sha256, "size": item.size} for item in binding.files] == original["files"]
+        assert json.loads(binding.metadata_bytes)["collection_digest"] == value.digest
 
 
 @pytest.mark.parametrize("version", [True, 1.0, "1", None])
@@ -164,8 +171,9 @@ def test_wheel_notices_are_indexed_without_importing_runtime(tmp_path):
 def test_immutable_builtin_recipe_uses_exact_host_component(tmp_path):
     bundle = onnx.write_onnx_recipe(tmp_path.resolve() / "recipe")
     assert bundle["manifest"]["id"] == "mcpme.onnx-hotdog"
-    assert bundle["manifest"]["steps"] == [{"component":"onnx-hotdog-v1","version":"1.0.0",
-                                           "digest":onnx.component_reference().digest,"config":{}}]
+    assert bundle["manifest"]["steps"] == [
+        {"component":"onnxruntime-cpu-v1","version":"1.0.0", "digest":onnx.runtime_component_reference().digest,"config":{}},
+        {"component":"yolo11-coco-detect-v1","version":"1.0.0", "digest":onnx.component_reference().digest,"config":{}}]
     assert bundle["manifest"]["input_schema"] == {"type":"object","additionalProperties":False}
     with pytest.raises(PreparationError, match="recipe_destination_exists"):
         onnx.write_onnx_recipe(tmp_path.resolve() / "recipe")
@@ -281,6 +289,23 @@ def test_form_respects_declared_memory_requirement_and_rejects_impossible_budget
     draft["requirements"]["memory_mb"] = 128
     _,_,blockers = onnx.OnnxHotdogFormProvider().fields(draft,{}, {})
     assert blockers == ["resource_requirement_mismatch"]
+
+
+def test_form_preserves_later_draft_name_and_reduced_memory_ceiling():
+    draft = source(collection())
+    provider = onnx.OnnxHotdogFormProvider()
+    fields, bindings, blockers = provider.fields(draft, {}, {})
+    assert next(field.value for field in fields if bindings[field.id][0] == "name") == draft["name"]
+    saved = descriptor(draft).model_dump(exclude_none=True)
+    saved["package"]["name"] = "Earlier name"
+    saved["resources"]["memory_mb"] = 1024
+    draft["name"] = "Renamed detector"
+    draft["requirements"]["memory_mb"] = 512
+    fields, bindings, blockers = provider.fields(draft, {}, {})
+    restored = provider.restore_fields(fields, bindings, saved)
+    assert not blockers
+    assert {bindings[field.id][0]: field.value for field in restored} == {
+        "name": "Renamed detector", "memory": 512}
 
 
 def test_captured_copy_cancellation_checks_each_chunk_and_keeps_content_identity(tmp_path):

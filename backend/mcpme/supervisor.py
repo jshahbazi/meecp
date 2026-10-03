@@ -200,11 +200,6 @@ class Supervisor(UpgradeHost):
             self.recipes = RecipeStore(self.imports)
             from .preparation_builtin_recipes import seed_builtin_recipes
             self.builtin_recipe_metadata = seed_builtin_recipes(self.recipes)
-            self.preparations = PreparationStore(self.imports, self.recipes, resolutions=self.resolutions)
-            from .preparation_forms import PreparationForms
-            self.preparation_forms = PreparationForms(self.preparations, preferred_recipes=tuple(
-                record["recipe"] for record in self.builtin_recipe_metadata["recipes"] if record["ready"]))
-            self.preparations.recover()
             self.grants = GrantStore(self.registry)
             self.resource_policy = self.load_resource_policy()
             self.artifacts = ArtifactStore(self.root / "captured-artifacts")
@@ -218,6 +213,13 @@ class Supervisor(UpgradeHost):
             except ValueError:
                 raise HostError("invalid_artifact_storage_policy") from None
             self.captures = ArtifactCaptureStore(self.imports, self.artifacts, storage_policy=storage_policy)
+            from .preparation_onnx import OnnxPreparationFamily
+            self.preparations = PreparationStore(self.imports, self.recipes, resolutions=self.resolutions,
+                                                families=(OnnxPreparationFamily(self.captures),))
+            from .preparation_forms import PreparationForms
+            self.preparation_forms = PreparationForms(self.preparations, preferred_recipes=tuple(
+                record["recipe"] for record in self.builtin_recipe_metadata["recipes"] if record["ready"]))
+            self.preparations.recover()
             self.capture_runner = ArtifactCaptureCoordinator(self.captures,
                 admit_target=self.admit_captured_target, validate_target=self.validate_capture_target,
                 reserve_resources=self.reserve_capture, release_resources=self.release_capture)

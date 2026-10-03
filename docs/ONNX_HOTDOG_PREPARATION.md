@@ -2,8 +2,8 @@
 
 This lane supplies the actual host-owned ONNX task implementation for acceptance
 gate A2. Public automatic execution and slot installation remain gated. The
-shared directory onboarding, family registry and native admission paths are
-integrated and verified by the host owner separately.
+shared directory onboarding, family registry and additive default recipe are
+registered by the cold host. Native/install ONNX acceptance remains open.
 
 ## Accepted input
 
@@ -15,13 +15,13 @@ full AGPL-3.0 text. Format labels, filenames, a matching class label or a suppli
 hash do not establish eligibility for another export. Local selection retains
 the `publisher_unverified` origin record.
 
-The original captured collection and revision remain the source identity. A
-folder's supplementary captured collection can be validated by the component's
-helper while preserving the folder revision. The current family routes captured
-collection sources; folder candidate routing and combined source bindings still
-require shared host integration. Source validation binds the exact captured entry
-hashes and sizes. It declares no original dependency lock: the runtime project
-and frozen wheel closure belong to the pinned host component.
+Captured-only imports preserve their collection identity. Folder and document
+imports preserve their original snapshot identity and file namespace; the captured
+model is a separate bound collection. Static inspection merges distinct Python
+and ONNX candidates without executing the directory. Both runtime and task source
+validations bind the original source records and the selected capture digest.
+There is no original dependency lock: the runtime project and frozen wheel closure
+belong to the pinned host component.
 
 The builder acquires a durable job reference before materialization. Each copy
 uses `ArtifactCaptureStore.open_artifact`, which holds a durable read lease and
@@ -75,17 +75,25 @@ workload measurements must pass before promoting the capability.
 
 ## Host integration
 
-`OnnxPreparationFamily(capture_store)` exposes the component, form provider,
+`OnnxPreparationFamily(capture_store)` exposes the components, form provider,
 static inspection, exact input binding, private builder and joined-work release
-hook. `builtin_onnx_components()` adds one catalog record without changing old
-Python records. `write_onnx_recipe(path)` writes the immutable declarative
+hook. `builtin_onnx_components()` adds independently identified
+`onnxruntime-cpu-v1` and `yolo11-coco-detect-v1` records without changing old
+Python records. The task binds its exact runtime dependency. `write_onnx_recipe(path)` writes the immutable declarative
 `mcpme.onnx-hotdog` 1.0.0 bundle. The host generates questions and the complete
 descriptor; the user selects an artifact and app choices.
 
-The component uses descriptor version 2. Its selected input is the closed
+The family accepts exactly the complete runtime/task component set. Both use
+descriptor version 2. The runtime selects `profile: cpu-stdio`; the task input is the closed
 `model_name`, `license_names`, `task: coco-hotdog`, `profile: cpu-stdio` object.
 Recipe step configuration is a separate closed empty object. Recipe enablement
 admits its declarative metadata and grants no execution authority.
+
+The host constructs capture ownership before preparation providers. Its shipped
+recipe seeds once and preserves disable, revoke, removal and deprecation across
+restart. Generated questions preserve the current app name and clamp restored
+memory choices to the current requirement ceiling. Native progress recognizes
+the owned model-validation stage.
 
 `prepare_onnx_bound` accepts the descriptor, draft, verified private toolchain,
 new private output path, controlled command callback and cancellation callback,
@@ -112,19 +120,23 @@ uv run --locked python scripts/verify_phase3_onnx.py \
   --model /absolute/path/to/exact/yolo11n.onnx
 ```
 
-The harness verifies the host artifact hashes, performs real durable capture,
+The harness verifies the host artifact hashes, constructs the actual cold
+Supervisor with its default providers and recipe catalog, performs real durable capture,
 removes the selected source copies, resolves the host-generated form, starts the
-controlled version-2 runner, probes the actual SDK and attaches the same revision.
+controlled version-2 runner with the Supervisor's real resource reservations,
+probes the actual SDK and attaches the same revision. Only this isolated development
+host has execution enabled by the harness.
 It relocates the sealed package, deletes captured state and builder inputs, then
 repeats real SDK probing. It checks an exact 1 MiB image request, maximum pixels,
 concurrent busy rejection and boundary errors with a private environment. Default
-cleanup removes its synthetic state; uncertain ownership retains the private
-proof directory for reconciliation. The original file supplied through `--model`
+cleanup removes its synthetic state after success. Failed verification retains
+the private proof directory, including uncertain independent probe ownership.
+Cleanup failures produce fixed diagnostics. The original file supplied through `--model`
 is never modified or removed.
 
 The harness reports metadata, hashes, counts, declared budgets and measured peaks.
-It does not install a slot. A2 remains open until the shared directory/captured
-input path and native/install acceptance pass; the complete Phase 3 goal includes
+It does not install a slot. A2 remains open until native/install acceptance passes;
+the complete Phase 3 goal includes
 further app families and independent adversarial review.
 
 ### Measured captured-input checkpoint

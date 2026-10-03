@@ -170,54 +170,52 @@ async def max_probe(package, reaper, workspace, memory_mb):
             raise
 
 
+async def relocation_probe(package_root, descriptor, reaper, workspace):
+    from mcpme.preparation_contracts import PreparationError
+    from mcpme.preparation_verifier import verify_prepared_package
+    from mcpme.processes import ProcessOwner, _await_ownership
+    owner = ProcessOwner(reaper)
+    try:
+        return await verify_prepared_package(package_root, descriptor, reaper, workspace,
+                                             timeout_seconds=60, owner=owner)
+    finally:
+        try:
+            await _await_ownership(owner.close())
+            if owner.instances:
+                raise PreparationError("phase3_onnx_owned_work_remaining")
+        except BaseException:
+            (workspace.parent / "ownership-unsettled").touch(mode=0o600)
+            raise
+
+
 async def verify(host, model, base):
     _host_paths(host)
     receipt = await asyncio.to_thread(host_hashes,host)
     _host_imports(host)
     from mcpme.contracts import validate_package
-    from mcpme.imports import ImportStore
-    from mcpme.preparation_artifacts import AcquisitionRequestV1, ArtifactStore
-    from mcpme.preparation_capture import (ArtifactCaptureCoordinator, ArtifactCaptureStore,
-        CapturePolicyV1, CreateImportTargetV1)
+    from mcpme.preparation_artifacts import AcquisitionRequestV1
+    from mcpme.preparation_capture import CapturePolicyV1, CreateImportTargetV1
     from mcpme.preparation_contracts import ExecutionPolicy, PreparationError
-    from mcpme.preparation_forms import PreparationForms
-    from mcpme.preparation_onnx import (MODEL_BYTES, MODEL_SHA256, OnnxPreparationFamily, builtin_onnx_components,
-                                     write_onnx_recipe)
-    from mcpme.preparation_runner import PreparationRunner
-    from mcpme.preparation_verifier import verify_prepared_package
-    from mcpme.preparations import PreparationStore
+    from mcpme.preparation_onnx import MODEL_BYTES, MODEL_SHA256
     from mcpme.processes import _await_ownership
-    from mcpme.recipes import RecipeStore, builtin_components
+    from mcpme.supervisor import Supervisor
     _check_module_origins(host)
-    imports = ImportStore(base / "state")
-    artifacts = ArtifactStore(base / "artifacts")
-    capture_store = ArtifactCaptureStore(imports,artifacts)
-    family = OnnxPreparationFamily(capture_store)
-    recipes = RecipeStore(imports,component_catalog={**builtin_components(),**builtin_onnx_components()})
-    store = PreparationStore(imports,recipes,families=(family,))
-    reserved = set()
-    runner = None
+    product = Supervisor(base / "state", host / "bin/mcpme-reap")
+    imports, capture_store, store = product.imports, product.captures, product.preparations
+    forms, coordinator, runner = product.preparation_forms, product.capture_runner, product.preparation_runner
+    reserved = product.preparation_reservations
     async def files(function,*args,**kwargs):
         task = asyncio.create_task(asyncio.to_thread(function,*args,**kwargs))
         try:
             return await asyncio.shield(task)
         finally:
             await _await_ownership(asyncio.gather(task,return_exceptions=True))
-    def admit(target,collection,capture_id):
-        draft = imports._admit_captured(collection,choices=target.model_dump(mode="json",exclude={"kind"}))
-        return {"import_id":draft["draft_id"],"revision":draft["revision"]}
-    coordinator = ArtifactCaptureCoordinator(capture_store,admit_target=admit)
-    async def reserve(job_id,policy):
-        if policy.memory_mb != 2048 or policy.disk_bytes != DISK_BYTES:
-            raise PreparationError("phase3_onnx_reservation_mismatch")
-        reserved.add(job_id)
-    async def release(job_id,*,ownership_settled):
-        job = store.get(job_id)
-        if not ownership_settled or not job["ownership_settled"] or job["reservation_retained"]:
-            raise PreparationError("phase3_onnx_premature_release")
-        reserved.remove(job_id)
     started = time.monotonic()
     try:
+        if runner.enabled or not all(item["ready"] for item in product.builtin_recipe_metadata["recipes"]):
+            raise PreparationError("phase3_onnx_default_registration_failed")
+        # Only this private development host executes. Product defaults stay gated.
+        runner.enabled = True
         async with asyncio.timeout(WALL_SECONDS):
             stage("capture")
             selected = base / "selected"; selected.mkdir(mode=0o700)
@@ -236,12 +234,7 @@ async def verify(host, model, base):
                 raise PreparationError(completed["error_code"] or "phase3_onnx_capture_failed")
             draft = await files(imports._get,completed["result"]["import_id"])
             await files(shutil.rmtree,selected)
-            bundle = base / "recipe"
-            await files(write_onnx_recipe,bundle)
-            recipe = await files(recipes.add,bundle)
-            recipe = await files(recipes.enable,recipe["recipe_id"],recipe["version"])
             stage("forms")
-            forms = PreparationForms(store,providers=(family.form_provider,))
             form = await files(forms.form,draft["draft_id"],draft["revision"])
             if form["blockers"] or form["execution_available"] is not False:
                 raise PreparationError("phase3_onnx_form_failed")
@@ -250,8 +243,6 @@ async def verify(host, model, base):
             draft = await files(store.select_descriptor,draft["draft_id"],draft["revision"],descriptor,
                                 candidate_id=form["candidate_id"],form_digest=form["form_digest"])
             stage("planning")
-            runner = PreparationRunner(store,host,host / "bin/mcpme-reap",enabled=True,
-                                       reserve_resources=reserve,release_resources=release)
             policy = ExecutionPolicy(schema_version=1,operations=["build","probe"],network=["files.pythonhosted.org"],
                                      wall_seconds=120,disk_bytes=DISK_BYTES,memory_mb=2048)
             plan = await runner.plan(draft["draft_id"],draft["revision"],descriptor.model_dump(exclude_none=True),policy)
@@ -270,22 +261,20 @@ async def verify(host, model, base):
                 raise PreparationError("phase3_onnx_settlement_failed")
             package = await files(validate_package,Path(attached["attachment"]["path"]))
             workload = json.loads((package.root / "onnx-validation.json").read_bytes())
-            await runner.close(); runner=None
-            await coordinator.close(); coordinator=None
+            await _await_ownership(product.close()); product=None
             stage("relocation")
             relocated = base / "relocated-package"
             await files(package.root.rename,relocated)
             digest = package.digest
-            imports.close(); imports=None
             stage("removing_inputs")
-            for path in (base / "state",base / "artifacts",bundle):
+            for path in (base / "state",):
                 await files(shutil.rmtree,path)
             package = await files(validate_package,relocated)
             if package.digest != digest:
                 raise PreparationError("phase3_onnx_relocation_identity_mismatch")
             probe = base / "probe"; probe.mkdir(mode=0o700)
             stage("relocation_probe")
-            report = await verify_prepared_package(relocated,descriptor,host / "bin/mcpme-reap",probe,timeout_seconds=60)
+            report = await relocation_probe(relocated,descriptor,host / "bin/mcpme-reap",probe)
             stage("max_image_probe")
             max_report = await max_probe(package,host / "bin/mcpme-reap",probe,descriptor.resources.memory_mb)
             after = await files(validate_package,relocated)
@@ -296,6 +285,7 @@ async def verify(host, model, base):
             return {**receipt,"verified":True,"public_execution_available":False,"slot_installed":False,
                 "model_sha256":MODEL_SHA256,"model_bytes":MODEL_BYTES,"package_digest":digest,
                 "descriptor_version":descriptor.schema_version,"same_revision_attachment":True,
+                "default_host_registration":True,"selected_components":len(descriptor.components),
                 "selected_sources_removed":True,"captured_state_removed_before_relocation_probe":True,
                 "commands":final["progress"]["commands_finished"],"wheels":final["progress"]["wheels_acquired"],
                 "dependency_bytes":final["progress"]["bytes_acquired"],"fixtures":report.fixtures_checked,
@@ -304,12 +294,8 @@ async def verify(host, model, base):
                 "workload":workload,**max_report,"wall_seconds":round(time.monotonic()-started,6)}
     finally:
         try:
-            if runner is not None:
-                await _await_ownership(runner.close())
-            if coordinator is not None:
-                await _await_ownership(coordinator.close())
-            if imports is not None:
-                imports.close()
+            if product is not None:
+                await _await_ownership(product.close())
         except BaseException:
             (base / "ownership-unsettled").touch(mode=0o600)
             raise
@@ -337,12 +323,19 @@ def main():
             error_type = "UnknownError"
         result = {"verified":False,"error":code,"stage":STAGE,"exception_type":error_type}
         failed = True
-    if options.keep_artifacts or (base / "ownership-unsettled").exists():
+    if options.keep_artifacts or failed or (base / "ownership-unsettled").exists():
         result["private_artifact_directory"] = str(base)
+        if failed:
+            result["failure_artifacts_retained"] = True
         if (base / "ownership-unsettled").exists():
             result["ownership_retained"] = True
     else:
-        shutil.rmtree(base)
+        try:
+            shutil.rmtree(base)
+        except OSError:
+            result = {"verified":False,"error":"phase3_onnx_cleanup_failed","stage":"closing",
+                      "exception_type":"OSError","private_artifact_directory":str(base)}
+            failed = True
     print(json.dumps(result,sort_keys=True))
     return int(failed)
 

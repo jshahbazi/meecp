@@ -362,7 +362,7 @@ struct PreparationJob {
               let state = preparationCode(object["state"]), ["queued", "snapshotting", "preparing", "verifying", "ready_to_attach", "attaching", "succeeded", "cancel_requested", "canceled", "failed", "interrupted"].contains(state),
               let updatedAt = preparationNumber(object["updated_at"]), updatedAt >= 0,
               let progress = object["progress"] as? [String: Any], let stage = preparationCode(progress["stage"]),
-              ["queued", "snapshotting", "dependency_export", "dependency_acquisition", "dependency_install", "private_python_version", "private_uv_version", "private_python_metadata", "sealing", "verifying", "attaching", "settling", "succeeded"].contains(stage) else { return nil }
+              ["queued", "snapshotting", "dependency_export", "dependency_acquisition", "dependency_install", "private_python_version", "private_uv_version", "private_python_metadata", "onnx_model_validation", "sealing", "verifying", "attaching", "settling", "succeeded"].contains(stage) else { return nil }
         var counters: [String: Int] = [:]
         let limits = ["commands_finished": 4096, "wheels_acquired": 4096, "bytes_acquired": 68_719_476_736, "files_checked": 200000, "fixtures_checked": 64]
         guard Set(progress.keys).isSubset(of: Set(limits.keys).union(["stage"])) else { return nil }
@@ -378,7 +378,7 @@ struct PreparationJob {
     var summary: String {
         let stages = ["queued": "Waiting to begin", "snapshotting": "Saving selected inputs", "dependency_export": "Reviewing locked dependencies",
             "dependency_acquisition": "Acquiring reviewed dependencies", "dependency_install": "Preparing dependencies", "private_python_version": "Checking packaged runtime",
-            "private_uv_version": "Checking packaged build tools", "private_python_metadata": "Checking runtime metadata", "sealing": "Sealing the prepared package",
+            "private_uv_version": "Checking packaged build tools", "private_python_metadata": "Checking runtime metadata", "onnx_model_validation": "Verifying the image detector", "sealing": "Sealing the prepared package",
             "verifying": "Verifying tools and package", "attaching": "Attaching the prepared package", "settling": "Finishing owned work", "succeeded": "Complete"]
         return state.replacingOccurrences(of: "_", with: " ").capitalized + " · " + stages[stage]! + "\n" +
             "Commands: \(progress["commands_finished"] ?? 0) · Wheels: \(progress["wheels_acquired"] ?? 0) · Bytes acquired: \(progress["bytes_acquired"] ?? 0)\n" +
@@ -1212,6 +1212,11 @@ extension PreparationWorkspaceView {
         guard PreparationReview(invalid, form: parsed) == nil else { return false }
         invalid = PreparationTestData.job(); invalid["progress"] = ["stage": "unknown_stage", "commands_finished": 0, "wheels_acquired": 0, "bytes_acquired": 0, "files_checked": 0, "fixtures_checked": 0]
         guard PreparationJob(invalid) == nil else { return false }
+        var detectorJob = PreparationTestData.job()
+        var detectorProgress = detectorJob["progress"] as! [String: Any]
+        detectorProgress["stage"] = "onnx_model_validation"; detectorJob["progress"] = detectorProgress
+        guard let detector = PreparationJob(detectorJob), detector.active,
+              detector.summary.contains("Verifying the image detector") else { return false }
         invalid = PreparationTestData.job(); var counters = invalid["progress"] as! [String: Any]; counters["files_checked"] = 200001; invalid["progress"] = counters
         guard PreparationJob(invalid) == nil else { return false }
 

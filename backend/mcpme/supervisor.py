@@ -215,7 +215,7 @@ class Supervisor(UpgradeHost):
             self.capture_runner = ArtifactCaptureCoordinator(self.captures,
                 admit_target=self.admit_captured_target, validate_target=self.validate_capture_target,
                 reserve_resources=self.reserve_capture, release_resources=self.release_capture)
-            self.refresh_capture_reservations()
+            self.capture_reservations.update(self.capture_reservation_values())
             self.preparation_reservation_root = ensure_private_directory(self.root / "preparation-reservations")
             self.load_preparation_reservations()
             if preparation_runner_factory is None:
@@ -330,22 +330,50 @@ class Supervisor(UpgradeHost):
             self._capture_recovery_task = asyncio.create_task(self.capture_runner.recover())
         return await asyncio.shield(self._capture_recovery_task)
 
-    def refresh_capture_reservations(self):
+    def capture_reservation_values(self):
+        result = {}
         for value in self.captures.unsettled_reservations():
             policy = CapturePolicyV1.model_validate(value["policy"])
-            self.capture_reservations[value["capture_id"]] = {
+            result[value["capture_id"]] = {
                 "memory_mb": policy.memory_mb + self.resource_policy["headroom_mb"],
                 "disk_bytes": policy.disk_ceiling_bytes, "policy_digest": policy.digest}
+        return result
+
+    async def capture_work(self, function, *args, settlement=False):
+        """Keep capture metadata and file work joined under caller locks."""
+        # Already-owned capture settlement cannot be refused by new-work capacity.
+        # The coordinator bounds capture attempts and joins these tracked tasks.
+        if not settlement and len(self.static_tasks) >= 4:
+            raise HostError("static_work_busy", 429)
+        task = asyncio.create_task(asyncio.to_thread(function, *args))
+        self.static_tasks.add(task)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # The admission lock cannot be released while its metadata lookup
+            # still runs. A worker returns data; only this loop mutates budgets.
+            with contextlib.suppress(Exception):
+                await _await_ownership(task)
+            raise
+        finally:
+            if task.done():
+                self.static_tasks.discard(task)
+
+    async def refresh_capture_reservations(self):
+        values = await self.capture_work(self.capture_reservation_values)
+        self.capture_reservations.update(values)
 
     async def reserve_capture(self, capture_id, policy):
         if not isinstance(policy, CapturePolicyV1):
             raise ArtifactError("artifact_capture_policy_invalid")
         async with self.resource_lock:
-            record = self.captures.get(capture_id)
-            if (not record["reservation_retained"] or self.captures.recovery_policy(capture_id).digest != policy.digest):
+            def authority():
+                return self.captures.get(capture_id), self.captures.recovery_policy(capture_id).digest
+            record, actual_digest = await self.capture_work(authority)
+            if not record["reservation_retained"] or actual_digest != policy.digest:
                 raise ArtifactError("artifact_capture_scope_mismatch")
             previous = self.capture_reservations.get(capture_id)
-            self.refresh_capture_reservations()
+            await self.refresh_capture_reservations()
             reservation = self.capture_reservations[capture_id]
             if previous is not None:
                 if previous != reservation:
@@ -359,14 +387,12 @@ class Supervisor(UpgradeHost):
                 raise HostError("resource_blocked", 409)
 
     async def release_capture(self, capture_id, *, ownership_settled=True):
-        record = self.captures.get(capture_id)
+        record = await self.capture_work(self.captures.get, capture_id, settlement=True)
         if ownership_settled and record["ownership_settled"] and record["state"] == "succeeded" and record["result"] is not None:
             result = record["result"]
-            cleanup = asyncio.create_task(asyncio.to_thread(self.imports.discard_previous_capture_attachment,
-                result["import_id"], result["revision"]))
-            await _await_ownership(cleanup)
+            await self.capture_work(self.imports.discard_previous_capture_attachment, result["import_id"], result["revision"], settlement=True)
         async with self.resource_lock:
-            record = self.captures.get(capture_id)
+            record = await self.capture_work(self.captures.get, capture_id, settlement=True)
             if ownership_settled and record["ownership_settled"] and not record["reservation_retained"]:
                 self.capture_reservations.pop(capture_id, None)
                 if record["state"] == "succeeded" and record["result"] is not None:
@@ -405,7 +431,7 @@ class Supervisor(UpgradeHost):
         draft = await self.static_work(lambda: self.preparations.select_descriptor(
             payload["import_id"], payload["revision"], value.model_dump(exclude_none=True),
             candidate_id=payload["candidate_id"], form_digest=context.form.form_digest))
-        self.captures.reconcile_draft_references()
+        await self.capture_work(self.captures.reconcile_draft_references)
         self.invalidate_import_plans(payload["import_id"])
         plan, blockers = None, ["preparation_runner_unavailable", "independent_runtime_verifier_unavailable"]
         if available:
@@ -711,7 +737,7 @@ class Supervisor(UpgradeHost):
 
     async def reserve_model(self, slot, package):
         async with self.resource_lock:
-            self.refresh_capture_reservations()
+            await self.refresh_capture_reservations()
             if slot.id in self.reservations:
                 return
             memory = package.manifest.resources.memory_mb + self.resource_policy["headroom_mb"]
@@ -728,7 +754,7 @@ class Supervisor(UpgradeHost):
         if not isinstance(policy, ExecutionPolicy):
             raise PreparationError("invalid_preparation_policy")
         async with self.resource_lock:
-            self.refresh_capture_reservations()
+            await self.refresh_capture_reservations()
             job = self.preparations.get(job_id)
             if not job.get("managed") or policy.digest != job["binding"]["policy_digest"] or not job["reservation_retained"]:
                 raise PreparationError("preparation_authority_mismatch")
@@ -1435,6 +1461,7 @@ class Supervisor(UpgradeHost):
         await self.recover_captures()
         await self.recover_preparations()
         self.reconcile_imports()
+        await self.capture_work(self.captures.reconcile_draft_references)
         await self.reconcile_owned_receipts()
         try:
             from .migrations import initialize_transfers
@@ -1517,7 +1544,6 @@ class Supervisor(UpgradeHost):
             details = operation.details
             self.imports.submit(details["import_id"], details["import_revision"], details["import_digest"], operation.id)
             self.imports.operation_status(details["import_id"], operation.to_dict())
-        self.captures.reconcile_draft_references()
 
     def invalidate_import_plans(self, draft_id: str):
         for plan_id, binding in list(self.plan_imports.items()):
@@ -1904,10 +1930,10 @@ def management_app(host: Supervisor, token: str, port: int):
                     result = host.downloads.get(request.path_params["download_id"])
                 elif route == "/v1/artifact-captures":
                     await host.recover_captures()
-                    result = {"captures": host.captures.list_summaries()}
+                    result = {"captures": await host.capture_work(host.captures.list_summaries)}
                 elif route.startswith("/v1/artifact-captures/"):
                     await host.recover_captures()
-                    result = host.captures.get(request.path_params["capture_id"])
+                    result = await host.capture_work(host.captures.get, request.path_params["capture_id"])
                 elif route == "/v1/preparations":
                     await host.recover_preparations()
                     result = {"preparations": host.preparations.list_summaries()}
@@ -1990,13 +2016,13 @@ def management_app(host: Supervisor, token: str, port: int):
                     if route.endswith("/cancel"):
                         result = await host.capture_runner.cancel(request.path_params["capture_id"])
                     else:
-                        host.captures.get(request.path_params["capture_id"])
+                        await host.capture_work(host.captures.get, request.path_params["capture_id"])
                         await host.recover_captures()
-                        result = host.captures.get(request.path_params["capture_id"])
+                        result = await host.capture_work(host.captures.get, request.path_params["capture_id"])
                 elif "collection_digest" in request.path_params and route.endswith("/collect"):
                     if payload:
                         raise ArtifactError("artifact_capture_contract_invalid")
-                    host.captures.reconcile_draft_references()
+                    await host.capture_work(host.captures.reconcile_draft_references)
                     await host.static_work(host.captures.collect, request.path_params["collection_digest"])
                     result = {"collection_digest": request.path_params["collection_digest"], "collected": True}
                 elif route == "/v1/recipes":
@@ -2091,7 +2117,7 @@ def management_app(host: Supervisor, token: str, port: int):
                         if "revision" not in payload:
                             raise HostError("invalid_import_request")
                         result = host.imports.revise(draft_id, revision, **{key: value for key, value in payload.items() if key != "revision"})
-                        host.captures.reconcile_draft_references()
+                        await host.capture_work(host.captures.reconcile_draft_references)
                         host.invalidate_import_plans(draft_id)
                     elif action == "attach" and set(payload) == {"revision", "package"} and isinstance(payload["package"], str):
                         result = await host.static_work(host.imports.attach, draft_id, revision, Path(payload["package"]))
@@ -2103,7 +2129,7 @@ def management_app(host: Supervisor, token: str, port: int):
                     elif action in {"export", "cancel", "expire"} and set(payload) == {"revision"}:
                         result = getattr(host.imports, action)(draft_id, revision)
                         if action in {"cancel", "expire"}:
-                            host.captures.reconcile_draft_references()
+                            await host.capture_work(host.captures.reconcile_draft_references)
                             host.invalidate_import_plans(draft_id)
                     else:
                         raise HostError("invalid_import_request")

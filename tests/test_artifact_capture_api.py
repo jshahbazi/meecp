@@ -33,7 +33,7 @@ async def settled(host, capture_id):
     async with asyncio.timeout(10):
         while True:
             current = host.captures.get(capture_id)
-            if current["ownership_settled"]:
+            if current["ownership_settled"] and capture_id not in host.capture_reservations:
                 return current
             await asyncio.sleep(0.01)
 
@@ -153,4 +153,93 @@ async def test_queued_capture_cost_blocks_model_and_disk_admission(tmp_path, mon
         assert host.captures.get(queued["capture_id"])["ownership_settled"] is True
         assert not host.capture_reservations
     finally:
+        await host.close()
+
+
+async def test_capture_policy_refresh_stays_responsive_and_joins_repeated_cancellation(tmp_path, monkeypatch):
+    host = Supervisor(tmp_path.resolve() / "state", tmp_path / "unused-reaper")
+    entered, release = threading.Event(), threading.Event()
+    pending = None
+    original = host.captures.recovery_policy
+    def paused(identity):
+        entered.set()
+        assert release.wait(10)
+        return original(identity)
+    try:
+        payload = body(tmp_path / "selected")
+        host.captures.begin(payload["request"], payload["policy"], payload["target"], payload["idempotency_key"], host.validate_capture_target)
+        monkeypatch.setattr(host.captures, "recovery_policy", paused)
+        slot = SimpleNamespace(id=str(uuid.uuid4()))
+        package = SimpleNamespace(manifest=SimpleNamespace(resources=SimpleNamespace(memory_mb=64, gpu=False)))
+        pending = asyncio.create_task(host.reserve_model(slot, package))
+        assert await asyncio.to_thread(entered.wait, 2)
+        async with client_for(host) as client, asyncio.timeout(1):
+            assert (await client.get("/v1/status")).status_code == 200
+        pending.cancel()
+        await asyncio.sleep(0.02)
+        pending.cancel()
+        await asyncio.sleep(0.02)
+        assert not pending.done() and host.resource_lock.locked() and host.static_tasks
+        assert slot.id not in host.reservations
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        assert not host.resource_lock.locked() and not host.static_tasks
+        assert not host.capture_reservations
+    finally:
+        release.set()
+        if pending is not None and not pending.done():
+            await asyncio.gather(pending, return_exceptions=True)
+        await host.close()
+
+
+async def test_capture_settlement_survives_saturated_static_capacity(tmp_path, monkeypatch):
+    host = Supervisor(tmp_path.resolve() / "state", tmp_path / "unused-reaper")
+    copy_entered, copy_release = threading.Event(), threading.Event()
+    cleanup_entered, cleanup_release = threading.Event(), threading.Event()
+    static_release = threading.Event()
+    static_entered = [threading.Event() for _ in range(4)]
+    pending = []
+    original_capture = host.artifacts.capture
+    original_cleanup = host.imports.discard_previous_capture_attachment
+
+    def paused_capture(*args, **kwargs):
+        copy_entered.set()
+        assert copy_release.wait(10)
+        return original_capture(*args, **kwargs)
+
+    def paused_cleanup(*args):
+        cleanup_entered.set()
+        assert cleanup_release.wait(10)
+        return original_cleanup(*args)
+
+    def paused_static(entered):
+        entered.set()
+        assert static_release.wait(10)
+
+    monkeypatch.setattr(host.artifacts, "capture", paused_capture)
+    monkeypatch.setattr(host.imports, "discard_previous_capture_attachment", paused_cleanup)
+    try:
+        async with client_for(host) as client:
+            started = (await client.post("/v1/artifact-captures", json=body(tmp_path / "selected"))).json()
+            capture_id = started["capture_id"]
+            assert await asyncio.to_thread(copy_entered.wait, 3)
+            pending = [asyncio.create_task(host.static_work(paused_static, entered)) for entered in static_entered]
+            for entered in static_entered:
+                assert await asyncio.to_thread(entered.wait, 3)
+            assert len(host.static_tasks) == 4
+            copy_release.set()
+            assert await asyncio.to_thread(cleanup_entered.wait, 3)
+            assert capture_id in host.capture_reservations
+            async with asyncio.timeout(1):
+                assert (await client.get("/v1/status")).status_code == 200
+            cleanup_release.set()
+            result = await settled(host, capture_id)
+            assert result["state"] == "succeeded" and not host.capture_reservations
+            assert len(host.static_tasks) == 4 and all(not task.done() for task in pending)
+    finally:
+        copy_release.set()
+        cleanup_release.set()
+        static_release.set()
+        await asyncio.gather(*pending, return_exceptions=True)
         await host.close()

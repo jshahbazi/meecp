@@ -36,7 +36,7 @@ persisted job owner.
 
 The recipe generates one `detect_hotdog` tool. It accepts canonical base64 bytes
 and an optional finite confidence threshold from 0.05 through 0.95. Its image
-limits are 1 MiB encoded bytes, 1,048,576 decoded pixels and 4096 pixels per
+limits are 1 MiB image file bytes before base64 encoding, 1,048,576 decoded pixels and 4096 pixels per
 dimension. JPEG, PNG, WebP, BMP and the first GIF frame are supported. Images
 remain in memory. PNG compressed metadata is capped at 64 KiB per chunk and
 256 KiB in total, independently of the pixel limit. Pillow documents the
@@ -159,5 +159,28 @@ references. Public execution stayed disabled and no slot was installed.
 
 These are measured synthetic workload bounds for this pinned export and machine.
 They establish package behavior and resource admission evidence, not recognition
-accuracy on real photographs. The frozen integration host must repeat the harness
-after the family is registered in the product and complete the native gate.
+accuracy on real photographs. The frozen integration below repeats the harness
+after product registration. Native ONNX preparation and install acceptance remain required.
+
+### Frozen default-host integration verification
+
+The [passing integration receipt](evidence/onnx-default-host-2918a95.json)
+records clean source `2918a954415a12b41add87b9c5443f0274a1ebad` and all 1,650
+matching host artifacts. The harness used actual default Supervisor registration,
+two selected components and real shared resource reservations. It acquired 35
+locked wheels, completed six owned commands, verified three SDK fixtures and
+attached the exact reviewed revision. After removing selected sources, captured
+state and builder inputs, the relocated package passed the SDK fixtures, maximum
+image request, concurrent busy rejection and byte/pixel boundary checks.
+
+The maximum SDK process peak was 278,839,296 bytes against the 512 MiB declared
+reservation. Total harness time was 35.490343 seconds. Owned work, pending native
+receipts and job references all reached zero. The independently repeated installed
+Python regression and immutable checkpoint review are recorded in
+[native acceptance](NATIVE_INSTALLED_ONBOARDING_ACCEPTANCE.md).
+
+Final Python verification passed 2,047 tests with 13 expected skips, including
+the real pinned scanner matrix. The locked ONNX task environment passed 30 tests.
+Swift passed 18 tests with three opt-in installer skips; all four native UI and
+transport self-tests passed. Native ONNX installation and the broader isolation,
+aggregate resource and whole-Phase-3 adversarial gates remain open.

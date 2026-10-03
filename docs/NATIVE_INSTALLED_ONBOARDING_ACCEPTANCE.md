@@ -130,3 +130,22 @@ filesystem/network isolation and hard aggregate live-memory enforcement need
 independent adversarial evidence. ONNX, CLI, generic LLM, integrated-agent and
 broader-runtime gates retain their own acceptance requirements. Public
 automatic execution remains disabled until the release gates are satisfied.
+
+## Additive ONNX host regression
+
+The [second passing receipt](evidence/native-installed-onboarding-2918a95.json)
+repeats all three installed Python cases against clean ONNX integration source
+`2918a954415a12b41add87b9c5443f0274a1ebad`. All 1,650 host hashes matched;
+`build.json` SHA-256 was
+`924acbbe67ee26c48391d6817a0e137e0cd0c826127645b44879037741f36d55`.
+The independently copied native executable SHA-256 was
+`e55133acf0657140151edf1e138c483351585be06a6411caed26b3ee14db8009`.
+
+The cases passed 9 HTTP and 9 stdio calls, source removal, restart, reviewed and
+attached revision 2, and independent recipe enable/disable persistence. Every
+owned child joined; public preparation and resolution defaults remained denied.
+The immutable review separately passed 84 focused composition, form, cold-host,
+recipe evidence, lifecycle and harness cleanup tests plus all four native
+self-tests. It found no remaining blocker in that checkpoint scope. This
+regression provides Python compatibility evidence for the additive ONNX catalog;
+ONNX native installation and the full Phase 3 acceptance remain open.

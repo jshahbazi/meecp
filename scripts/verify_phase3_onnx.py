@@ -271,7 +271,7 @@ async def verify(host, model, base):
             package = await files(validate_package,Path(attached["attachment"]["path"]))
             workload = json.loads((package.root / "onnx-validation.json").read_bytes())
             await runner.close(); runner=None
-            await coordinator.close()
+            await coordinator.close(); coordinator=None
             stage("relocation")
             relocated = base / "relocated-package"
             await files(package.root.rename,relocated)
@@ -306,7 +306,8 @@ async def verify(host, model, base):
         try:
             if runner is not None:
                 await _await_ownership(runner.close())
-            await _await_ownership(coordinator.close())
+            if coordinator is not None:
+                await _await_ownership(coordinator.close())
             if imports is not None:
                 imports.close()
         except BaseException:

@@ -32,6 +32,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from .contracts import (MAX_ARTIFACTS, MAX_PACKAGE_BYTES, PackageError,
                         package_relative_path, validate_package)
+from ._native_tls import SSLContext as NativeSSLContext
 from .private import (PrivateStateError, check_private_file, ensure_private_directory,
                       read_private_json, write_private_json)
 
@@ -131,6 +132,11 @@ def _public_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> b
                                       or address.is_unspecified or address.is_loopback)
 
 
+def _tls_context() -> ssl.SSLContext:
+    """Private system trust with no macOS certificate network fetches."""
+    return NativeSSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+
 class PinnedHTTPSNetwork:
     """No proxy, authentication, cookies, redirect, or DNS re-resolution on connect."""
 
@@ -157,7 +163,11 @@ class PinnedHTTPSNetwork:
                     raise DownloadError("download_network_blocked")
                 if (family, str(ip)) not in resolved:
                     resolved.append((family, str(ip)))
-            context = ssl.create_default_context()
+            # Use the platform's certificate trust, including managed macOS
+            # Keychain roots. A relocated host must not depend on OpenSSL's
+            # build-time CA path or inherited SSL_CERT_FILE/SSL_CERT_DIR.
+            # Each transfer owns its context; never patch global ssl state.
+            context = _tls_context()
             # Connecting to the vetted numeric address cannot trigger a second DNS
             # lookup. TLS verifies the selected URL hostname, including SNI.
             async with asyncio.timeout(NETWORK_IDLE_SECONDS):

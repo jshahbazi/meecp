@@ -141,7 +141,7 @@ async def test_normal_cold_host_needs_no_user_recipe_and_preserves_disable(tmp_p
     restarted = Supervisor(tmp_path / "state", tmp_path / "unused-reaper")
     try:
         assert restarted.builtin_recipe_metadata["recipes"][0]["ready"] is False
-        assert restarted.recipes.list()[0]["state"] == "disabled"
+        assert restarted.recipes.inspect(form["recipe"]["id"], form["recipe"]["version"])["state"] == "disabled"
         questions = restarted.preparation_forms.form(draft["draft_id"], 1)
         assert questions["recipe"] is None and "compatible_recipe_required" in questions["blockers"]
     finally:

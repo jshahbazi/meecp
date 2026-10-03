@@ -11,6 +11,12 @@
       "directory": "resolved-python-v1",
       "recipe_id": "mcpme.resolved-python",
       "version": "1.0.0"
+    },
+    {
+      "digest": "1ef17324b5efe21af607854d17a62026ac911388539afbd7e487a5e1048f3ba8",
+      "directory": "onnx-hotdog-v1",
+      "recipe_id": "mcpme.onnx-hotdog",
+      "version": "1.0.0"
     }
   ],
   "schema_version": 1

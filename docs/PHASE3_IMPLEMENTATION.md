@@ -10,7 +10,7 @@ Static inspection reads the selected immutable snapshot, verifies its original f
 
 The distribution builder includes a pinned private uv executable, its upstream licenses, a copied private CPython runtime, trusted generator templates and a closed artifact manifest. Signing refreshes packaged hashes before the app's outer signature and host receipt are sealed. The managed builder uses injected host-selected commands, hash-locked wheels, offline installation and retained distribution notices. It has no global executable or cache fallback.
 
-Wheel acquisition uses the existing proxy-independent, public-address-pinned HTTPS transport with a separately bound exact host allowlist. Redirects and credentials are rejected. Each sink enforces expected bytes/hash, a disk ceiling, cancellation and elapsed deadline, and deletes failed attempt files through its held directory descriptor.
+Wheel acquisition uses the existing proxy-independent, public-address-pinned HTTPS transport with a separately bound exact host allowlist. Redirects and credentials are rejected. Each sink enforces expected bytes/hash, a disk ceiling, cancellation and elapsed deadline, and deletes failed attempt files through its held directory descriptor. The macOS transport uses local platform trust and disables certificate issuer/revocation network fetching; these additional requests cannot bypass the selected socket and origin scope.
 
 The preparation executor launches reviewed foreground steps in an opt-in native process group. The native wrapper holds its unreaped leader identity through same-group cleanup, including natural exit, cancellation, timeout and parent death. Repeated asyncio and AnyIO cancellation cannot abandon launch acknowledgement or cleanup. Observed wrapper loss interrupts blocked stream/protocol waits and retains the process reservation. Daemonizing or group-escaping executable workers remain unsupported; this facility does not establish arbitrary descendant-tree isolation.
 
@@ -120,8 +120,48 @@ The same clean commit produced a development CLI host with all 1,595 recorded ar
 
 New recipe evidence binds exact selected and transitive components. Independently checked legacy-default regressions preserve original schema-1 evidence, epoch and lifecycle state when the catalog adds the resolved component. Changed selected component bytes or unknown historical catalog identities still fail closed. The checkpoint review found no remaining blocker in its reviewed scope; the final full Phase 3 adversarial review remains required.
 
+## Native TLS checkpoint
+
+Live native acceptance exposed a packaged TLS failure under a minimal environment: the private OpenSSL runtime could not establish the managed certificate chain without an inherited CA-file setting. The platform trust evaluator accepts the same chain through local macOS trust. The repair uses a private, exact-wheel truststore 0.10.4 fork, with the complete MIT license and original source hashes retained in `backend/mcpme/_native_tls`.
+
+The independent review reproduced an additional network-scope defect in upstream native trust: an untrusted peer with a missing intermediate caused a loopback HTTP issuer fetch before certificate rejection. The fork disables native network fetching with a checked OSStatus before trust evaluation. It removes the upstream global SSL injection helpers and creates a fresh context per transfer. Resolution producer identities bind the complete Python implementation; host receipts bind the source, license and provenance.
+
+The repaired transport independently passed trusted and untrusted missing-intermediate checks with zero issuer/application requests, a valid full-chain positive control, wrong-hostname/expired/untrusted negative checks, 16 concurrent transfers using distinct verified contexts, and a native policy-set failure that stops before evaluation. Existing real TLS framing tests use the production context with a private fixture anchor. The checked-in native TLS suite preserves these certificate, policy-failure and concurrent-transfer cases. Packaged/native installed acceptance remains the next gate; this source checkpoint does not enable public preparation or complete Phase 3.
+
+## Modular ONNX integration checkpoint
+
+The cold host registers the pinned CPU ONNX runtime and YOLO11 detector as two
+independent components with an exact dependency. The additive default recipe
+preserves previous recipe evidence and user lifecycle decisions. Folder/document
+inspection merges eligible Python and captured-model candidates; component
+bindings retain original snapshot files and bind captured model bytes separately.
+The generated detector form preserves app renames and reduced memory ceilings.
+Native progress parsing accepts the detector validation stage.
+
+The ONNX builder streams captured FDs, retains model and dependency licenses,
+validates the exact graph in the owned runtime, and seals a relocatable MCP app.
+Its development harness uses actual default Supervisor registration and resource
+reservation callbacks. Public automatic execution remains disabled. Native ONNX
+installation/invocation/restart and the broader containment gates remain open.
+
+Installed native Python acceptance is recorded in
+[Native installed onboarding acceptance](NATIVE_INSTALLED_ONBOARDING_ACCEPTANCE.md).
+It covers ordinary callable, declared foreground MCP and independently scaffolded
+recipe paths through resolve, build, attach, installation, HTTP/stdio invocation,
+source removal and restart against the exact recorded host/native pair. That
+receipt belongs to its stated immutable checkpoint and does not close ONNX or
+other-family acceptance.
+
 ## Next acceptance work
 
-Verify callable and foreground MCP independently through actual native/API preparation, installation, invocation and restart from a relocated host with an empty private cache. Owned dependency and MCP interface resolution now allow ordinary directories to reach generated forms and package construction without hand-authored descriptors or locks. The private derived-build tests resolve and discover the interface through the owned runner; installed/native acceptance remains required.
+Recheck callable and foreground MCP against later integrated installed artifacts.
+Owned dependency and MCP interface resolution allow ordinary directories to reach
+generated forms and package construction without hand-authored descriptors or locks.
+Their recorded native checkpoint passes; containment/resource/race requirements
+remain independently gated.
 
-Add the real ONNX recipe/worker using durable captured inputs. Binary materialization must stream verified captured FDs and survive removal of original paths. Preserve legacy GGUF and folder identities. Continue CLI, general LLM/service connectors and integrated-agent work under the original independent acceptance gates. Full Phase 3 and its final adversarial review remain required.
+Complete native ONNX prepare/install/invoke/restart acceptance from a relocated
+artifact and independently recheck the integrated runtime. Preserve legacy GGUF
+and folder identities. Continue CLI, general LLM/service connectors and
+integrated-agent work under the original independent acceptance gates. Full
+Phase 3 and its final adversarial review remain required.

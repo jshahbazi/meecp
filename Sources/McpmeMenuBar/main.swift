@@ -2250,6 +2250,7 @@ extension McpmeApp {
             receipt["passed"] = passed; receipt["stage"] = stage; receipt["routes"] = routes
             if let code = app.preparationView.job?.error ?? app.preparationView.resolutionJob?.error { receipt["error_code"] = code }
             guard let result = try? JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]),
+                  result.count <= 262144,
                   (try? result.write(to: URL(fileURLWithPath: output), options: .atomic)) != nil,
                   (try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: output)) != nil else { return false }
             return passed
@@ -2264,7 +2265,10 @@ extension McpmeApp {
         app.nativeAcceptanceConnection = connection; app.hostAvailable = true
         let view = app.preparationView
         view.request = { path, method, body, complete in
-            routes.append(method + " " + path); pending += 1
+            let route = method + " " + path
+            guard routes.contains(route) || routes.count < 512 else { complete(nil, "native_acceptance_route_limit"); return }
+            if !routes.contains(route) { routes.append(route) }
+            pending += 1
             app.request(path, method: method, body: body) { object, code in pending -= 1; complete(object, code) }
         }
         func fetchDraft() -> ImportDraft? {
@@ -2318,11 +2322,17 @@ extension McpmeApp {
             view.poll(); guard awaitCondition(330, { pending == 0 && !view.busy }) else { return report(false) }
             RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         }
-        guard let job = view.job, job.state == "succeeded", let final = fetchDraft(),
-              final.sourceRevision == draft.sourceRevision, final.revision > review.context.revision,
-              final.packagePath != nil else { return report(false) }
+        guard let job = view.job, job.state == "succeeded" else { return report(false) }
+        var jobFetched = false, expectedPackageDigest: String?
+        app.request("v1/preparations/" + job.id) { object, _ in
+            expectedPackageDigest = preparationDigest(object?["expected_package_digest"]); jobFetched = true
+        }
+        guard awaitCondition(330, { jobFetched }), let expectedPackageDigest, let final = fetchDraft(),
+              final.sourceRevision == draft.sourceRevision, final.revision == review.context.revision,
+              final.packagePath != nil, final.packageDigest == expectedPackageDigest else { return report(false) }
         receipt["preparation_job_id"] = job.id; receipt["preparation_state"] = job.state; receipt["preparation_progress"] = job.progress
         receipt["attached_revision"] = final.revision; receipt["source_revision"] = final.sourceRevision
+        receipt["attached_package_digest"] = expectedPackageDigest
         stage = "attached"; return report(true)
     }
 

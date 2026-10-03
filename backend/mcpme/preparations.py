@@ -14,6 +14,7 @@ import uuid
 from pydantic import ValidationError
 
 from .contracts import PackageError, _read_file, validate_package
+from .preparation_components import builtin_component_registry
 from .preparation_contracts import (
     ExecutionPolicy, JobBinding, PreparationError, PreparationReceipt,
     MAX_CONTRACT_BYTES, RUNNER_IDENTITY, VERIFIER_IDENTITY, contract_digest, load_contract, parse_descriptor, schema_accepts,
@@ -37,6 +38,7 @@ MAX_JOBS = 1024
 class PreparationStore:
     def __init__(self, imports, recipes):
         self.imports, self.recipes = imports, recipes
+        self.components = builtin_component_registry()
         self.db = imports._connection
         with imports._transaction():
             self.db.execute("""CREATE TABLE IF NOT EXISTS preparation_jobs (
@@ -87,19 +89,7 @@ class PreparationStore:
         manifest = recipe["manifest"]
         if not schema_accepts(manifest["input_schema"], descriptor.inputs):
             raise PreparationError("recipe_input_mismatch")
-        component = "python-function-v1" if descriptor.interface.kind == "python-callable" else "existing-mcp-v1"
-        if not any(step["component"] == component for step in manifest["steps"]):
-            raise PreparationError("recipe_interface_mismatch")
-        files = {item["path"]: item for item in draft["source"]["files"]}
-        prefix = "" if descriptor.dependencies.project == "." else descriptor.dependencies.project + "/"
-        lock = files.get(prefix + "uv.lock")
-        if lock is None or lock["sha256"] != descriptor.dependencies.lock_sha256 or prefix + "pyproject.toml" not in files:
-            raise PreparationError("dependency_lock_mismatch")
-        if descriptor.source_license not in files or not files[descriptor.source_license]["size"]:
-            raise PreparationError("source_license_required")
-        module = descriptor.interface.module.replace(".", "/")
-        if module + ".py" not in files and module + "/__init__.py" not in files:
-            raise PreparationError("entrypoint_source_required")
+        self.components.validate_source(descriptor, draft, recipe)
         if draft["requirements"].get("profile") not in {None, "mcp-stdio"}:
             raise PreparationError("unsupported_execution_profile")
         if draft["requirements"].get("secret_references"):

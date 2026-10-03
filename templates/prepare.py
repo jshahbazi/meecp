@@ -60,7 +60,7 @@ def run(*args: str) -> str:
     return result.stdout.strip()
 
 
-def source_snapshot(export: dict, destination: Path) -> list[dict]:
+def source_snapshot(export: dict, destination: Path, check_canceled=None) -> list[dict]:
     """Copy only exact exported files, without importing or executing the source."""
     source = export["source"]
     if not re.fullmatch(r"sha256:[0-9a-f]{64}|[0-9a-f]{40}", source["revision"]):
@@ -80,6 +80,8 @@ def source_snapshot(export: dict, destination: Path) -> list[dict]:
     seen = set()
     destination.mkdir(mode=0o700)
     for record in records:
+        if check_canceled is not None:
+            check_canceled()
         relative = record["path"]
         package_relative_path(relative)
         if relative in seen:
@@ -183,7 +185,7 @@ def write_launcher(destination: Path, *, module: str | None = None,
     (destination / "bootstrap.py").write_text("\n".join(bootstrap) + "\n")
 
 
-def prepare(args: argparse.Namespace):
+def prepare(args: argparse.Namespace, *, runtime_builder=None, check_canceled=None, lifecycle_override=None):
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise PreparationError("unsupported_build_platform")
     export = read_json(args.setup_export)
@@ -213,12 +215,13 @@ def prepare(args: argparse.Namespace):
     validation = Validation.model_validate(read_json(args.validation_spec) if args.validation_spec else {})
     memory = args.memory_mb or requirements.get("memory_mb") or 128
     resources = Resources(memory_mb=memory, cpu_only=True)
-    lifecycle = Lifecycle(max_sessions=args.max_sessions, operation_timeout_seconds=args.timeout_seconds)
+    lifecycle = (Lifecycle.model_validate(lifecycle_override) if lifecycle_override is not None
+                 else Lifecycle(max_sessions=args.max_sessions, operation_timeout_seconds=args.timeout_seconds))
     destination = args.output.absolute()
     if destination.exists():
         raise PreparationError("destination_exists")
     destination.mkdir(parents=True, mode=0o700)
-    records = source_snapshot(export, destination / "source")
+    records = source_snapshot(export, destination / "source", check_canceled)
     names = {record["path"] for record in records}
     package_relative_path(args.source_license)
     if args.source_license not in names or not (destination / "source" / args.source_license).stat().st_size:
@@ -251,7 +254,9 @@ def prepare(args: argparse.Namespace):
             package_relative_path(args.script)
             if args.script not in names:
                 raise PreparationError("entrypoint_source_required")
-        toolchain = prepare_runtime(destination, args.dependency_project.absolute())
+        # Installed-host preparation injects its private toolchain and owned
+        # command runner. Keep the external generator's existing CLI behavior.
+        toolchain = (runtime_builder or prepare_runtime)(destination, args.dependency_project.absolute())
         licenses.extend(["licenses/python-LICENSE.txt", "licenses/DEPENDENCIES.md"])
         is_callable = args.template == "python-function"
         write_launcher(destination, module=args.module, script=args.script, callable_adapter=is_callable, http_adapter=is_http)
@@ -281,6 +286,8 @@ def prepare(args: argparse.Namespace):
     (destination / "mcpme.package.json").write_text(json.dumps(manifest.model_dump(exclude_none=True), indent=2) + "\n")
     artifacts = []
     for path in sorted(destination.rglob("*")):
+        if check_canceled is not None:
+            check_canceled()
         if path.is_dir():
             path.chmod(0o700)
         elif path.is_file():

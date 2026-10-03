@@ -18,6 +18,8 @@ import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
+import anyio
+
 
 class ProcessError(RuntimeError):
     """A sanitized process lifecycle failure."""
@@ -26,6 +28,37 @@ class ProcessError(RuntimeError):
 class OwnershipLost(ProcessError):
     def __init__(self) -> None:
         super().__init__("ownership_lost")
+
+
+async def _await_ownership(awaitable):
+    """Settle an owned action even when a caller repeatedly cancels cleanup.
+
+    Native spawn/reap handles outlive a canceled API request. AnyIO applies
+    level cancellation; asyncio can deliver several explicit cancel calls.
+    Shield both without suppressing the caller's original cancellation.
+    """
+    task = asyncio.ensure_future(awaitable)
+    with anyio.CancelScope(shield=True):
+        while True:
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                if task.done():
+                    return task.result()
+
+
+async def _watch_ownership(process, action):
+    """Interrupt a stream/protocol action promptly on observed wrapper loss."""
+    task = asyncio.ensure_future(action)
+    try:
+        await asyncio.wait((task, process._done), return_when=asyncio.FIRST_COMPLETED)
+        if process._done.done() and process.ownership_lost:
+            raise OwnershipLost()
+        return await task
+    finally:
+        if not task.done():
+            task.cancel()
+        await _await_ownership(asyncio.gather(task, return_exceptions=True))
 
 
 class _WriteProtocol(asyncio.streams.FlowControlMixin):
@@ -54,6 +87,7 @@ class OwnedProcess:
         self.reaper_pid = wrapper.pid
         self.pid: int | None = None
         self.returncode: int | None = None
+        self.peak_memory_bytes: int | None = None
         self.ownership_lost = False
         self.stdin_fd: int | None = stdin_fd
         self.stdout_fd: int | None = stdout_fd
@@ -88,6 +122,8 @@ class OwnedProcess:
                         self.pid = value
                         if not self._spawned.done():
                             self._spawned.set_result(True)
+                    elif event["event"] == "peak_memory" and self.peak_memory_bytes is None and 0 <= value <= 2**63 - 1:
+                        self.peak_memory_bytes = value
                     elif event["event"] in {"exit", "launch_failed"}:
                         self.returncode = value
                         exited = True
@@ -197,12 +233,13 @@ class ProcessOwner:
         inherited_fds: tuple[int, ...] = (), startup_timeout: float = 10,
         stop_grace: float = 2, completion_fd: int | None = None,
         completion_nonce: str | None = None,
+        owned_group: bool = False,
     ) -> OwnedProcess:
         if self._closed:
             raise ProcessError("owner_closed")
         if any(p.ownership_lost for p in self.instances.values()):
             raise OwnershipLost()
-        if io_mode not in {"streams", "fds"} or not 0 <= stop_grace <= 30:
+        if io_mode not in {"streams", "fds"} or not 0 <= stop_grace <= 30 or type(owned_group) is not bool:
             raise ProcessError("invalid_launch")
         if not 0 < startup_timeout <= 120:
             raise ProcessError("invalid_launch")
@@ -222,17 +259,18 @@ class ProcessOwner:
             Path(executable).absolute(), list(args), Path(cwd).absolute(), dict(env),
             identifier, io_mode, tuple(inherited_fds), startup_timeout, stop_grace,
             completion_fd, completion_nonce,
+            owned_group,
         ))
         self._launches.add(task)
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError:
             try:
-                process = await task
+                process = await _await_ownership(task)
             except ProcessError:
                 pass
             else:
-                await process.stop()
+                await _await_ownership(process.stop())
             raise
         finally:
             self._pending_ids.discard(identifier)
@@ -243,6 +281,7 @@ class ProcessOwner:
         identifier: str, io_mode: str, inherited_fds: tuple[int, ...],
         startup_timeout: float, stop_grace: float,
         completion_fd: int | None, completion_nonce: str | None,
+        owned_group: bool,
     ) -> OwnedProcess:
         if any(not isinstance(v, str) or "\0" in v for v in args):
             raise ProcessError("invalid_launch")
@@ -268,7 +307,8 @@ class ProcessOwner:
         output_read, output_write = os.pipe()
         process = None
         try:
-            payload = bytearray(b"MCPME002" if completion_fd is not None else b"MCPME001")
+            payload = bytearray((b"MCPME004" if completion_fd is not None else b"MCPME003") if owned_group
+                                else (b"MCPME002" if completion_fd is not None else b"MCPME001"))
             def number(value: int) -> None:
                 payload.extend(struct.pack("!I", value))
             def string(value: str) -> None:
@@ -317,9 +357,13 @@ class ProcessOwner:
             if io_mode == "streams":
                 await process._streams()
             return process
+        except asyncio.CancelledError:
+            if process is not None:
+                await _await_ownership(process.stop())
+            raise
         except (OSError, TimeoutError, ProcessError, ValueError, UnicodeError):
             if process is not None:
-                await process.stop()
+                await _await_ownership(process.stop())
             raise ProcessError("launch_failed") from None
         finally:
             spec_parent.close(); spec_child.close(); control_child.close()
@@ -333,10 +377,10 @@ class ProcessOwner:
     async def close(self) -> None:
         self._closed = True
         if self._launches:
-            await asyncio.gather(*list(self._launches), return_exceptions=True)
-        results = await asyncio.gather(
+            await _await_ownership(asyncio.gather(*list(self._launches), return_exceptions=True))
+        results = await _await_ownership(asyncio.gather(
             *(process.stop() for process in list(self.instances.values())), return_exceptions=True,
-        )
+        ))
         if any(isinstance(result, OwnershipLost) for result in results):
             raise OwnershipLost()
         if any(isinstance(result, BaseException) for result in results):

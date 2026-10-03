@@ -2,6 +2,8 @@
 
 Status: implementation plan, updated 2026-10-03. The [metadata and admission foundation](PREPARATION_FOUNDATION.md) is implemented; automatic build execution remains unavailable. This is the Phase 3 product milestone. Multiple managed model engines follow in Phase 4.
 
+The [Phase 3 implementation ledger](PHASE3_IMPLEMENTATION.md) tracks the component, private builder, controlled execution and independent probe checkpoint, its review repairs, and the full acceptance gates still open. Public execution and native automatic preparation remain unavailable until installed-host integration passes those gates.
+
 Baseline: `1d723e5af50639aa40702091c3e39e47dc3020dd`, including the standalone hotdog example. This plan extends [project onboarding](PROJECT_ONBOARDING.md), [package authoring](PACKAGE_AUTHORING.md), and the [implemented Phase 2 boundary](PHASE2_ONBOARDING.md).
 
 ## Intended result

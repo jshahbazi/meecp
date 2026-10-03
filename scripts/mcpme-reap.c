@@ -1,6 +1,11 @@
 /* One foreground target, an execution-spec FD, and an ownership-control FD.
+ * Opt-in preparation groups retain the leader's unreaped identity through
+ * group cleanup. This covers descendants that remain in the declared group;
+ * arbitrary executable workers which escape that group remain unsupported.
  * No child output or executable/environment values are diagnostics. */
 #define _POSIX_C_SOURCE 200809L
+#define _DARWIN_C_SOURCE 1
+#define _DEFAULT_SOURCE 1
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -66,9 +71,9 @@ static char *string(int fd) {
     value[size] = 0;
     return value;
 }
-static int report(const char *event, int value) {
+static int report(const char *event, long long value) {
     char message[100];
-    int length = snprintf(message, sizeof(message), "{\"event\":\"%s\",\"value\":%d}\n", event, value);
+    int length = snprintf(message, sizeof(message), "{\"event\":\"%s\",\"value\":%lld}\n", event, value);
     ssize_t count;
     do { count = write(control, message, (size_t)length); } while (count < 0 && errno == EINTR);
     return count == length ? 0 : -1;
@@ -117,17 +122,19 @@ int main(int argc, char **argv) {
     signal(SIGPIPE, SIG_IGN);
     signal(SIGTERM, stop_signal); signal(SIGINT, stop_signal);
     char magic[8];
+    int owned_group = 0;
     uint32_t grace, input, output, extra_count, arg_count, env_count;
     if (read_exact(spec, magic, 8)) goto invalid;
+    owned_group = !memcmp(magic, "MCPME003", 8) || !memcmp(magic, "MCPME004", 8);
     if (completion >= 0) {
         char *instance = NULL, *nonce = NULL;
-        if (memcmp(magic, "MCPME002", 8) || !(instance = string(spec)) || !(nonce = string(spec)) ||
+        if ((memcmp(magic, "MCPME002", 8) && memcmp(magic, "MCPME004", 8)) || !(instance = string(spec)) || !(nonce = string(spec)) ||
             strlen(instance) != 32 || strlen(nonce) != 64 ||
             memcmp(instance, receipt + 8, 32) || memcmp(nonce, receipt + 40, 64)) {
             free(instance); free(nonce); goto invalid;
         }
         free(instance); free(nonce);
-    } else if (memcmp(magic, "MCPME001", 8)) goto invalid;
+    } else if (memcmp(magic, "MCPME001", 8) && memcmp(magic, "MCPME003", 8)) goto invalid;
     if (number(spec, &grace) || grace > 30000 || number(spec, &input) ||
         number(spec, &output) || number(spec, &extra_count) || extra_count > 64) goto invalid;
     if (input < 3 || output < 3 || input == output || input == (uint32_t)spec || output == (uint32_t)spec ||
@@ -161,6 +168,7 @@ int main(int argc, char **argv) {
         close(exec_status[0]);
         signal(SIGTERM, SIG_DFL); signal(SIGINT, SIG_DFL); signal(SIGPIPE, SIG_DFL);
         umask(0077);
+        if (owned_group && setsid() < 0) goto exec_failed;
         int nullfd = open("/dev/null", O_WRONLY);
         if (nullfd < 0 || dup2((int)input, STDIN_FILENO) < 0 ||
             dup2((int)output, STDOUT_FILENO) < 0 || dup2(nullfd, STDERR_FILENO) < 0 || chdir(cwd)) goto exec_failed;
@@ -179,7 +187,40 @@ exec_failed:
     double stop_at = 0;
     for (;;) {
         int status;
-        pid_t result = waitpid(child, &status, WNOHANG);
+        struct rusage usage;
+        pid_t result;
+        if (owned_group) {
+            siginfo_t info;
+            memset(&info, 0, sizeof(info));
+            /* Do not consume the leader: its held identity prevents a reused
+             * PID/group ID from becoming a signal target during settlement. */
+            if (waitid(P_PID, (id_t)child, &info, WEXITED | WNOHANG | WNOWAIT)) {
+                if (errno == EINTR) continue;
+                return 70;
+            }
+            result = info.si_pid == child ? child : 0;
+            if (result == child) {
+                if (!acknowledged && !exec_failed_flag) {
+                    int failure;
+                    ssize_t count = read(exec_status[0], &failure, sizeof(failure));
+                    exec_failed_flag = count > 0;
+                    if (count == 0) {
+                        acknowledged = 1;
+                        (void)report("spawn", (int)child);
+                    }
+                }
+                if (!stop_sent) {
+                    if (acknowledged) (void)kill(-child, SIGTERM);
+                    stop_sent = 1; stop_at = now();
+                }
+                if (now() - stop_at < (double)grace / 1000) {
+                    (void)poll(NULL, 0, 10);
+                    continue;
+                }
+                if (acknowledged) (void)kill(-child, SIGKILL);
+                do { result = wait4(child, &status, 0, &usage); } while (result < 0 && errno == EINTR);
+            }
+        } else result = waitpid(child, &status, WNOHANG);
         if (result == child) {
             if (completed_receipt()) { close(exec_status[0]); close(control); if (completion >= 0) close(completion); return 74; }
             /* A very short successful target may exit before spawn reporting. */
@@ -190,6 +231,17 @@ exec_failed:
                 if (!exec_failed_flag) (void)report("spawn", (int)child);
             }
             int code = WIFEXITED(status) ? WEXITSTATUS(status) : -WTERMSIG(status);
+            if (owned_group) {
+                /* Darwin reports bytes; the other supported test platform
+                 * reports KiB. This is the foreground target's observed peak,
+                 * not an aggregate simultaneous descendant-tree measurement. */
+#ifdef __APPLE__
+                long long peak = (long long)usage.ru_maxrss;
+#else
+                long long peak = (long long)usage.ru_maxrss * 1024;
+#endif
+                (void)report("peak_memory", peak);
+            }
             (void)report(exec_failed_flag ? "launch_failed" : "exit", code);
             close(exec_status[0]); close(control); if (completion >= 0) close(completion);
             return 0;
@@ -212,10 +264,16 @@ exec_failed:
         }
         if (!parent_alive() && !stop_sent) {
             /* The unreaped child identity is still held by this process. */
-            (void)kill(child, SIGTERM); stop_sent = 1; stop_at = now();
+            if (!owned_group || acknowledged) (void)kill(owned_group ? -child : child, SIGTERM);
+            /* The target may still be before setsid(). Its child identity is
+             * also held, so signal it directly at this launch boundary. */
+            if (owned_group) (void)kill(child, SIGTERM);
+            stop_sent = 1; stop_at = now();
         }
         if (stop_sent && !killed && now() - stop_at >= (double)grace / 1000) {
-            (void)kill(child, SIGKILL); killed = 1;
+            if (!owned_group || acknowledged) (void)kill(owned_group ? -child : child, SIGKILL);
+            if (owned_group) (void)kill(child, SIGKILL);
+            killed = 1;
         }
     }
 invalid:

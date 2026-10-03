@@ -361,7 +361,7 @@ class PreparationRunner:
         runner = await calculate("preparation-runner-implementation-v1", RUNNER_FILES)
         verifier = await calculate("preparation-verifier-implementation-v1", VERIFIER_FILES)
         if family is not None:
-            identities = sorted(component.reference.key for component in getattr(family, "components", (family.component,)))
+            identities = sorted(list(component.reference.key) for component in getattr(family, "components", (family.component,)))
             runner = contract_digest("preparation-family-runner-v1", {"implementation": runner, "components": identities})
             verifier = contract_digest("preparation-family-verifier-v1", {"implementation": verifier,
                 "components": identities, "profile": getattr(family, "target_profile", "mcp-stdio"),

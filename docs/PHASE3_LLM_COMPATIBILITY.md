@@ -131,7 +131,7 @@ removal of captured state. The full A4 managed/native gate remains open.
 ## Host registration and separate admission
 
 The cold supervisor now registers the engine/task composition and seeds the
-immutable `mcpme.text-generation@1.0.0` recipe. Captured-only imports and a
+immutable `mcpme.text-generation@1.0.1` recipe. Captured-only imports and a
 captured model supplement on an original directory use the normal inspection,
 generated forms, durable preparation runner and attachment path. App names
 come from the draft; restored memory choices respect the current ceiling.
@@ -202,3 +202,23 @@ production-disabled tests exercise the actual dispatcher.
 These checks validate source behavior. The next acceptance requires a clean
 immutable host, actual managed construction and installation, and the native
 capture flow. Public preparation remains disabled.
+
+## First composed run and corrected identity encoding
+
+Clean host `d48cc78ba062449df24472aa477abadadf69e343` contained 1,743
+verified artifact hashes. Its native binary passed all five contract self-checks.
+The managed captured-model run passed capture and generated setup, then failed
+at planning with `invalid_preparation_contract`. No preparation process launched.
+The component identity calculation supplied tuples to the strict JSON encoder.
+The failed private artifact directory was retained; this run provides no
+managed inference or installation evidence.
+
+The corrected calculation uses JSON arrays. A regression exercises the real
+implementation/native-helper hashes, order independence and verifier-profile
+and specialist binding. Its focused suite passed 96 checks. The new component
+and recipe version is `1.0.1`; the original `1.0.0` bundle remains unchanged in
+Git and existing saved recipe records are not rewritten. Actual composed
+acceptance requires a new clean host built from the corrected source.
+
+The corrected combined source suite passed 2,169 tests with 12 skips, including
+the real identity regression and pinned secret-scanner integration.

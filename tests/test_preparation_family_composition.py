@@ -14,6 +14,7 @@ from mcpme.preparation_runner import PreparationRunner
 from mcpme.preparation_verifier import VerificationReport
 from mcpme.recipes import RecipeStore
 from test_preparation_components import FakeNativeComponent, v2_descriptor
+from test_preparation_processes import group_reaper
 
 
 class FakeTaskComponent(FakeNativeComponent):
@@ -169,3 +170,25 @@ def test_family_admission_rejects_unknown_version_and_partial_recipe(composite, 
     assert runner.execution_available_for_recipe(record)
     record["manifest"]["steps"].pop()
     assert not runner.execution_available_for_recipe(record)
+
+
+async def test_real_composite_implementation_identities_are_canonical_and_bind_verifier_profile(composite, tmp_path, group_reaper):
+    store, _, family, raw = composite
+    runner = PreparationRunner(store, tmp_path, group_reaper, enabled=True,
+                               enabled_families=(family.component.reference.key,))
+    value = parse_component_descriptor(raw)
+    try:
+        first = await runner._implementation_identities(value, "d" * 64)
+        assert all(len(identity) == 64 and int(identity, 16) >= 0 for identity in first)
+        family.components = tuple(reversed(family.components))
+        assert await runner._implementation_identities(value, "d" * 64) == first
+        family.target_profile = "model-service"
+        second = await runner._implementation_identities(value, "d" * 64)
+        assert second[0] == first[0] and second[1] != first[1]
+        async def specialist(*args, **kwargs):
+            raise AssertionError("identity calculation must not execute a verifier")
+        family.verify = specialist
+        third = await runner._implementation_identities(value, "d" * 64)
+        assert third[0] == first[0] and third[1] != second[1]
+    finally:
+        await runner.close()

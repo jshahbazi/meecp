@@ -24,6 +24,39 @@ MAX_DOWNLOAD_BYTES = 32 * 1024 * 1024
 MAX_BINARY_BYTES = 64 * 1024 * 1024
 FINDINGS_EXIT_CODE = 10
 
+# Reviewed public data, not a credential: SHA-256 of canonical sorted compact
+# ASCII JSON containing the pinned GGUF's complete tokenizer.* metadata.
+# Independently recomputed after checking the model's complete file identity:
+# Qwen/Qwen2.5-0.5B-Instruct-GGUF revision
+# 9217f5db79a29953eb74d5343926648285ec7e67, qwen2.5-0.5b-instruct-q4_k_m.gguf.
+# The exception is one exact extracted value AND either exact repository path,
+# for generic-api-key only. Other rules, values and paths remain unchanged.
+PUBLIC_GGUF_METADATA_DIGEST = "c828d4ced3ffa97554baf70310ae1b232a03bb63eff517952a9222567b44b5b8"
+PUBLIC_GGUF_METADATA_PATHS = (
+    "backend/mcpme_textgen/fixture.py",
+    "templates/text-generate-v1/model-provenance.json",
+)
+
+
+def trusted_config() -> str:
+    """Extend built-in rules with one reviewed, content-and-path-bound finding.
+
+    Pinned upstream schema and inheritance semantics:
+    https://github.com/gitleaks/gitleaks/blob/v8.30.1/README.md#configuration
+    https://github.com/gitleaks/gitleaks/blob/v8.30.1/config/config.go
+    `AND` is essential: a path alone must never suppress another value. There
+    are no commit skips, global exceptions, disabled rules or caller inputs.
+    """
+    import re
+    paths = "|".join(re.escape(path) for path in PUBLIC_GGUF_METADATA_PATHS)
+    return ("[extend]\nuseDefault = true\n"
+            '[[rules]]\nid = "generic-api-key"\n'
+            '[[rules.allowlists]]\n'
+            'description = "Reviewed public pinned GGUF metadata SHA-256 at two exact source paths"\n'
+            'condition = "AND"\nregexTarget = "secret"\n'
+            "paths = ['''^(?:" + paths + ")$''']\n"
+            "regexes = ['''^" + PUBLIC_GGUF_METADATA_DIGEST + "$''']\n")
+
 
 class ScanFailure(Exception):
     """A fixed public error code, with no underlying tool output."""
@@ -85,7 +118,10 @@ def tracked_source(repository: Path, destination: Path):
 
 
 def run_scanner(binary: Path, mode: str, target: Path, config: Path, ignore_directory: Path):
-    arguments = [str(binary), mode, str(target), "--config", str(config),
+    # Both history and source findings must use exact repository-relative paths.
+    # Scanning '.' from the already selected target preserves the full scope;
+    # an absolute dir argument would prefix findings with its temporary path.
+    arguments = [str(binary), mode, "." if mode == "dir" else str(target), "--config", str(config),
                  "--gitleaks-ignore-path", str(ignore_directory),
                  "--ignore-gitleaks-allow", "--redact=100", "--no-banner",
                  "--exit-code", str(FINDINGS_EXIT_CODE), "--timeout", "600"]
@@ -114,7 +150,7 @@ def scan(repository: Path):
         config = workspace / "default.toml"
         # Explicitly select built-in rules, including generic API keys and private
         # keys, instead of accepting a repository or environment allowlist.
-        config.write_text("[extend]\nuseDefault = true\n")
+        config.write_text(trusted_config())
         ignore_directory = workspace / "ignore"
         ignore_directory.mkdir()
         run_scanner(binary, "git", repository, config, ignore_directory)

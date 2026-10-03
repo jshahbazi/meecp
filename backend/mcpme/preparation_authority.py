@@ -42,6 +42,8 @@ class PreparationAuthority:
         self.db.execute("""CREATE TABLE IF NOT EXISTS preparation_ownership (
             job_id TEXT NOT NULL, instance_id TEXT NOT NULL, data TEXT NOT NULL,
             PRIMARY KEY(job_id,instance_id))""")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS preparation_command_ownership (
+            job_id TEXT PRIMARY KEY, instance_id TEXT NOT NULL, data TEXT NOT NULL)""")
 
     def _execution_plan(self, plan_id):
         _uuid(plan_id, "invalid_preparation_plan")
@@ -193,6 +195,74 @@ class PreparationAuthority:
             self._get(job_id)
             return [json.loads(row["data"]) for row in self.db.execute(
                 "SELECT data FROM preparation_ownership WHERE job_id=? ORDER BY rowid", (job_id,))]
+
+    def command_ownership(self, job_id):
+        with self.imports._lock:
+            self._get(job_id)
+            return [json.loads(row["data"]) for row in self.db.execute(
+                "SELECT data FROM preparation_command_ownership WHERE job_id=?", (job_id,))]
+
+    def pending_ownership(self, job_id):
+        """Separate proof formats share reservation/publication guards only."""
+        return bool(self.ownership_receipts(job_id) or self.command_ownership(job_id))
+
+    def register_command_ownership(self, job_id, metadata):
+        from .contracts import validate_package
+        from .preparation_command_owner import validate_command_ownership
+        from .private import check_private_file, read_private_json
+        validate_command_ownership(metadata)
+        with self.imports._transaction():
+            job = self._get(job_id)
+            self._current_inputs(job)
+            if (not job.get("managed") or not job.get("workspace") or job["state"] != "verifying"
+                    or metadata["job_binding_digest"] != contract_digest("preparation-command-job-binding-v1", job["binding"])):
+                raise PreparationError("invalid_command_ownership")
+            descriptor, draft, _ = self.job_inputs(job_id)
+            family = self.family_for(descriptor)
+            if getattr(family, "preparation_owner_kind", None) != "command-v3":
+                raise PreparationError("invalid_command_ownership")
+            workspace = Path(job["workspace"])
+            package = validate_package(workspace / "candidate")
+            if (package.digest != metadata["candidate_digest"] or package.manifest.profile != "host-command"
+                    or package.manifest.command.helper_sha256 != metadata["helper_sha256"]
+                    or metadata["fixture_digest"] != contract_digest("preparation-command-fixtures-v1",
+                        [item.model_dump(exclude_none=True) for item in descriptor.validation])):
+                raise PreparationError("invalid_command_ownership")
+            expected = family.expected_package_contract(descriptor, draft)
+            manifest = package.manifest.model_dump(exclude_none=True)
+            if (any(manifest.get(key) != value for key, value in expected.items() if key != "source_artifacts")
+                    or [item.model_dump() for item in package.lock.artifacts if item.path != "mcpme.preparation.json"]
+                    != expected["source_artifacts"]):
+                raise PreparationError("invalid_command_ownership")
+            state = workspace / "command-probe-v3"
+            check_private_file(state / "command-v2.lock")
+            if (read_private_json(state / "owner.json") != metadata
+                    or read_private_json(state / "invocations.json") != {"version": 1, "entries": []}
+                    or read_private_json(state / "command-v2.json") != {"version": 3, "entries": []}):
+                raise PreparationError("invalid_command_ownership")
+            if self.command_ownership(job_id):
+                raise PreparationError("duplicate_preparation_ownership")
+            self.db.execute("INSERT INTO preparation_command_ownership VALUES (?,?,?)",
+                (job_id, metadata["instance_id"], canonical_bytes(metadata).decode()))
+            job["ownership_settled"] = False
+            self._save(job)
+
+    def confirm_command_ownership(self, job_id, instance_id, verified_native_identity):
+        from .preparation_command_owner import recover_command_ownership
+        _digest(verified_native_identity)
+        with self.imports._lock:
+            job = self._get(job_id)
+            metadata = next((item for item in self.command_ownership(job_id) if item["instance_id"] == instance_id), None)
+            workspace = job.get("workspace")
+        if (metadata is None or workspace is None
+                or recover_command_ownership(Path(workspace), metadata) != verified_native_identity):
+            raise PreparationError("preparation_ownership_unsettled")
+        with self.imports._transaction():
+            current = self._get(job_id)
+            if current.get("workspace") != workspace or self.command_ownership(job_id) != [metadata]:
+                raise PreparationError("preparation_ownership_unsettled")
+            self.db.execute("DELETE FROM preparation_command_ownership WHERE job_id=? AND instance_id=?",
+                (job_id, instance_id))
 
     def register_ownership(self, job_id, metadata):
         if (not isinstance(metadata, dict) or set(metadata) != {"schema_version", "instance_id", "nonce"}

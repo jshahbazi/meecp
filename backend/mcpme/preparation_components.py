@@ -63,6 +63,13 @@ class PreparationDescriptorV2(Contract):
 
     @model_validator(mode="after")
     def consistency(self):
+        if any(selection.component.id == "host-command-json-v1" for selection in self.components):
+            # Reject costly selected validation keywords before general fixture
+            # evaluation. Component selection grants no execution capability.
+            from .preparation_command import structural_schema
+            for tool in self.tools:
+                structural_schema(tool.input_schema)
+                structural_schema(tool.output_schema)
         keys = [selection.component.key for selection in self.components]
         if len(set(keys)) != len(keys) or len({key[0] for key in keys}) != len(keys):
             raise PreparationError("duplicate_preparation_component")

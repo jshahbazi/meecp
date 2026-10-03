@@ -267,6 +267,7 @@ class JournaledPreparationOwner(ProcessOwner):
 @dataclass
 class _Attempt:
     job_id: str
+    command_attempt_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     stop: threading.Event = field(default_factory=threading.Event)
     threads: set = field(default_factory=set)
     callbacks: set = field(default_factory=set)
@@ -299,10 +300,15 @@ async def _joined(task: asyncio.Task):
 
 class PreparationRunner:
     def __init__(self, store, host_root: Path, reaper: Path, *, reserve_resources=None,
-                 release_resources=None, enabled: bool = False, enabled_families=()):
+                 release_resources=None, enabled: bool = False, enabled_families=(), command_admission=None):
         self.store, self.host_root, self.reaper = store, host_root, reaper
         self.reserve_resources, self.release_resources = reserve_resources, release_resources
         self.enabled = enabled is True
+        if command_admission is not None:
+            from .host_command import HostCommandAdmission
+            if type(command_admission) is not HostCommandAdmission:
+                raise PreparationError("command_preparation_not_admitted")
+        self.command_admission = command_admission
         # Admission belongs to an exact reviewed family version. Enabling the
         # legacy runner cannot enable a newly registered composite family.
         self.enabled_families = frozenset(enabled_families)
@@ -329,6 +335,11 @@ class PreparationRunner:
         family = self.store.family_for(descriptor)
         if family.component.reference.key not in self.enabled_families:
             raise PreparationError("preparation_family_unavailable")
+        if getattr(family, "preparation_owner_kind", None) == "command-v3":
+            from .host_command import HostCommandAdmission
+            if (type(self.command_admission) is not HostCommandAdmission
+                    or self.command_admission.helper_sha256 != family.helper_sha256):
+                raise PreparationError("command_preparation_not_admitted")
         return family
 
     def execution_available_for_recipe(self, record):
@@ -339,7 +350,9 @@ class PreparationRunner:
         matching = [family for family in self.store.families.values() if keys == {
             component.reference.key for component in getattr(family, "components", (family.component,))}]
         if matching:
-            return len(matching) == 1 and matching[0].component.reference.key in self.enabled_families
+            return (len(matching) == 1 and matching[0].component.reference.key in self.enabled_families
+                and (getattr(matching[0], "preparation_owner_kind", None) != "command-v3"
+                     or self.command_admission is not None and self.command_admission.helper_sha256 == matching[0].helper_sha256))
         from .recipes import LEGACY_COMPONENT_KEYS, builtin_components
         catalog = builtin_components()
         return len(keys) == 1 and all(component + "@" + version in LEGACY_COMPONENT_KEYS
@@ -485,7 +498,12 @@ class PreparationRunner:
             for metadata in self.store.ownership_receipts(job["job_id"]):
                 if workspace is not None and verify_receipt(Path(workspace), metadata):
                     self.store.confirm_ownership(job["job_id"], metadata["instance_id"])
-            if not self.store.ownership_receipts(job["job_id"]):
+            from .preparation_command_owner import recover_command_ownership
+            for metadata in self.store.command_ownership(job["job_id"]):
+                identity = recover_command_ownership(Path(workspace), metadata) if workspace is not None else None
+                if identity is not None:
+                    self.store.confirm_command_ownership(job["job_id"], metadata["instance_id"], identity)
+            if not self.store.pending_ownership(job["job_id"]):
                 job = self.store.settle(job["job_id"])
             if job["ownership_settled"] and not job["reservation_retained"]:
                 await asyncio.to_thread(self.store.release_family_inputs, job["job_id"])
@@ -710,7 +728,14 @@ class PreparationRunner:
                 self.store.record_progress(attempt.job_id, "verifying")
                 probe_workspace = attempt.workspace / "probe"
                 probe_workspace.mkdir(mode=0o700)
-                probe_owner = JournaledPreparationOwner(self.reaper, self.store, attempt.job_id, attempt.workspace)
+                family = self._require_admission(descriptor)
+                if getattr(family, "preparation_owner_kind", None) == "command-v3":
+                    from .preparation_command_owner import CommandPreparationOwner
+                    probe_owner = CommandPreparationOwner(self.command_admission, self.store, attempt.job_id,
+                        attempt.workspace, package, descriptor, attempt_id=attempt.command_attempt_id,
+                        check=attempt.check, deadline=attempt.deadline)
+                else:
+                    probe_owner = JournaledPreparationOwner(self.reaper, self.store, attempt.job_id, attempt.workspace)
                 attempt.owners.append(probe_owner)
                 report = await self._controlled(attempt, self._verify(package.root, descriptor,
                     probe_workspace, timeout_seconds=attempt.deadline - time.monotonic(), owner=probe_owner))
@@ -779,7 +804,7 @@ class PreparationRunner:
                 settled = False
             if not owner.confirm_completed():
                 settled = False
-        if self.store.ownership_receipts(attempt.job_id):
+        if self.store.pending_ownership(attempt.job_id):
             settled = False
         if attempt.stage is not None:
             await asyncio.to_thread(self.store.imports._discard_attachment_stage, Path(attempt.stage["path"]))

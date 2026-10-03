@@ -136,6 +136,42 @@ async def _join(awaitable):
     return task.result()
 
 
+def validate_command_journal(value: dict) -> None:
+    if type(value) is not dict or set(value) != {"version", "entries"} or type(value["version"]) is not int or value["version"] != 3 or type(value["entries"]) is not list or len(value["entries"]) > 256:
+        raise CommandExecutionError("invalid_command_journal")
+    identities = set()
+    for item in value["entries"]:
+        if (type(item) is not dict or set(item) != {"instance", "nonce", "helper_digest", "policy_digest", "contract_digest", "units", "state", "receipt_failed"} or
+                not _hex(item["instance"], 32) or item["instance"] in identities or
+                any(not _hex(item[key]) for key in ("nonce", "helper_digest", "policy_digest", "contract_digest")) or
+                type(item["units"]) is not int or not 1 <= item["units"] <= 4096 or item["state"] not in ("pending", "settled") or
+                type(item["receipt_failed"]) is not bool):
+            raise CommandExecutionError("invalid_command_journal")
+        identities.add(item["instance"])
+
+
+def verify_command_completion(state: Path, item: dict) -> tuple[bool, int]:
+    """Read a published format-3 proof without adopting native process identity."""
+    if item["receipt_failed"]:
+        return False, 0
+    try:
+        path = state / (item["instance"] + ".command-v3.complete")
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o400 or info.st_nlink != 1 or info.st_size != RECEIPT_SIZE:
+                return False, 0
+            frame = os.read(fd, RECEIPT_SIZE + 1)
+        finally:
+            os.close(fd)
+        valid = len(frame) == RECEIPT_SIZE and frame[:SEED_SIZE] == _seed(item) and frame[SEED_SIZE:SEED_SIZE + 1] in (b"C", b"N")
+        code = struct.unpack("!i", frame[-4:])[0] if valid else 0
+        valid = valid and -127 <= code <= 255 and (frame[SEED_SIZE:SEED_SIZE + 1] != b"N" or code == 0)
+        return valid, code if valid else 0
+    except (OSError, ValueError):
+        return False, 0
+
+
 class CommandExecutorV2:
     def __init__(self, helper: Path, expected_helper_sha256: str, state: Path, *, admit: Callable[[CommandSpecV2], bool]):
         self.policy_digest = _platform_policy()
@@ -178,18 +214,7 @@ class CommandExecutorV2:
             raise CommandExecutionError("command_helper_mismatch") from None
 
     def _validate_journal(self) -> None:
-        value = self.journal
-        if type(value) is not dict or set(value) != {"version", "entries"} or type(value["version"]) is not int or value["version"] != 3 or type(value["entries"]) is not list or len(value["entries"]) > 256:
-            raise CommandExecutionError("invalid_command_journal")
-        identities = set()
-        for item in value["entries"]:
-            if (type(item) is not dict or set(item) != {"instance", "nonce", "helper_digest", "policy_digest", "contract_digest", "units", "state", "receipt_failed"} or
-                    not _hex(item["instance"], 32) or item["instance"] in identities or
-                    any(not _hex(item[key]) for key in ("nonce", "helper_digest", "policy_digest", "contract_digest")) or
-                    type(item["units"]) is not int or not 1 <= item["units"] <= 4096 or item["state"] not in ("pending", "settled") or
-                    type(item["receipt_failed"]) is not bool):
-                raise CommandExecutionError("invalid_command_journal")
-            identities.add(item["instance"])
+        validate_command_journal(self.journal)
 
     def _receipt_path(self, item: dict) -> Path:
         return self.state / (item["instance"] + ".command-v3.complete")
@@ -205,22 +230,7 @@ class CommandExecutorV2:
             # A visible marker cannot race the current owner's final sync or
             # observed error. Restart has no adopted process handle.
             return False, 0
-        try:
-            path = self._receipt_path(item)
-            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-            try:
-                info = os.fstat(fd)
-                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o400 or info.st_nlink != 1 or info.st_size != RECEIPT_SIZE:
-                    return False, 0
-                frame = os.read(fd, RECEIPT_SIZE + 1)
-            finally:
-                os.close(fd)
-            valid = len(frame) == RECEIPT_SIZE and frame[:SEED_SIZE] == _seed(item) and frame[SEED_SIZE:SEED_SIZE + 1] in (b"C", b"N")
-            code = struct.unpack("!i", frame[-4:])[0] if valid else 0
-            valid = valid and -127 <= code <= 255 and (frame[SEED_SIZE:SEED_SIZE + 1] != b"N" or code == 0)
-            return valid, code if valid else 0
-        except (OSError, ValueError):
-            return False, 0
+        return verify_command_completion(self.state, item)
 
     def reconcile(self) -> dict[str, int]:
         changed = False

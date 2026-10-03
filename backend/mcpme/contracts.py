@@ -243,6 +243,31 @@ class PackageManifest(StrictModel):
     licenses: list[Label] = Field(min_length=1, max_length=128)
 
 
+class HostCommand(StrictModel):
+    """Versioned fixed argv / JSON stdin contract; selected code has no host API."""
+    version: Literal[1]
+    component: Literal["macos26-arm64-command-v3"]
+    helper_sha256: Digest
+    commands: dict[SettingName, Entrypoint] = Field(min_length=1, max_length=16)
+    deadline_ms: int = Field(ge=1, le=30000)
+    input_bytes: int = Field(ge=1, le=65536)
+    output_bytes: int = Field(ge=1, le=65536)
+    queue_limit: int = Field(default=4, ge=1, le=8)
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def exact_version(cls, value):
+        if type(value) is not int:
+            raise ValueError("invalid_host_command_contract")
+        return value
+
+
+class HostCommandManifest(PackageManifest):
+    schema_version: Literal[2]
+    profile: Literal["host-command"]
+    command: HostCommand
+
+
 class Artifact(StrictModel):
     path: Label
     sha256: Digest
@@ -387,6 +412,70 @@ def _check_tool_schema(schema: dict[str, Any]) -> None:
         raise PackageError("invalid_tool_schema") from None
 
 
+def _check_host_command_schema(schema: dict[str, Any], byte_limit: int) -> None:
+    """Bound trusted-host validation work; never evaluate selected regex/refs."""
+    unsupported = "unsupported_host_command_schema"
+    def size(value):
+        try:
+            return len(value.encode())
+        except UnicodeError:
+            raise PackageError(unsupported) from None
+    pending = [(schema, 0)]
+    nodes = 0
+    while pending:
+        value, depth = pending.pop()
+        nodes += 1
+        if type(value) is not dict or nodes > 128 or depth > 8:
+            raise PackageError(unsupported)
+        kind = value.get("type")
+        common = {"type", "title", "description"}
+        allowed = {"object": {"properties", "required", "additionalProperties"},
+                   "array": {"items", "minItems", "maxItems"},
+                   "string": {"minLength", "maxLength", "enum"},
+                   "integer": {"minimum", "maximum", "enum"},
+                   "number": {"minimum", "maximum", "enum"},
+                   "boolean": {"enum"}, "null": {"enum"}}
+        if type(kind) is not str or kind not in allowed or set(value) - common - allowed[kind]:
+            raise PackageError(unsupported)
+        for key in ("title", "description"):
+            if key in value and (type(value[key]) is not str or size(value[key]) > min(byte_limit, 4096)):
+                raise PackageError(unsupported)
+        if kind == "object":
+            properties = value.get("properties")
+            required = value.get("required", [])
+            if (type(properties) is not dict or len(properties) > 32 or value.get("additionalProperties") is not False
+                    or any(type(key) is not str or not 1 <= size(key) <= min(byte_limit, 256) for key in properties)
+                    or type(required) is not list or len(required) > 32
+                    or any(type(key) is not str or key not in properties for key in required)
+                    or len(set(required)) != len(required)):
+                raise PackageError(unsupported)
+            pending.extend((child, depth + 1) for child in properties.values())
+        elif kind in {"array", "string"}:
+            lower, upper = ("minItems", "maxItems") if kind == "array" else ("minLength", "maxLength")
+            maximum = value.get(upper)
+            minimum = value.get(lower, 0)
+            ceiling = min(byte_limit, 64 if kind == "array" else 16384)
+            if type(minimum) is not int or type(maximum) is not int or not 0 <= minimum <= maximum <= ceiling:
+                raise PackageError(unsupported)
+            if kind == "array":
+                pending.append((value.get("items"), depth + 1))
+        if kind in {"integer", "number"}:
+            for key in ("minimum", "maximum"):
+                if key in value and (type(value[key]) not in {int, float}
+                                     or type(value[key]) is float and not math.isfinite(value[key])):
+                    raise PackageError(unsupported)
+            if "minimum" in value and "maximum" in value and value["minimum"] > value["maximum"]:
+                raise PackageError(unsupported)
+        if "enum" in value:
+            enum = value["enum"]
+            types = {"string": {str}, "integer": {int}, "number": {int, float}, "boolean": {bool}, "null": {type(None)}}
+            if (type(enum) is not list or not 1 <= len(enum) <= 32
+                    or any(type(item) not in types[kind] or type(item) is float and not math.isfinite(item) for item in enum)
+                    or size(json.dumps(enum, ensure_ascii=False, allow_nan=False)) > byte_limit
+                    or kind == "string" and any(size(item) > min(byte_limit, 16384) for item in enum)):
+                raise PackageError(unsupported)
+
+
 def _tree(root: Path) -> tuple[set[str], set[str]]:
     files: set[str] = set()
     directories: set[str] = {"."}
@@ -422,16 +511,31 @@ def validate_package(root: Path) -> ValidatedPackage:
             raise PackageError("unsafe_package_path")
         manifest_bytes, manifest_json = _metadata(root, MANIFEST_NAME)
         lock_bytes, lock_json = _metadata(root, LOCK_NAME)
-        if (type(manifest_json.get("schema_version")) is not int or manifest_json.get("schema_version") != 1
+        if (type(manifest_json.get("schema_version")) is not int or manifest_json.get("schema_version") not in (1, 2)
                 or type(lock_json.get("schema_version")) is not int or lock_json.get("schema_version") != 1):
             raise PackageError("unsupported_package_schema")
-        manifest = PackageManifest.model_validate(manifest_json)
+        if manifest_json["schema_version"] == 2 and manifest_json.get("profile") != "host-command":
+            raise PackageError("unsupported_package_schema")
+        manifest = (PackageManifest if manifest_json["schema_version"] == 1 else HostCommandManifest).model_validate(manifest_json)
         lock = PackageLock.model_validate(lock_json)
         if type(manifest_json.get("host_api_version", 1)) is not int:
             raise PackageError("invalid_package_schema")
         if manifest.resources.cpu_only and manifest.resources.gpu:
             raise PackageError("invalid_resource_declaration")
-        if manifest.profile == "mcp-stdio":
+        if manifest.profile == "host-command":
+            if (manifest.entrypoint is not None or manifest.processes or manifest.model is not None
+                    or manifest.http is not None or manifest.adapter_process is not None
+                    or not manifest.resources.cpu_only or manifest.resources.gpu or manifest.resources.memory_mb > 4096
+                    or manifest.access != Access() or manifest.configuration.fields
+                    or set(manifest.command.commands) != {tool.name for tool in manifest.tools}
+                    or manifest.command.deadline_ms > manifest.lifecycle.operation_timeout_seconds * 1000
+                    or any(tool.output_schema is None or tool.input_schema.get("additionalProperties") is not False
+                           or tool.output_schema.get("additionalProperties") is not False for tool in manifest.tools)):
+                raise PackageError("invalid_host_command_contract")
+            for tool in manifest.tools:
+                _check_host_command_schema(tool.input_schema, manifest.command.input_bytes)
+                _check_host_command_schema(tool.output_schema, manifest.command.output_bytes)
+        elif manifest.profile == "mcp-stdio":
             if (manifest.entrypoint is None or manifest.processes or manifest.model is not None
                     or manifest.http is not None or manifest.adapter_process is not None or not manifest.resources.cpu_only
                     or manifest.resources.memory_mb > 4096):
@@ -513,8 +617,9 @@ def validate_package(root: Path) -> ValidatedPackage:
             package_relative_path(license_path)
             if license_path not in artifacts or artifacts[license_path].size == 0:
                 raise PackageError("license_required")
-        entries = ([manifest.entrypoint] if manifest.profile == "mcp-stdio"
-                   else [process.entrypoint for process in manifest.processes])
+        entries = ([manifest.entrypoint] if manifest.profile == "mcp-stdio" else
+                   list(manifest.command.commands.values()) if manifest.profile == "host-command" else
+                   [process.entrypoint for process in manifest.processes])
         for entry in entries:
             package_relative_path(entry.executable)
             package_relative_path(entry.cwd, allow_dot=True)

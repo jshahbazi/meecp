@@ -182,6 +182,7 @@ private struct ImportDraft {
     let name: String
     let sourcePath: String
     let sourceKind: String
+    let sourceRevision: String?
     let sourceSnapshotPath: String?
     let intent: String
     let documentRole: String?
@@ -212,6 +213,7 @@ private struct ImportDraft {
         guard intent.count <= 16384, !intent.contains("\0") else { return nil }
         self.id = id; self.revision = revision; self.state = state; self.name = name
         self.sourcePath = path; self.sourceKind = kind; self.intent = intent
+        self.sourceRevision = preparationText(source["revision"], maximum: 256)
         let snapshot = source["snapshot_path"] as? String
         self.sourceSnapshotPath = snapshot?.hasPrefix("/") == true ? snapshot : nil
         self.documentRole = safeCode(object["document_role"]); self.start = start; self.policy = policy
@@ -440,6 +442,9 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private var operationStopButton: NSButton?
     private var modelEngineButton: NSButton?
     private var modelProfileButton: NSButton?
+    private var recipesWindow: NSWindow?
+    private let recipesView = PreparationRecipesView()
+    private let preparationView = PreparationWorkspaceView()
     private let stateDirectory: URL = {
         if let configured = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"], configured.hasPrefix("/") {
             return URL(fileURLWithPath: configured, isDirectory: true)
@@ -548,6 +553,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private func resetHostRequestState() {
         pollInFlight = false; importsPollInFlight = false; downloadsPolling = false
         setupRequest = false; detailRequests = []; pendingAppRequests = []
+        preparationView.invalidate(); recipesView.invalidate()
     }
 
     private func startHost() {
@@ -655,7 +661,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             self.hostAvailable = true
             self.projects = parsed.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }; self.operations = operations.compactMap(Operation.init)
             self.hostMessage = "\(parsed.filter { $0.state == "ready" }.count) ready / \(parsed.count) installed"
-            self.rebuildMenu(); self.refreshWindow(); self.pollTrackedOperations(); self.pollImports(); self.pollDownloads()
+            self.rebuildMenu(); self.refreshWindow(); self.pollTrackedOperations(); self.pollImports(); self.pollDownloads(); self.preparationView.poll()
             if Date().timeIntervalSince(self.lastDetailRefresh) >= 6 {
                 var selected: Set<String> = []
                 if self.dashboard.isVisible, let id = self.dashboard.selectedID { selected.insert(id) }
@@ -943,8 +949,22 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let engine = button("Choose Model Engine…", action: #selector(chooseModelEngine)); self.modelEngineButton = engine
         let profile = button("Use JevK5 Decision Tools", action: #selector(selectModelProfile)); self.modelProfileButton = profile
         let modelControls = workspaceStack([engine, profile], horizontal: true)
-        let prepareCard = workspaceCard("2. Prepare the app", subtitle: "If your source needs an adapter, give the instructions to your coding agent, then import its prepared package.",
-                                        views: [handoff, handoffReturn, modelControls])
+        let recipes = button("Manage Recipes…", action: #selector(showPreparationRecipes))
+        preparationView.available = { [weak self] in
+            guard let self else { return false }
+            return !uiPreviewMode && self.connection() != nil && self.hostAvailable && !self.setupRequest && !self.stopping && !self.quitting
+        }
+        preparationView.request = { [weak self] path, method, body, completion in self?.request(path, method: method, body: body, completion: completion) }
+        preparationView.onUpdatedDraft = { [weak self] object in
+            guard let self, !self.draftDirty, !self.setupRequest, let current = self.currentDraft, let updated = ImportDraft(object),
+                  updated.id == current.id, updated.revision >= current.revision, updated.sourceRevision == current.sourceRevision else { return false }
+            self.displayDraft(updated); return true
+        }
+        preparationView.onStateChange = { [weak self] in self?.refreshWindow() }
+        preparationView.onAttached = { [weak self] in self?.pollImports() }
+        recipesView.onRegistryChange = { [weak self] in self?.preparationView.registryChanged() }
+        let prepareCard = workspaceCard("2. Prepare the app", subtitle: "Answer the detected questions and review the preparation plan. You can also export instructions for your coding agent.",
+                                        views: [recipes, preparationView, handoff, handoffReturn, modelControls])
         configurationView.onChange = { [weak self] in self?.setupChanged() }
         configurationView.onCreateSecret = { [weak self] name in self?.createSecret(name) }
         let configureCard = workspaceCard("Configure the prepared app", subtitle: "Choose nonsecret settings and saved secret references before reviewing the exact plan.", views: [configurationView])
@@ -987,6 +1007,12 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private func refreshWindow() {
+        recipesView.refreshAvailability()
+        let preparationContext = currentDraft.flatMap { draft in
+            draft.sourceRevision.flatMap { PreparationContext(importID: draft.id, revision: draft.revision, sourceRevision: $0) }
+        }
+        preparationView.bind(preparationContext, saved: !draftDirty, eligible: currentDraft?.editable == true && currentDraft?.packagePath == nil)
+        preparationView.refreshAvailability()
         refreshActionButtons()
         if let id = pendingInstalledSelection, projects.contains(where: { $0.id == id }), management != nil {
             pendingInstalledSelection = nil; management?.select(id: id)
@@ -996,7 +1022,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let operation = setupOperation.flatMap { id in operations.first { $0.id == id } }
         let active = operation.map { $0.active || $0.status == "recovery_required" } ?? (setupOperation != nil)
         let enabled = process?.isRunning == true && connection() != nil && !stopping && !quitting && !setupRequest && !active
-        let editable = enabled && (currentDraft?.editable ?? true)
+        let editable = enabled && (currentDraft?.editable ?? true) && !preparationView.busy && !preparationView.hasActiveJob
         chooseButton?.isEnabled = intakeEnabled; newDraftButton?.isEnabled = !setupRequest && connection() != nil
         starterButton?.isEnabled = intakeEnabled && bundledStarterPackage != nil
         starterLabel?.stringValue = bundledStarterPackage == nil ? "The included app is unavailable in this copy of mcpme." :
@@ -1012,7 +1038,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         copyInstructionsButton?.isEnabled = editable && currentDraft != nil
         exportDraftButton?.isEnabled = editable && currentDraft != nil
         attachButton?.isEnabled = editable && currentDraft != nil
-        cancelDraftButton?.isEnabled = editable && currentDraft != nil
+        cancelDraftButton?.isEnabled = enabled && currentDraft?.editable == true && !preparationView.busy
         reviewButton?.isEnabled = editable && (currentDraft?.packagePath != nil || currentDraft == nil && !(pathField?.stringValue.isEmpty ?? true))
         installButton?.isEnabled = enabled && setupPlan != nil && setupOperation == nil && !draftDirty
         planDetailsButton?.isEnabled = setupPlan != nil
@@ -1571,7 +1597,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
 
     private func pollImports() {
         guard !uiPreviewMode else { return }
-        guard !importsPollInFlight, !setupRequest, connection() != nil else { return }
+        guard !importsPollInFlight, !setupRequest, !preparationView.busy, connection() != nil else { return }
         importsPollInFlight = true
         let expectedViewGeneration = importViewGeneration
         request("v1/imports") { [weak self] object, _ in
@@ -1581,12 +1607,12 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             guard drafts.count == rows.count, Set(drafts.map(\.id)).count == drafts.count else { return }
             self.drafts = drafts; self.updateDraftPicker()
             let selectedID = self.currentDraft?.id ?? self.savedSetup["import_id"] as? String
-            if let id = selectedID, let draft = drafts.first(where: { $0.id == id }), !self.draftDirty, !self.setupRequest,
+            if let id = selectedID, let draft = drafts.first(where: { $0.id == id }), !self.draftDirty, !self.setupRequest, !self.preparationView.busy,
                expectedViewGeneration == self.importViewGeneration {
                 let previous = self.currentDraft
                 if previous == nil || previous?.revision != draft.revision || previous?.state != draft.state || previous?.packageDigest != draft.packageDigest || previous?.operationID != draft.operationID {
                     self.request("v1/imports/" + id) { [weak self] object, _ in
-                        guard let self = self, !self.draftDirty, !self.setupRequest,
+                        guard let self = self, !self.draftDirty, !self.setupRequest, !self.preparationView.busy,
                               expectedViewGeneration == self.importViewGeneration,
                               self.currentDraft?.id == id || (self.currentDraft == nil && self.savedSetup["import_id"] as? String == id),
                               let object = object, let complete = ImportDraft(object), complete.revision >= draft.revision else { return }
@@ -2014,6 +2040,27 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
               let text = String(data: data, encoding: .utf8) else { return "Unavailable" }; return text
     }
 
+    @objc private func showPreparationRecipes() {
+        if recipesWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 510),
+                                  styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+            window.title = "Manage Recipes"; window.contentMinSize = NSSize(width: 680, height: 510)
+            window.isReleasedWhenClosed = false; window.center()
+            let container = NSView(); window.contentView = container
+            recipesView.translatesAutoresizingMaskIntoConstraints = false; container.addSubview(recipesView)
+            NSLayoutConstraint.activate([recipesView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+                recipesView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+                recipesView.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
+                recipesView.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -20)])
+            recipesView.available = { [weak self] in self?.connection() != nil && self?.hostAvailable == true }
+            recipesView.request = { [weak self] path, method, body, completion in
+                self?.request(path, method: method, body: body, completion: completion)
+            }
+            recipesWindow = window
+        }
+        recipesView.refreshRecipes(); recipesWindow?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+    }
+
     private func persistSetup() {
         guard !uiPreviewMode else { return }
         var object: [String: Any] = ["schema_version": 1,
@@ -2159,6 +2206,42 @@ private func nativeSelfTest() -> Bool {
 }
 
 extension McpmeApp {
+    /// Exercises actual host form/review responses through the parent's draft callback.
+    fileprivate static func preparationBindingSelfTest(fixture: URL?) -> Bool {
+        guard let fixture else { return true }
+        guard let data = try? Data(contentsOf: fixture), data.count <= 1_048_576,
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
+        guard let formObject = object["form"] as? [String: Any], let reviewObject = object["review"] as? [String: Any] else { return true }
+        guard let form = OnboardingFormV1(formObject), let reviewed = PreparationReview(reviewObject, form: form) else { return false }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("mcpme-native-form-test-" + UUID().uuidString, isDirectory: true)
+        guard (try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])) != nil else { return false }
+        let prior = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"]
+        setenv("MCPME_STATE_DIR", directory.path, 1)
+        defer {
+            if let prior { setenv("MCPME_STATE_DIR", prior, 1) } else { unsetenv("MCPME_STATE_DIR") }
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let app = McpmeApp(); _ = app.makeSetupWorkspace()
+        var original = reviewed.draft; original["revision"] = form.revision
+        guard let draft = ImportDraft(original), draft.editable, draft.sourceRevision == form.sourceRevision else { return false }
+        app.currentDraft = draft; app.refreshWindow()
+        app.preparationView.available = { true }
+        var calls: [String] = []
+        app.preparationView.request = { path, method, _, complete in
+            calls.append(path)
+            guard method == "POST" else { complete(nil, "invalid_test_request"); return }
+            if path == "v1/preparations/form" { complete(formObject, nil) }
+            else if path == "v1/preparations/plan-form" { complete(reviewObject, nil) }
+            else { complete(nil, "invalid_test_request") }
+        }
+        app.preparationView.refreshForm(); app.preparationView.reviewForm()
+        return calls == ["v1/preparations/form", "v1/preparations/plan-form"]
+            && app.currentDraft?.revision == reviewed.context.revision
+            && app.preparationView.review?.context == reviewed.context
+            && app.preparationView.review?.formDigest == form.digest
+            && !app.preparationView.busy
+    }
+
     /// Checks the first-app route and opt-in publisher controls without contacting a host.
     fileprivate static func onboardingControlsSelfTest() -> Bool {
         let app = McpmeApp()
@@ -2294,8 +2377,18 @@ if CommandLine.arguments.dropFirst().first == "--dashboard-ui-self-test" {
 
 if CommandLine.arguments.dropFirst().first == "--management-ui-self-test" {
     _ = NSApplication.shared
-    let passed = managementViewSelfTest() && setupControlsSelfTest() && McpmeApp.recoveryControlsSelfTest() && McpmeApp.onboardingControlsSelfTest()
+    let passed = managementViewSelfTest() && setupControlsSelfTest() && McpmeApp.recoveryControlsSelfTest() && McpmeApp.onboardingControlsSelfTest() && preparationFormsSelfTest()
     print(passed ? "management_ui_contracts_passed" : "management_ui_contracts_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--preparation-ui-self-test" {
+    _ = NSApplication.shared
+    let arguments = Array(CommandLine.arguments.dropFirst())
+    guard arguments.count <= 2, arguments.count == 1 || arguments[1].hasPrefix("/") else { exit(2) }
+    let fixture = arguments.count == 2 ? URL(fileURLWithPath: arguments[1]) : nil
+    let passed = preparationFormsSelfTest(fixture: fixture) && McpmeApp.preparationBindingSelfTest(fixture: fixture)
+    print(passed ? "preparation_ui_contracts_passed" : "preparation_ui_contracts_failed")
     exit(passed ? 0 : 1)
 }
 

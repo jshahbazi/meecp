@@ -38,6 +38,12 @@ The harness answers generated directory questions, builds a real private runtime
 
 The run reports the foreground command's measured `ru_maxrss` separately from the 128 MiB declaration. Over-budget results are rejected after exit. There is no live physical-memory enforcement or aggregate adapter/reaper/command measurement in this spike, so memory acceptance remains open. This distinction appears in the machine-readable harness result.
 
+## Recorded clean checkpoint
+
+Implementation commit `fbe87c589bf9ee066f4de231dbdbbc9b2e6e4385` passed 112 focused tests in 18.10 seconds. Its unchanged clean checkout then ran the actual package harness in 6.418 seconds. The sealed package contained 2,949 artifacts and had digest `8f4921e7ee64b9cb407f3c6966d83f046b60f52fcd0d0f023c6cc2b7ab0d2072`.
+
+The harness passed generated directory questions with no source manifest, two real SDK calls across adapter restart, exact full tool definitions, relocated private-runtime execution after deleting original source/build/helpers and package mutation verification. Native receipt reconciliation ended with zero pending receipts and zero reserved memory. The command's measured foreground peak was 24,543,232 bytes against a 128 MiB declaration. The result reports `memory_enforcement: post-exit-foreground-measurement-only` and `A3: open`. These measurements describe the synthetic no-fork fixture on this macOS arm64 host.
+
 ## Integration and remaining gates
 
 Common owners can add the static component catalog/reference, register the directory inspector and generated form provider, and supply a reviewed private native helper/toolchain plus job-bound state directory. Public execution must remain disabled while the original A3 gates are open. Component identity covers the source validator, executor, form provider, native launcher, adapter and generator bytes.

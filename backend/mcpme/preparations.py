@@ -51,6 +51,8 @@ class PreparationStore(PreparationAuthority):
             self.db.execute("""CREATE TABLE IF NOT EXISTS preparation_jobs (
                 job_id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE NOT NULL,
                 input_digest TEXT NOT NULL, data TEXT NOT NULL)""")
+            self.db.execute("""CREATE TABLE IF NOT EXISTS preparation_selections (
+                import_id TEXT PRIMARY KEY, data TEXT NOT NULL)""")
             self._init_authority()
 
     def _get(self, job_id):
@@ -80,6 +82,7 @@ class PreparationStore(PreparationAuthority):
     def list_summaries(self):
         """Bound the public collection independently of detailed job bindings."""
         return [{"job_id": job["job_id"], "import_id": job["binding"]["import_id"],
+                 "source_revision": job["binding"]["source_revision"],
                  "revision": job["binding"]["revision"], "state": job["state"], "updated_at": job["updated_at"],
                  "reservation_retained": job["reservation_retained"], "error_code": job["error_code"],
                  "progress": job.get("progress")}
@@ -102,7 +105,7 @@ class PreparationStore(PreparationAuthority):
             self._save(job)
             return job
 
-    def _bound_descriptor(self, import_id, revision, value):
+    def _bound_descriptor(self, import_id, revision, value, *, enforce_selection=True):
         descriptor = parse_descriptor(value)
         # Full bundle hashing/schema evaluation occurs outside the connection
         # lock and write transaction. Admission rechecks only registry metadata.
@@ -110,6 +113,8 @@ class PreparationStore(PreparationAuthority):
         with self.imports._lock:
             draft = self.imports._get(import_id, revision)
             self.imports._mutable(draft)
+            if enforce_selection:
+                self._check_selection(descriptor, draft)
         if draft["source"]["kind"] == "prepared_package":
             raise PreparationError("preparation_not_required")
         manifest = recipe["manifest"]
@@ -140,14 +145,65 @@ class PreparationStore(PreparationAuthority):
                     "tools": [tool.model_dump(exclude_none=True) for tool in value.interface.tools],
                     "access": value.access.model_dump(), "resources": value.resources.model_dump()}
 
-    def _recheck_descriptor(self, descriptor, observed):
+    def _recheck_descriptor(self, descriptor, observed, *, enforce_selection=True):
         """Metadata-only check; caller holds the read lock or admission write."""
         current = self.imports._get(observed["draft_id"], observed["revision"])
         self.imports._mutable(current)
         if current["source"] != observed["source"]:
             raise PreparationError("source_identity_mismatch")
+        if enforce_selection:
+            self._check_selection(descriptor, current)
         selected = descriptor.recipe
         self.recipes.assert_admissible(selected.id, selected.version, selected.digest)
+        return current
+
+    def selected_descriptor(self, import_id):
+        with self.imports._lock:
+            row = self.db.execute("SELECT data FROM preparation_selections WHERE import_id=?", (import_id,)).fetchone()
+            return json.loads(row["data"]) if row is not None else None
+
+    def _check_selection(self, descriptor, draft):
+        selected = self.selected_descriptor(draft["draft_id"])
+        if selected is not None and (selected["revision"] != draft["revision"]
+                or selected["source_revision"] != draft["source"]["revision"]
+                or selected["descriptor_digest"] != descriptor.digest):
+            raise PreparationError("preparation_selection_mismatch")
+
+    def select_descriptor(self, import_id, revision, descriptor, *, candidate_id, form_digest):
+        """Atomically bind resolved questions to a new editable revision.
+
+        This grants no execution authority. Repeated identical resolution is
+        idempotent; every changed choice invalidates previous revision plans.
+        Legacy drafts without a selection keep their existing descriptor API.
+        """
+        from .imports import RETENTION_SECONDS, _choices, _remove_attachment_tree
+        from pathlib import Path
+        for digest in (candidate_id, form_digest):
+            if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+                raise PreparationError("invalid_preparation_form")
+        value, observed, _ = self._bound_descriptor(import_id, revision, descriptor, enforce_selection=False)
+        previous_attachment = None
+        with self.imports._transaction():
+            current = self._recheck_descriptor(value, observed, enforce_selection=False)
+            previous = self.selected_descriptor(import_id)
+            if previous is not None and (previous["revision"], previous["source_revision"],
+                    previous["descriptor_digest"], previous["candidate_id"]) == (
+                    revision, current["source"]["revision"], value.digest, candidate_id):
+                return current
+            previous_attachment = current["attachment"]
+            current["name"] = value.package.name
+            _choices(current)
+            current["attachment"] = None
+            current["revision"] += 1
+            current["expires_at"] = time.time() + RETENTION_SECONDS
+            self.imports._save(current)
+            selected = {"revision": current["revision"], "source_revision": current["source"]["revision"],
+                "candidate_id": candidate_id, "form_digest": form_digest,
+                "descriptor_digest": value.digest, "descriptor": value.model_dump(exclude_none=True)}
+            self.db.execute("INSERT OR REPLACE INTO preparation_selections VALUES (?,?)",
+                (import_id, json.dumps(selected, sort_keys=True, separators=(",", ":"), allow_nan=False)))
+        if previous_attachment is not None and previous_attachment["path"] != current["source"]["snapshot_path"]:
+            _remove_attachment_tree(Path(previous_attachment["path"]))
         return current
 
     @staticmethod

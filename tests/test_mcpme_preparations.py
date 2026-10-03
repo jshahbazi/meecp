@@ -365,7 +365,8 @@ def test_public_collection_has_compact_bounded_metadata(foundation):
     imports, recipes, jobs, draft, value = foundation
     job = jobs.reserve(draft["draft_id"], 1, value, policy(), idempotency_key=str(uuid.uuid4()))
     summary = jobs.list_summaries()[0]
-    assert set(summary) == {"job_id", "import_id", "revision", "state", "updated_at", "reservation_retained", "error_code", "progress"}
+    assert set(summary) == {"job_id", "import_id", "revision", "source_revision", "state", "updated_at", "reservation_retained", "error_code", "progress"}
+    assert summary["source_revision"] == draft["source"]["revision"]
     assert summary["job_id"] == job["job_id"] and summary["import_id"] == draft["draft_id"]
     assert len(json.dumps({"preparations": [summary] * 1024}, allow_nan=False).encode()) < 1024 * 1024
 

@@ -19,6 +19,10 @@ class ResolvedPythonInput(Contract):
 
 
 COMPONENT_ID = "resolved-python-v1"
+VERSION = "1.0.1"
+# Published component metadata remains immutable when a new host implementation
+# is minted. It is retained for saved recipe records, not implicit admission.
+PUBLISHED_COMPONENTS = {"1.0.0": "876ec0a299ff6b028ac8b747f72c610fc7f53c119cac4bf00de1e2405558f04f"}
 INPUT_SCHEMA = {"type": "object", "additionalProperties": False,
     "required": ["candidate_id", "resolution_digest", "source_license"],
     "properties": {"candidate_id": {"type": "string", "minLength": 64, "maxLength": 64},
@@ -29,12 +33,15 @@ INPUT_SCHEMA = {"type": "object", "additionalProperties": False,
 def component_catalog():
     # Identity changes when the trusted component or build implementation does.
     root = Path(__file__).parent
-    files = ["preparation_resolved_python.py", "preparation_builder.py"]
+    files = ["preparation_resolved_python.py", "preparation_builder.py",
+        "preparation_application_builder.py", "preparation_application_source.py"]
     digest = contract_digest("preparation-resolved-python-component-v1", [
         {"path": name, "sha256": hashlib.sha256((root / name).read_bytes()).hexdigest()} for name in files])
     # Recipe config is empty. Descriptor input belongs to the component below.
-    return {COMPONENT_ID + "@1.0.0": {"digest": digest,
-        "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []}}
+    identities = {**PUBLISHED_COMPONENTS, VERSION: digest}
+    return {COMPONENT_ID + "@" + version: {"digest": identity,
+        "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []}
+        for version, identity in identities.items()}
 
 
 def resolved_input(descriptor):
@@ -81,8 +88,8 @@ class ResolvedPythonComponent:
     legacy_interface_kinds = frozenset()
 
     def __init__(self):
-        self.reference = ComponentReference(id=COMPONENT_ID, version="1.0.0",
-            digest=component_catalog()[COMPONENT_ID + "@1.0.0"]["digest"])
+        self.reference = ComponentReference(id=COMPONENT_ID, version=VERSION,
+            digest=component_catalog()[COMPONENT_ID + "@" + VERSION]["digest"])
 
     def validate_source(self, descriptor, draft, recipe):
         candidate = source_candidate(descriptor, draft)

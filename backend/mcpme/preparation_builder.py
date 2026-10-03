@@ -572,6 +572,13 @@ def prepare_bound(descriptor, draft: dict, toolchain: PrivateToolchain, output: 
         # Importlib's source loader can create __pycache__ beside the sealed
         # implementation. Execute its already verified source without a cache.
         exec(compile(implementation, str(toolchain.root / "templates/prepare.py"), "exec"), generator.__dict__)
+        if (draft["source"].get("kind") == "application_directory"
+                and type(draft["source"].get("contract_version")) is int
+                and draft["source"]["contract_version"] == 2):
+            from .preparation_application_builder import copy_application_snapshot
+            # The published generator retains its v1 identity semantics. Only
+            # this trusted host binding may select the validated v2 adapter.
+            generator.source_snapshot = copy_application_snapshot
         if candidate is None:
             kind, module, function = value.interface.kind, value.interface.module, getattr(value.interface, "function", None)
             source_license, project = value.source_license, output / "source" / value.dependencies.project

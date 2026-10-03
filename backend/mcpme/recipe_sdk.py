@@ -170,7 +170,11 @@ def scaffold_recipe(output: Path, recipe_id: str, version: str = "1.0.0",
     if component not in COMPONENTS:
         raise PreparationError("recipe_component_unavailable")
     catalog = builtin_components()
-    entry = catalog.get(component + "@1.0.0")
+    component_version = "1.0.0"
+    if component == "resolved-python-v1":
+        from .preparation_resolved_python import ResolvedPythonComponent
+        component_version = ResolvedPythonComponent().reference.version
+    entry = catalog.get(component + "@" + component_version)
     if entry is None:
         raise PreparationError("recipe_component_unavailable")
     component_identity = entry["digest"]
@@ -183,7 +187,7 @@ def scaffold_recipe(output: Path, recipe_id: str, version: str = "1.0.0",
             "required": ["label"]},
         "form": [{"field": "label", "label": "Tool label", "kind": "string", "default": "Synthetic tool"},
                  {"field": "precision", "label": "Decimal places", "kind": "integer", "default": 2}],
-        "steps": [{"component": component, "version": "1.0.0", "digest": component_identity, "config": {}}],
+        "steps": [{"component": component, "version": component_version, "digest": component_identity, "config": {}}],
         "requirements": {"capabilities": ["declarative-composition", component]},
         "licenses": ["LICENSE"], "provenance": {"origin": "mcpme-recipe-sdk-v1", "publisher": "mcpme contributors"},
     })

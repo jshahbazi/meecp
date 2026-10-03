@@ -7,10 +7,10 @@
       "version": "1.0.0"
     },
     {
-      "digest": "64b4a9727453b41ebbecc5ed5ec94f8abe7a96d1bdbc7096e9c26553b2f3b49f",
-      "directory": "resolved-python-v1",
+      "digest": "086f3cbe68fc6412baad7dafb2f1c9c132275606460af030dd32391c8852d239",
+      "directory": "resolved-python-v1-0-1",
       "recipe_id": "mcpme.resolved-python",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "digest": "1ef17324b5efe21af607854d17a62026ac911388539afbd7e487a5e1048f3ba8",

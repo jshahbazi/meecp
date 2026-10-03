@@ -158,7 +158,7 @@ async def call(state_dir: Path, method: str, path: str, body: dict | None = None
         from .grants import read_credential
         # Reopen for every call; a removed or unsafe file never selects owner authority.
         token = read_credential(credential_file)["token"]
-    timeout = 300 if path in {"/v1/install/plan", "/v1/migrations/jevk5/plan", "/v1/imports"} or path.endswith("/attach") else 30
+    timeout = 300 if path in {"/v1/install/plan", "/v1/upgrade/plan", "/v1/migrations/jevk5/plan", "/v1/imports"} or path.endswith(("/attach", "/engine")) else 30
     async with httpx.AsyncClient(base_url=endpoint(connection), timeout=timeout, follow_redirects=False, trust_env=False,
                                  transport=private_transport(socket_path(state_dir, "manager")),
                                  headers={"Authorization": "Bearer " + token}) as client:
@@ -252,6 +252,16 @@ def parser() -> argparse.ArgumentParser:
     inspect = install.add_parser("inspect")
     inspect.add_argument("--plan", type=uuid_argument, required=True)
     inspect.add_argument("--json", action="store_true")
+    upgrade = commands.add_parser("upgrade").add_subparsers(dest="action", required=True)
+    upgrade_plan = upgrade.add_parser("plan")
+    upgrade_plan.add_argument("--slot", type=uuid_argument, required=True)
+    upgrade_plan.add_argument("--package", type=Path, required=True)
+    upgrade_plan.add_argument("--settings", type=Path, help="Owner-only JSON configuration and opaque secret references.")
+    upgrade_plan.add_argument("--json", action="store_true")
+    for action in ("inspect", "apply"):
+        item = upgrade.add_parser(action)
+        item.add_argument("--plan", type=uuid_argument, required=True)
+        item.add_argument("--json", action="store_true")
     authorize = commands.add_parser("authorize")
     scope = authorize.add_mutually_exclusive_group(required=True)
     scope.add_argument("--plan", type=uuid_argument)
@@ -285,6 +295,7 @@ def parser() -> argparse.ArgumentParser:
     imports.add_parser("list").add_argument("--json", action="store_true")
     create = imports.add_parser("create")
     create.add_argument("--source", type=Path, required=True)
+    create.add_argument("--model-engine", type=Path, help="Explicit verified engine build for a selected GGUF model.")
     create.add_argument("--name", required=True)
     create.add_argument("--intent", default="")
     create.add_argument("--document-role", choices=["instructions", "reference"])
@@ -292,13 +303,15 @@ def parser() -> argparse.ArgumentParser:
     create.add_argument("--start", action="store_true")
     create.add_argument("--start-policy", choices=["manual", "host"], default="manual")
     create.add_argument("--json", action="store_true")
-    for action in ("inspect", "revise", "export", "attach", "cancel", "expire"):
+    for action in ("inspect", "revise", "export", "attach", "engine", "cancel", "expire"):
         item = imports.add_parser(action)
         item.add_argument("draft_id", type=uuid_argument)
         if action != "inspect":
             item.add_argument("--revision", type=int, required=True)
         if action == "attach":
             item.add_argument("--package", type=Path, required=True)
+        if action == "engine":
+            item.add_argument("--model-engine", type=Path, required=True)
         if action == "revise":
             item.add_argument("--name")
             item.add_argument("--intent")
@@ -306,6 +319,8 @@ def parser() -> argparse.ArgumentParser:
             item.add_argument("--start", action=argparse.BooleanOptionalAction, default=None)
             item.add_argument("--start-policy", choices=["manual", "host"])
             item.add_argument("--requirements", type=Path, help="JSON file of tool/profile/resource requirements and settings references.")
+            item.add_argument("--carry-attachment", action="store_true",
+                              help="Retain the sealed attachment for compatible configuration or startup edits.")
         item.add_argument("--json", action="store_true")
     recipes = commands.add_parser("recipes").add_subparsers(dest="action", required=True)
     scaffold = recipes.add_parser("scaffold")
@@ -347,9 +362,11 @@ def parser() -> argparse.ArgumentParser:
         item = downloads.add_parser(action)
         item.add_argument("download_id", type=uuid_argument)
         item.add_argument("--json", action="store_true")
-    operation = commands.add_parser("operations").add_subparsers(dest="action", required=True).add_parser("get")
-    operation.add_argument("operation_id", type=uuid_argument)
-    operation.add_argument("--json", action="store_true")
+    operations = commands.add_parser("operations").add_subparsers(dest="action", required=True)
+    for action in ("get", "cancel", "recover"):
+        operation = operations.add_parser(action)
+        operation.add_argument("operation_id", type=uuid_argument)
+        operation.add_argument("--json", action="store_true")
     export = commands.add_parser("connections").add_subparsers(dest="action", required=True).add_parser("export")
     export.add_argument("--slot", type=uuid_argument, required=True)
     export.add_argument("--json", action="store_true")
@@ -503,6 +520,18 @@ async def execute(args) -> dict | None:
             except PrivateStateError as error:
                 return {"error": {"code": error.code}}
         return await api("POST", "/v1/install/plan", body)
+    if args.command == "upgrade":
+        if args.action == "inspect":
+            return await api("GET", "/v1/upgrade/plans/" + args.plan)
+        if args.action == "apply":
+            return await api("POST", "/v1/upgrade/apply", {"plan_id": args.plan})
+        body = {"slot_id": args.slot, "package": str(args.package.absolute())}
+        if args.settings is not None:
+            try:
+                body["settings"] = read_settings_file(args.settings)
+            except PrivateStateError as error:
+                return {"error": {"code": error.code}}
+        return await api("POST", "/v1/upgrade/plan", body)
     if args.command == "imports":
         if args.action == "list":
             return await api("GET", "/v1/imports")
@@ -513,6 +542,8 @@ async def execute(args) -> dict | None:
                 body["document_role"] = args.document_role
             if args.files is not None:
                 body["files"] = args.files
+            if args.model_engine is not None:
+                body["model_engine"] = str(args.model_engine.absolute())
             return await api("POST", "/v1/imports", body)
         route = "/v1/imports/" + args.draft_id
         if args.action == "inspect":
@@ -520,6 +551,8 @@ async def execute(args) -> dict | None:
         body = {"revision": args.revision}
         if args.action == "attach":
             body["package"] = str(args.package.absolute())
+        if args.action == "engine":
+            body["model_engine"] = str(args.model_engine.absolute())
         if args.action == "revise":
             for key in ("name", "intent", "document_role", "start", "start_policy"):
                 if getattr(args, key) is not None:
@@ -529,9 +562,14 @@ async def execute(args) -> dict | None:
                     body["requirements"] = read_requirements_file(args.requirements)
                 except PrivateStateError as error:
                     return {"error": {"code": error.code}}
+            if args.carry_attachment:
+                body["carry_attachment"] = True
         return await api("POST", route + "/" + args.action, body)
     if args.command == "operations":
-        return await api("GET", "/v1/operations/" + args.operation_id)
+        route = "/v1/operations/" + args.operation_id
+        if args.action == "get":
+            return await api("GET", route)
+        return await api("POST", route + "/" + args.action, {})
     if args.command == "connections":
         slot = await api("GET", "/v1/slots/" + args.slot)
         if "error" in slot:

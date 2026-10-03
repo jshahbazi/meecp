@@ -52,19 +52,19 @@ An import plan includes its revision and package digest in its first durable pub
 
 Apply checks the revision/digest before writing a durable installation intent and submitting the draft, without yielding between those steps. The registry intent contains its import binding and owns a separate candidate snapshot. On restart, reconciliation repairs a crash between the intent write and draft submission before draft mutation can occur. Concurrent applications of different plans for the same draft revision recover one operation. Interrupted installations retain Phase 1's `recovery_required` behavior; this milestone does not add automatic runtime reconciliation.
 
-Submitted drafts reject edits, return, cancel, and expiry while the operation is active, and remain finalized afterward. Failed/canceled operations retain their submitted draft as history; another attempt requires a new draft. Installation-operation cancellation remains unsupported.
+Submitted drafts reject edits, return, cancel, and expiry while the operation is active, and remain finalized afterward. Failed/canceled operations retain their submitted draft as history; another attempt requires a new draft. Installation-operation cancellation is available before exposure; submitted draft cancellation remains a separate inactive-draft action. Follow owner-authorized recovery through the linked operation.
 
-## Remaining Phase 2 work
+## Completion checks and later work
 
 Scoped owner-issued grants and a separate management MCP facade are implemented in the [management milestone](MANAGEMENT_MCP.md).
 
-Pinned prepared-package ZIP downloads are implemented through the owner CLI and API; see [pinned downloads](PINNED_DOWNLOADS.md). They return a statically verified package for the existing install plan, with exact byte/hash pins, durable progress, cancellation, and retry. Native download controls and byte-range resume remain pending.
+Pinned prepared-package ZIP downloads are implemented through the owner CLI and API; see [pinned downloads](PINNED_DOWNLOADS.md). They return a statically verified package for the existing install plan, with exact byte/hash pins, durable progress, cancellation, and retry. Native download controls are implemented. Partial byte-range resume remains unsupported; interrupted jobs retry safely.
 
-Typed nonsecret configuration and immutable owner-managed secret references are implemented through owner CLI/API planning and private runtime descriptors; see [configuration and secrets](CONFIGURATION_SECRETS.md). Import requirements bind the same choices to the draft revision. Native configuration forms and installed-settings edits remain pending.
+Typed nonsecret configuration and immutable owner-managed secret references are implemented through owner CLI/API planning and private runtime descriptors; see [configuration and secrets](CONFIGURATION_SECRETS.md). Import requirements bind the same choices to the draft revision. Native typed forms and installed-settings edits through reviewed generation upgrades are implemented.
 
-- Broader package profiles and native configuration/download controls.
-- Upgrades with candidate data snapshots, exposure-aware recovery, and rollback. Installed-app removal now preserves data; see [app management](MCPME_STATUS.md#manage-installed-apps).
-- Raw model/engine intake and end-to-end model preparation acceptance.
-- Supported reference-document services and integrated provider preparation.
+- Authenticated descriptor-configured MCP HTTP factories use a shared resident service with bounded sessions and explicit DELETE cleanup.
+- [Reviewed upgrades](UPGRADES_RECOVERY.md) use private candidate data snapshots, durable exposure permission, pre-exposure rollback and selected-generation recovery. Removal retains all private data generations.
+- Raw pinned JevK5 GGUF and engine intake, resumed engine selection, export-driven preparation and actual model-client acceptance are implemented.
+- [The completion audit](PHASE2_COMPLETION.md) tracks final committed-build checks. Reference-document services and integrated provider preparation remain later work.
 
 Read [verification](MCPME_PHASE2_VERIFICATION.md) for the checks performed on this milestone. The repeatable bundled-host acceptance command is `uv run --locked python scripts/verify_phase2.py --host /absolute/path/to/host`. It uses only synthetic source and a temporary private installation. Neither prepared-package declarations nor synthetic integration checks establish publisher trust or model quality.

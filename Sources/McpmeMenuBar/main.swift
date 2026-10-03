@@ -96,7 +96,7 @@ private struct Project: Equatable {
               let name = object["name"] as? String, !name.isEmpty, name.count <= 256,
               !name.unicodeScalars.contains(where: { $0.value < 32 }),
               let state = object["observed_state"] as? String,
-              ["stopped", "starting", "loading", "warming_up", "ready", "stopping", "draining", "failed", "ownership_lost"].contains(state),
+              ["stopped", "starting", "loading", "warming_up", "ready", "stopping", "draining", "failed", "ownership_lost", "updating"].contains(state),
               let port = integer(object["public_port"]), (1024...65535).contains(port),
               let policy = object["start_policy"] as? String, ["manual", "host", "first_call"].contains(policy),
               let generation = integer(object["generation"]), generation > 0 else { return nil }
@@ -112,10 +112,15 @@ private struct Project: Equatable {
     var status: String {
         ["stopped": "Stopped", "starting": "Starting", "loading": "Loading", "warming_up": "Warming up",
          "ready": "Ready", "stopping": "Stopping", "draining": "Stopping", "failed": "Failed",
-         "ownership_lost": "Reconciliation required"][state] ?? "Unavailable"
+         "ownership_lost": "Reconciliation required", "updating": "Updating"][state] ?? "Unavailable"
     }
     var policyLabel: String { ["manual": "Manual", "host": "Automatic", "first_call": "On first call"][policy] ?? "Manual" }
-    var blocked: Bool { state == "ownership_lost" || error == "installation_recovery_required" }
+    var blocked: Bool { ["ownership_lost", "updating"].contains(state) || ["installation_recovery_required", "removal_recovery_required", "upgrade_recovery_required"].contains(error ?? "") }
+}
+
+private func managementRequestTimeout(_ path: String, method: String) -> TimeInterval {
+    let preparesFiles = path == "v1/imports" || ["/plan", "/attach", "/engine"].contains { path.hasSuffix($0) }
+    return method == "POST" && preparesFiles ? 300 : 30
 }
 
 private struct Operation {
@@ -124,24 +129,50 @@ private struct Operation {
     let action: String
     let status: String
     let error: String?
+    let stage: String?
+    let exposed: Bool
 
     init?(_ object: [String: Any]) {
         guard let id = object["operation_id"] as? String, validUUID(id),
               let action = object["action"] as? String,
-              ["install", "start", "stop", "restart", "remove", "recover", "migrate"].contains(action),
+              ["install", "upgrade", "start", "stop", "restart", "remove", "recover", "migrate"].contains(action),
               let status = object["status"] as? String,
               ["pending", "running", "completed", "failed", "canceled", "recovery_required"].contains(status) else { return nil }
         self.id = id; self.action = action; self.status = status
         let projectID = object["slot_id"] as? String
         if let projectID = projectID, !validUUID(projectID) { return nil }
         self.projectID = projectID; self.error = safeCode(object["error_code"])
+        let details = object["details"] as? [String: Any] ?? [:]
+        self.stage = safeCode(details["stage"])
+        self.exposed = details["exposed"] as? Bool == true || details["exposure_committed"] as? Bool == true
     }
     var active: Bool { ["pending", "running"].contains(status) }
+    var canStopExposedRecovery: Bool {
+        ["install", "upgrade"].contains(action) && status == "recovery_required" && exposed && projectID != nil
+    }
+    var recoveryError: String? {
+        guard status == "recovery_required" else { return nil }
+        return ["install": "installation_recovery_required", "upgrade": "upgrade_recovery_required",
+                "remove": "removal_recovery_required"][action]
+    }
     var label: String {
         let state = ["pending": "Pending", "running": "Running", "completed": "Completed", "failed": "Failed",
                      "canceled": "Canceled", "recovery_required": "Recovery required"][status] ?? "Unavailable"
-        return action.capitalized + ": " + state + (error.map { " (\($0))" } ?? "")
+        return action.capitalized + ": " + state + (stage.map { " · " + $0.replacingOccurrences(of: "_", with: " ") } ?? "") + (error.map { " (\($0))" } ?? "")
     }
+}
+
+private func projectCanControl(_ project: Project, action: String, operations: [Operation], recoveryOperationID: String? = nil) -> Bool {
+    guard ["start", "stop", "restart", "remove"].contains(action),
+          project.state != "ownership_lost", project.error != "ownership_lost" else { return false }
+    let related = operations.filter { $0.projectID == project.id }
+    guard !related.contains(where: { $0.active }) else { return false }
+    let recoveries = related.filter { $0.recoveryError != nil }
+    if let recoveryOperationID {
+        return action == "stop" && recoveries.count == 1 && recoveries.first?.id == recoveryOperationID
+            && recoveries.first?.canStopExposedRecovery == true
+    }
+    return !project.blocked && recoveries.isEmpty
 }
 
 private struct ImportDraft {
@@ -161,6 +192,8 @@ private struct ImportDraft {
     let packageDigest: String?
     let operationID: String?
     let resultSlotID: String?
+    let requirements: [String: Any]
+    let attachment: [String: Any]?
 
     init?(_ object: [String: Any]) {
         let summary = object["summary"] as? Bool == true
@@ -184,6 +217,7 @@ private struct ImportDraft {
         self.documentRole = safeCode(object["document_role"]); self.start = start; self.policy = policy
         self.blockers = (object["blockers"] as? [[String: Any]] ?? []).compactMap { safeCode($0["code"]) }
         let attachment = object["attachment"] as? [String: Any]
+        self.attachment = attachment; self.requirements = object["requirements"] as? [String: Any] ?? [:]
         let packagePath = attachment?["path"] as? String
         self.packagePath = packagePath?.hasPrefix("/") == true ? packagePath : nil
         self.packageDigest = attachment?["digest"] as? String
@@ -216,7 +250,7 @@ private final class SourceDropView: NSView {
               urls.count == 1 else { return nil }
         let url = urls[0]
         let directory = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
-        return directory || ["md", "txt"].contains(url.pathExtension.lowercased()) ? url : nil
+        return directory || ["md", "txt", "gguf"].contains(url.pathExtension.lowercased()) ? url : nil
     }
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { source(sender) == nil ? [] : .copy }
     override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool { source(sender) != nil }
@@ -384,6 +418,24 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private var attachButton: NSButton?
     private var cancelDraftButton: NSButton?
     private var detailsWindow: NSWindow?
+    private let configurationView = SetupConfigurationView()
+    private var setupSettings: [String: Any] = ["schema_version": 1, "configuration": [String: Any](), "secret_references": [String: String]()]
+    private var secrets: [SetupSecret] = []
+    private var upgradeTarget: String?
+    private var downloadRows: [[String: Any]] = []
+    private var selectedDownload: [String: Any]?
+    private var downloadsPolling = false
+    private var downloadPicker: NSPopUpButton?
+    private var downloadLabel: NSTextField?
+    private var downloadStartButton: NSButton?
+    private var downloadCancelButton: NSButton?
+    private var downloadRetryButton: NSButton?
+    private var downloadUseButton: NSButton?
+    private var operationCancelButton: NSButton?
+    private var operationRecoverButton: NSButton?
+    private var operationStopButton: NSButton?
+    private var modelEngineButton: NSButton?
+    private var modelProfileButton: NSButton?
     private let stateDirectory: URL = {
         if let configured = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"], configured.hasPrefix("/") {
             return URL(fileURLWithPath: configured, isDirectory: true)
@@ -546,8 +598,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         }
         var request = URLRequest(url: connection.endpoint.appendingPathComponent(path))
         request.httpMethod = method
-        request.timeoutInterval = 30
-        if path.hasSuffix("/plan") || path.hasSuffix("/attach") || path == "v1/imports" && method == "POST" { request.timeoutInterval = 300 }
+        request.timeoutInterval = managementRequestTimeout(path, method: method)
         request.setValue("Bearer " + connection.token, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let body = body {
@@ -595,7 +646,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             self.hostAvailable = true
             self.projects = parsed.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }; self.operations = operations.compactMap(Operation.init)
             self.hostMessage = "\(parsed.filter { $0.state == "ready" }.count) ready / \(parsed.count) installed"
-            self.rebuildMenu(); self.refreshWindow(); self.pollTrackedOperations(); self.pollImports()
+            self.rebuildMenu(); self.refreshWindow(); self.pollTrackedOperations(); self.pollImports(); self.pollDownloads()
             if Date().timeIntervalSince(self.lastDetailRefresh) >= 6 {
                 var selected: Set<String> = []
                 if self.dashboard.isVisible, let id = self.dashboard.selectedID { selected.insert(id) }
@@ -651,10 +702,10 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             let busy = pendingAppRequests.contains(project.id) || operations.contains {
                 $0.projectID == project.id && $0.active
             }
-            let removalRecovery = operations.contains { $0.projectID == project.id && $0.action == "remove" && $0.status == "recovery_required" }
-            return DashboardApp(id: project.id, name: project.name, status: removalRecovery ? "Recovery required" : project.status, state: project.state,
+            let recoveryError = operations.first { $0.projectID == project.id && $0.recoveryError != nil }?.recoveryError
+            return DashboardApp(id: project.id, name: project.name, status: recoveryError != nil ? "Recovery required" : project.status, state: project.state,
                                 policy: project.policyLabel, activity: project.activity,
-                                error: removalRecovery ? "removal_recovery_required" : project.error, busy: busy)
+                                error: project.error == "ownership_lost" ? project.error : recoveryError ?? project.error, busy: busy)
         }
     }
 
@@ -666,15 +717,15 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         statusItem.button?.toolTip = "mcpme: " + hostMessage
     }
 
-    private func control(_ id: String, action: String) {
+    private func control(_ id: String, action: String, recoveryOperationID: String? = nil) {
         guard !uiPreviewMode else { return }
         guard hostAvailable, !stopping, !quitting, !pendingAppRequests.contains(id),
-              let project = projects.first(where: { $0.id == id }), !project.blocked,
-              !operations.contains(where: { $0.projectID == id && ($0.active || $0.action == "remove" && $0.status == "recovery_required") }) else { return }
-        pendingAppRequests.insert(id); refreshActionButtons(); rebuildMenu()
+              let project = projects.first(where: { $0.id == id }),
+              projectCanControl(project, action: action, operations: operations, recoveryOperationID: recoveryOperationID) else { return }
+        pendingAppRequests.insert(id); refreshWindow(); rebuildMenu()
         request("v1/slots/\(id)/\(action)", method: "POST", body: [:]) { [weak self] object, code in
             guard let self = self else { return }
-            self.pendingAppRequests.remove(id); self.refreshActionButtons(); self.rebuildMenu()
+            self.pendingAppRequests.remove(id); self.refreshWindow(); self.rebuildMenu()
             guard let object = object, let operation = Operation(object) else { self.showError(code ?? "invalid_response"); return }
             self.trackedOperations.insert(operation.id); self.operations.insert(operation, at: 0)
             self.rebuildMenu(); self.refreshWindow(); self.poll()
@@ -782,6 +833,9 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         installed.onCopy = { [weak self] id in self?.copyConfiguration(id) }
         installed.onPolicy = { [weak self] id, policy in self?.changeAppPolicy(id, policy: policy) }
         installed.onRemove = { [weak self] id in self?.removeApp(id) }
+        installed.onUpgrade = { [weak self] id in self?.chooseUpgrade(id) }
+        installed.onConfigure = { [weak self] id in self?.configureInstalled(id) }
+        installed.onOperation = { [weak self] id in self?.showAppOperation(id) }
         installed.onAdd = { [weak self] in self?.selectWorkspace(1) }
         installed.onRetry = { [weak self] in if !uiPreviewMode { self?.retryHost() } }
         let installedTab = NSTabViewItem(identifier: "installed"); installedTab.view = installed; tabs.addTabViewItem(installedTab)
@@ -816,7 +870,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         drop.selectedSource = { [weak self] url in self?.beginImport(url) }
         drop.heightAnchor.constraint(equalToConstant: 66).isActive = true
         let path = NSTextField(labelWithString: "")
-        path.placeholderString = "Drop a source folder, prepared package, or Markdown/text file"
+        path.placeholderString = "Drop a source folder, prepared package, text document, or GGUF model"
         path.isSelectable = true; path.lineBreakMode = .byTruncatingMiddle
         path.setAccessibilityLabel("Selected source")
         path.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -849,6 +903,17 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let sourceCard = workspaceCard("1. Choose your source", subtitle: "Start with a prepared app, a project folder, or a setup brief.",
             views: [drop, settings, workspaceLabel("What should your assistant be able to do?", size: 12, weight: .medium), intentScroll, role])
 
+        let download = button("Download Package…", action: #selector(beginDownload)); self.downloadStartButton = download
+        let downloads = NSPopUpButton(); downloads.addItem(withTitle: "No saved downloads")
+        downloads.target = self; downloads.action = #selector(selectDownload); downloads.setAccessibilityLabel("Saved package downloads"); self.downloadPicker = downloads
+        let downloadLabel = workspaceLabel("Downloads continue when this window closes.", size: 12, secondary: true); self.downloadLabel = downloadLabel
+        let cancelDownload = button("Cancel Download", action: #selector(cancelDownload)); self.downloadCancelButton = cancelDownload
+        let retryDownload = button("Retry Download", action: #selector(retryDownload)); self.downloadRetryButton = retryDownload
+        let useDownload = button("Use Downloaded Package", action: #selector(useDownload)); self.downloadUseButton = useDownload
+        let downloadCard = workspaceCard("Get a prepared package", subtitle: "Use a public HTTPS link with its exact byte count and SHA-256 from the publisher.",
+            views: [workspaceStack([download, downloads], horizontal: true), downloadLabel,
+                    workspaceStack([cancelDownload, retryDownload, useDownload], horizontal: true)])
+
         let save = button("Save Draft", action: #selector(saveDraft)); self.saveDraftButton = save
         let copy = button("Copy Agent Instructions", action: #selector(copyAgentInstructions)); self.copyInstructionsButton = copy
         let export = button("Export Setup Specification…", action: #selector(exportDraft)); self.exportDraftButton = export
@@ -856,8 +921,14 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let cancel = button("Cancel Draft", action: #selector(cancelDraft)); self.cancelDraftButton = cancel
         let handoff = workspaceStack([save, copy, export], horizontal: true, spacing: 8)
         let handoffReturn = workspaceStack([attach, cancel], horizontal: true, spacing: 8)
+        let engine = button("Choose Model Engine…", action: #selector(chooseModelEngine)); self.modelEngineButton = engine
+        let profile = button("Use JevK5 Decision Tools", action: #selector(selectModelProfile)); self.modelProfileButton = profile
+        let modelControls = workspaceStack([engine, profile], horizontal: true)
         let prepareCard = workspaceCard("2. Prepare the app", subtitle: "If your source needs an adapter, give the instructions to your coding agent, then import its prepared package.",
-                                        views: [handoff, handoffReturn])
+                                        views: [handoff, handoffReturn, modelControls])
+        configurationView.onChange = { [weak self] in self?.setupChanged() }
+        configurationView.onCreateSecret = { [weak self] name in self?.createSecret(name) }
+        let configureCard = workspaceCard("Configure the prepared app", subtitle: "Choose nonsecret settings and saved secret references before reviewing the exact plan.", views: [configurationView])
 
         let label = workspaceLabel("Choose a source to begin.", size: 13); self.setupLabel = label
         label.setAccessibilityLabel("Setup status")
@@ -875,9 +946,13 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let actions = workspaceStack([review, install, details], horizontal: true, spacing: 8)
         let showInstalled = button("Open Installed App", action: #selector(showInstalledApp))
         self.showInstalledButton = showInstalled
+        let cancelOperation = button("Cancel Operation", action: #selector(cancelSetupOperation)); self.operationCancelButton = cancelOperation
+        let recoverOperation = button("Recover Candidate", action: #selector(recoverSetupOperation)); self.operationRecoverButton = recoverOperation
+        let stopOperation = button("Stop Candidate", action: #selector(stopSetupOperation)); self.operationStopButton = stopOperation
+        stopOperation.toolTip = "Stop the exposed candidate and preserve its saved data while recovery remains required"
         let reviewCard = workspaceCard("3. Review and install", subtitle: "Check the tools, declared access, and startup choices before adding this app.",
-                                       views: [label, reviewScroll, actions, showInstalled])
-        for card in [sourceCard, prepareCard, reviewCard] {
+                                       views: [label, reviewScroll, actions, workspaceStack([cancelOperation, stopOperation, recoverOperation], horizontal: true), showInstalled])
+        for card in [sourceCard, downloadCard, prepareCard, configureCard, reviewCard] {
             content.addArrangedSubview(card); workspaceFill(card, in: content, inset: 28)
         }
         return page
@@ -889,7 +964,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private func refreshActionButtons() {
         management?.update(apps: dashboardApps, hostMessage: hostMessage,
                            available: hostAvailable && !stopping && !quitting,
-                           operations: operations.map { ManagementOperation(appID: $0.projectID, title: $0.label, status: $0.status) })
+                           operations: operations.map { ManagementOperation(appID: $0.projectID, title: $0.label, status: $0.status, action: $0.action) })
     }
 
     private func refreshWindow() {
@@ -899,12 +974,15 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         }
         setupHostText?.stringValue = uiPreviewMode ? "Preview · setup actions are disabled." :
             (hostAvailable ? "Drafts are kept when you switch views or close this window." : "Host unavailable. Setup will resume when the connection returns.")
-        let active = setupOperation.flatMap { id in operations.first { $0.id == id } }?.active ?? (setupOperation != nil)
+        let operation = setupOperation.flatMap { id in operations.first { $0.id == id } }
+        let active = operation.map { $0.active || $0.status == "recovery_required" } ?? (setupOperation != nil)
         let enabled = process?.isRunning == true && connection() != nil && !stopping && !quitting && !setupRequest && !active
         let editable = enabled && (currentDraft?.editable ?? true)
         chooseButton?.isEnabled = intakeEnabled; newDraftButton?.isEnabled = !setupRequest && connection() != nil
         draftField?.isEnabled = !setupRequest && connection() != nil
         nameField?.isEnabled = editable; policyField?.isEnabled = editable; startCheck?.isEnabled = editable
+        if upgradeTarget != nil { nameField?.isEnabled = false; policyField?.isEnabled = false; startCheck?.isEnabled = false }
+        configurationView.setEditable(editable)
         intentField?.isEditable = editable; documentRoleField?.isEnabled = editable && currentDraft?.isDocument == true
         documentRoleField?.isHidden = currentDraft?.isDocument != true
         saveDraftButton?.isEnabled = editable && currentDraft != nil && draftDirty
@@ -915,7 +993,29 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         reviewButton?.isEnabled = editable && (currentDraft?.packagePath != nil || currentDraft == nil && !(pathField?.stringValue.isEmpty ?? true))
         installButton?.isEnabled = enabled && setupPlan != nil && setupOperation == nil && !draftDirty
         planDetailsButton?.isEnabled = setupPlan != nil
-        installButton?.title = startCheck?.state == .on ? "Add & Start App" : "Add App"
+        installButton?.title = upgradeTarget != nil ? "Apply Reviewed Upgrade" : startCheck?.state == .on ? "Add & Start App" : "Add App"
+        startCheck?.title = upgradeTarget == nil ? "Start after install" : "Keep running after upgrade"
+        let operationAvailable = !uiPreviewMode && !setupRequest && hostAvailable && !stopping && !quitting
+            && !pendingAppRequests.contains(operation?.projectID ?? "")
+        operationCancelButton?.isHidden = operation == nil || !["install", "upgrade"].contains(operation!.action)
+        operationCancelButton?.isEnabled = operationAvailable && operation?.active == true && operation?.exposed == false
+        operationRecoverButton?.isHidden = operation?.status != "recovery_required"
+        operationRecoverButton?.isEnabled = operationAvailable && operation?.status == "recovery_required"
+        operationStopButton?.isHidden = operation?.canStopExposedRecovery != true
+        operationStopButton?.isEnabled = operationAvailable && operation.map { operation in
+            projects.first(where: { $0.id == operation.projectID }).map {
+                projectCanControl($0, action: "stop", operations: operations, recoveryOperationID: operation.id)
+            } ?? false
+        } == true
+        let model = currentDraft?.sourceKind == "artifact_collection"
+        modelEngineButton?.isHidden = !model; modelProfileButton?.isHidden = !model
+        modelEngineButton?.isEnabled = editable && model; modelProfileButton?.isEnabled = editable && model
+        downloadStartButton?.isEnabled = intakeEnabled
+        downloadPicker?.isEnabled = !uiPreviewMode && !setupRequest
+        let downloadStatus = selectedDownload?["status"] as? String
+        downloadCancelButton?.isEnabled = intakeEnabled && ["pending", "running"].contains(downloadStatus ?? "")
+        downloadRetryButton?.isEnabled = intakeEnabled && ["failed", "canceled"].contains(downloadStatus ?? "")
+        downloadUseButton?.isEnabled = intakeEnabled && downloadStatus == "completed" && selectedDownload?["package_path"] is String
         showInstalledButton?.isHidden = installedSetupAppID == nil
     }
 
@@ -935,12 +1035,271 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         !uiPreviewMode && !setupRequest && !stopping && !quitting && connection() != nil
     }
 
+    private func pollSecrets() {
+        guard !uiPreviewMode, connection() != nil else { return }
+        request("v1/secrets") { [weak self] object, _ in
+            guard let self, let rows = object?["secrets"] as? [[String: Any]] else { return }
+            self.secrets = rows.compactMap(SetupSecret.init)
+            self.configurationView.updateSecrets(self.secrets)
+        }
+    }
+
+    private func createSecret(_ logicalName: String) {
+        guard intakeEnabled, let window else { return }
+        let panel = NSOpenPanel(); panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+        panel.message = "Choose an owner-only file (mode 0600) containing this secret. Its value will not be displayed."
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .OK, let url = panel.url, let value = readSetupSecret(url) else {
+                if response == .OK { self?.setupLabel?.stringValue = "Choose a private, owner-only UTF-8 file containing at most 4,096 bytes." }; return
+            }
+            let alert = NSAlert(); alert.messageText = "Save a secret reference"
+            alert.informativeText = "Give this secret a display name. mcpme stores the value privately and gives this app an opaque reference."
+            let name = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24)); name.stringValue = logicalName
+            name.setAccessibilityLabel("Saved secret name"); alert.accessoryView = name
+            alert.addButton(withTitle: "Save Secret"); alert.addButton(withTitle: "Cancel")
+            alert.beginSheetModal(for: window) { [weak self] response in
+                guard let self, response == .alertFirstButtonReturn, self.intakeEnabled else { return }
+                let generation = self.importViewGeneration
+                self.setupRequest = true; self.refreshWindow()
+                self.request("v1/secrets", method: "POST", body: ["name": name.stringValue, "value": value]) { [weak self] object, code in
+                    guard let self else { return }; self.setupRequest = false
+                    guard let object, let secret = SetupSecret(object) else {
+                        self.setupLabel?.stringValue = "Secret could not be saved (\(code ?? "invalid_secret"))."; self.refreshWindow(); return
+                    }
+                    self.secrets.append(secret)
+                    if generation == self.importViewGeneration { self.configurationView.selectSecret(secret, for: logicalName) }
+                    self.refreshWindow()
+                }
+            }
+        }
+    }
+
+    @objc private func beginDownload() {
+        guard intakeEnabled, let window else { return }
+        let alert = NSAlert(); alert.messageText = "Download a prepared package"
+        alert.informativeText = "Use the publisher's exact archive size and SHA-256. The host verifies the archive and prepared package before you can review it."
+        let url = NSTextField(), size = NSTextField(), hash = NSTextField(), digest = NSTextField()
+        url.placeholderString = "https://publisher.example/package.zip"; size.placeholderString = "Exact byte count"
+        hash.placeholderString = "Archive SHA-256 (64 lowercase hexadecimal characters)"; digest.placeholderString = "Package digest (optional)"
+        for (field, label) in [(url, "Public HTTPS package URL"), (size, "Exact archive byte count"), (hash, "Archive SHA-256"), (digest, "Optional package digest")] { field.setAccessibilityLabel(label) }
+        let form = workspaceStack([url, size, hash, digest]); form.frame = NSRect(x: 0, y: 0, width: 500, height: 128)
+        for field in [url, size, hash, digest] { workspaceFill(field, in: form) }
+        alert.accessoryView = form; alert.addButton(withTitle: "Download"); alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn, self.intakeEnabled else { return }
+            guard size.stringValue.range(of: "^[1-9][0-9]*$", options: .regularExpression) != nil, let bytes = Int(size.stringValue), bytes > 0,
+                  hash.stringValue.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
+                  digest.stringValue.isEmpty || digest.stringValue.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else {
+                self.downloadLabel?.stringValue = "Enter an exact positive byte count and lowercase SHA-256."; return
+            }
+            var spec: [String: Any] = ["url": url.stringValue, "size": bytes, "sha256": hash.stringValue]
+            if !digest.stringValue.isEmpty { spec["package_digest"] = digest.stringValue }
+            self.fetchDownload(spec)
+        }
+    }
+
+    private func fetchDownload(_ descriptor: [String: Any]) {
+        guard intakeEnabled else { return }; setupRequest = true; refreshWindow()
+        request("v1/downloads", method: "POST", body: descriptor) { [weak self] object, code in
+            guard let self else { return }; self.setupRequest = false
+            guard let object, let id = object["download_id"] as? String, validUUID(id) else {
+                self.downloadLabel?.stringValue = "Download request failed (\(code ?? "invalid_response"))."; self.refreshWindow(); return
+            }
+            self.selectedDownload = object; self.savedSetup["download_id"] = id
+            self.renderDownload(); self.persistSetup(); self.pollDownloads(); self.refreshWindow()
+        }
+    }
+
+    private func pollDownloads() {
+        guard !uiPreviewMode, !downloadsPolling, connection() != nil else { return }; downloadsPolling = true
+        request("v1/downloads") { [weak self] object, _ in
+            guard let self else { return }; self.downloadsPolling = false
+            guard let rows = object?["downloads"] as? [[String: Any]] else { return }
+            self.downloadRows = rows.filter { ($0["download_id"] as? String).map(validUUID) == true }
+            let selected = self.selectedDownload?["download_id"] as? String ?? self.savedSetup["download_id"] as? String
+            self.downloadPicker?.removeAllItems()
+            if self.downloadRows.isEmpty { self.downloadPicker?.addItem(withTitle: "No saved downloads") }
+            for row in self.downloadRows {
+                guard let id = row["download_id"] as? String else { continue }
+                self.downloadPicker?.addItem(withTitle: String(id.prefix(8)) + " · " + (safeCode(row["status"]) ?? "unavailable"))
+                self.downloadPicker?.lastItem?.representedObject = id
+            }
+            if let selected, let index = self.downloadPicker?.itemArray.firstIndex(where: { $0.representedObject as? String == selected }) { self.downloadPicker?.selectItem(at: index) }
+            let id = selected ?? self.downloadRows.first?["download_id"] as? String
+            if let id { self.inspectDownload(id) }
+            else { self.refreshWindow() }
+        }
+    }
+
+    private func inspectDownload(_ id: String) {
+        request("v1/downloads/" + id) { [weak self] object, _ in
+            guard let self, let object, object["download_id"] as? String == id,
+                  let status = safeCode(object["status"]), ["pending", "running", "completed", "failed", "canceled"].contains(status),
+                  integer(object["received_bytes"]) != nil, integer(object["size"]) != nil else { return }
+            let selected = self.downloadPicker?.selectedItem?.representedObject as? String
+            guard selected == nil || selected == id else { return }
+            self.selectedDownload = object; self.savedSetup["download_id"] = id; self.renderDownload(); self.refreshWindow()
+        }
+    }
+
+    private func renderDownload() {
+        guard let download = selectedDownload else { return }
+        let received = integer(download["received_bytes"]) ?? 0, size = integer(download["size"]) ?? 0
+        let stage = safeCode(download["stage"]) ?? "unavailable"
+        var text = stage.replacingOccurrences(of: "_", with: " ").capitalized + " · \(received.formatted()) / \(size.formatted()) bytes"
+        if let attempt = integer(download["attempt"]) { text += " · attempt \(attempt)" }
+        if let code = safeCode(download["error_code"]) { text += " (\(code))" }
+        downloadLabel?.stringValue = text
+    }
+
+    @objc private func selectDownload() { if let id = downloadPicker?.selectedItem?.representedObject as? String { selectedDownload = nil; savedSetup["download_id"] = id; inspectDownload(id); persistSetup() } }
+    @objc private func cancelDownload() {
+        guard intakeEnabled, let id = selectedDownload?["download_id"] as? String, validUUID(id) else { return }
+        request("v1/downloads/\(id)/cancel", method: "POST", body: [:]) { [weak self] object, code in
+            guard let self else { return }
+            if let object { self.selectedDownload = object; self.renderDownload() }
+            else { self.downloadLabel?.stringValue = "Cancellation failed (\(code ?? "request_failed"))." }
+            self.refreshWindow()
+        }
+    }
+    @objc private func retryDownload() { if let descriptor = selectedDownload?["descriptor"] as? [String: Any] { fetchDownload(descriptor) } }
+    @objc private func useDownload() {
+        guard intakeEnabled, selectedDownload?["status"] as? String == "completed", let path = selectedDownload?["package_path"] as? String, path.hasPrefix("/") else { return }
+        beginImport(URL(fileURLWithPath: path, isDirectory: true))
+    }
+
+    private func configureInstalled(_ id: String) {
+        guard intakeEnabled, let project = projects.first(where: { $0.id == id }),
+              projectCanControl(project, action: "start", operations: operations) else { return }
+        request("v1/slots/\(id)/details") { [weak self] object, code in
+            guard let self, let object, let slot = object["slot"] as? [String: Any], let package = object["package"] as? [String: Any],
+                  let path = slot["package_path"] as? String, path.hasPrefix("/") else { self?.showError(code ?? "configuration_unavailable"); return }
+            self.beginUpgrade(project: project, path: path, package: package, settings: object["settings"] as? [String: Any] ?? [:])
+        }
+    }
+
+    private func chooseUpgrade(_ id: String) {
+        guard intakeEnabled, let project = projects.first(where: { $0.id == id }),
+              projectCanControl(project, action: "start", operations: operations), let window else { return }
+        let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true
+        panel.message = "Choose the prepared replacement package for \(project.name)"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            self.request("v1/slots/\(id)/details") { [weak self] object, code in
+                guard let self, let object else { self?.showError(code ?? "configuration_unavailable"); return }
+                self.beginUpgrade(project: project, path: url.path, package: nil, settings: object["settings"] as? [String: Any] ?? [:])
+            }
+        }
+    }
+
+    private func beginUpgrade(project: Project, path: String, package: [String: Any]?, settings: [String: Any]) {
+        saveCurrentDraft { [weak self] saved in
+            guard let self, saved else { return }; self.clearDraft(); self.upgradeTarget = project.id
+            self.selectWorkspace(1); self.pathField?.stringValue = path; self.nameField?.stringValue = project.name
+            self.policyField?.selectItem(at: project.policy == "host" ? 1 : 0); self.startCheck?.state = project.state == "ready" ? .on : .off
+            self.setupSettings = settings; self.configurationView.configure(package: package, settings: settings)
+            self.pollSecrets(); self.setupLabel?.stringValue = "Upgrade \(project.name). Review the candidate and its configuration before applying."
+            if package == nil { self.readUpgradeMetadata(path) }; self.persistSetup(); self.refreshWindow()
+        }
+    }
+
+    private func readUpgradeMetadata(_ path: String) {
+        // Metadata only; planning performs authoritative complete package validation.
+        let file = URL(fileURLWithPath: path, isDirectory: true).appendingPathComponent("mcpme.package.json")
+        let generation = importViewGeneration
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let metadata = readSetupPackageMetadata(file)
+            DispatchQueue.main.async {
+                guard let self, generation == self.importViewGeneration else { return }
+                self.configurationView.configure(package: metadata, settings: self.setupSettings); self.pollSecrets(); self.refreshWindow()
+                if metadata == nil { self.setupLabel?.stringValue = "The selected package metadata could not be read safely. Choose a complete prepared package." }
+            }
+        }
+    }
+
+    private func showAppOperation(_ id: String) {
+        let related = operations.filter { $0.projectID == id && ["install", "upgrade"].contains($0.action) }
+        guard let operation = related.first(where: { $0.status == "recovery_required" }) ?? related.first else { return }
+        saveCurrentDraft { [weak self] saved in
+            guard let self, saved else { return }; self.clearDraft(); self.showManagement(); self.selectWorkspace(1)
+            self.setupOperation = operation.id; self.trackedOperations.insert(operation.id)
+            self.setupLabel?.stringValue = operation.label + (operation.exposed ? " Candidate was exposed; recovery preserves its saved data." : "")
+            self.persistSetup(); self.refreshWindow(); self.pollTrackedOperations()
+        }
+    }
+
+    @objc private func cancelSetupOperation() { mutateSetupOperation("cancel") }
+    @objc private func stopSetupOperation() {
+        guard !setupRequest, let operation = setupOperation.flatMap({ id in operations.first { $0.id == id } }),
+              operation.canStopExposedRecovery, let projectID = operation.projectID else { return }
+        control(projectID, action: "stop", recoveryOperationID: operation.id)
+    }
+    @objc private func recoverSetupOperation() {
+        guard let operation = setupOperation.flatMap({ id in operations.first { $0.id == id } }), operation.status == "recovery_required", let window else { return }
+        let alert = NSAlert(); alert.messageText = "Recover this candidate?"
+        alert.informativeText = operation.exposed ? "The candidate was exposed to clients. Recovery verifies the retained candidate and preserves its saved data and recovery artifacts. If you chose Stop, it stays stopped until you explicitly Start it after recovery completes. Old data will not be restored automatically." : "Recovery finishes settling owned processes and restores the previous generation only when exposure has not occurred."
+        alert.addButton(withTitle: "Recover Candidate"); alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in if response == .alertFirstButtonReturn { self?.mutateSetupOperation("recover") } }
+    }
+    private func mutateSetupOperation(_ action: String) {
+        guard !uiPreviewMode, !setupRequest, let id = setupOperation,
+              let operation = operations.first(where: { $0.id == id }),
+              action == "cancel" && operation.active && !operation.exposed || action == "recover" && operation.status == "recovery_required" else { return }
+        setupRequest = true; refreshWindow()
+        request("v1/operations/\(id)/\(action)", method: "POST", body: [:]) { [weak self] object, code in
+            guard let self else { return }; self.setupRequest = false
+            if let object, let updated = Operation(object) {
+                self.operations.removeAll { $0.id == id }; self.operations.insert(updated, at: 0); self.trackedOperations.insert(id)
+                self.setupLabel?.stringValue = updated.label
+            } else { self.setupLabel?.stringValue = "Operation request failed (\(code ?? "request_failed"))." }
+            self.refreshWindow(); self.poll()
+        }
+    }
+
+    @objc private func chooseModelEngine() {
+        guard intakeEnabled, let draft = currentDraft, draft.editable, draft.sourceKind == "artifact_collection", let window else { return }
+        let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true
+        panel.message = "Choose a verified JevK5 app or engine build containing its runtime manifest, llama engine, and licenses."
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .OK, let path = panel.url?.path else { return }
+            self.saveCurrentDraft { [weak self] saved in
+                guard let self, saved, let current = self.currentDraft else { return }; self.setupRequest = true; self.refreshWindow()
+                self.request("v1/imports/\(current.id)/engine", method: "POST", body: ["revision": current.revision, "model_engine": path]) { [weak self] object, code in
+                    guard let self else { return }; self.setupRequest = false
+                    if let object, let updated = ImportDraft(object) { self.displayDraft(updated) }
+                    else { self.setupLabel?.stringValue = self.draftError(code ?? "engine_artifacts_required"); self.refreshWindow() }
+                }
+            }
+        }
+    }
+
+    @objc private func selectModelProfile() {
+        guard intakeEnabled, let draft = currentDraft, draft.editable, draft.sourceKind == "artifact_collection", let window else { return }
+        let alert = NSAlert(); alert.messageText = "Use this model for JevK5 decisions?"
+        alert.informativeText = "This prepared profile exposes jevk5_decide and jevk5_status using the pinned JevK5 scorer and compatible llama.cpp engine. Model identity and engine compatibility must pass preparation checks."
+        alert.addButton(withTitle: "Use Decision Tools"); alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            self.saveCurrentDraft { [weak self] saved in
+                guard let self, saved, let current = self.currentDraft else { return }
+                var requirements = current.requirements; requirements["engine_profile"] = "jevk5-llamacpp-v1"
+                requirements["profile"] = "model-service"; requirements["tools"] = ["jevk5_decide", "jevk5_status"]
+                self.setupRequest = true; self.refreshWindow()
+                self.request("v1/imports/\(current.id)/revise", method: "POST", body: ["revision": current.revision, "requirements": requirements]) { [weak self] object, code in
+                    guard let self else { return }; self.setupRequest = false
+                    if let object, let updated = ImportDraft(object) { self.displayDraft(updated) }
+                    else { self.setupLabel?.stringValue = self.draftError(code ?? "invalid_import_requirements"); self.refreshWindow() }
+                }
+            }
+        }
+    }
+
     private func changeAppPolicy(_ id: String, policy: String) {
         guard !uiPreviewMode, hostAvailable, !stopping, !quitting,
               let project = projects.first(where: { $0.id == id }), !project.blocked,
               ["manual", "host"].contains(policy), project.policy != "first_call",
               policy != project.policy, !pendingAppRequests.contains(project.id),
-              !operations.contains(where: { $0.projectID == id && ($0.active || $0.action == "remove" && $0.status == "recovery_required") }) else { return }
+              !operations.contains(where: { $0.projectID == id && ($0.active || $0.recoveryError != nil) }) else { return }
         pendingAppRequests.insert(project.id); refreshActionButtons()
         request("v1/slots/\(project.id)", method: "PATCH", body: ["start_policy": policy]) { [weak self] object, code in
             guard let self = self else { return }
@@ -957,7 +1316,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         guard !uiPreviewMode, hostAvailable, !stopping, !quitting,
               let project = projects.first(where: { $0.id == id }), !project.blocked,
               !pendingAppRequests.contains(id),
-              !operations.contains(where: { $0.projectID == id && ($0.active || $0.action == "remove" && $0.status == "recovery_required") }),
+              !operations.contains(where: { $0.projectID == id && ($0.active || $0.recoveryError != nil) }),
               let window = window else { return }
         let alert = NSAlert(); alert.alertStyle = .warning
         alert.messageText = "Remove \(project.name)?"
@@ -1102,7 +1461,32 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         rebuildMenu()
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            if managePreviewMode { self.showManagement() }
+            if managePreviewMode || scenario.hasPrefix("setup_") {
+                self.showManagement()
+                if scenario.hasPrefix("setup_") {
+                    self.selectWorkspace(1)
+                    let fixture: [String: Any] = ["package_id": "org.example.synthetic", "version": "1.0.0", "profile": "mcp-stdio",
+                        "configuration": ["schema_version": 1, "fields": ["Label": ["type": "string", "required": true, "default": "Synthetic label"],
+                            "Retries": ["type": "integer", "minimum": 0, "maximum": 8, "default": 2], "Enabled": ["type": "boolean", "default": false]]],
+                        "access": ["filesystem": [], "network": [], "writes": false, "secrets": ["API_KEY"]],
+                        "tools": [["name": "synthetic_tool", "description": "Exercise the native setup form."]]]
+                    let secretID = "11111111-2222-4333-8444-555555555555"
+                    self.configurationView.configure(package: fixture, settings: ["configuration": [:], "secret_references": ["API_KEY": secretID]])
+                    self.configurationView.updateSecrets([SetupSecret(["secret_id": secretID, "name": "Synthetic secret", "status": "active"])!])
+                    self.nameField?.stringValue = "Synthetic app"; self.pathField?.stringValue = "/private/preview/prepared-package"
+                    if scenario == "setup_recovery" {
+                        let id = "99999999-2222-4333-8444-555555555555"
+                        self.operations = [Operation(["operation_id": id, "slot_id": secretID, "action": "upgrade", "status": "recovery_required",
+                            "details": ["stage": "candidate_exposed", "exposed": true], "error_code": "upgrade_recovery_required"])!]
+                        self.setupOperation = id; self.setupLabel?.stringValue = "Upgrade: Recovery required. Candidate writes and recovery artifacts are preserved."
+                    }
+                    if scenario == "setup_model" {
+                        self.currentDraft = ImportDraft(["draft_id": secretID, "revision": 1, "state": "needs_information", "name": "Synthetic model",
+                            "source": ["kind": "artifact_collection", "locator": "/private/preview/model.gguf"], "start_policy": "manual", "start": false])
+                    }
+                    self.refreshWindow()
+                }
+            }
             else {
                 self.toggleDashboard()
             }
@@ -1187,12 +1571,17 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         importViewGeneration &+= 1
         let changed = currentDraft?.id != draft.id || currentDraft?.revision != draft.revision || currentDraft?.packageDigest != draft.packageDigest
         currentDraft = draft; draftDirty = false
+        upgradeTarget = nil
         pathField?.stringValue = draft.sourcePath; nameField?.stringValue = draft.name; intentField?.string = draft.intent
         policyField?.selectItem(at: draft.policy == "host" ? 1 : 0)
         startCheck?.state = draft.start ? .on : .off
         documentRoleField?.selectItem(at: draft.documentRole == "reference" ? 1 : draft.documentRole == "instructions" ? 2 : 0)
         if changed { setupPlan = nil; reviewText?.string = "" }
         setupOperation = draft.operationID
+        setupSettings = ["schema_version": 1, "configuration": draft.requirements["configuration"] as? [String: Any] ?? [:],
+                         "secret_references": draft.requirements["secret_references"] as? [String: String] ?? [:]]
+        configurationView.configure(package: draft.attachment, settings: setupSettings)
+        pollSecrets()
         if let operationID = draft.operationID { trackedOperations.insert(operationID) }
         setupLabel?.stringValue = draftStatus(draft)
         updateDraftPicker(); persistSetup(); refreshWindow()
@@ -1253,6 +1642,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private func clearDraft() {
         importViewGeneration &+= 1
         currentDraft = nil; draftDirty = false; setupPlan = nil; setupOperation = nil
+        upgradeTarget = nil; setupSettings = ["schema_version": 1, "configuration": [String: Any](), "secret_references": [String: String]()]
+        configurationView.configure(package: nil, settings: setupSettings)
         pathField?.stringValue = ""; nameField?.stringValue = ""; intentField?.string = ""
         policyField?.selectItem(at: 0); startCheck?.state = .off; documentRoleField?.selectItem(at: 0)
         reviewText?.string = ""; setupLabel?.stringValue = "Choose a source to begin."
@@ -1263,8 +1654,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     @objc private func chooseSource() {
         guard intakeEnabled, let window = window else { return }
         let panel = NSOpenPanel(); panel.canChooseFiles = true; panel.canChooseDirectories = true; panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [UTType(filenameExtension: "md")!, .plainText]
-        panel.message = "Choose a source folder, prepared package, or Markdown/text document"
+        panel.allowedContentTypes = [UTType(filenameExtension: "md")!, .plainText, UTType(filenameExtension: "gguf") ?? .data]
+        panel.message = "Choose a source folder, prepared package, text document, or GGUF model"
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, let url = panel.url else { return }; self?.beginImport(url)
         }
@@ -1325,7 +1716,14 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private func hasDraftChanges(_ draft: ImportDraft) -> Bool {
         (nameField?.stringValue ?? draft.name) != draft.name || (intentField?.string ?? draft.intent) != draft.intent ||
         selectedPolicy != draft.policy || (startCheck?.state == .on) != draft.start ||
-        draft.isDocument && selectedDocumentRole != draft.documentRole
+        draft.isDocument && selectedDocumentRole != draft.documentRole ||
+        configurationChanged(draft)
+    }
+
+    private func configurationChanged(_ draft: ImportDraft) -> Bool {
+        guard draft.attachment != nil else { return false }
+        guard let choices = try? configurationView.settings() else { return true }
+        return !NSDictionary(dictionary: choices).isEqual(to: setupSettings)
     }
 
     private func saveCurrentDraft(completion: @escaping (Bool) -> Void) {
@@ -1337,6 +1735,18 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         if draft.isDocument {
             if let role = selectedDocumentRole { payload["document_role"] = role }
             else { payload["document_role"] = NSNull() }
+        }
+        if draft.attachment != nil {
+            guard let settings = try? configurationView.settings() else {
+                setupLabel?.stringValue = "Complete the required settings and select an available saved secret."; completion(false); return
+            }
+            var requirements = draft.requirements
+            requirements["configuration"] = settings["configuration"]; requirements["secret_references"] = settings["secret_references"]
+            payload["requirements"] = requirements
+            if (intentField?.string ?? draft.intent) == draft.intent && selectedDocumentRole == draft.documentRole {
+                payload["carry_attachment"] = true
+                payload.removeValue(forKey: "intent"); payload.removeValue(forKey: "document_role")
+            }
         }
         setupRequest = true; setupLabel?.stringValue = "Saving draft…"; refreshWindow()
         request("v1/imports/\(draft.id)/revise", method: "POST", body: payload) { [weak self] object, code in
@@ -1409,6 +1819,12 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     @objc private func reviewPackage() {
+        if currentDraft?.attachment != nil || upgradeTarget != nil {
+            guard let settings = try? configurationView.settings() else {
+                setupLabel?.stringValue = "Complete the required settings and select an available saved secret."; return
+            }
+            if currentDraft?.attachment != nil, !NSDictionary(dictionary: settings).isEqual(to: setupSettings) { draftDirty = true }
+        }
         saveCurrentDraft { [weak self] saved in
             guard let self = self, saved else { return }
             var payload: [String: Any]
@@ -1417,17 +1833,21 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                 payload = ["import_id": draft.id, "revision": draft.revision]
             } else {
                 guard let path = self.pathField?.stringValue, !path.isEmpty else { return }
-                payload = ["package": path, "start_policy": self.selectedPolicy, "start": self.startCheck?.state == .on]
-                if let name = self.nameField?.stringValue, !name.isEmpty { payload["name"] = name }
+                guard let settings = try? self.configurationView.settings() else { self.setupLabel?.stringValue = "Complete the app configuration before reviewing."; return }
+                if let target = self.upgradeTarget { payload = ["slot_id": target, "package": path, "settings": settings] }
+                else {
+                    payload = ["package": path, "start_policy": self.selectedPolicy, "start": self.startCheck?.state == .on, "settings": settings]
+                    if let name = self.nameField?.stringValue, !name.isEmpty { payload["name"] = name }
+                }
             }
             self.setupRequest = true; self.setupLabel?.stringValue = "Verifying prepared artifacts…"; self.refreshWindow()
-            self.request("v1/install/plan", method: "POST", body: payload) { [weak self] object, code in
+            self.request(self.upgradeTarget == nil ? "v1/install/plan" : "v1/upgrade/plan", method: "POST", body: payload) { [weak self] object, code in
                 guard let self = self else { return }; self.setupRequest = false
                 guard let object = object, let id = object["plan_id"] as? String, validUUID(id), object["package"] is [String: Any] else {
                     self.setupLabel?.stringValue = self.draftError(code ?? "invalid_plan"); self.refreshWindow(); return
                 }
                 self.setupPlan = object; self.setupOperation = nil; self.reviewText?.string = self.reviewSummary(object)
-                self.setupLabel?.stringValue = "Review the tools and declared access. Add App applies this exact plan."
+                self.setupLabel?.stringValue = self.upgradeTarget == nil ? "Review the tools and declared access. Add App applies this exact plan." : "Review the replacement tools, configuration, and data policy. Apply Reviewed Upgrade applies this exact plan."
                 self.persistSetup(); self.refreshWindow(); self.pollImports()
             }
         }
@@ -1436,7 +1856,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     @objc private func installPackage() {
         guard let id = setupPlan?["plan_id"] as? String, validUUID(id) else { return }
         setupRequest = true; refreshWindow()
-        request("v1/install/apply", method: "POST", body: ["plan_id": id]) { [weak self] object, code in
+        request(upgradeTarget == nil ? "v1/install/apply" : "v1/upgrade/apply", method: "POST", body: ["plan_id": id]) { [weak self] object, code in
             guard let self = self else { return }; self.setupRequest = false
             guard let object = object, let operation = Operation(object) else {
                 self.setupLabel?.stringValue = "Install request failed: " + (code ?? "invalid_response"); self.refreshWindow(); return
@@ -1462,10 +1882,14 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             if let lifecycle = package["lifecycle"] { sections.append("Request size and lifecycle limits\n" + pretty(lifecycle)) }
             if let resources = package["resources"] { sections.append("Declared resource estimates\n" + pretty(resources)) }
             if let access = package["access"] { sections.append("Declared access (same-user code; no OS sandbox)\n" + pretty(access)) }
+            if let configuration = package["configuration"] { sections.append("Declared configuration fields and bounds\n" + pretty(configuration)) }
             if let tools = package["tools"] { sections.append("MCP tools and schemas\n" + pretty(tools)) }
         }
         if let digest = object["package_digest"] as? String { sections.append("Package digest: " + digest) }
         if let policy = object["start_policy"] as? String { sections.append("Start policy: " + policy) }
+        if let settings = object["settings"] { sections.append("Configuration and opaque secret references\n" + pretty(settings)) }
+        if let dataPolicy = object["data_policy"] as? String { sections.append("Data snapshot policy: " + dataPolicy) }
+        if let rollback = object["rollback_policy"] as? String { sections.append("Rollback policy: " + rollback) }
         return sections.joined(separator: "\n\n")
     }
 
@@ -1487,6 +1911,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             let requestBytes = integer(lifecycle?["max_request_bytes"]) ?? 1_048_576
             sections.append("Maximum tool request: \(requestBytes.formatted()) bytes")
             if let resources = package["resources"] { sections.append("Declared resource estimates\n" + pretty(resources)) }
+        }
+        if let settings = object["settings"] { sections.append("Configuration and saved secret references\n" + pretty(settings)) }
+        if object["kind"] as? String == "upgrade" {
+            sections.append("Upgrade data policy\nThe host closes old admission, settles its processes, and clones saved app data before probing the candidate. Before exposure, a failed candidate restores the prior generation and data. After candidate exposure, recovery preserves candidate writes and recovery artifacts; it does not restore old data automatically.")
+            if let generation = integer(object["expected_generation"]) { sections.append("Replaces generation: \(generation)") }
         }
         sections.append("Start after installation: " + ((object["start"] as? Bool ?? currentDraft?.start ?? false) ? "Yes" : "No"))
         let policy = object["start_policy"] as? String ?? currentDraft?.policy ?? "manual"
@@ -1526,6 +1955,9 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         }
         if let plan = setupPlan { object["plan"] = plan }
         if let operation = setupOperation { object["operation_id"] = operation }
+        if let target = upgradeTarget { object["upgrade_slot_id"] = target }
+        if let id = selectedDownload?["download_id"] as? String ?? savedSetup["download_id"] as? String, validUUID(id) { object["download_id"] = id }
+        if let choices = try? configurationView.settings() { object["settings"] = choices }
         PrivateFile.write(object, to: setupFile)
         savedSetup = object
     }
@@ -1534,13 +1966,25 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         guard !uiPreviewMode else { return }
         guard let object = PrivateFile.read(setupFile), integer(object["schema_version"]) == 1 else { return }
         savedSetup = object
+        if let id = object["upgrade_slot_id"] as? String, validUUID(id) { upgradeTarget = id }
+        setupSettings = object["settings"] as? [String: Any] ?? setupSettings
         pathField?.stringValue = object["package"] as? String ?? ""; nameField?.stringValue = object["name"] as? String ?? ""
         policyField?.selectItem(at: object["start_policy"] as? String == "host" ? 1 : 0)
         startCheck?.state = object["start"] as? Bool == true ? .on : .off
         if let plan = object["plan"] as? [String: Any], let id = plan["plan_id"] as? String, validUUID(id) {
             setupPlan = plan; reviewText?.string = reviewSummary(plan)
+            configurationView.configure(package: plan["package"] as? [String: Any], settings: setupSettings); pollSecrets()
+            if upgradeTarget != nil {
+                request("v1/upgrade/plans/" + id) { [weak self] object, code in
+                    guard let self else { return }
+                    if let object, object["plan_id"] as? String == id { self.setupPlan = object; self.reviewText?.string = self.reviewSummary(object) }
+                    else { self.setupPlan = nil; self.setupLabel?.stringValue = "Review this package again (\(code ?? "plan_unavailable"))." }
+                    self.refreshWindow()
+                }
+            }
         }
         if let id = object["operation_id"] as? String, validUUID(id) { setupOperation = id; trackedOperations.insert(id) }
+        if upgradeTarget != nil && setupPlan == nil, let path = object["package"] as? String, !path.isEmpty { readUpgradeMetadata(path) }
     }
 
     @objc private func toggleLogin() {
@@ -1571,6 +2015,45 @@ private func nativeSelfTest() -> Bool {
           fallbackConnectionName("!!!", id: id) == "app-" + id, integer(true) == nil, safeCode("private arbitrary text") == nil,
           ManagerConnection(["api_version": 1, "supervisor_pid": 42, "endpoint": "http://127.0.0.1:19384", "token": String(repeating: "x", count: 32)]) != nil,
           ManagerConnection(["api_version": 1, "supervisor_pid": 42, "endpoint": "http://example.com:19384", "token": String(repeating: "x", count: 32)]) == nil else { return false }
+    var updating = good; updating["observed_state"] = "updating"
+    guard Project(updating)?.status == "Updating", Project(updating)?.blocked == true,
+          managementRequestTimeout("v1/imports", method: "POST") == 300,
+          managementRequestTimeout("v1/imports/" + id + "/engine", method: "POST") == 300,
+          managementRequestTimeout("v1/imports/" + id + "/attach", method: "POST") == 300,
+          managementRequestTimeout("v1/install/plan", method: "POST") == 300,
+          managementRequestTimeout("v1/upgrade/plan", method: "POST") == 300,
+          managementRequestTimeout("v1/imports", method: "GET") == 30,
+          managementRequestTimeout("v1/operations/" + id + "/recover", method: "POST") == 30 else { return false }
+    let recoveryID = "99999999-2222-4333-8444-555555555555"
+    guard let ordinary = Project(good), projectCanControl(ordinary, action: "remove", operations: []) else { return false }
+    for action in ["install", "upgrade"] {
+        var blocked = good; blocked["observed_state"] = "failed"; blocked["error_code"] = action == "install" ? "installation_recovery_required" : "upgrade_recovery_required"
+        let fixture: [String: Any] = ["operation_id": recoveryID, "slot_id": id, "action": action,
+                                      "status": "recovery_required", "details": ["exposed": true]]
+        guard let project = Project(blocked), let operation = Operation(fixture), operation.canStopExposedRecovery,
+              projectCanControl(project, action: "stop", operations: [operation], recoveryOperationID: recoveryID),
+              !projectCanControl(project, action: "stop", operations: [operation]),
+              !projectCanControl(project, action: "stop", operations: [operation], recoveryOperationID: id),
+              !projectCanControl(ordinary, action: "start", operations: [operation]) else { return false }
+        for control in ["start", "restart", "remove"] {
+            guard !projectCanControl(project, action: control, operations: [operation], recoveryOperationID: recoveryID) else { return false }
+        }
+        var unexposed = fixture; unexposed["details"] = ["exposed": false]
+        var active = fixture; active["status"] = "running"
+        var removal = fixture; removal["action"] = "remove"
+        var missingSlot = fixture; missingSlot.removeValue(forKey: "slot_id")
+        for denied in [unexposed, active, removal, missingSlot] {
+            guard let operation = Operation(denied), !operation.canStopExposedRecovery,
+                  !projectCanControl(project, action: "stop", operations: [operation], recoveryOperationID: recoveryID) else { return false }
+        }
+        blocked["observed_state"] = "updating"
+        guard let interrupted = Project(blocked),
+              projectCanControl(interrupted, action: "stop", operations: [operation], recoveryOperationID: recoveryID),
+              !projectCanControl(interrupted, action: "start", operations: [operation]) else { return false }
+        blocked["observed_state"] = "ownership_lost"
+        guard let lost = Project(blocked),
+              !projectCanControl(lost, action: "stop", operations: [operation], recoveryOperationID: recoveryID) else { return false }
+    }
     let exported = connectionConfiguration(name: "synthetic", id: id, executable: "/Applications/mcpme.app/Contents/MacOS/mcpme", stateDirectory: "/tmp/state")
     guard let servers = exported["mcpServers"] as? [String: Any],
           let registration = servers["synthetic"] as? [String: Any],
@@ -1600,6 +2083,40 @@ private func nativeSelfTest() -> Bool {
         }
     }
     return true
+}
+
+extension McpmeApp {
+    /// Verifies recovery button availability without starting a host or issuing requests.
+    fileprivate static func recoveryControlsSelfTest() -> Bool {
+        let app = McpmeApp()
+        _ = app.makeSetupWorkspace()
+        let projectID = "11111111-2222-4333-8444-555555555555"
+        let operationID = "99999999-2222-4333-8444-555555555555"
+        app.projects = [Project(["slot_id": projectID, "name": "Synthetic", "observed_state": "stopped",
+                                "public_port": 19386, "start_policy": "manual", "generation": 1])!]
+        app.hostAvailable = true; app.setupOperation = operationID
+        for action in ["install", "upgrade"] {
+            let fixture: [String: Any] = ["operation_id": operationID, "slot_id": projectID, "action": action,
+                                          "status": "recovery_required", "details": ["exposed": true]]
+            app.operations = [Operation(fixture)!]; app.refreshWindow()
+            guard app.operationStopButton?.isHidden == false, app.operationStopButton?.isEnabled == true,
+                  app.operationRecoverButton?.isEnabled == true, app.operationCancelButton?.isEnabled == false,
+                  let projected = app.dashboardApps.first, projected.blocked,
+                  !managementCanControl(projected, available: true) else { return false }
+            app.pendingAppRequests.insert(projectID); app.refreshWindow()
+            guard app.operationStopButton?.isEnabled == false, app.operationRecoverButton?.isEnabled == false else { return false }
+            app.pendingAppRequests.remove(projectID)
+            app.hostAvailable = false; app.refreshWindow()
+            guard app.operationStopButton?.isEnabled == false else { return false }
+            app.hostAvailable = true
+            var unexposed = fixture; unexposed["details"] = ["exposed": false]
+            app.operations = [Operation(unexposed)!]; app.refreshWindow()
+            guard app.operationStopButton?.isHidden == true, app.operationStopButton?.isEnabled == false,
+                  app.operationRecoverButton?.isEnabled == true else { return false }
+        }
+        app.operations = []; app.setupOperation = nil; app.refreshWindow()
+        return app.operationStopButton?.isHidden == true && app.operationStopButton?.isEnabled == false
+    }
 }
 
 private func legacyHandoff(_ arguments: [String]) -> Int32? {
@@ -1660,7 +2177,7 @@ if CommandLine.arguments.dropFirst().first == "--dashboard-ui-self-test" {
 
 if CommandLine.arguments.dropFirst().first == "--management-ui-self-test" {
     _ = NSApplication.shared
-    let passed = managementViewSelfTest()
+    let passed = managementViewSelfTest() && setupControlsSelfTest() && McpmeApp.recoveryControlsSelfTest()
     print(passed ? "management_ui_contracts_passed" : "management_ui_contracts_failed")
     exit(passed ? 0 : 1)
 }

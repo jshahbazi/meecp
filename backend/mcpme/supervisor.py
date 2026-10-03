@@ -33,9 +33,12 @@ from .connections import connection_names
 from .limits import DEFAULT_REQUEST_BYTES, MAX_REQUEST_BYTES
 from .activity import ACTIVITY_EVENTS, ACTIVITY_FRAME, Activity, timestamp
 from .imports import ImportError as ImportDraftError, ImportStore
-from .private import PrivateStateError, ensure_private_directory, read_private_json, snapshot_package, write_private_json
+from .private import PrivateStateError, check_private_file, ensure_private_directory, read_private_json, snapshot_package, write_private_json
+from .ownership_receipts import prepare_receipt, verify_receipt
 from .processes import OwnedProcess, ProcessOwner
 from .registry import Registry, RegistryError
+from .upgrade_host import UpgradeHost
+from .upgrades import UpgradeError, UpgradeStore
 from .grants import GrantError, GrantStore, plan_digest
 from .preparation_contracts import PreparationError
 from .preparations import PreparationStore
@@ -65,26 +68,30 @@ class HostServer(uvicorn.Server):
 
 def capabilities() -> dict:
     return {"api_version": 1, "host_version": "0.1.0", "package_schema_versions": [1],
-            "profiles": ["mcp-stdio", "model-service"], "protocol_versions": ["2025-11-25"], "capabilities": ["tools"],
+            "profiles": ["mcp-stdio", "mcp-http", "model-service"], "protocol_versions": ["2025-11-25"], "capabilities": ["tools"],
             "start_policies": ["manual", "host"], "platform": {"os": "macos", "architecture": "arm64", "minimum_version": "26.0"},
             "slot_actions": ["start", "stop", "restart", "remove"], "slot_settings": ["start_policy"],
             "limits": {"slots": 16, "request_bytes": DEFAULT_REQUEST_BYTES,
                        "max_request_bytes": MAX_REQUEST_BYTES, "idle_seconds": 300},
             "installation": "prepared_local_packages_and_imports", "management_credentials": "owner_and_scoped_grants",
             "management_grant_modes": ["read", "prepare", "lifecycle", "install"], "management_mcp": "scoped_stdio",
-            "import_schema_versions": [1], "import_sources": ["local_folder", "markdown", "text", "prepared_package"],
+            "import_schema_versions": [1], "import_sources": ["local_folder", "markdown", "text", "prepared_package", "artifact_collection"],
             "preparation_templates": ["python-function-v1", "existing-mcp-v1", "jevk5-llamacpp-v1"],
             "preparation_descriptor_schema_versions": [1], "recipe_bundle_schema_versions": [1],
             "recipe_management": "local_static_declarative", "recipe_execution": False,
             "automatic_preparation": False,
             "configuration": {"schema_versions": [1], "types": ["string", "integer", "boolean"],
-                              "delivery": "private_inherited_descriptor", "mutable_installed_settings": False},
+                              "delivery": "private_inherited_descriptor", "mutable_installed_settings": True,
+                              "updates": "reviewed_generation_upgrade"},
             "secrets": {"references": "immutable_owner_managed", "credentials": "owner_only",
                         "value_export": False, "rotation": "new_reference"},
             "downloads": {"format": "zip", "transport": "https", "credentials": "owner_only",
                           "pins": ["sha256", "size"], "redirects": False, "resume_partial": False},
-            "unsupported": ["mcp-http", "first_call", "upgrades",
-                            "reference_document_service", "raw_model_intake", "integrated_preparation"]}
+            "upgrades": {"credentials": "owner_only", "data_policy": "clone_before_probe",
+                         "rollback_policy": "before_exposure_only", "recovery": "selected_generation"},
+            "model_intake": {"contract_versions": [1], "kind": "artifact_collection", "weights": ["gguf"],
+                             "profiles": ["jevk5-llamacpp-v1"], "max_artifact_bytes": 64 * 1024**3},
+            "unsupported": ["first_call", "reference_document_service", "integrated_preparation"]}
 
 
 def bind_listener(port: int = 0) -> socket.socket:
@@ -134,7 +141,7 @@ class Resident:
     monitor: asyncio.Task | None = None
 
 
-class Supervisor:
+class Supervisor(UpgradeHost):
     def __init__(self, state_dir: Path, reaper: Path):
         self.root = ensure_private_directory(state_dir.absolute())
         self.lock_fd = os.open(self.root / "supervisor.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -169,6 +176,8 @@ class Supervisor:
         self.migration_blocked: set[str] = set()
         self.package_cache: dict[str, tuple[object, tuple]] = {}
         self.plan_imports: dict[str, tuple[str, int]] = {}
+        self.candidate_slots = {}
+        self.upgrade_cancels = {}
         try:
             self.imports = ImportStore(self.root)
             self.recipes = RecipeStore(self.imports)
@@ -178,6 +187,7 @@ class Supervisor:
             self.resource_policy = self.load_resource_policy()
             self.secrets = SecretStore(self.root)
             self.downloads = DownloadManager(self.root)
+            self.upgrades = UpgradeStore(self.root)
         except BaseException:
             if hasattr(self, "imports"):
                 self.imports.close()
@@ -280,6 +290,17 @@ class Supervisor:
     def save_ledger(self, slot_id: str):
         write_private_json(self.slot_directory(slot_id) / "ownership.json", self.ledger(slot_id))
 
+    def check_recovery_ownership(self, slot_id: str):
+        ledger = self.ledger(slot_id)
+        owner = self.owners.get(slot_id)
+        if owner is None:
+            if ledger:
+                raise UpgradeError("ownership_lost")
+            return
+        if (any(not isinstance(value, dict) or value.get("state") != "owned" for value in ledger.values())
+                or not owner.holds_live_instances(set(ledger))):
+            raise UpgradeError("ownership_lost")
+
     def owner(self, slot_id: str) -> ProcessOwner:
         if slot_id not in self.owners:
             async def lost(process):
@@ -313,24 +334,77 @@ class Supervisor:
 
     async def launch(self, slot_id: str, **kwargs) -> OwnedProcess:
         identifier = uuid.uuid4().hex
-        self.ledger(slot_id)[identifier] = {"state": "launching"}
-        self.save_ledger(slot_id)
+        completion_fd, completion = prepare_receipt(self.slot_directory(slot_id), identifier)
         try:
-            process = await self.owner(slot_id).launch(instance_id=identifier, **kwargs)
+            self.ledger(slot_id)[identifier] = {"state": "launching", "completion": completion}
+            self.save_ledger(slot_id)
+            process = await self.owner(slot_id).launch(instance_id=identifier,
+                completion_fd=completion_fd, completion_nonce=completion["nonce"], **kwargs)
         except BaseException:
             process = self.owner(slot_id).instances.get(identifier)
             if process is None:
                 self.ledger(slot_id).pop(identifier, None)
                 self.save_ledger(slot_id)
+                self.retire_completion(slot_id, completion)
             raise
-        self.ledger(slot_id)[identifier] = {"state": "owned"}
+        finally:
+            os.close(completion_fd)
+        self.ledger(slot_id)[identifier]["state"] = "owned"
         self.save_ledger(slot_id)
         return process
 
     async def reap(self, slot_id: str, process: OwnedProcess):
         await process.stop()
+        self.record_owned_exit(slot_id, process)
+
+    def record_owned_exit(self, slot_id: str, process: OwnedProcess):
+        completion = self.ledger(slot_id).get(process.instance_id, {}).get("completion")
+        if completion is not None and not verify_receipt(self.slot_directory(slot_id), completion):
+            raise HostError("completion_unconfirmed", 409)
         self.ledger(slot_id).pop(process.instance_id, None)
         self.save_ledger(slot_id)
+        if completion is not None:
+            self.retire_completion(slot_id, completion)
+
+    def retire_completion(self, slot_id: str, completion: dict):
+        if not verify_receipt(self.slot_directory(slot_id), completion):
+            return
+        path = self.slot_directory(slot_id) / "ownership-receipts" / (completion["instance_id"] + ".receipt")
+        with contextlib.suppress(PrivateStateError, OSError):
+            check_private_file(path)
+            path.unlink()
+            descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+
+    async def reconcile_owned_receipts(self):
+        # Reapers retain the child identity after this process dies. A bounded
+        # wait lets their stop grace finish before classifying unresolved state.
+        deadline = asyncio.get_running_loop().time() + 35
+        while True:
+            pending = False
+            for slot in self.registry.list_slots():
+                ledger = self.ledger(slot.id)
+                removed = []
+                for identifier, value in list(ledger.items()):
+                    completion = value.get("completion")
+                    if (isinstance(completion, dict) and completion.get("instance_id") == identifier
+                            and verify_receipt(self.slot_directory(slot.id), completion)):
+                        ledger.pop(identifier)
+                        removed.append(completion)
+                    elif completion is not None and value.get("state") != "ownership_lost":
+                        pending = True
+                if removed:
+                    self.save_ledger(slot.id)
+                    for completion in removed:
+                        self.retire_completion(slot.id, completion)
+                    if not ledger:
+                        self.registry.reconcile_owned_exit(slot.id, expected_generation=slot.generation)
+            if not pending or asyncio.get_running_loop().time() >= deadline:
+                return
+            await asyncio.sleep(0.05)
 
     def connection(self, slot_id: str) -> dict:
         return read_private_json(self.slot_directory(slot_id) / "connection.json")
@@ -373,7 +447,8 @@ class Supervisor:
             # Existing installations predate user settings. Do not discover an
             # unbound file, or silently supply newly required configuration.
             return normalize_settings(package.manifest)
-        path = self.slot_directory(slot.id) / "settings.json"
+        path = Path(slot.settings_path) if slot.settings_path else self.slot_directory(slot.id) / "settings.json"
+        self.check_slot_reference(slot.id, path)
         settings = normalize_settings(package.manifest, read_private_json(path, max_bytes=65536))
         if settings_digest(settings) != slot.settings_digest:
             raise SettingsError("settings_digest_mismatch")
@@ -460,7 +535,7 @@ class Supervisor:
 
     async def launch_resident(self, slot, package, declaration, *, deadline: float | None = None) -> Resident:
         runtime = ensure_private_directory(self.slot_directory(slot.id) / "runtime")
-        data = ensure_private_directory(self.slot_directory(slot.id) / "data")
+        data = self.data_directory(slot)
         dependencies = self.residents.setdefault(slot.id, {})
         for attempt in range(3):
             listener = bind_listener()
@@ -477,7 +552,8 @@ class Supervisor:
                       "nonce": nonce, "endpoint": {"host": "127.0.0.1", "port": port}, "api_key": key,
                       "api_key_file": str(key_file), "runtime_dir": str(runtime), "package_dir": str(package.root),
                       "public_endpoint": f"http://127.0.0.1:{slot.public_port}",
-                      "model": package.manifest.model.model_dump(),
+                      "model": package.manifest.model.model_dump() if package.manifest.model else None,
+                      "lifecycle": package.manifest.lifecycle.model_dump(),
                       "dependencies": {name: {"endpoint": dependencies[name].endpoint, "api_key": dependencies[name].key,
                                               "nonce": dependencies[name].nonce, "instance_id": dependencies[name].process.instance_id,
                                               "pid": dependencies[name].process.pid}
@@ -555,7 +631,7 @@ class Supervisor:
                     key_file.unlink(missing_ok=True)
         raise HostError("runtime_start_failed")
 
-    async def start_residents(self, slot):
+    async def start_residents(self, slot, *, business_smoke: bool = True):
         package = await asyncio.to_thread(self.package, slot)
         await self.reserve_model(slot, package)
         try:
@@ -565,7 +641,7 @@ class Supervisor:
             async with asyncio.timeout_at(deadline):
                 for declaration in self.process_order(package):
                     await self.launch_resident(slot, package, declaration, deadline=deadline)
-                await self.check_http_candidate(slot, package)
+                await self.check_http_candidate(slot, package, business_smoke=business_smoke)
             for resident in self.residents[slot.id].values():
                 resident.monitor = asyncio.create_task(self.monitor_resident(slot.id, resident))
         except BaseException:
@@ -575,8 +651,7 @@ class Supervisor:
     async def monitor_resident(self, slot_id: str, resident: Resident):
         try:
             await resident.process.wait()
-            self.ledger(slot_id).pop(resident.process.instance_id, None)
-            self.save_ledger(slot_id)
+            self.record_owned_exit(slot_id, resident.process)
         except Exception:
             pass
         if slot_id not in self.stopping_residents and not self.closing:
@@ -604,14 +679,14 @@ class Supervisor:
             self.stopping_residents.discard(slot_id)
 
     def model_runtime(self, slot_id: str) -> dict | None:
-        slot = self.registry.get_slot(slot_id)
+        slot = self.candidate_slots.get(slot_id) or self.registry.get_slot(slot_id)
         package = self.package(slot)
         resident = self.residents.get(slot_id, {}).get(package.manifest.adapter_process)
         if resident is None or resident.process.returncode is not None or resident.process.ownership_lost:
             return None
         return {"endpoint": resident.endpoint + "/mcp", "key": resident.key, "nonce": resident.nonce, "generation": resident.generation}
 
-    async def check_http_candidate(self, slot, package):
+    async def check_http_candidate(self, slot, package, *, business_smoke: bool = True):
         from mcp import ClientSession
         from mcp.client.streamable_http import streamable_http_client
         runtime = self.model_runtime(slot.id)
@@ -623,8 +698,12 @@ class Supervisor:
                         if result.protocolVersion != "2025-11-25" or result.capabilities.model_dump(exclude_none=True).keys() - {"tools"}:
                             raise HostError("unsupported_mcp_capabilities")
                         listing = await session.list_tools()
-                        if [tool.model_dump(by_alias=True, exclude_none=True) for tool in listing.tools] != [tool.mcp_schema() for tool in package.manifest.tools]:
+                        if listing.nextCursor or [tool.model_dump(by_alias=True, exclude_none=True) for tool in listing.tools] != [tool.mcp_schema() for tool in package.manifest.tools]:
                             raise HostError("tool_schema_mismatch")
+                        for fixture in package.manifest.validation.fixtures if business_smoke else ():
+                            smoke_result = await session.call_tool(fixture.tool, fixture.arguments)
+                            if smoke_result.isError or smoke_result.structuredContent != fixture.expected:
+                                raise HostError("smoke_probe_failed")
                         private_session = get_session_id()
                         if private_session is not None:
                             headers = {"Mcp-Session-Id": private_session, "Mcp-Protocol-Version": result.protocolVersion}
@@ -639,7 +718,7 @@ class Supervisor:
     async def package_process(self, slot, *, io_mode="streams") -> OwnedProcess:
         package = self.package(slot)
         entry = package.manifest.entrypoint
-        data = ensure_private_directory(self.slot_directory(slot.id) / "data")
+        data = self.data_directory(slot)
         runtime = ensure_private_directory(self.slot_directory(slot.id) / "runtime")
         return await self.launch_package(slot, package,
             executable=package.root / entry.executable, args=entry.args, cwd=package.root / entry.cwd,
@@ -647,10 +726,10 @@ class Supervisor:
             io_mode=io_mode, startup_timeout=min(package.manifest.lifecycle.startup_timeout_seconds, 120),
             stop_grace=package.manifest.lifecycle.stop_grace_seconds)
 
-    async def check_candidate(self, slot):
+    async def check_candidate(self, slot, *, business_smoke: bool = True):
         package = self.package(slot)
-        if package.manifest.profile == "model-service":
-            await self.start_residents(slot)
+        if package.manifest.profile in {"model-service", "mcp-http"}:
+            await self.start_residents(slot, business_smoke=business_smoke)
             return
         process = await self.package_process(slot)
         async def exchange(message):
@@ -677,10 +756,20 @@ class Supervisor:
                 listing = await exchange({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
                 if listing.get("nextCursor") or listing.get("tools") != [tool.mcp_schema() for tool in package.manifest.tools]:
                     raise HostError("tool_schema_mismatch")
+                from mcp.types import CallToolResult
+                for index, fixture in enumerate(package.manifest.validation.fixtures if business_smoke else (), 3):
+                    response = await exchange({"jsonrpc": "2.0", "id": index, "method": "tools/call",
+                                               "params": {"name": fixture.tool, "arguments": fixture.arguments}})
+                    try:
+                        result = CallToolResult.model_validate(response)
+                    except Exception:
+                        raise HostError("smoke_probe_failed") from None
+                    if result.isError or result.structuredContent != fixture.expected:
+                        raise HostError("smoke_probe_failed")
         finally:
             await self.reap(slot.id, process)
 
-    async def start_gateway(self, slot, active: bool):
+    async def start_gateway(self, slot, active: bool, *, inactive_code="slot_stopped"):
         package = self.package(slot)
         lifecycle = package.manifest.lifecycle
         listener = self.listeners[slot.id]
@@ -690,14 +779,15 @@ class Supervisor:
         activity_parent.setblocking(False)
         config_read, config_write = os.pipe()
         config = {"token": self.connection(slot.id)["token"], "port": slot.public_port, "active": active,
+                  "inactive_code": inactive_code,
                   "max_sessions": lifecycle.max_sessions, "idle_timeout": lifecycle.idle_timeout_seconds,
                   "max_request_bytes": lifecycle.max_request_bytes,
                   "request_timeout": lifecycle.operation_timeout_seconds,
                   "control_timeout": lifecycle.startup_timeout_seconds +
                       max(1, len(package.manifest.processes)) * (lifecycle.stop_grace_seconds + 5) + 5}
-        if package.manifest.profile == "model-service":
+        if package.manifest.profile in {"model-service", "mcp-http"}:
             model_runtime = self.model_runtime(slot.id) if active else None
-            config.update({"profile": "model-service", "upstream_endpoint": model_runtime["endpoint"] if model_runtime else None,
+            config.update({"profile": package.manifest.profile, "upstream_endpoint": model_runtime["endpoint"] if model_runtime else None,
                            "upstream_key": model_runtime["key"] if model_runtime else None,
                            "upstream_nonce": model_runtime["nonce"] if model_runtime else None,
                            "generation": model_runtime["generation"] if model_runtime else slot.generation,
@@ -865,8 +955,7 @@ class Supervisor:
     async def monitor_gateway(self, slot_id: str, worker: Worker):
         try:
             await worker.process.wait()
-            self.ledger(slot_id).pop(worker.process.instance_id, None)
-            self.save_ledger(slot_id)
+            self.record_owned_exit(slot_id, worker.process)
         except Exception:
             pass
         with contextlib.suppress(OSError):
@@ -885,10 +974,11 @@ class Supervisor:
             code = "ownership_lost" if worker.process.ownership_lost or self.registry.get_slot(slot_id).error_code == "ownership_lost" else "gateway_failed"
             self.registry.update_slot(slot_id, observed_state="ownership_lost" if code == "ownership_lost" else "failed", error_code=code)
 
-    async def stop_gateway(self, slot_id: str):
+    async def stop_gateway(self, slot_id: str, *, stop_runtime: bool = True):
         worker = self.workers.pop(slot_id, None)
         if worker is None:
-            await self.stop_residents(slot_id)
+            if stop_runtime:
+                await self.stop_residents(slot_id)
             return
         worker.closing = True
         try:
@@ -903,7 +993,8 @@ class Supervisor:
             if worker.monitor:
                 await worker.monitor
             worker.channel.close()
-            await self.stop_residents(slot_id)
+            if stop_runtime:
+                await self.stop_residents(slot_id)
 
     def migration_running(self, slot_id: str) -> bool:
         directory = self.root / "transfers"
@@ -912,7 +1003,8 @@ class Supervisor:
         return any(record.get("slot_id") == slot_id and record.get("status") == "running"
                    for record in (read_private_json(path) for path in directory.glob("*.json")))
 
-    def check_mutation(self, slot, *, operation_id: str | None = None, migration_internal: bool = False):
+    def check_mutation(self, slot, *, operation_id: str | None = None, migration_internal: bool = False,
+                       allow_exposed_stop: bool = False):
         if self.closing:
             raise HostError("host_closing", 409)
         if slot.id in self.migration_blocked and not migration_internal:
@@ -922,13 +1014,21 @@ class Supervisor:
         for operation in self.registry.list_unfinished_operations():
             if operation.slot_id != slot.id or operation.id == operation_id:
                 continue
+            if (allow_exposed_stop and operation.action in {"install", "upgrade"} and operation.status == "recovery_required"
+                    and operation.details.get("exposed")):
+                continue
             if operation.status in {"pending", "running"}:
                 raise HostError("operation_in_progress", 409)
-            if operation.action in {"install", "remove"}:
-                code = "installation_recovery_required" if operation.action == "install" else "removal_recovery_required"
+            if operation.action in {"install", "remove", "upgrade"}:
+                code = {"install": "installation_recovery_required", "remove": "removal_recovery_required",
+                        "upgrade": "upgrade_recovery_required"}[operation.action]
                 raise HostError(code, 409)
-        if slot.error_code == "installation_recovery_required":
-            raise HostError("installation_recovery_required", 409)
+        if slot.error_code in {"installation_recovery_required", "upgrade_recovery_required"}:
+            recovery = self.registry.get_operation(operation_id) if operation_id else None
+            if (not allow_exposed_stop
+                    and (recovery is None or recovery.slot_id != slot.id or recovery.action not in {"install", "upgrade"}
+                         or recovery.status != "recovery_required")):
+                raise HostError(slot.error_code, 409)
         if (slot.observed_state == "ownership_lost" or slot.error_code == "ownership_lost"
                 or any(value.get("state") == "ownership_lost" for value in self.ledger(slot.id).values())
                 or any(process.ownership_lost for process in self.owner(slot.id).instances.values())):
@@ -989,9 +1089,13 @@ class Supervisor:
                       operation_id: str | None = None):
         if not isinstance(action, str) or action not in {"start", "stop", "restart", "remove"}:
             raise HostError("invalid_control")
-        async with self.locks.setdefault(slot_id, asyncio.Lock()):
+        lock = self.locks.setdefault(slot_id, asyncio.Lock())
+        if lock.locked():
+            raise HostError("operation_in_progress", 409)
+        async with lock:
             slot = self.registry.get_slot(slot_id)
-            self.check_mutation(slot, operation_id=operation_id, migration_internal=migration_internal)
+            self.check_mutation(slot, operation_id=operation_id, migration_internal=migration_internal,
+                                allow_exposed_stop=action == "stop")
             if action == "remove":
                 if operation_id is None:
                     raise HostError("removal_operation_required")
@@ -1011,7 +1115,7 @@ class Supervisor:
                 wake_suppressed=action == "stop")
             try:
                 if action != "stop":
-                    await self.check_candidate(slot)
+                    await self.check_candidate(slot, business_smoke=not bool(self.activation(slot_id).get("verified")))
                     self.secrets.resolve(self.package_settings(slot)["secret_references"])
                     write_private_json(self.slot_directory(slot_id) / "activation.json", {
                         **self.activation(slot_id), "generation": slot.generation, "verified": True, "exposure_permitted": True})
@@ -1070,7 +1174,7 @@ class Supervisor:
                     observed_state="stopped" if action == "pause" else "starting")
                 if action == "resume":
                     try:
-                        await self.start_residents(slot)
+                        await self.start_residents(slot, business_smoke=not bool(self.activation(slot_id).get("verified")))
                         write_private_json(self.slot_directory(slot_id) / "activation.json", {
                             **self.activation(slot_id), "generation": slot.generation, "verified": True, "exposure_permitted": True})
                         self.registry.update_slot(slot_id, observed_state="ready")
@@ -1084,6 +1188,7 @@ class Supervisor:
 
     async def initialize(self):
         self.reconcile_imports()
+        await self.reconcile_owned_receipts()
         try:
             from .migrations import initialize_transfers
         except ImportError:
@@ -1118,9 +1223,24 @@ class Supervisor:
             await self.execute_control(operation)
         pending_removals = {operation.slot_id for operation in self.registry.list_unfinished_operations()
                             if operation.action == "remove"}
+        recovered_upgrades = set()
+        for operation in self.registry.list_unfinished_operations():
+            if operation.action != "upgrade":
+                continue
+            recovered_upgrades.add(operation.slot_id)
+            if self.ledger(operation.slot_id):
+                self.registry.update_slot(operation.slot_id, observed_state="ownership_lost", error_code="ownership_lost")
+                self.registry.update_operation(operation.id, "recovery_required", error_code="ownership_lost")
+                continue
+            await self.execute_upgrade(operation.id, self.read_upgrade_plan(operation.details["plan_id"]), recovery=True)
         self.reconcile_imports()
         for slot in self.registry.list_slots():
             if slot.id in self.migration_blocked:
+                continue
+            if slot.id in recovered_upgrades:
+                # Recovery already classified prior ownership and may have
+                # launched a new held gateway. Do not treat its fresh ledger
+                # as an unresolved owner from the previous supervisor.
                 continue
             if self.ledger(slot.id):
                 self.registry.update_slot(slot.id, observed_state="ownership_lost", error_code="ownership_lost")
@@ -1303,7 +1423,8 @@ class Supervisor:
             if grant_id is not None:
                 self.grants.validate_apply(grant_id, plan)
             key = plan_id
-            details = {"plan_id": plan_id, "package_digest": plan["package_digest"], "package_path": plan["package_path"]}
+            details = {"plan_id": plan_id, "package_digest": plan["package_digest"], "package_path": plan["package_path"],
+                       "selected": False, "exposed": False, "cancel_requested": False, "stage": "staging"}
             if "settings_digest" in plan:
                 details["settings_digest"] = plan["settings_digest"]
             if "import_id" in plan:
@@ -1328,6 +1449,17 @@ class Supervisor:
                     return existing.to_dict()
                 self.imports.validate_binding(plan["import_id"], plan["import_revision"], plan["import_digest"])
                 details.update({field: plan[field] for field in ("import_id", "import_revision", "import_digest")})
+            else:
+                existing = self.registry.get_operation_by_key(key)
+                if existing is not None:
+                    if existing.action != "install" or existing.details.get("plan_id") != plan_id:
+                        raise HostError("operation_conflict", 409)
+                    if grant_id is not None:
+                        with self.registry.transaction():
+                            self.grants.bind_operation(grant_id, plan, existing)
+                    if existing.status == "pending":
+                        self.schedule_install(existing, plan)
+                    return existing.to_dict()
             if self.registry.get_operation_by_key(key) is None:
                 # Plans already contain effective choices. Preserve asynchronous
                 # artifact verification and its durable failed-operation result.
@@ -1347,81 +1479,20 @@ class Supervisor:
             self.schedule_install(operation, plan)
             return operation.to_dict()
 
-    def schedule_install(self, operation, plan: dict):
-        if operation.status == "pending" and not any(getattr(task, "operation_id", None) == operation.id for task in self.tasks):
+    def schedule_install(self, operation, plan: dict, *, recovery: bool = False):
+        if (operation.status == "pending" or recovery and operation.status == "recovery_required") and not any(
+                getattr(task, "operation_id", None) == operation.id for task in self.tasks):
             task = asyncio.create_task(self.install(operation.id, plan))
             task.operation_id = operation.id
             self.track(task)
 
     async def install(self, operation_id: str, plan: dict):
-        slot_id = plan["slot_id"]
-        listener = self.plan_listeners.pop(plan["plan_id"], None)
-        self.registry.update_operation(operation_id, "running")
-        created = False
-        exposure_permitted = False
-        try:
-            if len(self.registry.list_slots()) >= 16:
-                raise HostError("capacity_exceeded")
-            if listener is None:
-                listener = bind_listener(plan["public_port"])
-            package = await asyncio.to_thread(validate_package, Path(plan["package_path"]))
-            if package.digest != plan["package_digest"]:
-                raise HostError("package_digest_mismatch")
-            settings = self.check_plan_settings(plan, package)
-            self.secrets.resolve(settings["secret_references"])
-            package = await asyncio.to_thread(snapshot_package, package, self.root / "packages" / package.manifest.package_id / package.digest)
-            self.package_cache[str(package.root)] = (package, self.package_stamp(package))
-            directory = self.slot_directory(slot_id)
-            write_private_json(directory / "settings.json", settings)
-            connection_path = directory / "connection.json"
-            token = read_private_json(connection_path)["token"] if connection_path.exists() else secrets.token_urlsafe(32)
-            write_private_json(connection_path, {
-                "slot_id": slot_id, "endpoint": f"http://127.0.0.1:{plan['public_port']}/mcp", "token": token,
-                "max_request_bytes": package.manifest.lifecycle.max_request_bytes})
-            slot = self.registry.add_slot(slot_id=slot_id, package_digest=package.digest, package_path=package.root,
-                name=plan["name"], public_port=plan["public_port"], start_policy=plan["start_policy"],
-                credential_ref=directory / "connection.json", settings_digest=settings_digest(settings))
-            created = True
-            self.listeners[slot_id] = listener
-            self.registry.update_slot(slot_id, observed_state="starting")
-            await self.check_candidate(slot)
-            # Revocation during candidate initialization prevents exposure.
-            self.secrets.resolve(settings["secret_references"])
-            if not plan["start"]:
-                await self.stop_residents(slot_id)
-            # Ordinary admission is opened only after the verified candidate is
-            # durably selected. Install has no previous data generation to restore.
-            write_private_json(directory / "activation.json", {"generation": slot.generation, "verified": True,
-                                                               "exposure_permitted": plan["start"], "legacy_jev": plan.get("legacy_jev", False)})
-            exposure_permitted = plan["start"]
-            await self.start_gateway(slot, active=plan["start"])
-            self.registry.update_slot(slot_id, observed_state="ready" if plan["start"] else "stopped",
-                                      desired_state="running" if plan["start"] else "stopped")
-            self.registry.update_operation(operation_id, "completed")
-        except Exception as error:
-            code = error.code if isinstance(error, (HostError, PackageError, RegistryError, SettingsError)) else "installation_failed"
-            with contextlib.suppress(Exception):
-                await self.stop_gateway(slot_id)
-            with contextlib.suppress(Exception):
-                await self.stop_residents(slot_id)
-            ownership_lost = bool(self.ledger(slot_id))
-            if exposure_permitted and not ownership_lost:
-                code = "installation_recovery_required"
-            if created:
-                self.registry.update_slot(slot_id, observed_state="ownership_lost" if ownership_lost else "failed",
-                                          error_code="ownership_lost" if ownership_lost else code)
-                if not ownership_lost and not exposure_permitted:
-                    self.registry.update_slot(slot_id, desired_state="stopped")
-                    self.registry.discard_slot(slot_id)
-                    self.activities.pop(slot_id, None)
-            if listener is not None and not ownership_lost and not exposure_permitted:
-                listener.close()
-                self.listeners.pop(slot_id, None)
-            self.registry.update_operation(operation_id, "recovery_required" if ownership_lost or exposure_permitted else "failed",
-                                           error_code="ownership_lost" if ownership_lost else code)
-        finally:
-            if "import_id" in plan:
-                self.imports.operation_status(plan["import_id"], self.registry.get_operation(operation_id).to_dict())
+        from .install_recovery import install_generation
+        async with self.locks.setdefault(plan["slot_id"], asyncio.Lock()):
+            await install_generation(self, operation_id, plan)
+
+    async def install_checkpoint(self, operation_id: str, stage: str):
+        await asyncio.sleep(0)
 
     def begin_control(self, slot_id: str, action: str) -> dict:
         if not isinstance(action, str) or action not in {"start", "stop", "restart", "remove"}:
@@ -1432,7 +1503,7 @@ class Supervisor:
         retry = next((operation for operation in self.registry.list_unfinished_operations()
                       if action == "remove" and operation.slot_id == slot_id and operation.action == "remove"
                       and operation.status == "recovery_required"), None)
-        self.check_mutation(slot, operation_id=retry.id if retry else None)
+        self.check_mutation(slot, operation_id=retry.id if retry else None, allow_exposed_stop=action == "stop")
         operation = (self.registry.update_operation(retry.id, "running") if retry else
                      self.registry.create_operation(action, slot_id=slot_id, generation=slot.generation))
         task = asyncio.create_task(self.execute_control(operation))
@@ -1534,7 +1605,8 @@ def management_app(host: Supervisor, token: str, port: int):
                 if not isinstance(payload, dict):
                     raise HostError("invalid_request")
             if grant_id is not None:
-                if route.startswith(("/v1/recipes", "/v1/preparations", "/v1/downloads", "/v1/secrets")):
+                if (route.startswith(("/v1/recipes", "/v1/preparations", "/v1/downloads", "/v1/secrets", "/v1/upgrade"))
+                        or route.startswith("/v1/operations/") and request.method != "GET"):
                     # Existing metadata/attachment grants retain their scope.
                     # This foundation introduces no scoped execution authority.
                     raise GrantError("grant_scope", 403)
@@ -1558,7 +1630,7 @@ def management_app(host: Supervisor, token: str, port: int):
                     result = host.preparations.get(request.path_params["job_id"])
                 elif route == "/v1/status":
                     result = {"supervisor_pid": os.getpid(), "slots": [host.slot_snapshot(slot) for slot in host.registry.list_slots()],
-                              "operations": [operation.to_dict() for operation in host.registry.list_operations()],
+                              "operations": [host.operation_snapshot(operation) for operation in host.registry.list_operations()],
                               "resource_policy": host.resource_policy,
                               "reservations": {slot_id: dict(value) for slot_id, value in host.reservations.items()}}
                 elif route == "/v1/slots":
@@ -1571,6 +1643,8 @@ def management_app(host: Supervisor, token: str, port: int):
                     result = host.grants.inspect(request.path_params["grant_id"])
                 elif route.startswith("/v1/plans/"):
                     result = await asyncio.to_thread(host.inspect_plan, request.path_params["plan_id"])
+                elif route.startswith("/v1/upgrade/plans/"):
+                    result = await host.static_work(host.inspect_upgrade_plan, request.path_params["plan_id"])
                 elif route == "/v1/imports":
                     host.reconcile_imports()
                     result = {"imports": host.imports.list_summaries()}
@@ -1594,9 +1668,17 @@ def management_app(host: Supervisor, token: str, port: int):
                 elif route.startswith("/v1/slots/"):
                     result = host.slot_snapshot(host.registry.get_slot(request.path_params["slot_id"]))
                 else:
-                    result = host.registry.get_operation(request.path_params["operation_id"]).to_dict()
+                    result = host.operation_snapshot(host.registry.get_operation(request.path_params["operation_id"]))
             else:
-                if route == "/v1/secrets":
+                if route == "/v1/upgrade/plan":
+                    result = await host.plan_upgrade(payload)
+                elif route == "/v1/upgrade/apply" and set(payload) == {"plan_id"}:
+                    result = await host.apply_upgrade(payload["plan_id"])
+                elif route.startswith("/v1/operations/"):
+                    if payload or request.path_params["action"] not in {"cancel", "recover"}:
+                        raise HostError("invalid_operation_request")
+                    result = await getattr(host, request.path_params["action"] + "_operation")(request.path_params["operation_id"])
+                elif route == "/v1/secrets":
                     if set(payload) != {"name", "value"}:
                         raise SettingsError("invalid_secret")
                     result = host.secrets.create(payload["name"], payload["value"])
@@ -1644,14 +1726,18 @@ def management_app(host: Supervisor, token: str, port: int):
                 elif request.method == "PATCH" and "slot_id" in request.path_params:
                     result = await host.update_settings(request.path_params["slot_id"], payload)
                 elif route == "/v1/imports":
-                    if set(payload) - {"source", "name", "intent", "document_role", "files", "start", "start_policy"}:
+                    if set(payload) - {"source", "name", "intent", "document_role", "files", "start", "start_policy", "model_engine"}:
                         raise HostError("invalid_import_request")
                     if not isinstance(payload.get("source"), str) or not isinstance(payload.get("name"), str):
                         raise HostError("invalid_import_request")
                     settings = {key: value for key, value in payload.items() if key != "source"}
+                    if "model_engine" in settings:
+                        if not isinstance(settings["model_engine"], str) or not Path(settings["model_engine"]).is_absolute():
+                            raise HostError("invalid_import_request")
+                        settings["model_engine"] = Path(settings["model_engine"])
                     # ImportStore is synchronous so intake cannot race revision,
                     # cancel, or apply. It never executes the selected source.
-                    result = host.imports.create(Path(payload["source"]), **settings)
+                    result = await host.static_work(lambda: host.imports.create(Path(payload["source"]), **settings))
                 elif "draft_id" in request.path_params:
                     host.reconcile_imports()
                     draft_id = request.path_params["draft_id"]
@@ -1664,6 +1750,11 @@ def management_app(host: Supervisor, token: str, port: int):
                         host.invalidate_import_plans(draft_id)
                     elif action == "attach" and set(payload) == {"revision", "package"} and isinstance(payload["package"], str):
                         result = await host.static_work(host.imports.attach, draft_id, revision, Path(payload["package"]))
+                    elif action == "engine" and set(payload) == {"revision", "model_engine"} and isinstance(payload["model_engine"], str):
+                        if not Path(payload["model_engine"]).is_absolute():
+                            raise HostError("invalid_import_request")
+                        result = await host.static_work(host.imports.add_engine, draft_id, revision, Path(payload["model_engine"]))
+                        host.invalidate_import_plans(draft_id)
                     elif action in {"export", "cancel", "expire"} and set(payload) == {"revision"}:
                         result = getattr(host.imports, action)(draft_id, revision)
                         if action in {"cancel", "expire"}:
@@ -1694,7 +1785,7 @@ def management_app(host: Supervisor, token: str, port: int):
                 else:
                     raise HostError("invalid_request")
             return JSONResponse({"api_version": 1, **result})
-        except (HostError, PackageError, RegistryError, ImportDraftError, GrantError, PreparationError, DownloadError, SettingsError) as error:
+        except (HostError, PackageError, RegistryError, ImportDraftError, GrantError, PreparationError, DownloadError, SettingsError, UpgradeError) as error:
             return JSONResponse({"api_version": 1, "error": {"code": error.code}}, status_code=getattr(error, "status", 400))
         except Exception:
             return JSONResponse({"api_version": 1, "error": {"code": "invalid_request"}}, status_code=400)
@@ -1715,8 +1806,12 @@ def management_app(host: Supervisor, token: str, port: int):
         Route("/v1/grants", dispatch, methods=["GET", "POST"]),
         Route("/v1/grants/{grant_id}", dispatch), Route("/v1/grants/{grant_id}/revoke", dispatch, methods=["POST"]),
         Route("/v1/plans/{plan_id}", dispatch),
+        Route("/v1/upgrade/plan", dispatch, methods=["POST"]),
+        Route("/v1/upgrade/plans/{plan_id}", dispatch),
+        Route("/v1/upgrade/apply", dispatch, methods=["POST"]),
         Route("/v1/slots/{slot_id}/details", dispatch),
         Route("/v1/slots/{slot_id}", dispatch, methods=["GET", "PATCH"]), Route("/v1/operations/{operation_id}", dispatch),
+        Route("/v1/operations/{operation_id}/{action}", dispatch, methods=["POST"]),
         Route("/v1/imports", dispatch, methods=["GET", "POST"]),
         Route("/v1/imports/{draft_id}", dispatch),
         Route("/v1/imports/{draft_id}/{action}", dispatch, methods=["POST"]),

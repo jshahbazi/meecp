@@ -1,6 +1,6 @@
 # Package configuration and secret references
 
-Prepared packages can declare typed nonsecret configuration and logical secret names. The owner selects configuration and immutable secret references when planning an installation. The exact plan binds those choices; the installed generation retains them across host restart. The owner CLI and API support this flow. Native configuration forms and editing an installed app's configuration remain pending.
+Prepared packages can declare typed nonsecret configuration and logical secret names. The owner selects configuration and immutable secret references when planning an installation. The exact plan binds those choices; the installed generation retains them across host restart. The native setup window and owner CLI/API support this flow. Editing installed configuration creates a newly reviewed [generation upgrade](UPGRADES_RECOVERY.md).
 
 ## Declare the package contract
 
@@ -81,7 +81,7 @@ Packages declaring configuration or secrets receive this descriptor, including w
 scripts/mcpme secrets revoke SECRET_UUID --json
 ```
 
-References are immutable. Rotation creates a new reference and requires a newly reviewed installation; changing installed settings will require the upgrade/configuration workflow. Revocation durably replaces the active record with a metadata tombstone and prevents later resolution and new starts. Already delivered values may remain in a running process; stop that app when retiring its credential. Removing an app retains its nonsecret settings and referenced records. This is not a secure-erasure guarantee.
+References are immutable. Rotation creates a new reference and requires a newly reviewed installation or configuration upgrade. Revocation durably replaces the active record with a metadata tombstone and prevents later resolution and new starts. Already delivered values may remain in a running process; stop that app when retiring its credential. Removing an app retains its nonsecret settings and referenced records. This is not a secure-erasure guarantee.
 
 All four secret-store API routes require owner authority: `POST/GET /v1/secrets`, `GET /v1/secrets/{secret_id}`, and `POST /v1/secrets/{secret_id}/revoke` with `{}`. Creation accepts exactly `{ "name": ..., "value": ... }`. Existing read, prepare, lifecycle, and install grants cannot administer or inspect the store. An exact install grant covers the secret references already reviewed in that plan. Ordinary slot invocation credentials retain no management authority.
 
@@ -89,4 +89,4 @@ All four secret-store API routes require owner authority: `POST/GET /v1/secrets`
 
 `uv run --locked python scripts/verify_settings.py --host /absolute/path/to/host --package /absolute/path/to/json-utilities-package` builds a synthetic prepared stdio package using the bundled private runtime. It exercises private secret-file input, metadata-only owner commands, missing choices, scoped-grant denial, exact plans, duplicate apply, real HTTP and stdio SDK calls, restart, and revoked-reference failure. The fixture returns booleans without returning secret material. This check uses a temporary installation, synthetic values, and relocated paths; it does not access the user's normal installation.
 
-Upgrades with data snapshots and exposure-aware rollback, raw model preparation, reference-document services, provider preparation, and the full Phase 2 recovery acceptance remain open.
+Native configuration and installed settings upgrades use the same contract and private delivery. [PHASE2_COMPLETION.md](PHASE2_COMPLETION.md) records the remaining final acceptance checks. Reference-document services and integrated provider preparation remain later work.

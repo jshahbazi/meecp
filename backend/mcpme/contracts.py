@@ -1,4 +1,4 @@
-"""Static, closed-tree prepared package contract for the initial stdio profile."""
+"""Static, closed-tree prepared package contracts for owned MCP services."""
 from __future__ import annotations
 
 import hashlib
@@ -204,6 +204,21 @@ class ModelArtifact(StrictModel):
     parameters: dict[Label, str | int | float | bool] = Field(default_factory=dict)
 
 
+class HTTPService(StrictModel):
+    configuration: Literal["descriptor-v1"]
+    session_termination: Literal["delete"]
+
+
+class SmokeFixture(StrictModel):
+    tool: Label
+    arguments: dict[str, Any]
+    expected: dict[str, Any]
+
+
+class Validation(StrictModel):
+    fixtures: list[SmokeFixture] = Field(default_factory=list, max_length=4)
+
+
 class PackageManifest(StrictModel):
     schema_version: Literal[1]
     host_api_version: Literal[1] = 1
@@ -211,12 +226,14 @@ class PackageManifest(StrictModel):
     version: Annotated[str, Field(pattern=r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$")]
     source_revision: Label
     name: Label
-    profile: Literal["mcp-stdio", "model-service"]
+    profile: Literal["mcp-stdio", "mcp-http", "model-service"]
     platform: Platform
     entrypoint: Entrypoint | None = None
     processes: list[ManagedProcess] = Field(default_factory=list, max_length=16)
     adapter_process: Label | None = None
     model: ModelArtifact | None = None
+    http: HTTPService | None = None
+    validation: Validation = Field(default_factory=Validation)
     protocol: Protocol
     lifecycle: Lifecycle = Field(default_factory=Lifecycle)
     tools: list[Tool] = Field(min_length=1, max_length=128)
@@ -408,8 +425,6 @@ def validate_package(root: Path) -> ValidatedPackage:
         if (type(manifest_json.get("schema_version")) is not int or manifest_json.get("schema_version") != 1
                 or type(lock_json.get("schema_version")) is not int or lock_json.get("schema_version") != 1):
             raise PackageError("unsupported_package_schema")
-        if manifest_json.get("profile") == "mcp-http":
-            raise PackageError("unsupported_execution_profile")
         manifest = PackageManifest.model_validate(manifest_json)
         lock = PackageLock.model_validate(lock_json)
         if type(manifest_json.get("host_api_version", 1)) is not int:
@@ -418,11 +433,21 @@ def validate_package(root: Path) -> ValidatedPackage:
             raise PackageError("invalid_resource_declaration")
         if manifest.profile == "mcp-stdio":
             if (manifest.entrypoint is None or manifest.processes or manifest.model is not None
-                    or manifest.adapter_process is not None or not manifest.resources.cpu_only
+                    or manifest.http is not None or manifest.adapter_process is not None or not manifest.resources.cpu_only
                     or manifest.resources.memory_mb > 4096):
                 raise PackageError("invalid_package_schema")
+        elif manifest.profile == "mcp-http":
+            if manifest.http is None:
+                raise PackageError("http_configuration_required")
+            if (manifest.entrypoint is not None or manifest.model is not None or len(manifest.processes) != 1
+                    or not manifest.resources.cpu_only or manifest.resources.gpu or manifest.resources.memory_mb > 4096):
+                raise PackageError("unsupported_process_topology")
+            service = manifest.processes[0]
+            if (manifest.adapter_process != service.id or service.role != "adapter" or service.depends_on
+                    or service.readiness.path != "/health" or not service.readiness.echo_generation):
+                raise PackageError("http_identity_contract_required")
         else:
-            if manifest.entrypoint is not None or not manifest.processes or manifest.model is None:
+            if manifest.entrypoint is not None or not manifest.processes or manifest.model is None or manifest.http is not None:
                 raise PackageError("invalid_package_schema")
             processes = {process.id: process for process in manifest.processes}
             if len(processes) != len(manifest.processes) or manifest.adapter_process not in processes:
@@ -497,7 +522,7 @@ def validate_package(root: Path) -> ValidatedPackage:
                 raise PackageError("entrypoint_not_executable")
             if entry.cwd not in directories or any("\x00" in arg for arg in entry.args):
                 raise PackageError("invalid_entrypoint")
-            if manifest.profile == "model-service" and any(arg == "--mcpme-config-fd" for arg in entry.args):
+            if manifest.profile in {"model-service", "mcp-http"} and any(arg == "--mcpme-config-fd" for arg in entry.args):
                 raise PackageError("invalid_entrypoint")
         if manifest.model is not None:
             package_relative_path(manifest.model.artifact)
@@ -516,6 +541,14 @@ def validate_package(root: Path) -> ValidatedPackage:
             _check_tool_schema(tool.input_schema)
             if tool.output_schema is not None:
                 _check_tool_schema(tool.output_schema)
+        tools = {tool.name: tool for tool in manifest.tools}
+        for fixture in manifest.validation.fixtures:
+            if len(json.dumps(fixture.model_dump(), separators=(",", ":"), allow_nan=False).encode()) > 16384:
+                raise PackageError("smoke_fixture_limit")
+            tool = tools.get(fixture.tool)
+            if (tool is None or not Draft202012Validator(tool.input_schema).is_valid(fixture.arguments)
+                    or tool.output_schema is not None and not Draft202012Validator(tool.output_schema).is_valid(fixture.expected)):
+                raise PackageError("invalid_smoke_fixture")
         # Recheck tree and metadata so an artifact added/removed during hashing is rejected.
         if _tree(root) != (files, directories) or _read_file(root / MANIFEST_NAME, MAX_METADATA_BYTES) != manifest_bytes or _read_file(root / LOCK_NAME, MAX_LOCK_METADATA_BYTES) != lock_bytes:
             raise PackageError("package_changed")

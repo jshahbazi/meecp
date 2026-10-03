@@ -215,7 +215,10 @@ class Gateway:
     def __init__(self, *, launch_session: Callable[[str], Awaitable[SessionPipes]],
                  close_session: Callable[[str], Awaitable[None]], max_sessions=8,
                  idle_timeout=300, request_timeout=60, active=None, expected_tools=None,
-                 activity_report=None, max_request_bytes=DEFAULT_REQUEST_BYTES):
+                 activity_report=None, max_request_bytes=DEFAULT_REQUEST_BYTES, inactive_code="slot_stopped"):
+        if inactive_code not in {"slot_stopped", "updating"}:
+            raise ValueError("invalid_inactive_code")
+        self.inactive_code = inactive_code
         if (not isinstance(max_sessions, int) or isinstance(max_sessions, bool) or max_sessions < 1 or
                 not isinstance(max_request_bytes, int) or isinstance(max_request_bytes, bool) or
                 not 1 <= max_request_bytes <= MAX_REQUEST_BYTES or
@@ -354,7 +357,7 @@ class Gateway:
     async def _handle(self, request: Request, activity=None):
         # Raw ASGI streaming is returned below so HTTP disconnect never cancels a package request.
         if self.stopping or not self.active():
-            return JSONResponse({"error": {"code": "slot_stopped"}}, status_code=409)
+            return JSONResponse({"error": {"code": self.inactive_code}}, status_code=409)
         message = request.scope.get("mcpme.message")
         sid = request.headers.get("mcp-session-id")
         if request.method == "POST":
@@ -562,11 +565,11 @@ class SSE(Response):
 
 def make_app(*, token: str, port: int, launch_session, close_session, max_sessions=8,
              idle_timeout=300, request_timeout=60, active=None, expected_tools=None,
-             activity_report=None, max_request_bytes=DEFAULT_REQUEST_BYTES):
+             activity_report=None, max_request_bytes=DEFAULT_REQUEST_BYTES, inactive_code="slot_stopped"):
     gateway = Gateway(launch_session=launch_session, close_session=close_session, max_sessions=max_sessions,
                       idle_timeout=idle_timeout, request_timeout=request_timeout, active=active,
                       expected_tools=expected_tools, activity_report=activity_report,
-                      max_request_bytes=max_request_bytes)
+                      max_request_bytes=max_request_bytes, inactive_code=inactive_code)
 
     @asynccontextmanager
     async def lifespan(app):

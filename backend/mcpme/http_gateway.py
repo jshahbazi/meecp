@@ -282,6 +282,8 @@ class HTTPGateway(Gateway):
                 activity.finish(succeeded)
 
     async def _legacy(self, request: Request):
+        if self.inactive_code == "updating":
+            return JSONResponse({"error": {"code": "updating"}}, status_code=409)
         if not self.legacy_jev:
             return Response(status_code=404)
         path = request.url.path
@@ -325,12 +327,12 @@ class HTTPGateway(Gateway):
 def make_http_app(*, token, port, upstream_endpoint=None, upstream_token=None, max_sessions=8,
                   idle_timeout=300, request_timeout=180, expected_tools=None, active=None,
                   legacy_jev=False, control=None, control_timeout=None, client=None,
-                  activity_report=None, max_request_bytes=DEFAULT_REQUEST_BYTES):
+                  activity_report=None, max_request_bytes=DEFAULT_REQUEST_BYTES, inactive_code="slot_stopped"):
     gateway = HTTPGateway(upstream_endpoint=upstream_endpoint, upstream_token=upstream_token,
                           max_sessions=max_sessions, idle_timeout=idle_timeout, request_timeout=request_timeout,
                           expected_tools=expected_tools, active=active, legacy_jev=legacy_jev, control=control,
                           control_timeout=control_timeout, client=client, activity_report=activity_report,
-                          max_request_bytes=max_request_bytes)
+                          max_request_bytes=max_request_bytes, inactive_code=inactive_code)
 
     @asynccontextmanager
     async def lifespan(app):

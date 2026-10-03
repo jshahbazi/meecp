@@ -1,7 +1,9 @@
 """Real two-slot host acceptance using owned native stdio packages and SDK clients."""
 import asyncio
+import hashlib
 import importlib.util
 import json
+import shutil
 from pathlib import Path
 import subprocess
 
@@ -15,6 +17,37 @@ from mcpme.supervisor import HostError, Supervisor, bind_listener, management_ap
 from mcpme.imports import ImportError as ImportDraftError
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expected_valid", [True, False])
+async def test_declared_business_smoke_gates_real_stdio_candidate(tmp_path, prepared, expected_valid):
+    package, reaper = prepared
+    candidate = tmp_path / "smoke-package"
+    shutil.copytree(package, candidate)
+    manifest_path = candidate / "mcpme.package.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["validation"] = {"fixtures": [{"tool": "validate_json",
+        "arguments": {"document": '{"synthetic":true}'},
+        "expected": {"valid": expected_valid, "kind": "object"}}]}
+    manifest_path.write_text(json.dumps(manifest))
+    lock_path = candidate / "mcpme.lock.json"
+    lock = json.loads(lock_path.read_text())
+    lock["manifest_sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    lock_path.write_text(json.dumps(lock))
+    host = Supervisor(tmp_path / "smoke-state", reaper)
+    try:
+        plan = host.plan_install({"package": str(candidate), "start": True})
+        operation = await finish(host, await host.apply_install(plan["plan_id"]))
+        if expected_valid:
+            assert operation.status == "completed"
+            assert await tool_call(host, operation.slot_id) == {"valid": True, "kind": "object"}
+        else:
+            assert operation.status == "failed" and operation.error_code == "smoke_probe_failed"
+            assert not host.registry.list_slots() and not host.workers
+            assert not host.ledger(operation.slot_id)
+    finally:
+        await host.close()
 
 
 def test_reserved_listener_rejects_another_owner():
@@ -398,7 +431,7 @@ async def test_shutdown_cancels_blocked_install_before_closing_registry(tmp_path
     state = tmp_path.resolve() / "host"
     host = Supervisor(state, reaper)
     entered = asyncio.Event()
-    async def candidate(_):
+    async def candidate(_, **kwargs):
         entered.set()
         await asyncio.Event().wait()
     monkeypatch.setattr(host, "check_candidate", candidate)

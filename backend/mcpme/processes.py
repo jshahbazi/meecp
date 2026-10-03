@@ -180,11 +180,23 @@ class ProcessOwner:
         self._launches: set[asyncio.Task[OwnedProcess]] = set()
         self._pending_ids: set[str] = set()
 
+    def holds_live_instances(self, identifiers: set[str]) -> bool:
+        """Confirm current capabilities without discovering or adopting PIDs."""
+        if (self._closed or self.persistence_failed or self._launches or self._pending_ids
+                or identifiers != set(self.instances)):
+            return False
+        return all(process.owner is self and process.instance_id == identifier
+                   and process.pid is not None and not process.ownership_lost
+                   and process.returncode is None and process.wrapper.returncode is None
+                   and not process._done.done() and not process._monitor.done()
+                   for identifier, process in self.instances.items())
+
     async def launch(
         self, executable: Path, args: list[str], cwd: Path, env: dict[str, str], *,
         instance_id: str | None = None, io_mode: str = "streams",
         inherited_fds: tuple[int, ...] = (), startup_timeout: float = 10,
-        stop_grace: float = 2,
+        stop_grace: float = 2, completion_fd: int | None = None,
+        completion_nonce: str | None = None,
     ) -> OwnedProcess:
         if self._closed:
             raise ProcessError("owner_closed")
@@ -197,12 +209,19 @@ class ProcessOwner:
         identifier = instance_id or uuid.uuid4().hex
         if identifier in self.instances or identifier in self._pending_ids:
             raise ProcessError("duplicate_instance")
+        if completion_fd is None and completion_nonce is not None:
+            raise ProcessError("invalid_launch")
+        if completion_fd is not None:
+            from .ownership_receipts import validate_receipt_descriptor
+            if (completion_fd in inherited_fds or not validate_receipt_descriptor(completion_fd, identifier, completion_nonce)):
+                raise ProcessError("invalid_launch")
         # Shield creation through acknowledgment so cancellation cannot orphan a
         # subprocess between OS spawn and Python receiving its owned handle.
         self._pending_ids.add(identifier)
         task = asyncio.create_task(self._launch(
             Path(executable).absolute(), list(args), Path(cwd).absolute(), dict(env),
             identifier, io_mode, tuple(inherited_fds), startup_timeout, stop_grace,
+            completion_fd, completion_nonce,
         ))
         self._launches.add(task)
         try:
@@ -223,6 +242,7 @@ class ProcessOwner:
         self, executable: Path, args: list[str], cwd: Path, env: dict[str, str],
         identifier: str, io_mode: str, inherited_fds: tuple[int, ...],
         startup_timeout: float, stop_grace: float,
+        completion_fd: int | None, completion_nonce: str | None,
     ) -> OwnedProcess:
         if any(not isinstance(v, str) or "\0" in v for v in args):
             raise ProcessError("invalid_launch")
@@ -248,13 +268,15 @@ class ProcessOwner:
         output_read, output_write = os.pipe()
         process = None
         try:
-            payload = bytearray(b"MCPME001")
+            payload = bytearray(b"MCPME002" if completion_fd is not None else b"MCPME001")
             def number(value: int) -> None:
                 payload.extend(struct.pack("!I", value))
             def string(value: str) -> None:
                 data = value.encode("utf-8")
                 number(len(data))
                 payload.extend(data)
+            if completion_fd is not None:
+                string(identifier); string(completion_nonce)
             for value in (int(stop_grace * 1000), input_read, output_write, len(inherited_fds)):
                 number(value)
             for fd in inherited_fds:
@@ -269,9 +291,11 @@ class ProcessOwner:
                 raise ProcessError("invalid_launch")
             wrapper = await asyncio.create_subprocess_exec(
                 str(self.reaper), str(spec_child.fileno()), str(control_child.fileno()), str(os.getpid()),
+                *([str(completion_fd)] if completion_fd is not None else []),
                 stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL, env={},
-                pass_fds=(spec_child.fileno(), control_child.fileno(), input_read, output_write, *inherited_fds),
+                pass_fds=(spec_child.fileno(), control_child.fileno(), input_read, output_write, *inherited_fds,
+                          *((completion_fd,) if completion_fd is not None else ())),
             )
             control_parent.setblocking(False)
             process = OwnedProcess(self, identifier, wrapper, control_parent, input_write, output_read, stop_grace)

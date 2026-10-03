@@ -75,7 +75,7 @@ The owner CLI also supports [pinned prepared-package downloads](docs/PINNED_DOWN
 
 Packages can declare [typed configuration and secret references](docs/CONFIGURATION_SECRETS.md). The owner selects nonsecret settings and private credential references in the installation plan; package processes receive the selected values through a private descriptor.
 
-Reference-document services and dropping in raw model weights aren't supported yet. Native download controls, raw model downloads, package upgrades and rollback, and preparation through a provider inside the app remain planned; see the [onboarding delivery plan](docs/PROJECT_ONBOARDING.md).
+Add App supports pinned package downloads, typed configuration and secret references, and raw pinned JevK5 weights with a selected verified engine. Reviewed [upgrades and recovery](docs/UPGRADES_RECOVERY.md) preserve app identity and data. Reference-document services and integrated provider preparation remain later work; see the [completion audit](docs/PHASE2_COMPLETION.md).
 
 ## Let an assistant manage apps
 
@@ -106,16 +106,16 @@ To prepare JevK5-4B from source, first build mcpme as above. The current model p
 ```sh
 uv run --locked python scripts/fetch_model.py
 uv run --locked python scripts/build.py --llama-server /absolute/path/to/llama-server
-uv run --locked python scripts/prepare_jevk5_package.py --host dist/mcpme.app/Contents/Resources/host
+uv run --locked python scripts/prepare_jevk5_package.py --legacy-app dist/JevK5.app --output dist/jevk5-package --host dist/mcpme.app/Contents/Resources/host
 ```
 
 The fetch verifies the pinned revision, size, and SHA-256; the model download is about 4.48 GB. Replace the `llama-server` placeholder with the actual executable path. Add the resulting `dist/jevk5-package` through **Add App**. If you already use the standalone JevK5 app, the [migration guide](docs/MCPME_STATUS.md#import-the-existing-jevk5-installation) covers its explicit port, credential, and login-policy transfer.
 
 ## Where things stand
 
-The current host supports `mcp-stdio` packages for CPU tools and `model-service` packages with a shared model engine. JevK5-4B and JSON Utilities have been tested together. Source imports, saved drafts, external-agent preparation, and scoped management MCP are implemented. The host currently permits one resident GPU package; generic `mcp-http` packages and starting a stopped app on its first tool call are pending.
+The current host supports `mcp-stdio` packages for CPU tools, authenticated `mcp-http` server factories, and `model-service` packages with a shared model engine. JevK5-4B and JSON Utilities have been tested together. Source imports, saved drafts, external-agent preparation, scoped management MCP and reviewed upgrades are implemented. The host currently permits one resident GPU package; first-call wake loading remains unsupported.
 
-**Start at Login** is implemented through macOS ServiceManagement; registration and next-login behavior for the development bundle still need verification. Package upgrades/rollback and an automatic host updater remain planned. Live request counters are limited to the current host session, while model-runtime statistics reset with that runtime.
+**Start at Login** is implemented through macOS ServiceManagement; registration and next-login behavior for the development bundle still need verification. Reviewed package upgrades and exposure-aware recovery are implemented. An automatic host updater remains planned. Live request counters are limited to the current host session, while model-runtime statistics reset with that runtime.
 
 Services listen on `127.0.0.1`, require authentication, and check Host/Origin headers. The host does not log tool inputs, outputs, or raw exception payloads. Packages run with your account's permissions, so install code you trust. The [implementation guide](docs/MCPME_STATUS.md) covers supported package types, resource limits, and recovery.
 

@@ -72,11 +72,10 @@ def test_validation_static_and_digest_bound(tmp_path, monkeypatch):
     assert validate_package(root).digest != digest
 
 
-@pytest.mark.parametrize("profile", ["mcp-http"])
-def test_unsupported_profiles(tmp_path, profile):
+def test_http_profile_requires_explicit_private_injection_contract(tmp_path):
     root = make_package(tmp_path / "package")
-    edit_manifest(root, profile=profile)
-    with pytest.raises(PackageError, match="^unsupported_execution_profile$"):
+    edit_manifest(root, profile="mcp-http")
+    with pytest.raises(PackageError, match="^http_configuration_required$"):
         validate_package(root)
 
 

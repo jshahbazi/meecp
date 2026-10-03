@@ -17,6 +17,7 @@ import httpx
 import pytest
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from mcp.types import ListToolsResult, Tool
 
 from mcpme.contracts import PackageError, validate_package
 from mcpme.processes import OwnershipLost
@@ -270,8 +271,8 @@ async def test_graph_and_protocol_probe_share_one_startup_deadline(tmp_path, pre
         assert deadline > asyncio.get_running_loop().time()
         launched.append(declaration.id)
         await asyncio.sleep(0.35 if slow_probe else 0.65)
-    probe = AsyncMock(side_effect=lambda *_: None)
-    async def check(*_):
+    probe = AsyncMock(side_effect=lambda *_, **kwargs: None)
+    async def check(*_, **kwargs):
         await asyncio.sleep(0.65)
     if slow_probe:
         probe = AsyncMock(side_effect=check)
@@ -293,7 +294,8 @@ async def test_native_ack_uses_remaining_graph_deadline(tmp_path, prepared, monk
     package_path, reaper = prepared
     package = validate_package(package_path)
     host = Supervisor(tmp_path.resolve() / "host", reaper)
-    slot = SimpleNamespace(id=str(__import__("uuid").uuid4()), generation=1, public_port=19496, settings_digest=None)
+    slot = SimpleNamespace(id=str(__import__("uuid").uuid4()), generation=1, public_port=19496,
+                           settings_digest=None, settings_path=None, data_path=None)
     engine = package.manifest.processes[0]
     captured = []
     async def launch(_slot, **kwargs):
@@ -331,8 +333,7 @@ async def test_stateful_candidate_must_prove_session_termination(tmp_path, prepa
         async def initialize(self):
             return SimpleNamespace(protocolVersion="2025-11-25", capabilities=SimpleNamespace(model_dump=lambda **_: {"tools": {}}))
         async def list_tools(self):
-            return SimpleNamespace(tools=[SimpleNamespace(model_dump=lambda value=tool.mcp_schema(), **_: value)
-                                          for tool in package.manifest.tools])
+            return ListToolsResult(tools=[Tool.model_validate(tool.mcp_schema()) for tool in package.manifest.tools])
     monkeypatch.setattr(mcp, "ClientSession", Session)
     requests = []
     def respond(request):

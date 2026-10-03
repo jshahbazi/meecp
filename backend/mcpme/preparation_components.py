@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any, Literal, Protocol
 
@@ -115,7 +115,7 @@ class SnapshotFile:
     path: str
     sha256: str
     size: int
-    data: bytes
+    data: bytes = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -131,6 +131,12 @@ def source_records(draft: dict) -> tuple[dict, ...]:
     """Validate the original folder identity without changing its serialization."""
     try:
         source = draft["source"]
+        if source["kind"] == "application_directory":
+            from .preparation_application_source import application_source_records
+            try:
+                return application_source_records(draft)
+            except SourceError as error:
+                raise PreparationError(error.code) from None
         if source["kind"] not in {"local_folder", "document"}:
             raise PreparationError("unsupported_preparation_source")
         raw = source["files"]
@@ -179,6 +185,14 @@ def original_file_records(draft):
 
 def read_snapshot(draft: dict) -> SourceSnapshot:
     """Read and recheck the exact bounded snapshot tree without importing it."""
+    if draft.get("source", {}).get("kind") == "application_directory":
+        from .preparation_application_source import read_application_snapshot
+        try:
+            files = read_application_snapshot(draft)
+            return SourceSnapshot(draft["source"]["revision"], tuple(
+                SnapshotFile(item.path, item.sha256, item.size, item.data) for item in files.values()))
+        except SourceError as error:
+            raise PreparationError(error.code) from None
     records = source_records(draft)
     try:
         root = Path(draft["source"]["snapshot_path"])

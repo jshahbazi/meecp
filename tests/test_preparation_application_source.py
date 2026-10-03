@@ -14,7 +14,6 @@ import pytest
 from mcpme.imports import ImportError, ImportStore
 from mcpme import preparation_application_source as intake
 from mcpme.preparation_components import original_file_records, read_snapshot
-from mcpme.preparation_contracts import PreparationError
 
 
 def source_tree(tmp_path):
@@ -44,8 +43,7 @@ def test_automatic_binary_capture_retains_modes_and_survives_source_removal(tmp_
         assert files["worker"].data == expected and files["worker"].executable
         assert "bounded synthetic binary" not in repr(files["worker"])
         assert original_file_records(draft) == tuple(draft["source"]["files"])
-        with pytest.raises(PreparationError, match="unsupported_preparation_source"):
-            read_snapshot(draft)
+        assert read_snapshot(draft).by_path()["worker"].data == expected
     with ImportStore(tmp_path / "state") as store:
         assert intake.read_application_snapshot(store.inspect(draft["draft_id"]))["worker"].data == expected
 
@@ -222,3 +220,23 @@ def test_automatic_copy_does_not_hold_sqlite_transaction(tmp_path, monkeypatch):
         monkeypatch.setattr(intake, "_read_file", observing)
         draft = store.create(root, name="Off transaction", source_mode="automatic")
         assert reads and draft["source"]["kind"] == "application_directory"
+
+
+def test_python_inspection_keeps_binary_assets_and_unknown_payload_bound(tmp_path, monkeypatch):
+    from mcpme.preparation_inspection import inspect_source
+    root = tmp_path / "source"
+    root.mkdir()
+    (root / "worker.py").write_text("def calculate(label: str) -> dict[str, bool]:\n    return {'ok': True}\n")
+    (root / "asset.png").write_bytes(b"\x89PNG\r\n\x1a\n\0synthetic asset")
+    (root / "source.metadata").write_text("Unknown regular payload")
+    monkeypatch.setattr("subprocess.Popen", lambda *a, **kw: pytest.fail("inspection executed source"))
+    with ImportStore(tmp_path / "state") as store:
+        draft = store.create(root, name="Mixed Python", source_mode="automatic")
+        assert draft["source"]["kind"] == "application_directory"
+        inspection = inspect_source(draft)
+        candidate, = inspection["candidates"]
+        assert candidate["kind"] == "python-callable" and candidate["function"] == "calculate"
+        assert inspection["source_revision"] == draft["source"]["revision"]
+        assert {item.path for item in read_snapshot(draft).files} == {"worker.py", "asset.png", "source.metadata"}
+        shutil.rmtree(root)
+        assert inspect_source(draft) == inspection

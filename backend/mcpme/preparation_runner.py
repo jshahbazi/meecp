@@ -42,7 +42,7 @@ MAX_WORKSPACE_ENTRIES = 200000
 RUNNER_FILES = ("preparation_runner.py", "preparation_builder.py", "preparation_acquisition.py",
                 "preparation_components.py", "preparation_processes.py", "preparations.py",
                 "preparation_authority.py", "preparation_contracts.py", "processes.py", "ownership_receipts.py",
-                "imports.py", "private.py", "recipes.py", "contracts.py", "preparation_inputs.py",
+                "imports.py", "preparation_application_source.py", "private.py", "recipes.py", "contracts.py", "preparation_inputs.py",
                 "preparation_resolved_python.py", "preparation_resolution.py")
 VERIFIER_FILES = ("preparation_verifier.py", "preparation_processes.py", "preparation_contracts.py",
                   "contracts.py", "processes.py", "ownership_receipts.py")

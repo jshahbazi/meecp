@@ -17,7 +17,8 @@ from pydantic import ValidationError
 from .contracts import PackageError, _read_file, validate_package
 from .preparation_components import builtin_component_registry
 from .preparation_authority import PreparationAuthority
-from .preparation_inputs import (parse_preparation_descriptor, descriptor_tools, parse_preparation_receipt)
+from .preparation_inputs import (parse_preparation_descriptor, descriptor_tools, parse_preparation_receipt,
+                                 candidate_contract_digest, extend_package_contract)
 from .preparation_contracts import (
     ExecutionPolicy, JobBinding, PreparationError, PreparationReceipt,
     MAX_CONTRACT_BYTES, RUNNER_IDENTITY, VERIFIER_IDENTITY, contract_digest, schema_accepts,
@@ -129,15 +130,22 @@ class PreparationStore(PreparationAuthority):
         if draft["source"]["kind"] == "prepared_package":
             raise PreparationError("preparation_not_required")
         manifest = recipe["manifest"]
-        if not schema_accepts(manifest["input_schema"], descriptor.inputs):
+        profile = (getattr(self.family_for(descriptor), "target_profile", "mcp-stdio")
+                   if descriptor.schema_version == 2 else "mcp-stdio")
+        if profile == "host-command":
+            # The command component owns typed questions and structural tool
+            # schemas. A recipe cannot inject regex/ref evaluation before it.
+            if manifest["input_schema"] != {"type": "object", "additionalProperties": False} or descriptor.inputs != {}:
+                raise PreparationError("recipe_input_mismatch")
+        elif not schema_accepts(manifest["input_schema"], descriptor.inputs):
             raise PreparationError("recipe_input_mismatch")
         self.components.validate_source(descriptor, draft, recipe)
         if descriptor.schema_version == 2:
             self.resolved_inputs(descriptor, draft)
-        profile = (getattr(self.family_for(descriptor), "target_profile", "mcp-stdio")
-                   if descriptor.schema_version == 2 else "mcp-stdio")
-        if profile not in {"mcp-stdio", "mcp-http", "model-service"}:
+        if profile not in {"mcp-stdio", "mcp-http", "model-service", "host-command"}:
             raise PreparationError("unsupported_execution_profile")
+        if manifest["requirements"]["package_schema"] != (2 if profile == "host-command" else 1):
+            raise PreparationError("recipe_incompatible")
         if draft["requirements"].get("profile") not in {None, profile}:
             raise PreparationError("unsupported_execution_profile")
         if draft["requirements"].get("secret_references"):
@@ -287,14 +295,15 @@ class PreparationStore(PreparationAuthority):
         return current
 
     @staticmethod
-    def _candidate_contract(value, source_revision, *, profile="mcp-stdio"):
-        if profile not in {"mcp-stdio", "mcp-http", "model-service"}:
+    def _candidate_contract(value, source_revision, *, profile="mcp-stdio", command=None, licenses=None, source_artifacts=None):
+        if profile not in {"mcp-stdio", "mcp-http", "model-service", "host-command"}:
             raise PreparationError("unsupported_execution_profile")
-        return {"package_id": value.package.id, "version": value.package.version, "name": value.package.name,
+        base = {"package_id": value.package.id, "version": value.package.version, "name": value.package.name,
                 "source_revision": source_revision, "profile": profile,
                 "tools": [tool.model_dump(exclude_none=True) for tool in descriptor_tools(value)],
                 "access": value.access.model_dump(), "resources": value.resources.model_dump(),
                 "lifecycle": value.lifecycle.model_dump()}
+        return extend_package_contract(base, command=command, licenses=licenses, source_artifacts=source_artifacts)
 
     def reserve(self, import_id, revision, descriptor, policy: ExecutionPolicy, *, idempotency_key: str,
                 authorization=None):
@@ -323,8 +332,14 @@ class PreparationStore(PreparationAuthority):
         identity = contract_digest("preparation-start-v1", inputs)
         profile = (getattr(self.family_for(value), "target_profile", "mcp-stdio")
                    if value.schema_version == 2 else "mcp-stdio")
-        candidate_digest = contract_digest("preparation-candidate-v1", self._candidate_contract(
-            value, observed["source"]["revision"], profile=profile))
+        expected_contract = (self.family_for(value).expected_package_contract(value, observed) if profile == "host-command"
+                             else self._candidate_contract(value, observed["source"]["revision"], profile=profile))
+        if profile == "host-command":
+            checked = self._candidate_contract(value, observed["source"]["revision"], profile=profile,
+                **{key: expected_contract[key] for key in ("command", "licenses", "source_artifacts")})
+            if checked != expected_contract:
+                raise PreparationError("expected_package_contract_mismatch")
+        candidate_digest = candidate_contract_digest(expected_contract)
         fixture_digest = contract_digest("preparation-fixtures-v1", [item.model_dump() for item in value.validation])
         artifact_digest = contract_digest("artifact-collection-v1", [item.model_dump() for item in value.artifacts])
         if bound_inputs is not None and bound_inputs.captured_collection is not None:
@@ -461,9 +476,13 @@ class PreparationStore(PreparationAuthority):
         except ValidationError:
             raise PreparationError("invalid_preparation_receipt") from None
         manifest = current.manifest.model_dump(exclude_none=True)
-        candidate_digest = contract_digest("preparation-candidate-v1", {
+        actual_contract = {
             key: manifest[key] for key in ("package_id", "version", "name", "source_revision", "profile", "tools", "access", "resources", "lifecycle")
-        })
+        }
+        if current.manifest.profile == "host-command":
+            actual_contract = extend_package_contract(actual_contract, command=manifest["command"], licenses=manifest["licenses"],
+                source_artifacts=[item.model_dump() for item in current.lock.artifacts if item.path != RECEIPT_NAME])
+        candidate_digest = candidate_contract_digest(actual_contract)
         with self.imports._transaction():
             job = self._get(job_id)
             self._current_inputs(job)

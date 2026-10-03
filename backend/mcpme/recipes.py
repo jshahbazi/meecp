@@ -242,7 +242,7 @@ class RecipeStore:
             blockers.append("unsupported_recipe_kind")
         requirements = manifest["requirements"]
         if (requirements["os"] != "macos" or requirements["architecture"] != "arm64"
-                or requirements["package_schema"] != 1 or requirements["protocol"] != "2025-11-25"):
+                or requirements["package_schema"] not in {1, 2} or requirements["protocol"] != "2025-11-25"):
             blockers.append("recipe_incompatible")
         if set(requirements.get("capabilities", [])) - {"declarative-composition", *(key.split("@", 1)[0] for key in self.component_catalog)}:
             blockers.append("recipe_capability_unavailable")
@@ -255,6 +255,10 @@ class RecipeStore:
                 raise RecipeError("recipe_component_unavailable")
             if reference["digest"] != component.get("digest"):
                 raise RecipeError("recipe_component_digest_mismatch")
+            # New package contracts require an explicit trusted component
+            # declaration. Existing catalogs retain schema-1 semantics.
+            if requirements["package_schema"] not in component.get("package_schemas", [1]):
+                raise RecipeError("recipe_incompatible")
             if key in visiting:
                 raise RecipeError("recipe_dependency_cycle")
             if key in visited:

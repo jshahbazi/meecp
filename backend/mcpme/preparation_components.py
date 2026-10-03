@@ -155,6 +155,12 @@ def source_records(draft: dict) -> tuple[dict, ...]:
 def original_file_records(draft):
     """Original file metadata for either existing snapshot or captured source."""
     source = draft["source"]
+    if source["kind"] == "application_directory":
+        from .preparation_application_source import application_source_records
+        try:
+            return application_source_records(draft)
+        except SourceError as error:
+            raise PreparationError(error.code) from None
     if source["kind"] != "captured_artifact_collection":
         return tuple(source.get("files", []))
     from .preparation_artifacts import CapturedArtifactCollectionV1

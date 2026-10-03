@@ -162,7 +162,7 @@ def _choices(data: dict[str, Any]) -> None:
                                    "secret_references": references if isinstance(references, dict) else {}})
     except SettingsError:
         raise ImportError("invalid_import_requirements") from None
-    if requirements.get("profile") not in (None, "mcp-stdio", "mcp-http", "model-service"):
+    if requirements.get("profile") not in (None, "mcp-stdio", "mcp-http", "model-service", "host-command"):
         raise ImportError("invalid_import_requirements")
     if requirements.get("engine_profile") not in (None, "jevk5-llamacpp-v1"):
         raise ImportError("unsupported_model_profile")
@@ -644,7 +644,9 @@ class ImportStore:
 
     def create(self, source: Path, *, name: str, intent: str = "", document_role: str | None = None,
                files: list[str] | None = None, start: bool = False, start_policy: str = "manual",
-               model_engine: Path | None = None) -> dict[str, Any]:
+               model_engine: Path | None = None, source_mode: str = "legacy") -> dict[str, Any]:
+        if type(source_mode) is not str or source_mode not in {"legacy", "automatic"}:
+            raise ImportError("invalid_source_selection")
         now = time.time()
         draft = {"schema_version": IMPORT_SCHEMA_VERSION, "draft_id": str(uuid.uuid4()), "revision": 1,
                  "name": name, "intent": intent, "document_role": document_role, "start": start,
@@ -657,6 +659,8 @@ class ImportStore:
         try:
             source = Path(source).absolute()
             model_source = source.suffix.lower() == ".gguf"
+            automatic_snapshot = (source_mode == "automatic" and not model_source
+                and not (source.is_dir() and (source / MANIFEST_NAME).exists()))
             if model_engine is not None and not model_source:
                 raise ImportError("invalid_source_selection")
             if model_source:
@@ -669,11 +673,16 @@ class ImportStore:
                     draft["source"] = snapshot_model(source, directory / "source", Path(model_engine) if model_engine is not None else None)
                 except ModelIntakeError as error:
                     raise ImportError(error.code) from None
+            if automatic_snapshot:
+                # New bounded binary intake never holds SQLite while copying.
+                from .preparation_application_source import snapshot_application_directory
+                ensure_private_directory(directory)
+                draft["source"] = snapshot_application_directory(source, directory / "source", files)
             with self._transaction():
                 if self._connection.execute("SELECT count(*) FROM drafts").fetchone()[0] >= MAX_DRAFTS:
                     raise ImportError("import_limit_exceeded")
                 ensure_private_directory(directory)
-                if model_source:
+                if model_source or automatic_snapshot:
                     pass
                 elif source.is_dir() and (source / MANIFEST_NAME).exists():
                     if files is not None:

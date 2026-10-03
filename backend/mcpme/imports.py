@@ -766,6 +766,25 @@ class ImportStore:
         with self._lock:
             return [json.loads(row["data"]) for row in self._connection.execute("SELECT data FROM drafts ORDER BY rowid")]
 
+    def discard_previous_capture_attachment(self, draft_id: str, revision: int) -> None:
+        """Collect only the superseded attachment after capture admission commits."""
+        _identity(draft_id)
+        if type(revision) is not int or revision < 1:
+            raise ImportError("invalid_import_revision")
+        with self._lock:
+            current = self._get(draft_id)
+            row = self._connection.execute("SELECT data FROM revisions WHERE draft_id=? AND revision=?",
+                                           (draft_id, revision - 1)).fetchone()
+            previous = json.loads(row[0])["attachment"] if row is not None else None
+            if (previous is None or current["revision"] < revision
+                    or previous["path"] == current["source"].get("snapshot_path")
+                    or current["attachment"] is not None and previous["path"] == current["attachment"]["path"]):
+                return
+            path = Path(previous["path"])
+            if not path.is_relative_to(self.staging / draft_id):
+                raise ImportError("imports_unavailable")
+        _remove_attachment_tree(path)
+
     def list_summaries(self) -> list[dict[str, Any]]:
         """Bound UI discovery without repeating every file, schema, and intent."""
         with self._lock:

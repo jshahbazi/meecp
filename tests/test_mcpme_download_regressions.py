@@ -45,7 +45,7 @@ def tls_certificate(tmp_path_factory):
 
 
 @contextlib.asynccontextmanager
-async def pinned_tls(monkeypatch, tls_certificate, response: bytes, *, hostname="downloads.example.com"):
+async def pinned_tls(monkeypatch, tls_certificate, response: bytes, *, hostname="downloads.example.com", trust_certificate=True):
     """Route a vetted public address to the fixture without bypassing actual TLS."""
     certificate, key = tls_certificate
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -69,7 +69,7 @@ async def pinned_tls(monkeypatch, tls_certificate, response: bytes, *, hostname=
     server = await asyncio.start_server(handle, "127.0.0.1", 0, ssl=context)
     port = server.sockets[0].getsockname()[1]
     actual_connect = asyncio.open_connection
-    actual_context = ssl.create_default_context
+    actual_context = downloads._tls_context
 
     async def resolve(name, selected_port, **kwargs):
         assert name == hostname and selected_port == 443
@@ -83,12 +83,15 @@ async def pinned_tls(monkeypatch, tls_certificate, response: bytes, *, hostname=
         return await actual_connect("127.0.0.1", port, **kwargs)
 
     def trusted_context():
-        return actual_context(cafile=str(certificate))
+        native_context = actual_context()
+        if trust_certificate:
+            native_context.load_verify_locations(cafile=str(certificate))
+        return native_context
 
     with monkeypatch.context() as patch:
         patch.setattr(asyncio.get_running_loop(), "getaddrinfo", resolve)
         patch.setattr(asyncio, "open_connection", connect)
-        patch.setattr(ssl, "create_default_context", trusted_context)
+        patch.setattr(downloads, "_tls_context", trusted_context)
         try:
             yield requests, connects
         finally:
@@ -122,6 +125,15 @@ async def test_pinned_https_real_tls_rejects_wrong_original_hostname(monkeypatch
             async with downloads.PinnedHTTPSNetwork().stream("https://other.example.com/package.zip"):
                 pytest.fail("a certificate for another hostname must not be accepted")
     assert connects == [("8.8.8.8", 443, "other.example.com")]
+    assert requests == []
+
+
+async def test_pinned_https_real_tls_rejects_untrusted_certificate(monkeypatch, tls_certificate):
+    async with pinned_tls(monkeypatch, tls_certificate, b"", trust_certificate=False) as (requests, connects):
+        with pytest.raises(downloads.DownloadError, match="^download_network_unavailable$"):
+            async with downloads.PinnedHTTPSNetwork().stream("https://downloads.example.com/package.zip"):
+                pytest.fail("an untrusted certificate must not be accepted")
+    assert connects == [("8.8.8.8", 443, "downloads.example.com")]
     assert requests == []
 
 

@@ -577,6 +577,23 @@ async def test_production_transport_pins_ip_retains_tls_hostname_and_ignores_pro
     assert b"Authorization" not in writer.data and b"Proxy" not in writer.data
 
 
+async def test_transfers_own_verified_native_contexts_without_inherited_ca_paths(monkeypatch):
+    import ssl
+    from mcpme._native_tls import SSLContext
+
+    monkeypatch.setenv("SSL_CERT_FILE", "/nonexistent/mcpme-inherited-ca")
+    monkeypatch.setenv("SSL_CERT_DIR", "/nonexistent/mcpme-inherited-ca-directory")
+    writer, calls = network_fixture(monkeypatch, b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nzip")
+    assert await collect_network() == b"zip"
+    first = calls[0][1]["ssl"]
+    assert isinstance(first, SSLContext)
+    assert first.check_hostname is True and first.verify_mode == ssl.CERT_REQUIRED
+    assert writer.closed
+    _, second_calls = network_fixture(monkeypatch, b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nzip")
+    assert await collect_network() == b"zip"
+    assert second_calls[0][1]["ssl"] is not first
+
+
 @pytest.mark.parametrize("ip", ["127.0.0.1", "10.1.2.3", "169.254.169.254", "192.168.1.1", "224.0.0.1", "::1", "fc00::1", "::ffff:127.0.0.1", "64:ff9b::7f00:1", "2002:0a00:0001::1"])
 async def test_dns_private_or_mixed_answers_fail_before_connection(monkeypatch, ip):
     family = socket.AF_INET6 if ":" in ip else socket.AF_INET

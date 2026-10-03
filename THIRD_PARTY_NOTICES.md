@@ -16,6 +16,7 @@ The native mcpme app wraps that host with AppKit and ServiceManagement. The sepa
 | OpenSSL | Bundled dependency of llama-server | Apache-2.0 |
 | CPython standalone runtime | uv-managed CPython 3.12.13, python-build-standalone | Python Software Foundation and included component licenses |
 | MCP Python SDK | 1.30.0, official modelcontextprotocol/python-sdk | MIT |
+| Native TLS trust integration | Private truststore 0.10.4 fork; macOS certificate network fetching disabled; exact wheel provenance in `backend/mcpme/_native_tls/upstream.json` | MIT; `backend/mcpme/_native_tls/LICENSE` |
 | Server dependencies | Exact versions in `uv.lock` | Licenses retained in bundled wheel metadata |
 
 The app's Resources include runtime license files and the complete package license metadata from the installed wheels. CPython includes its own component license directory. Vendored JevK5 files are unmodified upstream files; the application-specific cache and service wrapper is in `backend/jevk5_app`. Bundled Mach-O files have relocated load paths; the copied ggml library's compiled Homebrew backend directory string is disabled so plugins load from the bundle's working directory. Source and packaged SHA-256 values are recorded in `runtime-manifest.json`.

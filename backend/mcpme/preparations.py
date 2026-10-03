@@ -12,6 +12,8 @@ import json
 import re
 import time
 import uuid
+import weakref
+from dataclasses import dataclass
 from pydantic import ValidationError
 
 from .contracts import PackageError, _read_file, validate_package
@@ -44,9 +46,30 @@ PROGRESS_COUNTERS = {"commands_finished": 4096, "wheels_acquired": 4096,
                      "bytes_acquired": 64 * 1024**3, "files_checked": 200000, "fixtures_checked": 64}
 
 
+@dataclass(frozen=True)
+class CheckedDescriptorSelection:
+    owner: object
+    descriptor: bytes
+    observed: bytes
+    candidate_id: str
+    form_digest: str
+    resolution_digest: str | None
+    resolution_proof: object
+
+
+@dataclass(frozen=True)
+class CommittedDescriptorSelection:
+    owner: object
+    draft: bytes
+    cleanup_path: str | None
+
+
 class PreparationStore(PreparationAuthority):
     def __init__(self, imports, recipes, *, resolutions=None, families=()):
         self.imports, self.recipes = imports, recipes
+        self._selection_owner = object()
+        self._checked_selections = weakref.WeakValueDictionary()
+        self._committed_selections = weakref.WeakValueDictionary()
         self.resolutions = resolutions
         self.components = builtin_component_registry()
         from .preparation_resolved_python import ResolvedPythonFamily
@@ -241,14 +264,18 @@ class PreparationStore(PreparationAuthority):
             raise PreparationError("preparation_selection_mismatch")
 
     def select_descriptor(self, import_id, revision, descriptor, *, candidate_id, form_digest, resolution_digest=None):
+        checked = self.prepare_descriptor_selection(import_id, revision, descriptor, candidate_id=candidate_id,
+            form_digest=form_digest, resolution_digest=resolution_digest)
+        committed = self.commit_descriptor_selection(checked, check_current=lambda: True)
+        return self.cleanup_descriptor_selection(committed)
+
+    def prepare_descriptor_selection(self, import_id, revision, descriptor, *, candidate_id, form_digest, resolution_digest=None):
         """Atomically bind resolved questions to a new editable revision.
 
         This grants no execution authority. Repeated identical resolution is
         idempotent; every changed choice invalidates previous revision plans.
         Legacy drafts without a selection keep their existing descriptor API.
         """
-        from .imports import RETENTION_SECONDS, _choices, _remove_attachment_tree
-        from pathlib import Path
         for digest in (candidate_id, form_digest):
             if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
                 raise PreparationError("invalid_preparation_form")
@@ -266,14 +293,37 @@ class PreparationStore(PreparationAuthority):
                 raise PreparationError("resolution_result_mismatch")
         elif resolution_digest is not None:
             raise PreparationError("resolution_result_mismatch")
+        from .preparation_contracts import canonical_bytes
+        checked = CheckedDescriptorSelection(self._selection_owner, canonical_bytes(value.model_dump(mode="json", exclude_none=True)),
+            canonical_bytes(observed), candidate_id, form_digest, resolution_digest, proof)
+        self._checked_selections[id(checked)] = checked
+        return checked
+
+    def commit_descriptor_selection(self, checked, *, check_current):
+        """Trusted checked object only; metadata fence inside the actual write."""
+        from .imports import RETENTION_SECONDS, _choices
+        from .preparation_contracts import canonical_bytes
+        if (not isinstance(checked, CheckedDescriptorSelection) or checked.owner is not self._selection_owner
+                or self._checked_selections.get(id(checked)) is not checked or not callable(check_current)):
+            raise PreparationError("checked_descriptor_selection_required")
+        value = parse_preparation_descriptor(json.loads(checked.descriptor))
+        observed = json.loads(checked.observed)
+        import_id, revision = observed["draft_id"], observed["revision"]
+        candidate_id, form_digest = checked.candidate_id, checked.form_digest
+        resolution_digest, proof = checked.resolution_digest, checked.resolution_proof
         previous_attachment = None
         with self.imports._transaction():
             current = self._recheck_descriptor(value, observed, enforce_selection=False)
+            if check_current() is not True:
+                raise PreparationError("descriptor_selection_authority_denied")
             previous = self.selected_descriptor(import_id)
             if previous is not None and (previous["revision"], previous["source_revision"],
                     previous["descriptor_digest"], previous["candidate_id"]) == (
                     revision, current["source"]["revision"], value.digest, candidate_id):
-                return current
+                committed = CommittedDescriptorSelection(self._selection_owner, canonical_bytes(current), None)
+                self._committed_selections[id(committed)] = committed
+                self._checked_selections.pop(id(checked), None)
+                return committed
             previous_attachment = current["attachment"]
             current["name"] = value.package.name
             _choices(current)
@@ -290,9 +340,24 @@ class PreparationStore(PreparationAuthority):
                 selected["resolution_digest"] = resolution_digest
             self.db.execute("INSERT OR REPLACE INTO preparation_selections VALUES (?,?)",
                 (import_id, json.dumps(selected, sort_keys=True, separators=(",", ":"), allow_nan=False)))
-        if previous_attachment is not None and previous_attachment["path"] != current["source"].get("snapshot_path"):
-            _remove_attachment_tree(Path(previous_attachment["path"]))
-        return current
+        cleanup_path = (previous_attachment["path"] if previous_attachment is not None
+            and previous_attachment["path"] != current["source"].get("snapshot_path") else None)
+        committed = CommittedDescriptorSelection(self._selection_owner, canonical_bytes(current), cleanup_path)
+        self._committed_selections[id(committed)] = committed
+        self._checked_selections.pop(id(checked), None)
+        return committed
+
+    def cleanup_descriptor_selection(self, committed):
+        """Run off-loop when selected by an async owner; retain old cleanup."""
+        from .imports import _remove_attachment_tree
+        from pathlib import Path
+        if (not isinstance(committed, CommittedDescriptorSelection) or committed.owner is not self._selection_owner
+                or self._committed_selections.get(id(committed)) is not committed):
+            raise PreparationError("committed_descriptor_selection_required")
+        if committed.cleanup_path is not None:
+            _remove_attachment_tree(Path(committed.cleanup_path))
+        self._committed_selections.pop(id(committed), None)
+        return json.loads(committed.draft)
 
     @staticmethod
     def _candidate_contract(value, source_revision, *, profile="mcp-stdio", command=None, licenses=None, source_artifacts=None):

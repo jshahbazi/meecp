@@ -17,9 +17,10 @@ from pydantic import ValidationError
 from .contracts import PackageError, _read_file, validate_package
 from .preparation_components import builtin_component_registry
 from .preparation_authority import PreparationAuthority
+from .preparation_inputs import (parse_preparation_descriptor, descriptor_tools, parse_preparation_receipt)
 from .preparation_contracts import (
     ExecutionPolicy, JobBinding, PreparationError, PreparationReceipt,
-    MAX_CONTRACT_BYTES, RUNNER_IDENTITY, VERIFIER_IDENTITY, contract_digest, load_contract, parse_descriptor, schema_accepts,
+    MAX_CONTRACT_BYTES, RUNNER_IDENTITY, VERIFIER_IDENTITY, contract_digest, schema_accepts,
 )
 
 RECEIPT_NAME = "mcpme.preparation.json"
@@ -37,15 +38,24 @@ TRANSITIONS = {
 MAX_JOBS = 1024
 PROGRESS_STAGES = frozenset({"queued", "snapshotting", "dependency_export", "dependency_acquisition",
     "dependency_install", "private_python_version", "private_uv_version", "private_python_metadata",
-    "sealing", "verifying", "attaching", "settling", "succeeded"})
+    "onnx_model_validation", "sealing", "verifying", "attaching", "settling", "succeeded"})
 PROGRESS_COUNTERS = {"commands_finished": 4096, "wheels_acquired": 4096,
                      "bytes_acquired": 64 * 1024**3, "files_checked": 200000, "fixtures_checked": 64}
 
 
 class PreparationStore(PreparationAuthority):
-    def __init__(self, imports, recipes):
+    def __init__(self, imports, recipes, *, resolutions=None, families=()):
         self.imports, self.recipes = imports, recipes
+        self.resolutions = resolutions
         self.components = builtin_component_registry()
+        from .preparation_resolved_python import ResolvedPythonFamily
+        default = ResolvedPythonFamily(resolutions)
+        self.families = {default.component.reference.key: default}
+        for family in families:
+            if family.component.reference.key in self.families:
+                raise PreparationError("duplicate_preparation_component")
+            self.components.register(family.component)
+            self.families[family.component.reference.key] = family
         self.db = imports._connection
         with imports._transaction():
             self.db.execute("""CREATE TABLE IF NOT EXISTS preparation_jobs (
@@ -106,7 +116,7 @@ class PreparationStore(PreparationAuthority):
             return job
 
     def _bound_descriptor(self, import_id, revision, value, *, enforce_selection=True):
-        descriptor = parse_descriptor(value)
+        descriptor = parse_preparation_descriptor(value)
         # Full bundle hashing/schema evaluation occurs outside the connection
         # lock and write transaction. Admission rechecks only registry metadata.
         recipe = self.recipes.resolve(descriptor.recipe.id, descriptor.recipe.version, descriptor.recipe.digest)
@@ -121,17 +131,45 @@ class PreparationStore(PreparationAuthority):
         if not schema_accepts(manifest["input_schema"], descriptor.inputs):
             raise PreparationError("recipe_input_mismatch")
         self.components.validate_source(descriptor, draft, recipe)
+        if descriptor.schema_version == 2:
+            self.resolved_inputs(descriptor, draft)
         if draft["requirements"].get("profile") not in {None, "mcp-stdio"}:
             raise PreparationError("unsupported_execution_profile")
         if draft["requirements"].get("secret_references"):
             raise PreparationError("secret_reference_unavailable")
         required_tools = draft["requirements"].get("tools", [])
-        if required_tools and set(required_tools) != {tool.name for tool in descriptor.interface.tools}:
+        if required_tools and set(required_tools) != {tool.name for tool in descriptor_tools(descriptor)}:
             raise PreparationError("tool_requirement_mismatch")
         memory = draft["requirements"].get("memory_mb")
         if memory is not None and descriptor.resources.memory_mb > memory:
             raise PreparationError("resource_requirement_mismatch")
         return descriptor, draft, recipe
+
+    def resolved_inputs(self, descriptor, draft):
+        return self.family_for(descriptor).validate_inputs(descriptor, draft)
+
+    def family_for(self, descriptor):
+        if descriptor.schema_version != 2 or len(descriptor.components) != 1:
+            raise PreparationError("unsupported_component_descriptor")
+        family = self.families.get(descriptor.components[0].component.key)
+        if family is None:
+            raise PreparationError("unknown_preparation_component")
+        return family
+
+    def inspect_source(self, draft):
+        from .preparation_inspection import inspect_source
+        matching = [family for family in self.families.values() if family.source_kind == draft["source"]["kind"]]
+        if len(matching) > 1:
+            raise PreparationError("ambiguous_preparation_provider")
+        return matching[0].inspect_source(draft) if matching else inspect_source(draft)
+
+    def release_family_inputs(self, job_id):
+        with self.imports._lock:
+            row = self.db.execute("SELECT data FROM preparation_job_inputs WHERE job_id=?", (job_id,)).fetchone()
+        if row is not None:
+            descriptor = parse_preparation_descriptor(json.loads(row["data"])["descriptor"])
+            if descriptor.schema_version == 2:
+                self.family_for(descriptor).release(job_id, descriptor)
 
     def plan(self, import_id, revision, descriptor):
         value, observed, recipe = self._bound_descriptor(import_id, revision, descriptor)
@@ -142,7 +180,7 @@ class PreparationStore(PreparationAuthority):
                     "recipe": value.recipe.model_dump(), "form": recipe["manifest"]["form"],
                     "execution_available": False,
                     "blockers": ["preparation_runner_unavailable", "independent_runtime_verifier_unavailable"],
-                    "tools": [tool.model_dump(exclude_none=True) for tool in value.interface.tools],
+                    "tools": [tool.model_dump(exclude_none=True) for tool in descriptor_tools(value)],
                     "access": value.access.model_dump(), "resources": value.resources.model_dump()}
 
     def _recheck_descriptor(self, descriptor, observed, *, enforce_selection=True):
@@ -169,7 +207,7 @@ class PreparationStore(PreparationAuthority):
                 or selected["descriptor_digest"] != descriptor.digest):
             raise PreparationError("preparation_selection_mismatch")
 
-    def select_descriptor(self, import_id, revision, descriptor, *, candidate_id, form_digest):
+    def select_descriptor(self, import_id, revision, descriptor, *, candidate_id, form_digest, resolution_digest=None):
         """Atomically bind resolved questions to a new editable revision.
 
         This grants no execution authority. Repeated identical resolution is
@@ -182,6 +220,19 @@ class PreparationStore(PreparationAuthority):
             if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
                 raise PreparationError("invalid_preparation_form")
         value, observed, _ = self._bound_descriptor(import_id, revision, descriptor, enforce_selection=False)
+        proof = None
+        if value.schema_version == 2:
+            family = self.family_for(value)
+            binding = family.resolution_binding(value) if hasattr(family, "resolution_binding") else None
+            if binding is not None:
+                if binding[0] != candidate_id or resolution_digest not in (None, binding[1]):
+                    raise PreparationError("resolution_result_mismatch")
+                resolution_digest = binding[1]
+                proof = self.resolutions.prepare_result_binding(import_id, revision, candidate_id, resolution_digest)
+            elif resolution_digest is not None:
+                raise PreparationError("resolution_result_mismatch")
+        elif resolution_digest is not None:
+            raise PreparationError("resolution_result_mismatch")
         previous_attachment = None
         with self.imports._transaction():
             current = self._recheck_descriptor(value, observed, enforce_selection=False)
@@ -197,12 +248,16 @@ class PreparationStore(PreparationAuthority):
             current["revision"] += 1
             current["expires_at"] = time.time() + RETENTION_SECONDS
             self.imports._save(current)
+            if proof is not None:
+                self.resolutions.commit_result_binding(proof, current["revision"])
             selected = {"revision": current["revision"], "source_revision": current["source"]["revision"],
                 "candidate_id": candidate_id, "form_digest": form_digest,
                 "descriptor_digest": value.digest, "descriptor": value.model_dump(exclude_none=True)}
+            if resolution_digest is not None:
+                selected["resolution_digest"] = resolution_digest
             self.db.execute("INSERT OR REPLACE INTO preparation_selections VALUES (?,?)",
                 (import_id, json.dumps(selected, sort_keys=True, separators=(",", ":"), allow_nan=False)))
-        if previous_attachment is not None and previous_attachment["path"] != current["source"]["snapshot_path"]:
+        if previous_attachment is not None and previous_attachment["path"] != current["source"].get("snapshot_path"):
             _remove_attachment_tree(Path(previous_attachment["path"]))
         return current
 
@@ -210,7 +265,7 @@ class PreparationStore(PreparationAuthority):
     def _candidate_contract(value, source_revision):
         return {"package_id": value.package.id, "version": value.package.version, "name": value.package.name,
                 "source_revision": source_revision, "profile": "mcp-stdio",
-                "tools": [tool.model_dump(exclude_none=True) for tool in value.interface.tools],
+                "tools": [tool.model_dump(exclude_none=True) for tool in descriptor_tools(value)],
                 "access": value.access.model_dump(), "resources": value.resources.model_dump(),
                 "lifecycle": value.lifecycle.model_dump()}
 
@@ -222,7 +277,13 @@ class PreparationStore(PreparationAuthority):
                 raise ValueError()
         except (ValueError, TypeError, AttributeError):
             raise PreparationError("invalid_preparation_key") from None
-        value, observed, _ = self._bound_descriptor(import_id, revision, descriptor)
+        value, observed, recipe_record = self._bound_descriptor(import_id, revision, descriptor)
+        bound_inputs = None
+        if value.schema_version == 2:
+            if authorization is None:
+                raise PreparationError("preparation_authority_required")
+            bound_inputs = self.family_for(value).bound_inputs(value, observed, recipe_record, self.components,
+                authorization["runtime_digest"])
         if not isinstance(policy, ExecutionPolicy):
             raise PreparationError("invalid_preparation_policy")
         if policy.memory_mb < value.resources.memory_mb or set(policy.operations) != {"build", "probe"}:
@@ -236,6 +297,8 @@ class PreparationStore(PreparationAuthority):
         candidate_digest = contract_digest("preparation-candidate-v1", self._candidate_contract(value, observed["source"]["revision"]))
         fixture_digest = contract_digest("preparation-fixtures-v1", [item.model_dump() for item in value.validation])
         artifact_digest = contract_digest("artifact-collection-v1", [item.model_dump() for item in value.artifacts])
+        if bound_inputs is not None and bound_inputs.captured_collection is not None:
+            artifact_digest = bound_inputs.captured_collection.digest
         with self.imports._transaction():
             draft = self._recheck_descriptor(value, observed)
             row = self.db.execute("SELECT input_digest,data FROM preparation_jobs WHERE idempotency_key=?", (idempotency_key,)).fetchone()
@@ -262,9 +325,12 @@ class PreparationStore(PreparationAuthority):
             job = {"schema_version": 1, "job_id": job_id, "binding": binding.model_dump(), "state": "queued",
                    "created_at": now, "updated_at": now, "error_code": None, "reservation_retained": True,
                    "ownership_settled": True, "expected_package_digest": None, "receipt_digest": None,
-                   "dependency_lock_digest": value.dependencies.lock_sha256,
+                   "dependency_lock_digest": value.dependencies.lock_sha256 if value.schema_version == 1 else None,
                    "candidate_contract_digest": candidate_digest, "fixture_digest": fixture_digest,
                    "progress": {"stage": "queued", **{key: 0 for key in PROGRESS_COUNTERS}}}
+            if bound_inputs is not None:
+                job["bound_inputs"] = bound_inputs.model_dump(mode="json")
+                job["bound_inputs_digest"] = bound_inputs.digest
             if authorization is not None:
                 self._record_start_authority(job, authorization, value, policy)
             self.db.execute("INSERT INTO preparation_jobs VALUES (?,?,?,?)", (job_id, idempotency_key, identity,
@@ -361,7 +427,7 @@ class PreparationStore(PreparationAuthority):
         if hashlib.sha256(data).hexdigest() != artifact.sha256:
             raise PreparationError("preparation_receipt_mismatch")
         try:
-            receipt = PreparationReceipt.model_validate(load_contract(data))
+            receipt = parse_preparation_receipt(data)
         except ValidationError:
             raise PreparationError("invalid_preparation_receipt") from None
         manifest = current.manifest.model_dump(exclude_none=True)
@@ -375,9 +441,12 @@ class PreparationStore(PreparationAuthority):
                 and job.get("verification_publication_pending") and not self.ownership_receipts(job_id))
             if (job["state"] != "verifying" or not ownership_ok
                     or receipt.binding.model_dump() != job["binding"]
-                    or receipt.dependency_lock_digest != job["dependency_lock_digest"]
+                    or (receipt.schema_version == 1 and (job.get("bound_inputs") is not None
+                        or receipt.dependency_lock_digest != job["dependency_lock_digest"]))
+                    or (receipt.schema_version == 2 and (receipt.inputs.model_dump(mode="json") != job.get("bound_inputs")
+                        or receipt.inputs.digest != job.get("bound_inputs_digest")))
                     or receipt.fixture_digest != job["fixture_digest"]
-                    or job.get("managed") and receipt.runtime_digest != job["runtime_digest"]
+                    or job.get("managed") and receipt.schema_version == 1 and receipt.runtime_digest != job["runtime_digest"]
                     or candidate_digest != job["candidate_contract_digest"]
                     or current.manifest.source_revision != job["binding"]["source_revision"]):
                 raise PreparationError("preparation_receipt_mismatch")

@@ -304,6 +304,8 @@ class OwnedResolutionRunner(PreparationRunner):
         if result.peak_memory_bytes > attempt.policy.memory_mb * 1024**2:
             raise PreparationError("resolution_memory_limit")
         attempt.peak = max(attempt.peak, result.peak_memory_bytes)
+        attempt.commands_finished += 1
+        self.store.progress(attempt.job_id, commands_finished=attempt.commands_finished)
         return result.stdout.decode("utf-8")
 
     async def _resolve(self, attempt, toolchain, draft, candidate, executor):
@@ -350,6 +352,9 @@ class OwnedResolutionRunner(PreparationRunner):
             await self._controlled(attempt, WheelAcquirer().acquire(requests, target,
                 allowed_hosts=frozenset({"files.pythonhosted.org"}), disk_bytes=attempt.policy.disk_bytes,
                 wall_seconds=attempt.deadline - time.monotonic(), check_canceled=check))
+            attempt.wheels_acquired += len(requests)
+            attempt.bytes_acquired += sum(item.size for item in requests)
+            self.store.progress(attempt.job_id, wheels_acquired=attempt.wheels_acquired, bytes_acquired=attempt.bytes_acquired)
         def wheels(requests, target, check):
             return asyncio.run_coroutine_threadsafe(acquire(requests, target, check), loop).result()
         await self._thread(attempt, _runtime, destination, directory, toolchain, command, attempt.check, work, wheels)
@@ -381,6 +386,7 @@ class OwnedResolutionRunner(PreparationRunner):
                     request.import_id, request.revision, request.candidate_id)
                 if current_candidate != candidate or contract_digest("preparation-resolution-candidate-v1", candidate) != request.candidate_digest:
                     raise PreparationError("resolution_candidate_mismatch")
+                self.store.progress(attempt.job_id, files_checked=len(current_draft["source"]["files"]))
                 toolchain = await self._thread(attempt, load_private_toolchain, self.host_root, attempt.check)
                 if toolchain.identity != request.runtime.digest or await self._producer() != request.producer:
                     raise PreparationError("resolution_implementation_changed")
@@ -406,6 +412,8 @@ class OwnedResolutionRunner(PreparationRunner):
                         runtime / "python/bin/python3.12", runtime / "python", source, attempt.workspace, candidate,
                         timeout=min(60, attempt.deadline - time.monotonic()), memory_mb=request.policy.memory_mb, check=attempt.check))
                     owner.confirm_completed()
+                    attempt.commands_finished += 1
+                    self.store.progress(attempt.job_id, tools_discovered=len(tools), commands_finished=attempt.commands_finished)
                     attempt.peak = max(attempt.peak, peak)
                     protocol = "2025-11-25"
                     (directory / "interface.json").write_bytes(canonical_bytes({"protocol_version": protocol,

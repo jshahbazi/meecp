@@ -88,9 +88,10 @@ def test_authority_revision_idempotency_and_result_separation(source, tmp_path):
     with pytest.raises(PreparationError, match="resolution_binding_required"):
         store.resolve_result(draft["draft_id"], 2, candidate["candidate_id"], result.digest)
     # Acceptance rolls back with its caller's draft/selection transaction.
+    proof = store.prepare_result_binding(draft["draft_id"], 2, candidate["candidate_id"], result.digest, prior_revision=1)
     with pytest.raises(RuntimeError):
         with imports._transaction():
-            store.bind_result(draft["draft_id"], 1, 2, candidate["candidate_id"], result.digest)
+            store.commit_result_binding(proof, 2)
             raise RuntimeError("synthetic rollback")
     with pytest.raises(PreparationError, match="resolution_binding_required"):
         store.resolve_result(draft["draft_id"], 2, candidate["candidate_id"], result.digest)
@@ -158,10 +159,92 @@ async def test_resolution_success_prunes_unpublished_runtime_and_rechecks_bytes(
     assert {path.name for path in root.iterdir()} == {"derived"}
     await runner.close()
     assert runner.store.get(job["job_id"])["state"] == "succeeded"
+
     (root / "derived/uv.lock").chmod(0o600)
     (root / "derived/uv.lock").write_bytes(b'changed')
     with pytest.raises(PreparationError, match="resolution_result_changed"):
         runner.store.resolve_result(draft["draft_id"], 1, candidate["candidate_id"], final["result_digest"])
+
+
+async def test_failed_recovery_does_not_poison_close_retry(controlled, monkeypatch):
+    runner, _, _, _ = controlled
+    recover, attempts = runner._recover, []
+    async def flaky():
+        attempts.append(True)
+        if len(attempts) == 1:
+            raise PreparationError("synthetic_recovery_failure")
+        return await recover()
+    monkeypatch.setattr(runner, "_recover", flaky)
+    with pytest.raises(PreparationError, match="synthetic_recovery_failure"):
+        await runner.recover()
+    await runner.close()
+    assert len(attempts) == 2
+
+
+async def test_persistently_failed_recovery_retries_fresh_on_each_close(controlled, monkeypatch):
+    runner, _, _, _ = controlled
+    attempts = []
+    async def fail():
+        attempts.append(True)
+        raise PreparationError("synthetic_recovery_failure")
+    monkeypatch.setattr(runner, "_recover", fail)
+    for _ in range(2):
+        with pytest.raises(PreparationError, match="synthetic_recovery_failure"):
+            await runner.close()
+    assert len(attempts) == 2
+
+
+async def test_status_recovery_cannot_interrupt_owned_authorization_before_registration(controlled, monkeypatch):
+    runner, draft, candidate, resources = controlled
+    plan = await runner.plan(draft["draft_id"], 1, candidate["candidate_id"], policy())
+    entered, release = threading.Event(), threading.Event()
+    original = runner.store.authorize_start
+    def paused(*args):
+        job = original(*args)
+        entered.set()
+        assert release.wait(5)
+        return job
+    monkeypatch.setattr(runner.store, "authorize_start", paused)
+    starting = asyncio.create_task(runner.start(plan["plan_id"], plan["plan_digest"], str(uuid.uuid4())))
+    assert await asyncio.to_thread(entered.wait, 5)
+    try:
+        # Actual recovery/status surface remains responsive throughout the
+        # committed-row / worker-registration window.
+        status = await asyncio.wait_for(runner.recover(), .5)
+        assert status[0]["state"] == "queued"
+        assert runner.store.list()[0]["error_code"] is None
+    finally:
+        release.set()
+    job = await starting
+    await runner.tasks[job["job_id"]]
+    assert runner.store.get(job["job_id"])["state"] == "succeeded"
+    assert resources == {}
+    await runner.close()
+
+
+async def test_completed_worker_cleanup_failure_does_not_poison_recovered_close(controlled, monkeypatch):
+    from mcpme import preparation_resolution_runner as module
+    runner, draft, candidate, resources = controlled
+    plan = await runner.plan(draft["draft_id"], 1, candidate["candidate_id"], policy())
+    def runtime_failure(*args):
+        raise PreparationError("synthetic_runtime_failure")
+    monkeypatch.setattr(module, "load_private_toolchain", runtime_failure)
+    original, attempts = module.shutil.rmtree, []
+    def fail_once(path, *args, **kwargs):
+        attempts.append(path)
+        if len(attempts) == 1:
+            raise PermissionError("synthetic cleanup failure")
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(module.shutil, "rmtree", fail_once)
+    job = await runner.start(plan["plan_id"], plan["plan_digest"], str(uuid.uuid4()))
+    with pytest.raises(PermissionError):
+        await runner.tasks[job["job_id"]]
+    workspace = Path(runner.store.get(job["job_id"])["workspace"])
+    assert workspace.exists()
+    await runner.recover()
+    assert not workspace.exists() and not resources
+    assert runner.tasks[job["job_id"]].exception() is not None
+    await runner.close()
 
 
 async def test_stale_plan_cannot_start_owned_resolution(controlled):

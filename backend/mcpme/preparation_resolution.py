@@ -6,7 +6,7 @@ installation. Only the owned runner can publish a settled resolution result.
 from __future__ import annotations
 
 import copy
-from contextlib import nullcontext
+from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
@@ -25,7 +25,23 @@ from .recipes import _read
 
 TERMINAL = frozenset({"succeeded", "failed", "canceled", "interrupted"})
 MAX_RESOLUTIONS = 1024
+PROGRESS_LIMITS = {"commands_finished": 4096, "wheels_acquired": 4096, "bytes_acquired": 8 * 1024**3,
+                   "files_checked": 200000, "tools_discovered": 128}
 RESULT_FILES = {"dependency-project": "pyproject.toml", "dependency-lock": "uv.lock", "interface": "interface.json"}
+
+
+@dataclass(frozen=True)
+class CheckedResolutionBinding:
+    """In-process proof, never deserialized from client data."""
+    owner: object
+    import_id: str
+    observed_revision: int
+    prior_revision: int
+    candidate_id: str
+    source: bytes
+    result: bytes
+    job_id: str
+    job: bytes
 
 
 class ResolutionPolicyV1(InputContract):
@@ -148,6 +164,7 @@ def result_from_files(request, directory, tools, protocol_version, peak_memory_b
 class ResolutionStore:
     def __init__(self, imports):
         self.imports, self.db = imports, imports._connection
+        self._binding_owner = object()
         with imports._transaction():
             self.db.execute("CREATE TABLE IF NOT EXISTS resolution_plans (plan_id TEXT PRIMARY KEY, data TEXT NOT NULL)")
             self.db.execute("""CREATE TABLE IF NOT EXISTS resolution_jobs (
@@ -181,8 +198,22 @@ class ResolutionStore:
             "revision": item["request"]["revision"], "source_revision": item["request"]["source_revision"],
             "candidate_id": item["request"]["candidate_id"], "state": item["state"], "stage": item["stage"],
             "result_digest": item["result_digest"], "error_code": item["error_code"],
-            "ownership_settled": item["ownership_settled"], "reservation_retained": item["reservation_retained"]}
+            "ownership_settled": item["ownership_settled"], "reservation_retained": item["reservation_retained"],
+            "updated_at": item["updated_at"], "progress": item.get("progress", {key: 0 for key in PROGRESS_LIMITS})}
             for item in self.list()]
+
+    def progress(self, job_id, **counters):
+        if not set(counters) <= set(PROGRESS_LIMITS) or any(type(value) is not int or not 0 <= value <= PROGRESS_LIMITS[key]
+                for key, value in counters.items()):
+            raise PreparationError("invalid_resolution_progress")
+        with self.imports._transaction():
+            job = self._get(job_id)
+            self.check_authority(job_id)
+            previous = job.get("progress", {key: 0 for key in PROGRESS_LIMITS})
+            if any(value < previous[key] for key, value in counters.items()):
+                raise PreparationError("invalid_resolution_progress")
+            job["progress"] = {**previous, **counters}
+            self._save(job)
 
     def candidate(self, import_id, revision, candidate_id):
         with self.imports._lock:
@@ -250,7 +281,8 @@ class ResolutionStore:
                 raise PreparationError("resolution_limit")
             job = {**plan, "job_id": str(uuid.uuid4()), "state": "queued", "stage": "queued", "workspace": None,
                    "ownership": [], "ownership_settled": True, "reservation_retained": False,
-                   "error_code": None, "result": None, "result_digest": None, "updated_at": time.time()}
+                   "error_code": None, "result": None, "result_digest": None, "updated_at": time.time(),
+                   "progress": {key: 0 for key in PROGRESS_LIMITS}}
             self.db.execute("INSERT INTO resolution_jobs VALUES (?,?,?)", (job["job_id"], idempotency_key, canonical_bytes(job).decode()))
             return job
 
@@ -367,36 +399,68 @@ class ResolutionStore:
                 or binding.source_revision != request.source_revision or binding.candidate_digest != request.candidate_digest):
             raise PreparationError("resolution_result_mismatch")
 
-    def bind_result(self, import_id, prior_revision, new_revision, candidate_id, result_digest):
-        """Explicit carry into the caller's selection transaction; never re-sign.
-
-        Call off-loop: exact derived/source bytes are checked. When called from
-        an existing import transaction, the accepted ref commits or rolls back
-        with selection. No public endpoint should infer carry automatically.
-        """
-        draft, candidate = self.candidate(import_id, new_revision, candidate_id)
+    def prepare_result_binding(self, import_id, revision, candidate_id, result_digest, *, prior_revision=None):
+        """Hash/inspect off-loop before opening the caller's write transaction."""
+        with self.imports._lock:
+            if self.db.in_transaction:
+                raise PreparationError("resolution_prevalidation_transaction")
+        prior_revision = revision if prior_revision is None else prior_revision
+        draft, candidate = self.candidate(import_id, revision, candidate_id)
         result, _ = self._read_result(result_digest)
         if (draft["source"]["revision"] != result.request.source_revision
                 or contract_digest("preparation-resolution-candidate-v1", candidate) != result.request.candidate_digest):
             raise PreparationError("resolution_result_mismatch")
+        with self.imports._lock:
+            current = self.imports._get(import_id, revision)
+            self.imports._mutable(current)
+            if current["source"] != draft["source"]:
+                raise PreparationError("source_identity_mismatch")
+            self._accepted(import_id, prior_revision, candidate_id, result)
+            jobs = [job for job in self.list() if job["state"] == "succeeded" and job["result_digest"] == result_digest]
+            if not jobs:
+                raise PreparationError("resolution_result_unavailable")
+            job = jobs[-1]
+            if job["result"] != result.model_dump(mode="json") or job["ownership"] or not job["ownership_settled"] or job["reservation_retained"]:
+                raise PreparationError("resolution_result_mismatch")
+            return CheckedResolutionBinding(self._binding_owner, import_id, revision, prior_revision, candidate_id,
+                canonical_bytes(draft["source"]), canonical_bytes(result.model_dump(mode="json")), job["job_id"], canonical_bytes(job))
+
+    def commit_result_binding(self, proof, new_revision):
+        """Bounded authority fence inside selection's atomic write; no file IO.
+
+        The immutable result is rehashed again when consumed by the builder.
+        This metadata carry does not grant authority over later mutated bytes.
+        """
+        if not isinstance(proof, CheckedResolutionBinding) or proof.owner is not self._binding_owner or not self.db.in_transaction:
+            raise PreparationError("resolution_checked_binding_required")
+        if new_revision not in {proof.observed_revision, proof.observed_revision + 1}:
+            raise PreparationError("resolution_binding_conflict")
+        current = self.imports._get(proof.import_id, new_revision)
+        self.imports._mutable(current)
+        if canonical_bytes(current["source"]) != proof.source or current["expires_at"] <= time.time():
+            raise PreparationError("source_identity_mismatch")
+        if canonical_bytes(self._get(proof.job_id)) != proof.job:
+            raise PreparationError("resolution_result_mismatch")
+        result = ResolutionResultV1.model_validate(json.loads(proof.result))
+        self._accepted(proof.import_id, proof.prior_revision, proof.candidate_id, result)
+        import_id, prior_revision, candidate_id = proof.import_id, proof.prior_revision, proof.candidate_id
         binding = AcceptedResolutionReferenceV1(schema_version=1, import_id=import_id, prior_revision=prior_revision,
             revision=new_revision, candidate_id=candidate_id, candidate_digest=result.request.candidate_digest,
             source_revision=result.request.source_revision, result_digest=result.digest, original_request_digest=result.request.digest)
-        with self.imports._lock:
-            with nullcontext() if self.db.in_transaction else self.imports._transaction():
-                current = self.imports._get(import_id, new_revision)
-                self.imports._mutable(current)
-                if current["source"] != draft["source"]:
-                    raise PreparationError("source_identity_mismatch")
-                self._accepted(import_id, prior_revision, candidate_id, result)
-                raw = canonical_bytes(binding.model_dump(mode="json")).decode()
-                self.db.execute("INSERT OR IGNORE INTO accepted_resolutions VALUES (?,?,?,?)",
-                    (import_id, new_revision, candidate_id, raw))
-                saved = self.db.execute("SELECT data FROM accepted_resolutions WHERE import_id=? AND revision=? AND candidate_id=?",
-                    (import_id, new_revision, candidate_id)).fetchone()["data"]
-                if saved != raw:
-                    raise PreparationError("resolution_binding_conflict")
+        raw = canonical_bytes(binding.model_dump(mode="json")).decode()
+        self.db.execute("INSERT OR IGNORE INTO accepted_resolutions VALUES (?,?,?,?)",
+            (import_id, new_revision, candidate_id, raw))
+        saved = self.db.execute("SELECT data FROM accepted_resolutions WHERE import_id=? AND revision=? AND candidate_id=?",
+            (import_id, new_revision, candidate_id)).fetchone()["data"]
+        if saved != raw:
+            raise PreparationError("resolution_binding_conflict")
         return binding
+
+    def bind_result(self, import_id, prior_revision, new_revision, candidate_id, result_digest):
+        """Standalone explicit carry; selection uses prepare/commit around its write."""
+        proof = self.prepare_result_binding(import_id, new_revision, candidate_id, result_digest, prior_revision=prior_revision)
+        with self.imports._transaction():
+            return self.commit_result_binding(proof, new_revision)
 
     def resolve_result(self, import_id, revision, candidate_id, result_digest):
         draft, candidate = self.candidate(import_id, revision, candidate_id)

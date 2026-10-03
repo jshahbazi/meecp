@@ -172,8 +172,16 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
     def build_host(destination, *, version):
         host_versions.append(version)
         (destination / "bin").mkdir(parents=True)
+        resource = host_builder._resource_inventory_contract()
+        helper = destination / resource["helper"]
+        helper.write_bytes(b"synthetic resource helper")
+        resource.update(helper_sha256=app_builder.sha256(helper), helper_source_sha256="a" * 64,
+                        helper_header_sha256="b" * 64)
+        inventory = destination / "command-resource-execution.json"
+        inventory.write_text(json.dumps(resource))
         (destination / "build.json").write_text(json.dumps({
-            "host_version": version, "artifact_sha256": {},
+            "host_version": version, "artifact_sha256": {
+                resource["helper"]: app_builder.sha256(helper), "command-resource-execution.json": app_builder.sha256(inventory)},
         }))
         return destination
 
@@ -183,6 +191,8 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
         starter = staged / "Contents/Resources" / app_builder.STARTER_PACKAGE_PATH
         signed_starter = starter / "bin/service"
         signed_starter.write_bytes(signed_starter.read_bytes() + b" changed by codesign")
+        helper = staged / "Contents/Resources/host/bin/mcpme-command-resource-reap"
+        helper.write_bytes(helper.read_bytes() + b" changed by codesign")
         # The previously valid lock must fail until the app builder refreshes
         # the signed native artifact, as happens with actual codesign output.
         with pytest.raises(PackageError, match="artifact_(?:hash|size)_mismatch"):
@@ -206,6 +216,13 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
     assert receipt["source_commit"] == "a" * 40
     assert receipt["source_tree_dirty"] is False
     assert receipt["signing"] == host_receipt["signing"] == ("developer_id" if release else "ad_hoc")
+    resource = json.loads((resources / "host/command-resource-execution.json").read_bytes())
+    assert resource["helper_source_sha256"] == "a" * 64 and resource["helper_header_sha256"] == "b" * 64
+    assert resource["helper_sha256"] == app_builder.sha256(resources / "host" / resource["helper"])
+    assert all(resource[key] is False for key in ("lifetime_coverage_complete", "hard_aggregate_enforced", "result_admissible"))
+    assert resource["production_admission"] == "disabled"
+    for relative, digest in host_receipt["artifact_sha256"].items():
+        assert digest == app_builder.sha256(resources / "host" / relative)
     starter = resources / app_builder.STARTER_PACKAGE_PATH
     verified = validate_package(starter)
     assert receipt["starter_packages"] == [{"path": "starter-packages/json-utilities",
@@ -238,7 +255,8 @@ def test_all_native_helpers_and_extensions_get_hardened_signatures(monkeypatch, 
     native = tmp_path / "Contents/MacOS/mcpme"
     extension = tmp_path / "Contents/Resources/host/python/site-packages/native.so"
     reaper = tmp_path / "Contents/Resources/host/bin/mcpme-reap"
-    for path in (native, extension, reaper):
+    resource_reaper = reaper.parent / "mcpme-command-resource-reap"
+    for path in (native, extension, reaper, resource_reaper):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"\xcf\xfa\xed\xfe" + b"synthetic native file")
     (reaper.parent / "mcpme").write_text("#!/bin/sh\n")
@@ -251,9 +269,9 @@ def test_all_native_helpers_and_extensions_get_hardened_signatures(monkeypatch, 
         return ""
 
     monkeypatch.setattr(app_builder, "run", run)
-    assert app_builder.sign_runtime(tmp_path, CERTIFICATE, True) == 3
+    assert app_builder.sign_runtime(tmp_path, CERTIFICATE, True) == 4
     signatures = [call for call in calls if "--force" in call]
-    assert {Path(call[-1]) for call in signatures} == {native, extension, reaper}
+    assert {Path(call[-1]) for call in signatures} == {native, extension, reaper, resource_reaper}
     assert signatures[-1][-1] == str(native)
     for call in signatures:
         assert "--deep" not in call
@@ -261,7 +279,7 @@ def test_all_native_helpers_and_extensions_get_hardened_signatures(monkeypatch, 
         assert call[call.index("--options") + 1] == "runtime"
         assert call[call.index("--sign") + 1] == CERTIFICATE
     validations = [call for call in calls if "--verify" in call]
-    assert len(validations) == 3
+    assert len(validations) == 4
     assert all(CERTIFICATE in call[call.index("-R") + 1] for call in validations)
 
 

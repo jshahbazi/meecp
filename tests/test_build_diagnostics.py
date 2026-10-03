@@ -158,6 +158,8 @@ def test_host_build_preserves_nested_document_links_and_binds_all_document_hashe
              "backend/mcpme/service.py": "synthetic source", "backend/mcpme_local_transport.py": "synthetic transport",
              "README.md": "synthetic readme", "THIRD_PARTY_NOTICES.md": "synthetic notices",
              "scripts/mcpme-command-reap.c": "synthetic helper source",
+             "scripts/mcpme-command-resource-reap.c": "synthetic monitor source",
+             "scripts/mcpme-command-resource-v1.h": "synthetic monitor header",
              "assets/brand/source.svg": "synthetic branding", "templates/catalog.json": "{}",
              "templates/task/.venv/private-input.txt": "excluded local environment",
              "docs/AUTOMATIC_PREPARATION.md": "[Review](reviews/DIRECTORY_ONBOARDING_REVIEW.md)\n",
@@ -183,7 +185,7 @@ def test_host_build_preserves_nested_document_links_and_binds_all_document_hashe
             Path(arguments[arguments.index("-o") + 1]).write_bytes(b"synthetic native reaper")
         if arguments[:2] == ("uv", "export"):
             Path(arguments[arguments.index("--output-file") + 1]).write_text("synthetic requirements")
-        if arguments[0] == "/usr/bin/codesign":
+        if arguments[0] == "/usr/bin/codesign" and "--sign" in arguments:
             reaper = Path(arguments[-1])
             reaper.write_bytes(reaper.read_bytes() + b" signed")
         if arguments[0] == "/usr/bin/cc" and "--version" in arguments:
@@ -223,7 +225,17 @@ def test_host_build_preserves_nested_document_links_and_binds_all_document_hashe
         assert receipt["artifact_sha256"]["preparation-toolchain/engine"] == hashlib.sha256(b"synthetic exact engine").hexdigest()
     assert receipt["signing"] == "ad_hoc_native_helpers"
     assert receipt["artifact_sha256"]["bin/mcpme-reap"] == hashlib.sha256((host / "bin/mcpme-reap").read_bytes()).hexdigest()
-    assert len([call for call in calls if call[0] == "/usr/bin/codesign"]) == 2
+    assert len([call for call in calls if call[0] == "/usr/bin/codesign" and "--sign" in call]) == 3
+    resource = json.loads((host / "command-resource-execution.json").read_bytes())
+    assert resource["receipt_format"] == 4
+    assert resource["production_admission"] == "disabled"
+    assert resource["configuration_authority"] == "inventory-only"
+    assert all(resource[key] is False for key in ("lifetime_coverage_complete", "hard_aggregate_enforced", "result_admissible"))
+    for key, relative in (("helper_source_sha256", "scripts/mcpme-command-resource-reap.c"),
+                          ("helper_header_sha256", "scripts/mcpme-command-resource-v1.h")):
+        assert resource[key] == hashlib.sha256((source / relative).read_bytes()).hexdigest()
+    assert resource["helper_sha256"] == receipt["artifact_sha256"][resource["helper"]]
+    assert receipt["artifact_sha256"]["command-resource-execution.json"] == hashlib.sha256((host / "command-resource-execution.json").read_bytes()).hexdigest()
     metadata = json.loads((host / "command-execution.json").read_bytes())
     assert metadata["production_admission"] == "disabled" and metadata["configuration_authority"] == "inventory-only"
     assert metadata["receipt_format"] == 3 and metadata["package_schema"] == 2

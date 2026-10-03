@@ -832,6 +832,69 @@ def test_stream_consumer_must_discard_when_bytes_change_during_use(directory):
             selected.chmod(0o400)
 
 
+@pytest.mark.parametrize("stop", ["cancel", "deadline"])
+def test_verification_rejects_stop_after_final_hash_before_return(directory, monkeypatch, stop):
+    value = store(directory)
+    collection = value.capture(selection(directory / "source"), disk_ceiling_bytes=BUDGET)
+    canceled = threading.Event()
+    clock = [100.0]
+    monkeypatch.setattr(artifacts.time, "monotonic", lambda: clock[0])
+    original = value._verify_fd
+    def stop_after_hash(*args):
+        result = original(*args)
+        canceled.set()
+        clock[0] = 101.0
+        return result
+    monkeypatch.setattr(value, "_verify_fd", stop_after_hash)
+    with pytest.raises(artifacts.ArtifactError, match="artifact_capture_canceled" if stop == "cancel" else "artifact_deadline_exceeded"):
+        value.verify(collection.digest, cancel_event=canceled if stop == "cancel" else None, deadline=100.5)
+
+
+def test_verification_rejects_cancellation_at_final_identity_completion(directory, monkeypatch):
+    value = store(directory)
+    collection = value.capture(selection(directory / "source"), disk_ceiling_bytes=BUDGET)
+    canceled = threading.Event()
+    original = artifacts._same_directory
+    checks = 0
+    def stop_after_exit(*args):
+        nonlocal checks
+        result = original(*args)
+        if args[1] == collection.digest:
+            checks += 1
+            if checks == 2:
+                canceled.set()
+        return result
+    monkeypatch.setattr(artifacts, "_same_directory", stop_after_exit)
+    with pytest.raises(artifacts.ArtifactError, match="artifact_capture_canceled"):
+        value.verify(collection.digest, cancel_event=canceled)
+
+
+@pytest.mark.parametrize("stop", ["cancel", "deadline"])
+def test_artifact_descriptor_is_not_yielded_after_late_hash_stop(directory, monkeypatch, stop):
+    value = store(directory)
+    collection = value.capture(selection(directory / "source"), disk_ceiling_bytes=BUDGET)
+    inode = (value.root / "objects" / collection.digest / "files" / "weights").stat().st_ino
+    canceled = threading.Event()
+    clock = [100.0]
+    monkeypatch.setattr(artifacts.time, "monotonic", lambda: clock[0])
+    original = artifacts._hash_fd
+    checks, yielded = 0, False
+    def stop_before_handoff(fd, *args, **kwargs):
+        nonlocal checks
+        result = original(fd, *args, **kwargs)
+        if os.fstat(fd).st_ino == inode:
+            checks += 1
+            if checks == 2:
+                canceled.set()
+                clock[0] = 101.0
+        return result
+    monkeypatch.setattr(artifacts, "_hash_fd", stop_before_handoff)
+    with pytest.raises(artifacts.ArtifactError, match="artifact_capture_canceled" if stop == "cancel" else "artifact_deadline_exceeded"):
+        with value.open_artifact(collection.digest, "weights", cancel_event=canceled if stop == "cancel" else None, deadline=100.5):
+            yielded = True
+    assert yielded is False
+
+
 def test_stream_consumer_rejects_replaced_captured_ancestor(directory):
     value = store(directory)
     collection = value.capture(selection(directory / "source"), disk_ceiling_bytes=BUDGET)

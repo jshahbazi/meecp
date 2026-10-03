@@ -769,10 +769,12 @@ class ArtifactStore:
                         chain.check()
                         _same_directory(chain.fd, "objects", objects)
                         _same_directory(objects, digest, directory)
+                        budget.check()
                         yield directory, collection, budget
                         chain.check()
                         _same_directory(chain.fd, "objects", objects)
                         _same_directory(objects, digest, directory)
+                        budget.check()
                     finally:
                         os.close(directory)
                 finally:
@@ -805,11 +807,13 @@ class ArtifactStore:
                     _same_file(files, entry.name, fd, before)
                     _same_directory(directory, "files", files)
                     os.lseek(fd, 0, os.SEEK_SET)
+                    budget.check()
                     yield fd
                     if _hash_fd(fd, entry.size, budget, license_text=entry.role == "license") != entry.sha256:
                         raise ArtifactError("artifact_hash_mismatch")
                     _same_file(files, entry.name, fd, before)
                     _same_directory(directory, "files", files)
+                    budget.check()
                 finally:
                     os.close(fd)
             finally:

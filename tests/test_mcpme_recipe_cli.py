@@ -280,6 +280,8 @@ async def test_owner_add_enable_variant_and_restart_through_private_cli(tmp_path
     first = scaffold_recipe(first_path, "local.first")
     second = scaffold_recipe(second_path, "local.second")
     async with private_manager(tmp_path) as host:
+        defaults = {record["recipe_id"] for record in host.recipes.list()}
+        assert defaults == {"mcpme.python-callable"}
         for path, entry in ((first_path, first), (second_path, second)):
             added = await execute(host.root, "recipes", "add", "--path", path)
             assert added["digest"] == entry["digest"] and added["state"] == "proposed"
@@ -287,7 +289,8 @@ async def test_owner_add_enable_variant_and_restart_through_private_cli(tmp_path
             assert enabled["state"] == "enabled" and enabled["runnable"] is False
             assert host.recipes.resolve(entry["recipe_id"], "1.0.0", entry["digest"])["digest"] == entry["digest"]
         listing = await execute(host.root, "recipes", "list")
-        assert len(listing["recipes"]) == 2 and host.registry.list_slots() == []
+        assert {record["recipe_id"] for record in listing["recipes"]} == defaults | {"local.first", "local.second"}
+        assert host.registry.list_slots() == []
     async with private_manager(tmp_path) as host:
         restored = await execute(host.root, "recipes", "inspect", "--id", "local.first", "--version", "1.0.0")
         assert restored["digest"] == first["digest"] and restored["state"] == "enabled"
@@ -299,6 +302,7 @@ async def test_existing_scoped_grants_cannot_manage_recipes_or_preparation_jobs(
     path = tmp_path / "recipe"
     scaffold_recipe(path, "local.owner")
     async with private_manager(tmp_path) as host:
+        baseline = host.recipes.list()
         grant = await execute(host.root, "authorize", "--read-only" if mode == "read" else "--prepare")
         scoped = ("--credential-file", grant["credential_file"])
         for command in (("recipes", "list"), ("recipes", "add", "--path", path),
@@ -306,7 +310,7 @@ async def test_existing_scoped_grants_cannot_manage_recipes_or_preparation_jobs(
                         ("preparations", "list")):
             denied = await execute(host.root, *scoped, *command)
             assert denied["error"]["code"] == "grant_scope"
-        assert host.recipes.list() == [] and host.preparations.list() == []
+        assert host.recipes.list() == baseline and host.preparations.list() == []
 
 
 async def test_owner_preparation_plan_get_cancel_and_unknown_descriptor_fields(tmp_path):

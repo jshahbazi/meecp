@@ -108,7 +108,9 @@ def verify_signature(path: Path, certificate_hash: str | None = None, deep: bool
 
 
 def sign_runtime(root: Path, identity: str = "-", release: bool = False,
-                 keychain: Path | None = None) -> int:
+                 keychain: Path | None = None, *, immutable_runtime: Path | None = None) -> int:
+    if release and immutable_runtime is not None:
+        raise SystemExit("signed_textgen_preparation_not_supported")
     count = 0
     # Sign individual native files before the outer bundle seals their resources.
     for path in sorted(root.rglob("*"), key=lambda path: (-len(path.parts), str(path))):
@@ -122,7 +124,8 @@ def sign_runtime(root: Path, identity: str = "-", release: bool = False,
             magic = source.read(4)
         if magic not in MACHO_MAGIC:
             continue
-        if path.suffix == ".dylib":
+        preserved = immutable_runtime is not None and path.is_relative_to(immutable_runtime)
+        if path.suffix == ".dylib" and not preserved:
             # python-build-standalone gives libpython an absolute install ID;
             # rewrite that self identity before inspecting actual imports.
             run("/usr/bin/install_name_tool", "-id", "@loader_path/" + path.name, str(path))
@@ -131,17 +134,20 @@ def sign_runtime(root: Path, identity: str = "-", release: bool = False,
             dependency = line.strip().split(" (", 1)[0]
             if dependency.startswith("/") and not dependency.startswith(("/usr/lib/", "/System/Library/")):
                 raise SystemExit("Bundled runtime contains an external native dependency")
-        run(*signing_arguments(identity, release, keychain), str(path))
+        if not preserved:
+            run(*signing_arguments(identity, release, keychain), str(path))
         verify_signature(path, identity if release else None)
-        count += 1
+        count += not preserved
     return count
 
 
 def build(destination: Path, legacy_recovery_app: Path | None = None,
           sign_identity: str | None = None, keychain: Path | None = None,
-          version: str | None = None) -> Path:
+          version: str | None = None, textgen_engine: Path | None = None) -> Path:
     # Validate before invoking any tool or signing operation.
     effective_version = project_version(version)
+    if textgen_engine is not None and sign_identity is not None:
+        raise SystemExit("signed_textgen_preparation_not_supported")
     if keychain is not None and sign_identity is None:
         raise SystemExit("keychain_requires_signing_identity")
     identity = developer_identity(sign_identity, keychain) if sign_identity is not None else "-"
@@ -167,8 +173,12 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
     run(str(icon_generator), str(ROOT / "assets/brand"), str(iconset))
     run("/usr/bin/iconutil", "-c", "icns", str(iconset), "-o", str(resources / "AppIcon.icns"))
     shutil.copytree(ROOT / "assets/brand", resources / "assets/brand")
-    host = (build_host(resources / "host", version=version) if version is not None
-            else build_host(resources / "host"))
+    host_options = {}
+    if version is not None:
+        host_options["version"] = version
+    if textgen_engine is not None:
+        host_options["textgen_engine"] = textgen_engine
+    host = build_host(resources / "host", **host_options)
     starter = prepare_starter_package(resources)
     shutil.copy2(native, host / "bin/mcpme-handoff")
     (host / "native-app.json").write_text(json.dumps({"schema_version": 1, "bundle_identifier": "com.jshahbazi.mcpme",
@@ -193,7 +203,14 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
     for name in ("model-manifest.json", "THIRD_PARTY_NOTICES.md"):
         shutil.copyfile(ROOT / name, resources / name)
     native_input_hash = sha256(native)
-    signed_files = sign_runtime(staged, identity, release, keychain)
+    if textgen_engine is not None:
+        from bundle_textgen_assets import verify_runtime as verify_textgen_runtime
+        verify_textgen_runtime(host)
+        signed_files = sign_runtime(staged, identity, release, keychain,
+                                    immutable_runtime=host / "preparation-toolchain/textgen-runtime")
+        verify_textgen_runtime(host)
+    else:
+        signed_files = sign_runtime(staged, identity, release, keychain)
     if (host / "preparation-toolchain/toolchain.json").is_file():
         refresh_toolchain_manifest(host / "preparation-toolchain")
     starter_receipt = finalize_starter_package(starter, host, release=release)
@@ -223,6 +240,8 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
     (resources / "app-build.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     run(*signing_arguments(identity, release, keychain), str(staged))
     verify_signature(staged, identity if release else None, deep=True)
+    if textgen_engine is not None:
+        verify_textgen_runtime(host)
     staged.rename(destination)
     # An executable signature seals Resources; keep its final digest outside that
     # seal to avoid a self-referential receipt changing the executable digest.
@@ -239,10 +258,11 @@ if __name__ == "__main__":
     parser.add_argument("--sign-identity", help="Developer ID Application name or certificate SHA-1")
     parser.add_argument("--keychain", type=Path, help="Keychain containing the signing certificate")
     parser.add_argument("--version", help="Override the application version (major.minor.patch)")
+    parser.add_argument("--textgen-engine", type=Path, help="Exact reviewed engine Resources directory for private CPU text preparation")
     arguments = parser.parse_args()
     try:
         print(build(arguments.output.absolute(), arguments.legacy_recovery_app,
-                    arguments.sign_identity, arguments.keychain, arguments.version))
+                    arguments.sign_identity, arguments.keychain, arguments.version, arguments.textgen_engine))
     except KeyboardInterrupt:
         raise SystemExit("app_build_interrupted") from None
     except BuildCommandError as error:

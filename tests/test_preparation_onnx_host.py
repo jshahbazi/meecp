@@ -54,6 +54,11 @@ async def test_cold_host_captured_form_binds_original_files_and_separate_collect
             assert draft["source"] == original_source
         for entry in request.entries:
             Path(entry.path).unlink()
+        inspected = host.inspect_preparation_source(draft["draft_id"], draft["revision"])
+        assert inspected["blockers"] == []
+        assert inspected["execution_available"] is False and inspected["verified_capabilities"] == []
+        assert inspected["candidates"][0]["verified"] is False
+        assert [item["kind"] for item in inspected["candidates"]] == ["onnx-hotdog"]
         form = host.preparation_forms.form(draft["draft_id"], draft["revision"])
         assert not form["blockers"] and form["execution_available"] is False
         assert form["recipe"] == record["recipe"]

@@ -129,10 +129,15 @@ def verify_image(image: Path, workspace: Path, info: dict,
 
 def build(output: Path | None = None, app: Path | None = None,
           sign_identity: str | None = None, notary_profile: str | None = None,
-          keychain: Path | None = None, version: str | None = None) -> Path:
+          keychain: Path | None = None, version: str | None = None, textgen_engine: Path | None = None) -> Path:
     # Validate before credential lookup, copying, signing, or notarization.
     if version is not None:
         project_version(version)
+    if app is not None and textgen_engine is not None:
+        raise SystemExit("textgen_engine_requires_source_build")
+    if sign_identity is not None and (textgen_engine is not None or app is not None and (
+            app / "Contents/Resources/host/preparation-toolchain/textgen-runtime").exists()):
+        raise SystemExit("signed_textgen_preparation_not_supported")
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise SystemExit("Build requires Apple silicon macOS")
     if output is not None and (output.suffix != ".dmg" or output.exists() or output.is_symlink()):
@@ -152,10 +157,12 @@ def build(output: Path | None = None, app: Path | None = None,
             # Notarization staples a ticket; operate on a copy of supplied artifacts.
             run("/usr/bin/ditto", str(app.resolve(strict=True)), str(source))
         else:
-            if version is None:
-                build_app(source, sign_identity=certificate_hash, keychain=keychain)
-            else:
-                build_app(source, sign_identity=certificate_hash, keychain=keychain, version=version)
+            app_options = {"sign_identity": certificate_hash, "keychain": keychain}
+            if version is not None:
+                app_options["version"] = version
+            if textgen_engine is not None:
+                app_options["textgen_engine"] = textgen_engine
+            build_app(source, **app_options)
         info = app_metadata(source, certificate_hash)
         if version is not None and info["CFBundleShortVersionString"] != version:
             raise SystemExit("supplied_app_version_mismatch")
@@ -231,11 +238,12 @@ if __name__ == "__main__":
     parser.add_argument("--notary-profile", help="notarytool Keychain profile; requires --sign-identity")
     parser.add_argument("--keychain", type=Path, help="Keychain containing signing identity and notary profile")
     parser.add_argument("--version", help="Override the application version (major.minor.patch)")
+    parser.add_argument("--textgen-engine", type=Path, help="Exact reviewed engine Resources directory; requires source build")
     arguments = parser.parse_args()
     try:
         print(build(arguments.output, arguments.app, arguments.sign_identity,
                     arguments.notary_profile, arguments.keychain,
-                    version=arguments.version))
+                    version=arguments.version, textgen_engine=arguments.textgen_engine))
     except KeyboardInterrupt:
         raise SystemExit("dmg_build_interrupted") from None
     except BuildCommandError as error:

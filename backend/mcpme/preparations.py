@@ -170,15 +170,22 @@ class PreparationStore(PreparationAuthority):
         kind = draft["source"]["kind"]
         matching = [family for family in self.families.values() if
             (family.supports_source(draft) if hasattr(family, "supports_source") else family.source_kind == kind)]
-        inspections = ([inspect_source(draft)] if kind in {"local_folder", "document"} or not matching else [])
+        legacy = inspect_source(draft) if kind in {"local_folder", "document"} or not matching else None
+        if not matching:
+            return legacy
+        inspections = [legacy] if legacy is not None else []
         inspections.extend(family.inspect_source(draft) for family in matching)
         if any(item["source_revision"] != draft["source"]["revision"] for item in inspections):
             raise PreparationError("source_identity_mismatch")
         candidates = [candidate for item in inspections for candidate in item["candidates"]]
         if len({item["candidate_id"] for item in candidates}) != len(candidates):
             raise PreparationError("ambiguous_preparation_provider")
-        return {"schema_version": 1, "source_revision": draft["source"]["revision"],
-                "candidates": sorted(candidates, key=lambda item: item["candidate_id"]),
+        metadata = legacy if legacy is not None else {
+            "schema_version": 1, "source_revision": draft["source"]["revision"],
+            "roots": [], "observations": []}
+        return {**metadata, "execution_available": False, "verified_capabilities": [],
+                "candidates": sorted(({**candidate, "verified": False} for candidate in candidates),
+                                     key=lambda item: item["candidate_id"]),
                 "blockers": [] if candidates else sorted({code for item in inspections for code in item["blockers"]})}
 
     def release_family_inputs(self, job_id):

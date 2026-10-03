@@ -216,6 +216,8 @@ async def verify(host, model, base):
             raise PreparationError("phase3_onnx_default_registration_failed")
         # Only this private development host executes. Product defaults stay gated.
         runner.enabled = True
+        from mcpme.preparation_onnx import component_reference
+        runner.enabled_families = frozenset({component_reference().key})
         async with asyncio.timeout(WALL_SECONDS):
             stage("capture")
             selected = base / "selected"; selected.mkdir(mode=0o700)

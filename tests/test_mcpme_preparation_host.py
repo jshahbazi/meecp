@@ -135,14 +135,13 @@ async def test_inspection_does_not_execute_source_and_rejects_revision_race(tmp_
                                     "def calculate(value: str) -> dict:\n    return {}\n")
     draft = host.imports.create(source, name="Synthetic")
     entered, release = threading.Event(), threading.Event()
-    from mcpme import supervisor as module
-    original = module.inspect_source
+    original = host.preparations.inspect_source
     def slow(value):
         result = original(value)
         entered.set()
         assert release.wait(5)
         return result
-    monkeypatch.setattr(module, "inspect_source", slow)
+    monkeypatch.setattr(host.preparations, "inspect_source", slow)
     pending = None
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=management_app(host, "owner", 19886)),
@@ -325,6 +324,8 @@ async def test_production_execution_gate_is_explicit_and_static_inspection_remai
             assert rejected.status_code == 409 and rejected.json()["error"]["code"] == "preparation_runner_unavailable"
             inspected = await client.post("/v1/preparations/inspect-source", json={"import_id": draft["draft_id"], "revision": 1})
             assert inspected.status_code == 200
+            from mcpme.preparation_inspection import inspect_source
+            assert inspected.json() == {"api_version": 1, "import_id": draft["draft_id"], "revision": 1, **inspect_source(draft)}
             assert inspected.json()["execution_available"] is False
             assert inspected.json()["candidates"][0]["verified"] is False
             assert not host.preparations.list() and not host.preparation_reservations

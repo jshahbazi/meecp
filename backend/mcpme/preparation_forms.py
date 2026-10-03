@@ -386,7 +386,7 @@ class ResolvedPythonFormProvider(PythonCallableFormProvider):
 
 
 class PreparationForms:
-    def __init__(self, store, *, providers=None, preferred_recipes=()):
+    def __init__(self, store, *, providers=None, preferred_recipes=(), execution_admission=None):
         self.store, self.imports, self.recipes = store, store.imports, store.recipes
         self.providers = tuple(providers) if providers is not None else (PythonCallableFormProvider(), ResolvedPythonFormProvider())
         if providers is None:
@@ -394,6 +394,7 @@ class PreparationForms:
         if len(preferred_recipes) > MAX_CHOICES:
             raise PreparationError("preparation_form_limit")
         self.preferred_recipes = tuple(RecipeReference.model_validate(value) for value in preferred_recipes)
+        self.execution_admission = execution_admission
 
     def context(self, import_id, revision, *, candidate_id=None, recipe=None, execution_available=False,
                 resolution_digest=None, resolution_available=False):
@@ -486,6 +487,9 @@ class PreparationForms:
                     and previous["descriptor"]["recipe"] == selected.model_dump()
                     and hasattr(providers[selected.digest], "restore_fields")):
                 fields = providers[selected.digest].restore_fields(fields, bindings, previous["descriptor"])
+        available = execution_available is True
+        if self.execution_admission is not None:
+            available = available and selected is not None and self.execution_admission(record) is True
         payload = {"schema_version": 1, "import_id": import_id, "revision": revision,
             "source_revision": inspection["source_revision"], "candidate_id": candidate_id,
             "recipe": selected.model_dump() if selected else None,
@@ -493,7 +497,7 @@ class PreparationForms:
             "recipe_choices": [item.model_dump() for item in recipe_choices],
             "fields": [item.model_dump(by_alias=True) for item in fields],
             "tools": [Tool.model_validate(item).model_dump() for item in candidate["tools"]] if candidate else [],
-            "blockers": sorted(set(blockers)), "execution_available": execution_available is True,
+            "blockers": sorted(set(blockers)), "execution_available": available,
             "resolution_required": bool(operations and resolution is None), "resolution_operations": operations,
             "resolution_digest": resolution_digest, "resolution_available": bool(operations) and resolution_available is True,
             "resolution_policy": {"schema_version": 1, "operations": operations,

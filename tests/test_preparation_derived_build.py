@@ -210,7 +210,8 @@ async def test_real_resolution_form_build_attach_and_relocation(tmp_path, kind):
         resolutions = ResolutionStore(imports)
         resolver = OwnedResolutionRunner(resolutions, host, host / "bin/mcpme-reap", enabled=True)
         store, forms = seeded(imports, resolutions)
-        builder = PreparationRunner(store, host, host / "bin/mcpme-reap", enabled=True)
+        builder = PreparationRunner(store, host, host / "bin/mcpme-reap", enabled=True,
+                                    enabled_families=tuple(store.families))
         try:
             plan = await resolver.plan(draft["draft_id"], 1, candidate["candidate_id"], policy(kind != "callable"))
             job = await resolver.start(plan["plan_id"], plan["plan_digest"], str(uuid.uuid4()))

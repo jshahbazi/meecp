@@ -151,12 +151,14 @@ def test_bundled_model_generator_has_licensed_source_closure_without_checkout(tm
     assert not list(assets.rglob("*.pyc")) and not list(assets.rglob("__pycache__"))
 
 
-def test_host_build_preserves_nested_document_links_and_binds_all_document_hashes(monkeypatch, tmp_path):
+@pytest.mark.parametrize("with_engine", [False, True])
+def test_host_build_preserves_nested_document_links_and_binds_all_document_hashes(monkeypatch, tmp_path, with_engine):
     source = tmp_path / "source"
     files = {"pyproject.toml": '[project]\nversion = "0.1.0"\n', "uv.lock": "synthetic lock",
              "backend/mcpme/service.py": "synthetic source", "backend/mcpme_local_transport.py": "synthetic transport",
              "README.md": "synthetic readme", "THIRD_PARTY_NOTICES.md": "synthetic notices",
              "assets/brand/source.svg": "synthetic branding", "templates/catalog.json": "{}",
+             "templates/task/.venv/private-input.txt": "excluded local environment",
              "docs/AUTOMATIC_PREPARATION.md": "[Review](reviews/DIRECTORY_ONBOARDING_REVIEW.md)\n",
              "docs/reviews/DIRECTORY_ONBOARDING_REVIEW.md": "# Directory onboarding review\n",
              "docs/reviews/figure.svg": "synthetic documentation figure",
@@ -196,8 +198,17 @@ def test_host_build_preserves_nested_document_links_and_binds_all_document_hashe
     monkeypatch.setattr(host_builder.platform, "machine", lambda: "arm64")
     monkeypatch.setattr(host_builder, "run", run)
     monkeypatch.setattr(host_builder, "bundle_model_template_assets", lambda destination: None)
-    monkeypatch.setattr(host_builder, "bundle_preparation_toolchain", lambda destination, runtime: None)
-    host = host_builder.build(tmp_path / "host")
+    monkeypatch.setattr(host_builder, "bundle_textgen_backend", lambda destination: None)
+    def toolchain(destination, runtime):
+        (destination / "preparation-toolchain").mkdir()
+        (destination / "preparation-toolchain/toolchain.json").write_text("synthetic toolchain")
+    monkeypatch.setattr(host_builder, "bundle_preparation_toolchain", toolchain)
+    engine = tmp_path / "explicit-engine"
+    def bundle_engine(destination, selected):
+        assert selected == engine and (destination / "preparation-toolchain/toolchain.json").is_file()
+        (destination / "preparation-toolchain/engine").write_bytes(b"synthetic exact engine")
+    monkeypatch.setattr(host_builder, "bundle_textgen_toolchain", bundle_engine)
+    host = host_builder.build(tmp_path / "host", textgen_engine=engine if with_engine else None)
     receipt = json.loads((host / "build.json").read_text())
     included = {"docs/AUTOMATIC_PREPARATION.md", "docs/reviews/DIRECTORY_ONBOARDING_REVIEW.md", "docs/reviews/figure.svg"}
     for relative in included:
@@ -205,6 +216,10 @@ def test_host_build_preserves_nested_document_links_and_binds_all_document_hashe
         assert receipt["artifact_sha256"][relative] == hashlib.sha256((source / relative).read_bytes()).hexdigest()
     assert {name for name in receipt["artifact_sha256"] if name.startswith("docs/")} == included
     assert not list((host / "docs").rglob("__pycache__")) and not list((host / "docs").rglob("*.pyc"))
+    assert not list((host / "templates").rglob(".venv"))
+    assert ("preparation-toolchain/engine" in receipt["artifact_sha256"]) is with_engine
+    if with_engine:
+        assert receipt["artifact_sha256"]["preparation-toolchain/engine"] == hashlib.sha256(b"synthetic exact engine").hexdigest()
     assert receipt["signing"] == "ad_hoc_reaper_only"
     assert receipt["artifact_sha256"]["bin/mcpme-reap"] == hashlib.sha256((host / "bin/mcpme-reap").read_bytes()).hexdigest()
     assert len([call for call in calls if call[0] == "/usr/bin/codesign"]) == 1

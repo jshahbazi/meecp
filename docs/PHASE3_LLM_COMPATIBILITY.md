@@ -127,3 +127,78 @@ composed durable preparation acceptance result. The new managed harness
 exercise capture, immutable recipe selection, forms, planning, controlled
 building, joined verification, same-revision attachment, and relocation after
 removal of captured state. The full A4 managed/native gate remains open.
+
+## Host registration and separate admission
+
+The cold supervisor now registers the engine/task composition and seeds the
+immutable `mcpme.text-generation@1.0.0` recipe. Captured-only imports and a
+captured model supplement on an original directory use the normal inspection,
+generated forms, durable preparation runner and attachment path. App names
+come from the draft; restored memory choices respect the current ceiling.
+The task step depends on the exact engine version and digest.
+
+Each schema-2 family requires its own exact `(id, version, digest)` admission in
+`PreparationRunner.enabled_families`. The global runner switch alone cannot
+enable a newly registered family. Forms report the selected recipe's actual
+admission; planning, start, verification and attachment recheck it. The
+dependency resolver retains its separate resolution authority. Public
+preparation defaults remain disabled.
+
+The runner dispatches the trusted family's verification hook using the same
+journaled process owner and remaining deadline. A non-stdio family without a
+specialist verifier is blocked. Existing stdio families retain their verifier.
+Both execution identities bind the exact selected component set.
+
+The current engine and task identities also bind the complete reviewed host
+Python source closure, shared transport, adapter/policy files and immutable
+template assets. Changes to that closure require a new reviewed component and
+recipe version after publication; existing seed records must not be restamped.
+
+## Development distribution
+
+The host, app and DMG source builders accept an explicit `--textgen-engine`
+Resources directory. The host copies the static family implementation even
+when no engine is supplied. With an engine, it verifies the committed closure,
+compiles the reviewed launcher during distribution, refreshes the private
+toolchain manifest, and hashes the complete result. Template virtual
+environments are excluded from both template copies.
+
+```sh
+uv run --locked python scripts/build_mcpme_host.py --output /absolute/path/to/fresh-host --textgen-engine /absolute/path/to/JevK5.app/Contents/Resources
+uv run --locked python scripts/verify_phase3_textgen_managed.py --host /absolute/path/to/fresh-host --model /absolute/path/to/qwen2.5-0.5b-instruct-q4_k_m.gguf --source-mode captured --install-lifecycle
+```
+
+Development app signing preserves the exact text-engine subtree and validates
+its pinned bytes before and after signing. Release signing's hardened-runtime
+option was independently shown to change a representative engine library's
+hash. A text-engine source build or supplied development app therefore cannot
+enter Developer ID distribution under this component version. A separately
+reviewed signed closure and version remain required.
+
+The managed acceptance harness now uses the default supervisor, shipped
+recipe, capture coordinator and real preparation reservation callbacks. It
+supports captured-only and folder-plus-capture cases and optional same-import
+installation, invocation, contention, timeout and restart checks. Independent
+relocation probes explicitly join their owners; failures retain proof and
+cleanup failures emit fixed diagnostics. These mechanisms and static tests do
+not establish actual composed acceptance. A4 stays open until the recorded
+immutable-host runs and the remaining native, isolation and resource gates pass.
+
+## Common host regression checkpoint
+
+The integrated Python source suite passed 2,155 tests with 12 opt-in or platform
+skips. The actual pinned secret scanner participated in that run. Independent
+checkpoint reviews also passed 36 admission/resolution checks and 76
+distribution/signing checks; no reproducible finding remained in those scopes.
+
+The complete suite caught two integration errors before freezing the host:
+package-family admission reached the separate resolution store, and the new
+inspection dispatcher dropped legacy response metadata. Resolution start now
+uses its own authority hook. Legacy inspection retains its complete payload;
+captured and mixed-source inspection preserves the common response contract and
+labels every candidate unverified. Existing responsive revision-race and
+production-disabled tests exercise the actual dispatcher.
+
+These checks validate source behavior. The next acceptance requires a clean
+immutable host, actual managed construction and installation, and the native
+capture flow. Public preparation remains disabled.

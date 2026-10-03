@@ -46,7 +46,8 @@ def builtin_components() -> dict:
              "existing-mcp-v1": root / "templates/prepare.py"}
     from .preparation_resolved_python import component_catalog
     from .preparation_onnx import builtin_onnx_components
-    return {**component_catalog(), **builtin_onnx_components(), **{name + "@1.0.0": {"digest": hashlib.sha256(path.read_bytes()).hexdigest(),
+    from .preparation_textgen import builtin_textgen_components
+    return {**component_catalog(), **builtin_onnx_components(), **builtin_textgen_components(), **{name + "@1.0.0": {"digest": hashlib.sha256(path.read_bytes()).hexdigest(),
                               "input_schema": {"type": "object", "additionalProperties": False},
                               "dependencies": []} for name, path in paths.items()}}
 

@@ -79,55 +79,30 @@ async def verify(host, model, base, *, source_mode="captured", install_lifecycle
     receipt = await asyncio.to_thread(host_hashes,host)
     _host_imports(host)
     from mcpme.contracts import validate_package
-    from mcpme.imports import ImportStore
-    from mcpme.preparation_artifacts import AcquisitionRequestV1, ArtifactStore
-    from mcpme.preparation_capture import (ArtifactCaptureCoordinator, ArtifactCaptureStore,
-        CapturePolicyV1, CreateImportTargetV1, AttachImportTargetV1)
+    from mcpme.preparation_artifacts import AcquisitionRequestV1
+    from mcpme.preparation_capture import CapturePolicyV1, CreateImportTargetV1, AttachImportTargetV1
     from mcpme.preparation_contracts import ExecutionPolicy, PreparationError
-    from mcpme.preparation_forms import PreparationForms
-    from mcpme.preparation_textgen import (MODEL_BYTES, MODEL_SHA256, TextGenerationFamily, builtin_textgen_components,
-                                     write_textgen_recipe)
-    from mcpme.preparation_runner import PreparationRunner
-    from mcpme.preparation_textgen_verifier import verify_textgen_package as verify_prepared_package
-    from mcpme.preparations import PreparationStore
+    from mcpme.preparation_textgen import MODEL_BYTES, MODEL_SHA256, references
     from mcpme.preparations import RECEIPT_NAME
     from mcpme.preparation_inputs import parse_preparation_receipt
     from mcpme.processes import _await_ownership
-    from mcpme.recipes import RecipeStore, builtin_components
+    from mcpme.supervisor import Supervisor
     check_origins(host)
-    imports = ImportStore(base / "state")
-    artifacts = ArtifactStore(base / "state/captured-artifacts")
-    capture_store = ArtifactCaptureStore(imports,artifacts)
-    family = TextGenerationFamily(capture_store)
-    recipes = RecipeStore(imports,component_catalog={**builtin_components(),**builtin_textgen_components()})
-    store = PreparationStore(imports,recipes,families=(family,))
-    reserved = set()
-    runner = None
+    product = Supervisor(base / "state", host / "bin/mcpme-reap")
+    imports, capture_store, store = product.imports, product.captures, product.preparations
+    recipes, forms = product.recipes, product.preparation_forms
+    coordinator, runner = product.capture_runner, product.preparation_runner
+    reserved = product.preparation_reservations
     async def files(function,*args,**kwargs):
         task = asyncio.create_task(asyncio.to_thread(function,*args,**kwargs))
         try:
             return await asyncio.shield(task)
         finally:
             await _await_ownership(asyncio.gather(task,return_exceptions=True))
-    def admit(target,collection,capture_id):
-        if isinstance(target, AttachImportTargetV1):
-            draft = imports._admit_captured(collection, draft_id=target.import_id, revision=target.revision)
-        else:
-            draft = imports._admit_captured(collection,choices=target.model_dump(mode="json",exclude={"kind"}))
-        capture_store._reconcile_draft_references()
-        return {"import_id":draft["draft_id"],"revision":draft["revision"]}
-    coordinator = ArtifactCaptureCoordinator(capture_store,admit_target=admit)
-    async def reserve(job_id,policy):
-        if policy.memory_mb != 2048 or policy.disk_bytes != DISK_BYTES:
-            raise PreparationError("phase3_textgen_reservation_mismatch")
-        reserved.add(job_id)
-    async def release(job_id,*,ownership_settled):
-        job = store.get(job_id)
-        if not ownership_settled or not job["ownership_settled"] or job["reservation_retained"]:
-            raise PreparationError("phase3_textgen_premature_release")
-        reserved.remove(job_id)
     started = time.monotonic()
     try:
+        if runner.enabled or not all(item["ready"] for item in product.builtin_recipe_metadata["recipes"]):
+            raise PreparationError("phase3_textgen_default_registration_failed")
         async with asyncio.timeout(WALL_SECONDS):
             stage("capture")
             selected = base / "selected"; selected.mkdir(mode=0o700)
@@ -159,22 +134,19 @@ async def verify(host, model, base, *, source_mode="captured", install_lifecycle
                     raise PreparationError("phase3_textgen_source_snapshot_changed")
                 await files(shutil.rmtree, original)
             await files(shutil.rmtree,selected)
-            bundle = base / "recipe"
-            await files(write_textgen_recipe,bundle)
-            recipe = await files(recipes.add,bundle)
-            recipe = await files(recipes.enable,recipe["recipe_id"],recipe["version"])
             stage("forms")
-            forms = PreparationForms(store,providers=(family.form_provider,))
             form = await files(forms.form,draft["draft_id"],draft["revision"])
             if form["blockers"] or form["execution_available"] is not False:
                 raise PreparationError("phase3_textgen_form_failed")
+            if form["recipe"]["id"] != "mcpme.text-generation":
+                raise PreparationError("phase3_textgen_default_registration_failed")
             descriptor,context = await files(forms.resolve,draft["draft_id"],draft["revision"],
                 candidate_id=form["candidate_id"],recipe=form["recipe"],form_digest=form["form_digest"],answers={})
             draft = await files(store.select_descriptor,draft["draft_id"],draft["revision"],descriptor,
                                 candidate_id=form["candidate_id"],form_digest=form["form_digest"])
             stage("planning")
-            runner = PreparationRunner(store,host,host / "bin/mcpme-reap",enabled=True,
-                                       reserve_resources=reserve,release_resources=release)
+            runner.enabled = True
+            runner.enabled_families = frozenset({references()[1].key})
             policy = ExecutionPolicy(schema_version=1,operations=["build","probe"],network=["files.pythonhosted.org"],
                                      wall_seconds=240,disk_bytes=DISK_BYTES,memory_mb=2048)
             plan = await runner.plan(draft["draft_id"],draft["revision"],descriptor.model_dump(exclude_none=True),policy)
@@ -205,9 +177,7 @@ async def verify(host, model, base, *, source_mode="captured", install_lifecycle
                     or any([record.model_dump(mode="json") for record in binding.files] != expected_files
                            for binding in sealed.inputs.source_validations)):
                 raise PreparationError("phase3_textgen_receipt_binding_mismatch")
-            await runner.close(); runner=None
-            await coordinator.close(); coordinator=None
-            imports.close(); imports=None
+            await _await_ownership(product.close()); product=None
             installed = None
             if install_lifecycle:
                 stage("installed_lifecycle")
@@ -234,14 +204,13 @@ async def verify(host, model, base, *, source_mode="captured", install_lifecycle
             await files(package.root.rename,relocated)
             digest = package.digest
             stage("removing_inputs")
-            for path in (base / "state",bundle):
-                await files(shutil.rmtree,path)
+            await files(shutil.rmtree,base / "state")
             package = await files(validate_package,relocated)
             if package.digest != digest:
                 raise PreparationError("phase3_textgen_relocation_identity_mismatch")
             probe = base / "probe"; probe.mkdir(mode=0o700)
             stage("relocation_probe")
-            report = await verify_prepared_package(relocated,descriptor,host / "bin/mcpme-reap",probe,timeout_seconds=60)
+            report = await relocation_probe(relocated,descriptor,host / "bin/mcpme-reap",probe)
             after = await files(validate_package,relocated)
             if after.digest != digest:
                 raise PreparationError("phase3_textgen_probe_mutated_package")
@@ -249,6 +218,7 @@ async def verify(host, model, base, *, source_mode="captured", install_lifecycle
             stage("closing")
             return {**receipt,"verified":True,"public_execution_available":False,"slot_installed":install_lifecycle,
                 "source_mode":source_mode, "original_source_records_preserved":True,
+                "default_host_registration":True, "selected_components":len(descriptor.components),
                 "capture_descriptor_recipe_receipt_bound":True, "installed_lifecycle":installed,
                 "model_sha256":MODEL_SHA256,"model_bytes":MODEL_BYTES,"package_digest":digest,
                 "descriptor_version":descriptor.schema_version,"same_revision_attachment":True,
@@ -260,16 +230,30 @@ async def verify(host, model, base, *, source_mode="captured", install_lifecycle
                 "a4_managed_native_gate_passed":False,"wall_seconds":round(time.monotonic()-started,6)}
     finally:
         try:
-            if runner is not None:
-                await _await_ownership(runner.close())
-            if coordinator is not None:
-                await _await_ownership(coordinator.close())
-            if imports is not None:
-                imports.close()
+            if product is not None:
+                await _await_ownership(product.close())
             if reserved:
                 (base / "ownership-unsettled").touch(mode=0o600)
         except BaseException:
             (base / "ownership-unsettled").touch(mode=0o600)
+            raise
+
+
+async def relocation_probe(package_root, descriptor, reaper, workspace):
+    from mcpme.preparation_contracts import PreparationError
+    from mcpme.preparation_textgen_verifier import verify_textgen_package
+    from mcpme.processes import ProcessOwner, _await_ownership
+    owner = ProcessOwner(reaper)
+    try:
+        return await verify_textgen_package(package_root, descriptor, reaper, workspace,
+                                            timeout_seconds=60, owner=owner)
+    finally:
+        try:
+            await _await_ownership(owner.close())
+            if owner.instances:
+                raise PreparationError("phase3_textgen_owned_work_remaining")
+        except BaseException:
+            (workspace.parent / "ownership-unsettled").touch(mode=0o600)
             raise
 
 
@@ -302,12 +286,19 @@ def main():
         result = {"verified":False,"error":code,"stage":STAGE,"exception_type":error_type}
         failed = True
     result["harness_sha256"] = harness_hash
-    if options.keep_artifacts or (base / "ownership-unsettled").exists():
+    if options.keep_artifacts or failed or (base / "ownership-unsettled").exists():
         result["private_artifact_directory"] = str(base)
+        if failed:
+            result["failure_artifacts_retained"] = True
         if (base / "ownership-unsettled").exists():
             result["ownership_retained"] = True
     else:
-        shutil.rmtree(base)
+        try:
+            shutil.rmtree(base)
+        except OSError:
+            result = {"verified":False,"error":"phase3_textgen_cleanup_failed","stage":"closing",
+                      "exception_type":"OSError","private_artifact_directory":str(base)}
+            failed = True
     print(json.dumps(result,sort_keys=True))
     return int(failed)
 

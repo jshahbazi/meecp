@@ -175,6 +175,11 @@ async def discover_interface(owner, python, runtime, source, workspace, candidat
 
 
 class OwnedResolutionRunner(PreparationRunner):
+    def _validate_start_admission(self, plan_id):
+        # Resolution has its own authority store and capability gate. It never
+        # dispatches a package family; authorize_start validates its exact scope.
+        return None
+
     """Reuse joined ownership plumbing, with separate resolution authority."""
     def __init__(self, store, host_root, reaper, *, reserve_resources=None, release_resources=None, enabled=False):
         super().__init__(store, host_root, reaper, reserve_resources=reserve_resources,

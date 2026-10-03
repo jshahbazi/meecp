@@ -167,7 +167,17 @@ def bundle_preparation_toolchain(destination: Path, runtime: Path) -> None:
     bundle(destination / "preparation-toolchain", runtime, template_root=ROOT / "templates")
 
 
-def build(destination: Path, version: str | None = None):
+def bundle_textgen_backend(destination: Path) -> None:
+    from bundle_textgen_assets import bundle_backend
+    bundle_backend(destination / "backend")
+
+
+def bundle_textgen_toolchain(destination: Path, engine: Path) -> None:
+    from bundle_textgen_assets import bundle
+    bundle(destination, engine)
+
+
+def build(destination: Path, version: str | None = None, *, textgen_engine: Path | None = None):
     version = project_version(version)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise SystemExit("Build requires Apple silicon macOS")
@@ -180,6 +190,7 @@ def build(destination: Path, version: str | None = None):
     shutil.copytree(ROOT / "backend/mcpme", destination / "backend/mcpme",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copyfile(ROOT / "backend/mcpme_local_transport.py", destination / "backend/mcpme_local_transport.py")
+    bundle_textgen_backend(destination)
     (destination / "bin").mkdir()
     run("/usr/bin/cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
         str(ROOT / "scripts/mcpme-reap.c"), "-o", str(destination / "bin/mcpme-reap"))
@@ -193,9 +204,11 @@ def build(destination: Path, version: str | None = None):
     shutil.copyfile(ROOT / "uv.lock", destination / "uv.lock")
     shutil.copyfile(ROOT / "pyproject.toml", destination / "pyproject.toml")
     shutil.copytree(ROOT / "templates", destination / "templates",
-                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".venv"))
     bundle_model_template_assets(destination)
     bundle_preparation_toolchain(destination, runtime)
+    if textgen_engine is not None:
+        bundle_textgen_toolchain(destination, textgen_engine)
     shutil.copyfile(ROOT / "README.md", destination / "README.md")
     shutil.copytree(ROOT / "assets/brand", destination / "assets/brand")
     shutil.copytree(ROOT / "docs", destination / "docs",
@@ -225,9 +238,10 @@ def build(destination: Path, version: str | None = None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=ROOT / "dist/mcpme-host")
+    parser.add_argument("--textgen-engine", type=Path, help="Exact reviewed engine Resources directory for private CPU text preparation")
     args = parser.parse_args()
     try:
-        print(build(args.output.absolute()))
+        print(build(args.output.absolute(), textgen_engine=args.textgen_engine))
     except KeyboardInterrupt:
         raise SystemExit("host_build_interrupted") from None
     except BuildCommandError as failure:

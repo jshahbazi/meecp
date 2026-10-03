@@ -44,7 +44,6 @@ from .preparation_contracts import ExecutionPolicy, PreparationError
 from .preparation_artifacts import ArtifactError, ArtifactStore
 from .preparation_capture import (ArtifactCaptureCoordinator, ArtifactCaptureStore,
                                   ArtifactStoragePolicyV1, AttachImportTargetV1, CapturePolicyV1)
-from .preparation_inspection import inspect_source
 from .preparation_resolution import MAX_RESOLUTIONS, ResolutionPolicyV1, ResolutionRequestV1, ResolutionStore
 from .preparations import MAX_JOBS, PreparationStore
 from .recipes import RecipeStore
@@ -214,11 +213,13 @@ class Supervisor(UpgradeHost):
                 raise HostError("invalid_artifact_storage_policy") from None
             self.captures = ArtifactCaptureStore(self.imports, self.artifacts, storage_policy=storage_policy)
             from .preparation_onnx import OnnxPreparationFamily
+            from .preparation_textgen import TextGenerationFamily
             self.preparations = PreparationStore(self.imports, self.recipes, resolutions=self.resolutions,
-                                                families=(OnnxPreparationFamily(self.captures),))
+                                                families=(OnnxPreparationFamily(self.captures), TextGenerationFamily(self.captures)))
             from .preparation_forms import PreparationForms
             self.preparation_forms = PreparationForms(self.preparations, preferred_recipes=tuple(
-                record["recipe"] for record in self.builtin_recipe_metadata["recipes"] if record["ready"]))
+                record["recipe"] for record in self.builtin_recipe_metadata["recipes"] if record["ready"]),
+                execution_admission=lambda record: self.preparation_runner.execution_available_for_recipe(record))
             self.preparations.recover()
             self.capture_runner = ArtifactCaptureCoordinator(self.captures,
                 admit_target=self.admit_captured_target, validate_target=self.validate_capture_target,
@@ -519,7 +520,7 @@ class Supervisor(UpgradeHost):
         with self.imports._lock:
             draft = self.imports._get(import_id, revision)
             self.imports._mutable(draft)
-        result = inspect_source(draft)
+        result = self.preparations.inspect_source(draft)
         with self.imports._lock:
             current = self.imports._get(import_id, revision)
             self.imports._mutable(current)

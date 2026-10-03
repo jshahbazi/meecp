@@ -102,7 +102,7 @@ def bundle(destination: Path, runtime: Path, *, template_root: Path | None = Non
     shutil.copytree(runtime, destination / "python", symlinks=False,
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "site-packages"))
     shutil.copytree(template_root or ROOT / "templates", destination / "templates",
-                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".venv"))
     (destination / "licenses").mkdir()
     for name, value in licenses.items():
         (destination / "licenses" / ("uv-" + name)).write_bytes(value)

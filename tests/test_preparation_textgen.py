@@ -109,6 +109,25 @@ def test_recipe_has_only_the_two_pinned_components(tmp_path):
     bundle = textgen.write_textgen_recipe(tmp_path / "recipe")
     assert bundle["manifest"]["kind"] == "declarative"
     assert {step["component"] for step in bundle["manifest"]["steps"]} == {textgen.ENGINE_ID, textgen.TASK_ID}
+    engine, task = textgen.references()
+    assert textgen.builtin_textgen_components()[task.id + "@" + task.version]["dependencies"] == [
+        {"component": engine.id, "version": engine.version, "digest": engine.digest}]
+
+
+def test_textgen_form_preserves_draft_name_and_reduces_saved_memory_to_current_ceiling():
+    source = draft()
+    source["name"] = "Selected local model"
+    provider = textgen.TextGenerationFormProvider()
+    fields, bindings, blockers = provider.fields(source, {}, recipe())
+    assert fields[0].value == source["name"] and not blockers
+    saved = textgen.textgen_descriptor(source, recipe(), name="Reviewed text app", memory_mb=3072)
+    source["requirements"] = {"memory_mb": 1536}
+    fields, bindings, blockers = provider.fields(source, {}, recipe())
+    restored = provider.restore_fields(fields, bindings, saved)
+    assert restored[0].value == "Reviewed text app" and restored[1].value == 1536 and not blockers
+    source["requirements"] = {"memory_mb": 512}
+    fields, _, blockers = provider.fields(source, {}, recipe())
+    assert blockers == ["resource_requirement_mismatch"]
 
 
 def test_host_assets_bind_model_template_tokenizer_and_schema():

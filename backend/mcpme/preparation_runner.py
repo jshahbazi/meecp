@@ -31,7 +31,7 @@ from .preparation_acquisition import WheelAcquirer
 from .preparation_builder import CommandSpec, PrivateToolchain, load_private_toolchain, prepare_bound
 from .preparation_components import read_snapshot
 from .preparation_contracts import ExecutionPolicy, PreparationError, PreparationReceipt, canonical_bytes, contract_digest
-from .preparation_inputs import PreparationReceiptV2
+from .preparation_inputs import PreparationReceiptV2, parse_preparation_descriptor
 from .preparation_processes import PreparationExecutor
 from .preparation_verifier import verify_prepared_package
 from .preparations import RECEIPT_NAME, TERMINAL
@@ -299,10 +299,15 @@ async def _joined(task: asyncio.Task):
 
 class PreparationRunner:
     def __init__(self, store, host_root: Path, reaper: Path, *, reserve_resources=None,
-                 release_resources=None, enabled: bool = False):
+                 release_resources=None, enabled: bool = False, enabled_families=()):
         self.store, self.host_root, self.reaper = store, host_root, reaper
         self.reserve_resources, self.release_resources = reserve_resources, release_resources
         self.enabled = enabled is True
+        # Admission belongs to an exact reviewed family version. Enabling the
+        # legacy runner cannot enable a newly registered composite family.
+        self.enabled_families = frozenset(enabled_families)
+        if any(key not in store.families for key in self.enabled_families):
+            raise PreparationError("unknown_preparation_component")
         self.tasks: dict[str, asyncio.Task] = {}
         self.attempts: dict[str, _Attempt] = {}
         self._closed = False
@@ -315,6 +320,63 @@ class PreparationRunner:
         self._admissions: set[asyncio.Task] = set()
         self._startup_recovered = False
         self._released: set[str] = set()
+
+    def _require_admission(self, descriptor):
+        if self._closed or not self.enabled:
+            raise PreparationError("preparation_runner_unavailable")
+        if descriptor.schema_version == 1:
+            return None
+        family = self.store.family_for(descriptor)
+        if family.component.reference.key not in self.enabled_families:
+            raise PreparationError("preparation_family_unavailable")
+        return family
+
+    def execution_available_for_recipe(self, record):
+        if self._closed or not self.enabled:
+            return False
+        steps = record["manifest"]["steps"]
+        keys = {(step["component"], step["version"], step["digest"]) for step in steps}
+        matching = [family for family in self.store.families.values() if keys == {
+            component.reference.key for component in getattr(family, "components", (family.component,))}]
+        if matching:
+            return len(matching) == 1 and matching[0].component.reference.key in self.enabled_families
+        from .recipes import LEGACY_COMPONENT_KEYS, builtin_components
+        catalog = builtin_components()
+        return len(keys) == 1 and all(component + "@" + version in LEGACY_COMPONENT_KEYS
+            and catalog[component + "@" + version]["digest"] == digest for component, version, digest in keys)
+
+    def _validate_start_admission(self, plan_id):
+        with self.store.imports._lock:
+            plan = self.store._execution_plan(plan_id)
+            self._require_admission(parse_preparation_descriptor(plan["descriptor"]))
+
+    async def _implementation_identities(self, descriptor, dependencies, *, attempt=None):
+        family = self._require_admission(descriptor)
+        async def calculate(domain, files):
+            if attempt is not None:
+                return await self._thread(attempt, implementation_digest, domain, files,
+                                          reaper=self.reaper, dependencies=dependencies)
+            return await asyncio.to_thread(implementation_digest, domain, files,
+                                           reaper=self.reaper, dependencies=dependencies)
+        runner = await calculate("preparation-runner-implementation-v1", RUNNER_FILES)
+        verifier = await calculate("preparation-verifier-implementation-v1", VERIFIER_FILES)
+        if family is not None:
+            identities = sorted(component.reference.key for component in getattr(family, "components", (family.component,)))
+            runner = contract_digest("preparation-family-runner-v1", {"implementation": runner, "components": identities})
+            verifier = contract_digest("preparation-family-verifier-v1", {"implementation": verifier,
+                "components": identities, "profile": getattr(family, "target_profile", "mcp-stdio"),
+                "specialist": callable(getattr(family, "verify", None))})
+        return runner, verifier
+
+    async def _verify(self, package_root, descriptor, workspace, *, timeout_seconds, owner):
+        family = self._require_admission(descriptor)
+        verifier = getattr(family, "verify", None)
+        if verifier is None:
+            if family is not None and getattr(family, "target_profile", "mcp-stdio") != "mcp-stdio":
+                raise PreparationError("independent_runtime_verifier_unavailable")
+            verifier = verify_prepared_package
+        return await verifier(package_root, descriptor, self.reaper, workspace,
+                              timeout_seconds=timeout_seconds, owner=owner)
 
     @staticmethod
     async def _callback(callback, *args, **kwargs):
@@ -342,13 +404,11 @@ class PreparationRunner:
         # The store binds recipe form, source closure and interface before a
         # host-selected policy or implementation identity can be reviewed.
         value, _, _ = await asyncio.to_thread(self.store._bound_descriptor, import_id, revision, descriptor)
+        self._require_admission(value)
         toolchain = await asyncio.to_thread(load_private_toolchain, self.host_root)
         selected = _policy(policy, value)
         dependencies = await asyncio.to_thread(dependency_identity, self.host_root)
-        runner = await asyncio.to_thread(implementation_digest, "preparation-runner-implementation-v1", RUNNER_FILES,
-                                         reaper=self.reaper, dependencies=dependencies)
-        verifier = await asyncio.to_thread(implementation_digest, "preparation-verifier-implementation-v1", VERIFIER_FILES,
-                                           reaper=self.reaper, dependencies=dependencies)
+        runner, verifier = await self._implementation_identities(value, dependencies)
         return await asyncio.to_thread(self.store.execution_plan, import_id, revision, descriptor, selected, runner_digest=runner,
             verifier_digest=verifier, runtime_digest=toolchain.identity, expires_in=expires_in)
 
@@ -372,6 +432,7 @@ class PreparationRunner:
         async with self._control:
             self._admission_active = True
             try:
+                self._validate_start_admission(plan_id)
                 job = await asyncio.to_thread(self.store.authorize_start, plan_id, plan_digest, idempotency_key)
                 identifier = job["job_id"]
                 job = self.store.get(identifier)
@@ -604,6 +665,7 @@ class PreparationRunner:
         monitor = None
         try:
             descriptor, draft, policy = self.store.job_inputs(attempt.job_id)
+            self._require_admission(descriptor)
             attempt.policy = _policy(policy, descriptor)
             attempt.deadline = time.monotonic() + policy.wall_seconds
             monitor = asyncio.create_task(self._monitor(attempt))
@@ -628,10 +690,7 @@ class PreparationRunner:
                 toolchain = await self._thread(attempt, load_private_toolchain, self.host_root, attempt.check)
                 job = self.store.get(attempt.job_id)
                 dependencies = await self._thread(attempt, dependency_identity, self.host_root, attempt.check)
-                runner = await self._thread(attempt, implementation_digest, "preparation-runner-implementation-v1", RUNNER_FILES,
-                                            reaper=self.reaper, dependencies=dependencies)
-                verifier = await self._thread(attempt, implementation_digest, "preparation-verifier-implementation-v1", VERIFIER_FILES,
-                                              reaper=self.reaper, dependencies=dependencies)
+                runner, verifier = await self._implementation_identities(descriptor, dependencies, attempt=attempt)
                 if (job["binding"]["runner_digest"] != runner or job["binding"]["verifier_digest"] != verifier
                         or job["runtime_digest"] != toolchain.identity):
                     raise PreparationError("preparation_implementation_changed")
@@ -653,13 +712,14 @@ class PreparationRunner:
                 probe_workspace.mkdir(mode=0o700)
                 probe_owner = JournaledPreparationOwner(self.reaper, self.store, attempt.job_id, attempt.workspace)
                 attempt.owners.append(probe_owner)
-                report = await self._controlled(attempt, verify_prepared_package(package.root, descriptor,
-                    self.reaper, probe_workspace, timeout_seconds=attempt.deadline - time.monotonic(), owner=probe_owner))
+                report = await self._controlled(attempt, self._verify(package.root, descriptor,
+                    probe_workspace, timeout_seconds=attempt.deadline - time.monotonic(), owner=probe_owner))
                 probe_owner.confirm_completed()
                 if report.package_digest != package.digest:
                     raise PreparationError("preparation_result_mismatch")
                 self.store.record_progress(attempt.job_id, "verifying", fixtures_checked=report.fixtures_checked)
                 attempt.check()
+                self._require_admission(descriptor)
                 self.store.settle(attempt.job_id)
                 self.store.begin_verification_publication(attempt.job_id)
                 await self._thread(attempt, self.store.record_verified, attempt.job_id, package, verification=report)
@@ -673,6 +733,7 @@ class PreparationRunner:
                     return attempt.stage
                 await self._thread(attempt, stage)
                 attempt.check()
+                self._require_admission(descriptor)
                 await self._disk_check(attempt)
                 # This transaction shares the atomic winner with cancellation,
                 # recipe revocation and import revision changes.

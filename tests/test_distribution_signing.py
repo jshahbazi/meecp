@@ -45,6 +45,48 @@ def test_only_developer_id_application_identities_can_make_release(monkeypatch, 
             app_builder.developer_identity(invalid, keychain)
 
 
+def test_development_textgen_closure_is_verified_without_native_byte_rewrites(monkeypatch, tmp_path):
+    preserved = tmp_path / "host/preparation-toolchain/textgen-runtime"
+    preserved.mkdir(parents=True)
+    engine = preserved / "engine.dylib"
+    engine.write_bytes(b"\xcf\xfa\xed\xfe" + b"synthetic signed engine")
+    other = tmp_path / "other.dylib"
+    other.write_bytes(b"\xcf\xfa\xed\xfe" + b"synthetic private runtime")
+    before = engine.read_bytes()
+    calls = []
+    def run(*args):
+        calls.append(args)
+        return "synthetic:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)" if args[0] == "/usr/bin/otool" else ""
+    monkeypatch.setattr(app_builder, "run", run)
+    assert app_builder.sign_runtime(tmp_path, immutable_runtime=preserved) == 1
+    assert engine.read_bytes() == before
+    assert ("/usr/bin/codesign", "--verify", "--strict", str(engine)) in calls
+    assert not any(args[-1] == str(engine) and args[0] == "/usr/bin/install_name_tool" for args in calls)
+    assert not any(args[-1] == str(engine) and "--force" in args for args in calls)
+
+
+def test_signed_textgen_source_build_is_rejected_before_credential_lookup(monkeypatch, tmp_path):
+    def forbidden(*args, **kwargs):
+        pytest.fail("unsupported exact engine reached signing credentials or tools")
+    monkeypatch.setattr(app_builder, "developer_identity", forbidden)
+    monkeypatch.setattr(dmg_builder, "developer_identity", forbidden)
+    monkeypatch.setattr(app_builder, "run", forbidden)
+    monkeypatch.setattr(dmg_builder, "run", forbidden)
+    with pytest.raises(SystemExit, match="^signed_textgen_preparation_not_supported$"):
+        app_builder.build(tmp_path / "mcpme.app", sign_identity=CERTIFICATE, textgen_engine=tmp_path / "engine")
+    with pytest.raises(SystemExit, match="^signed_textgen_preparation_not_supported$"):
+        dmg_builder.build(tmp_path / "mcpme.dmg", sign_identity=CERTIFICATE, textgen_engine=tmp_path / "engine")
+
+
+def test_supplied_development_textgen_app_cannot_enter_signed_release_path(monkeypatch, tmp_path):
+    app = tmp_path / "mcpme.app"
+    (app / "Contents/Resources/host/preparation-toolchain/textgen-runtime").mkdir(parents=True)
+    monkeypatch.setattr(dmg_builder, "developer_identity",
+                        lambda *args, **kwargs: pytest.fail("development engine reached credential lookup"))
+    with pytest.raises(SystemExit, match="^signed_textgen_preparation_not_supported$"):
+        dmg_builder.build(tmp_path / "mcpme.dmg", app=app, sign_identity=CERTIFICATE)
+
+
 @pytest.mark.parametrize("version", ["1", "1.2", "01.2.3", "1.2.3-alpha", "v1.2.3"])
 def test_version_override_requires_strict_major_minor_patch(version):
     with pytest.raises(SystemExit, match="release_version_requires_major_minor_patch"):

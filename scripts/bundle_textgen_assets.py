@@ -16,6 +16,40 @@ ROOT = Path(__file__).resolve().parents[1]
 POLICY_FILES = ("__init__.py", "server.py", "contracts.py", "state.py")
 
 
+def bundle_backend(destination: Path):
+    """Copy the static family implementation even without an admitted engine."""
+    for name, files in (("mcpme_textgen", tuple(sorted((ROOT / "backend/mcpme_textgen").glob("*.py")))),
+                        ("jevk5_app", tuple(ROOT / "backend/jevk5_app" / name for name in POLICY_FILES))):
+        target = destination / name
+        target.mkdir(parents=True, exist_ok=True)
+        for source in files:
+            copied = target / source.name
+            if copied.exists():
+                if copied.is_symlink() or copied.read_bytes() != source.read_bytes():
+                    raise ValueError("textgen_backend_identity_mismatch")
+            else:
+                shutil.copyfile(source, copied)
+
+
+def verify_runtime(host: Path):
+    """Require the reviewed engine bytes after distribution-time signing."""
+    target = host / "preparation-toolchain/textgen-runtime"
+    closure = json.loads((ROOT / "templates/text-generate-v1/engine-closure.json").read_bytes())
+    origin = json.loads((target / "origin.json").read_bytes())
+    if (origin.get("engine_closure") != closure or origin.get("launcher_source_sha256") !=
+            hashlib.sha256((ROOT / "templates/text-generate-v1/launcher.c").read_bytes()).hexdigest()):
+        raise ValueError("textgen_runtime_identity_mismatch")
+    for name, record in closure.items():
+        if name == "llama/llama-server":
+            continue
+        path = target / name
+        if path.resolve() != path or not path.is_file() or path.stat().st_size != record["bytes"]:
+            raise ValueError("textgen_runtime_identity_mismatch")
+        with path.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != record["sha256"]:
+                raise ValueError("textgen_runtime_identity_mismatch")
+
+
 def bundle(host: Path, engine: Path):
     from build_preparation_toolchain import refresh_toolchain_manifest
     import sys
@@ -30,12 +64,7 @@ def bundle(host: Path, engine: Path):
         copy_artifact(engine / name, None if name == "llama/llama-server" else target / name,
             limit=128 * 1024**2, role="runtime-file", expected_sha256=record["sha256"], expected_size=record["bytes"])
     for destination in (host / "backend", target / "backend"):
-        destination.mkdir(exist_ok=True)
-        shutil.copytree(ROOT / "backend/mcpme_textgen", destination / "mcpme_textgen",
-                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-        (destination / "jevk5_app").mkdir(exist_ok=True)
-        for name in POLICY_FILES:
-            shutil.copyfile(ROOT / "backend/jevk5_app" / name, destination / "jevk5_app" / name)
+        bundle_backend(destination)
     (target / "bin").mkdir()
     source = ROOT / "templates/text-generate-v1/launcher.c"
     for arguments in (("/usr/bin/cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
@@ -51,4 +80,5 @@ def bundle(host: Path, engine: Path):
         "engine_policy": "Exact reviewed CPU closure; legacy supervisor verified and omitted; direct host ownership."},
         sort_keys=True, indent=2) + "\n")
     refresh_toolchain_manifest(host / "preparation-toolchain")
+    verify_runtime(host)
     return target

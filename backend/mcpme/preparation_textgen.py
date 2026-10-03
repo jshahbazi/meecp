@@ -77,9 +77,12 @@ def builtin_textgen_components():
     identity = {"implementation": {p.relative_to(root).as_posix(): hashlib.sha256(_read(p, 1024**2)).hexdigest()
                                    for p in sources},
                 "assets": {name: hashlib.sha256(data).hexdigest() for name, data in assets().items()}}
-    return {identifier + "@" + VERSION: {"digest": contract_digest("mcpme-" + identifier, identity),
+    catalog = {identifier + "@" + VERSION: {"digest": contract_digest("mcpme-" + identifier, identity),
         "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []}
         for identifier in (ENGINE_ID, TASK_ID)}
+    catalog[TASK_ID + "@" + VERSION]["dependencies"] = [{"component": ENGINE_ID, "version": VERSION,
+        "digest": catalog[ENGINE_ID + "@" + VERSION]["digest"]}]
+    return catalog
 
 
 def references():
@@ -294,7 +297,7 @@ class TextGenerationFormProvider:
         requirements = draft.get("requirements", {})
         ceiling = min(4096, requirements.get("memory_mb", 4096))
         blockers = ["resource_requirement_mismatch"] if ceiling < MIN_MEMORY_MB else []
-        fields = [_field("textgen-name", label="App name", kind="string", value="Local text generation",
+        fields = [_field("textgen-name", label="App name", kind="string", value=draft.get("name", "Local text generation"),
                          constraints={"min_length": 1, "max_length": 256}),
                   _field("textgen-memory", label="Reserved memory (MiB)", kind="integer", value=MIN_MEMORY_MB,
                          constraints={"minimum": MIN_MEMORY_MB, "maximum": max(MIN_MEMORY_MB, ceiling)})]
@@ -313,7 +316,7 @@ class TextGenerationFormProvider:
     def restore_fields(self, fields, bindings, descriptor):
         value = parse_component_descriptor(descriptor)
         return [field.model_copy(update={"value": value.package.name if bindings[field.id][0] == "name"
-                    else value.resources.memory_mb}) for field in fields]
+                    else min(value.resources.memory_mb, field.constraints["maximum"])}) for field in fields]
 
 
 def _copy_capture(store, collection, entry, destination, check):

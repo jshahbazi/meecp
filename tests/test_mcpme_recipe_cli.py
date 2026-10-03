@@ -280,7 +280,7 @@ async def test_owner_add_enable_variant_and_restart_through_private_cli(tmp_path
     second = scaffold_recipe(second_path, "local.second")
     async with private_manager(tmp_path) as host:
         defaults = {record["recipe_id"] for record in host.recipes.list()}
-        assert defaults == {"mcpme.python-callable", "mcpme.resolved-python", "mcpme.onnx-hotdog"}
+        assert defaults == {"mcpme.python-callable", "mcpme.resolved-python", "mcpme.onnx-hotdog", "mcpme.text-generation"}
         for path, entry in ((first_path, first), (second_path, second)):
             added = await execute(host.root, "recipes", "add", "--path", path)
             assert added["digest"] == entry["digest"] and added["state"] == "proposed"

@@ -29,12 +29,14 @@ FINDINGS_EXIT_CODE = 10
 # Independently recomputed after checking the model's complete file identity:
 # Qwen/Qwen2.5-0.5B-Instruct-GGUF revision
 # 9217f5db79a29953eb74d5343926648285ec7e67, qwen2.5-0.5b-instruct-q4_k_m.gguf.
-# The exception is one exact extracted value AND either exact repository path,
+# The exception is one exact extracted value AND a reviewed exact repository path,
 # for generic-api-key only. Other rules, values and paths remain unchanged.
 PUBLIC_GGUF_METADATA_DIGEST = "c828d4ced3ffa97554baf70310ae1b232a03bb63eff517952a9222567b44b5b8"
 PUBLIC_GGUF_METADATA_PATHS = (
     "backend/mcpme_textgen/fixture.py",
     "templates/text-generate-v1/model-provenance.json",
+    # Byte-identical metadata shipped inside the immutable declarative recipe.
+    "templates/builtin-recipes/text-generation-v1/model-provenance.json",
 )
 
 
@@ -52,7 +54,7 @@ def trusted_config() -> str:
     return ("[extend]\nuseDefault = true\n"
             '[[rules]]\nid = "generic-api-key"\n'
             '[[rules.allowlists]]\n'
-            'description = "Reviewed public pinned GGUF metadata SHA-256 at two exact source paths"\n'
+            'description = "Reviewed public pinned GGUF metadata SHA-256 at exact source paths"\n'
             'condition = "AND"\nregexTarget = "secret"\n'
             "paths = ['''^(?:" + paths + ")$''']\n"
             "regexes = ['''^" + PUBLIC_GGUF_METADATA_DIGEST + "$''']\n")

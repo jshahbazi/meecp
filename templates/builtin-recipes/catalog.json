@@ -17,6 +17,12 @@
       "directory": "onnx-hotdog-v1",
       "recipe_id": "mcpme.onnx-hotdog",
       "version": "1.0.0"
+    },
+    {
+      "digest": "5b54707eb691052272272a5ce40b91479dc3aa5feb3226c2cdd3d67338747aa2",
+      "directory": "text-generation-v1",
+      "recipe_id": "mcpme.text-generation",
+      "version": "1.0.0"
     }
   ],
   "schema_version": 1

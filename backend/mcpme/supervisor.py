@@ -28,11 +28,12 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from .contracts import PackageError, validate_package
+from .downloads import DownloadError, DownloadManager
 from .connections import connection_names
 from .limits import DEFAULT_REQUEST_BYTES, MAX_REQUEST_BYTES
 from .activity import ACTIVITY_EVENTS, ACTIVITY_FRAME, Activity, timestamp
 from .imports import ImportError as ImportDraftError, ImportStore
-from .private import ensure_private_directory, read_private_json, snapshot_package, write_private_json
+from .private import PrivateStateError, ensure_private_directory, read_private_json, snapshot_package, write_private_json
 from .processes import OwnedProcess, ProcessOwner
 from .registry import Registry, RegistryError
 from .grants import GrantError, GrantStore, plan_digest
@@ -75,7 +76,9 @@ def capabilities() -> dict:
             "preparation_descriptor_schema_versions": [1], "recipe_bundle_schema_versions": [1],
             "recipe_management": "local_static_declarative", "recipe_execution": False,
             "automatic_preparation": False,
-            "unsupported": ["mcp-http", "first_call", "upgrades", "downloads",
+            "downloads": {"format": "zip", "transport": "https", "credentials": "owner_only",
+                          "pins": ["sha256", "size"], "redirects": False, "resume_partial": False},
+            "unsupported": ["mcp-http", "first_call", "upgrades",
                             "reference_document_service", "raw_model_intake", "integrated_preparation"]}
 
 
@@ -168,6 +171,7 @@ class Supervisor:
             self.preparations.recover()
             self.grants = GrantStore(self.registry)
             self.resource_policy = self.load_resource_policy()
+            self.downloads = DownloadManager(self.root)
         except BaseException:
             if hasattr(self, "imports"):
                 self.imports.close()
@@ -1362,6 +1366,15 @@ class Supervisor:
 
     async def close(self):
         self.closing = True
+        # Downloads own network and extraction work independently of callers.
+        # Keep the state lock until every owned writer has settled.
+        download_error = None
+        try:
+            await self.downloads.close()
+        except PrivateStateError as error:
+            # The downloader reports this only after its writer barrier. Finish
+            # app/process cleanup before reporting failed journal persistence.
+            download_error = error
         if self.static_tasks:
             # Canceling an asyncio wrapper does not stop its underlying thread.
             # Shield each owned task even if shutdown itself is canceled, so a
@@ -1394,6 +1407,8 @@ class Supervisor:
         self.imports.close()
         self.registry.close()
         os.close(self.lock_fd)
+        if download_error is not None:
+            raise download_error
 
 
 def management_app(host: Supervisor, token: str, port: int):
@@ -1419,7 +1434,7 @@ def management_app(host: Supervisor, token: str, port: int):
                 if not isinstance(payload, dict):
                     raise HostError("invalid_request")
             if grant_id is not None:
-                if route.startswith(("/v1/recipes", "/v1/preparations")):
+                if route.startswith(("/v1/recipes", "/v1/preparations", "/v1/downloads")):
                     # Existing metadata/attachment grants retain their scope.
                     # This foundation introduces no scoped execution authority.
                     raise GrantError("grant_scope", 403)
@@ -1429,6 +1444,10 @@ def management_app(host: Supervisor, token: str, port: int):
                     result = capabilities()
                 elif route == "/v1/recipes":
                     result = {"recipes": host.recipes.list_summaries()}
+                elif route == "/v1/downloads":
+                    result = {"downloads": host.downloads.list(), "count": host.downloads.count()}
+                elif route.startswith("/v1/downloads/"):
+                    result = host.downloads.get(request.path_params["download_id"])
                 elif route == "/v1/preparations":
                     result = {"preparations": host.preparations.list_summaries()}
                 elif route.startswith("/v1/preparations/"):
@@ -1472,7 +1491,13 @@ def management_app(host: Supervisor, token: str, port: int):
                 else:
                     result = host.registry.get_operation(request.path_params["operation_id"]).to_dict()
             else:
-                if route == "/v1/recipes":
+                if route == "/v1/downloads":
+                    result = await host.downloads.start(payload)
+                elif route.startswith("/v1/downloads/"):
+                    if payload:
+                        raise HostError("invalid_download_spec")
+                    result = await host.downloads.cancel(request.path_params["download_id"])
+                elif route == "/v1/recipes":
                     if set(payload) != {"path"} or not isinstance(payload["path"], str) or not Path(payload["path"]).is_absolute():
                         raise HostError("invalid_recipe_request")
                     result = await host.static_work(host.recipes.add, Path(payload["path"]))
@@ -1556,12 +1581,15 @@ def management_app(host: Supervisor, token: str, port: int):
                 else:
                     raise HostError("invalid_request")
             return JSONResponse({"api_version": 1, **result})
-        except (HostError, PackageError, RegistryError, ImportDraftError, GrantError, PreparationError) as error:
+        except (HostError, PackageError, RegistryError, ImportDraftError, GrantError, PreparationError, DownloadError) as error:
             return JSONResponse({"api_version": 1, "error": {"code": error.code}}, status_code=getattr(error, "status", 400))
         except Exception:
             return JSONResponse({"api_version": 1, "error": {"code": "invalid_request"}}, status_code=400)
 
     app = Starlette(routes=[Route("/v1/capabilities", dispatch), Route("/v1/status", dispatch), Route("/v1/slots", dispatch),
+        Route("/v1/downloads", dispatch, methods=["GET", "POST"]),
+        Route("/v1/downloads/{download_id}", dispatch),
+        Route("/v1/downloads/{download_id}/cancel", dispatch, methods=["POST"]),
         Route("/v1/recipes", dispatch, methods=["GET", "POST"]),
         Route("/v1/recipes/{action}", dispatch, methods=["POST"]),
         Route("/v1/preparations", dispatch),

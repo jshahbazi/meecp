@@ -7,6 +7,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import sys
 import uuid
 from urllib.parse import urlsplit
@@ -33,6 +34,22 @@ def uuid_argument(value: str) -> str:
     except (ValueError, TypeError):
         raise argparse.ArgumentTypeError("expected_slot_or_operation_uuid") from None
     return value
+
+
+def digest_argument(value: str) -> str:
+    if re.fullmatch(r"[a-f0-9]{64}", value) is None:
+        raise argparse.ArgumentTypeError("expected_lowercase_sha256")
+    return value
+
+
+def positive_size_argument(value: str) -> int:
+    try:
+        size = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("expected_positive_size") from None
+    if size < 1:
+        raise argparse.ArgumentTypeError("expected_positive_size")
+    return size
 
 
 def endpoint(connection: dict) -> str:
@@ -217,6 +234,18 @@ def parser() -> argparse.ArgumentParser:
         item = preparations.add_parser(action)
         item.add_argument("job_id", type=uuid_argument)
         item.add_argument("--json", action="store_true")
+    downloads = commands.add_parser("downloads").add_subparsers(dest="action", required=True)
+    fetch = downloads.add_parser("fetch")
+    fetch.add_argument("--url", required=True)
+    fetch.add_argument("--sha256", type=digest_argument, required=True)
+    fetch.add_argument("--size", type=positive_size_argument, required=True)
+    fetch.add_argument("--package-digest", type=digest_argument)
+    fetch.add_argument("--json", action="store_true")
+    downloads.add_parser("list").add_argument("--json", action="store_true")
+    for action in ("inspect", "cancel"):
+        item = downloads.add_parser(action)
+        item.add_argument("download_id", type=uuid_argument)
+        item.add_argument("--json", action="store_true")
     operation = commands.add_parser("operations").add_subparsers(dest="action", required=True).add_parser("get")
     operation.add_argument("operation_id", type=uuid_argument)
     operation.add_argument("--json", action="store_true")
@@ -319,6 +348,16 @@ async def execute(args) -> dict | None:
             return await api("GET", "/v1/preparations")
         route = "/v1/preparations/" + args.job_id
         return await api("GET", route) if args.action == "get" else await api("POST", route + "/cancel", {})
+    if args.command == "downloads":
+        if args.action == "fetch":
+            body = {"url": args.url, "sha256": args.sha256, "size": args.size}
+            if args.package_digest is not None:
+                body["package_digest"] = args.package_digest
+            return await api("POST", "/v1/downloads", body)
+        if args.action == "list":
+            return await api("GET", "/v1/downloads")
+        route = "/v1/downloads/" + args.download_id
+        return await api("GET", route) if args.action == "inspect" else await api("POST", route + "/cancel", {})
     if args.command == "capabilities":
         return await api("GET", "/v1/capabilities")
     if args.command == "slots":

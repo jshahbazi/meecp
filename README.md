@@ -71,7 +71,9 @@ Describe what you want your assistant to do, then use **Copy Agent Instructions*
 
 The agent does the work of exposing your code through MCP. mcpme snapshots and inspects the source without running it, binds the returned package to the saved source revision, then checks the package before installation. Installation runs candidate readiness and protocol checks, including when **Start after install** is off. See [source onboarding](docs/PHASE2_ONBOARDING.md) for the implemented workflow and the [package-authoring guide](docs/PACKAGE_AUTHORING.md) for manifests, locked artifacts, and templates.
 
-Reference-document services and dropping in raw model weights aren't supported yet. Pinned package/model downloads, package upgrades and rollback, and preparation through a provider inside the app remain planned; see the [onboarding delivery plan](docs/PROJECT_ONBOARDING.md).
+The owner CLI also supports [pinned prepared-package downloads](docs/PINNED_DOWNLOADS.md): fetch a ZIP by its exact size and SHA-256, then review and install the verified package.
+
+Reference-document services and dropping in raw model weights aren't supported yet. Native download controls, raw model downloads, package upgrades and rollback, and preparation through a provider inside the app remain planned; see the [onboarding delivery plan](docs/PROJECT_ONBOARDING.md).
 
 ## Let an assistant manage apps
 

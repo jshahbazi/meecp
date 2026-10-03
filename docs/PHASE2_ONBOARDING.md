@@ -58,7 +58,9 @@ Submitted drafts reject edits, return, cancel, and expiry while the operation is
 
 Scoped owner-issued grants and a separate management MCP facade are implemented in the [management milestone](MANAGEMENT_MCP.md).
 
-- Pinned downloads and broader package/configuration/secret-reference support.
+Pinned prepared-package ZIP downloads are implemented through the owner CLI and API; see [pinned downloads](PINNED_DOWNLOADS.md). They return a statically verified package for the existing install plan, with exact byte/hash pins, durable progress, cancellation, and retry. Native download controls and byte-range resume remain pending.
+
+- Broader package/configuration/secret-reference support.
 - Upgrades with candidate data snapshots, exposure-aware recovery, and rollback. Installed-app removal now preserves data; see [app management](MCPME_STATUS.md#manage-installed-apps).
 - Raw model/engine intake and end-to-end model preparation acceptance.
 - Supported reference-document services and integrated provider preparation.

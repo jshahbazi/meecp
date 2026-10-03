@@ -27,7 +27,7 @@ import time
 from .command_resource_policy_v1 import ResourcePolicyV1, ResourceReportV1, REPORT_SIZE, ResourcePolicyError
 from .private import check_private_file, ensure_private_directory, read_private_json, write_private_json
 
-POLICY = "macos26-arm64-monitored-fork-exec-v1"
+POLICY = "macos26-arm64-monitored-fork-exec-v2"
 SEED_SIZE = 360
 RECEIPT_SIZE = SEED_SIZE + 5 + REPORT_SIZE
 
@@ -104,6 +104,15 @@ class CommandResourceAttemptV1:
     @property
     def result_admissible(self) -> bool:
         return False
+
+
+@dataclass(frozen=True)
+class CommandResourceOutputV1(CommandResourceAttemptV1):
+    """Transient bounded output; measured acceptance belongs to the caller.
+
+    The inherited hard-resource result_admissible flag remains false.
+    """
+    stdout: bytes
 
 
 def _seed(item: dict) -> bytes:
@@ -284,7 +293,10 @@ class CommandResourceExecutorV1:
         # Never kill the native owner: losing it cannot settle its target tree.
         # At the deadline ownership remains pending; its receipt can arrive later.
 
-    async def execute(self, spec: CommandResourceSpecV1, payload: bytes = b"", *, instance_id: str | None = None) -> CommandResourceAttemptV1:
+    async def execute(self, spec: CommandResourceSpecV1, payload: bytes = b"", *, instance_id: str | None = None,
+                      capture_output: bool = False) -> CommandResourceAttemptV1:
+        if type(capture_output) is not bool:
+            raise CommandExecutionError("invalid_command_spec")
         if type(spec) is not CommandResourceSpecV1 or type(payload) is not bytes:
             raise CommandExecutionError("invalid_command_spec")
         try:
@@ -311,7 +323,7 @@ class CommandResourceExecutorV1:
                 raise CommandExecutionError("command_not_admitted")
             if any(item["instance"] == instance_id for item in self.journal["entries"]):
                 raise CommandExecutionError("command_instance_reused")
-            return await self._execute(spec, payload, instance_id)
+            return await self._execute(spec, payload, instance_id, capture_output=capture_output)
 
     async def _admitted(self, spec: CommandResourceSpecV1) -> bool:
         try:
@@ -321,7 +333,8 @@ class CommandResourceExecutorV1:
         except Exception:
             raise CommandExecutionError("command_admission_failed") from None
 
-    async def _execute(self, spec: CommandResourceSpecV1, payload: bytes, instance_id: str | None = None) -> CommandResourceAttemptV1:
+    async def _execute(self, spec: CommandResourceSpecV1, payload: bytes, instance_id: str | None = None,
+                       *, capture_output: bool = False) -> CommandResourceAttemptV1:
         item = {"instance": instance_id or secrets.token_hex(16), "nonce": secrets.token_hex(32), "helper_digest": self.helper_digest,
                 "policy_digest": self.policy_digest, "contract_digest": spec.digest, "units": spec.reservation_units,
                 "resource_policy_digest": spec.resource_policy.digest, "resource_policy": asdict(spec.resource_policy),
@@ -333,6 +346,7 @@ class CommandResourceExecutorV1:
         started = time.monotonic()
         hard_deadline = started + (spec.deadline_ms + spec.grace_ms + spec.settlement_ms) / 1000 + 7
         output_bytes = 0
+        output = bytearray()
         result = None
         try:
             fd = os.open(self._staged_path(item).name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
@@ -387,6 +401,8 @@ class CommandResourceExecutorV1:
                         raise CommandExecutionError("command_output_limit")
                     else:
                         output_bytes += len(chunk)
+                        if capture_output:
+                            output.extend(chunk)
                 except BlockingIOError:
                     pass
                 if time.monotonic() - started >= spec.deadline_ms / 1000:
@@ -398,7 +414,9 @@ class CommandResourceExecutorV1:
             valid, code, report = read_resource_completion(self.state, item)
             if not valid or report is None:
                 raise CommandExecutionError("command_ownership_unsettled")
-            result = CommandResourceAttemptV1(report, code, int((time.monotonic() - started) * 1000))
+            elapsed = int((time.monotonic() - started) * 1000)
+            result = (CommandResourceOutputV1(report, code, elapsed, bytes(output)) if capture_output
+                      else CommandResourceAttemptV1(report, code, elapsed))
         except OSError:
             raise CommandExecutionError("command_io_failed") from None
         finally:

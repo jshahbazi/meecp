@@ -20,7 +20,7 @@ from .preparation_contracts import Contract, PreparationError, canonical_bytes, 
 from .preparation_command_source import inspect_native_executable
 
 COMPONENT_ID = "host-command-json-v1"
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 PROVENANCE = "Exact original application directory; trusted fixed JSON command component"
 MAX_SCHEMAS = 8
 MAX_EXECUTABLES = 8
@@ -63,7 +63,7 @@ class CommandInput(Contract):
 def component_catalog():
     names = ("preparation_command.py", "preparation_command_source.py", "preparation_command_forms.py",
              "preparation_command_owner.py", "preparation_command_verifier.py", "preparation_application_source.py",
-             "command_execution_v2.py", "host_command.py")
+             "command_execution_v2.py", "command_resource_execution_v1.py", "command_resource_policy_v1.py", "host_command.py")
     root = Path(__file__).parent
     digest = contract_digest("preparation-host-command-component-v1", [
         {"path": name, "sha256": hashlib.sha256((root / name).read_bytes()).hexdigest()} for name in names])

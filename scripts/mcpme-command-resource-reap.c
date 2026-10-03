@@ -25,7 +25,7 @@
 #include "mcpme-command-resource-v1.h"
 #define SEED_SIZE 360
 #define RECEIPT_SIZE (SEED_SIZE + 5 + RESOURCE_REPORT_SIZE)
-#define POLICY "macos26-arm64-monitored-fork-exec-v1"
+#define POLICY "macos26-arm64-monitored-fork-exec-v2"
 static struct resource_monitor monitor;
 static volatile sig_atomic_t stopping;
 static int control, receipt_fd, directory_fd;

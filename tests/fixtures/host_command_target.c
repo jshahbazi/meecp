@@ -48,6 +48,23 @@ int main(int argc, char **argv) {
         signal(SIGTERM, SIG_IGN);
         while (1) pause();
     }
+    if (!strcmp(argv[1], "measured-tree") || !strcmp(argv[1], "measured-overload")) {
+        size_t size = !strcmp(argv[1], "measured-overload") ? 48 * 1024 * 1024 : 4 * 1024 * 1024;
+        for (int i = 0; i < 2; ++i) {
+            pid_t child = fork();
+            if (child < 0) return 66;
+            if (!child) {
+                volatile char *allocation = malloc(size);
+                if (!allocation) _exit(67);
+                for (size_t page = 0; page < size; page += 4096) allocation[page] = 1;
+                signal(SIGTERM, SIG_IGN);
+                while (1) pause();
+            }
+        }
+        usleep(200000);
+        puts("{\"ok\":true}");
+        return 0;
+    }
     if (!strcmp(argv[1], "tree") || !strcmp(argv[1], "hang")) {
         pid_t child = fork();
         if (child < 0) return 66;

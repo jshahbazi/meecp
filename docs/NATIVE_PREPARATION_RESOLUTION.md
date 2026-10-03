@@ -32,3 +32,8 @@ The bounded fixture object has these fields:
 The driver loads the saved draft, obtains a generated form, reviews and starts resolution if needed, waits for settled success, obtains the resolved form, applies only the supplied synthetic answers, reviews preparation through the parent's metadata revision adoption, starts the exact preparation plan, and waits for attachment. It writes a mode-0600 receipt with plan/job IDs, digests, source/revision association, measured counters and requested route names. It records no credentials, source text or test content. A failed receipt identifies the phase reached and any sanitized job error code.
 
 Run the focused native contracts with `--preparation-ui-self-test`, the full management contracts with `--management-ui-self-test`, and transport/unit coverage with `swift test`. The native acceptance receipt confirms form-to-attachment behavior only; independent verification still needs to prove the installed package's complete runtime contract and the other required acceptance families.
+
+The [installed native onboarding harness](NATIVE_INSTALLED_ONBOARDING_ACCEPTANCE.md)
+extends that receipt check through real installation, complete HTTP/stdio SDK
+contracts, source removal, host restart and independently scaffolded recipe
+selection and lifecycle retention.

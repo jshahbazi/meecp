@@ -105,6 +105,7 @@ class CommandPreparationOwner:
         self.descriptor_digest = descriptor.digest
         self.check, self.deadline = check, deadline
         self.closed, self.sessions, self.live = False, {}, {}
+        self.confirmed = False
         self.intents = {"version": 1, "entries": []}
         state = workspace / "command-probe-v3"
         state.mkdir(mode=0o700)  # Never reopen a previous attempt as fresh authority.
@@ -120,7 +121,7 @@ class CommandPreparationOwner:
             write_private_json(state / "owner.json", metadata)
             write_private_json(state / "invocations.json", self.intents)
             write_private_json(self.executor.journal_path, self.executor.journal)
-            if not self.publication_check():
+            if not self._verify_package():
                 raise PreparationError("command_preparation_not_admitted")
             store.register_command_ownership(job_id, metadata)
         except BaseException:
@@ -129,11 +130,16 @@ class CommandPreparationOwner:
             self.executor.closed = True
             raise
 
-    def publication_check(self):
+    def _authority_current(self):
         if self.closed or time.monotonic() >= self.deadline:
             return False
         self.check()
         self.store.check_authority(self.job_id)
+        return True
+
+    def _verify_package(self):
+        if not self._authority_current():
+            return False
         current = validate_package(self.package.root)
         return (self.descriptor.digest == self.descriptor_digest
             and contract_digest("preparation-command-job-binding-v1", self.store.get(self.job_id)["binding"])
@@ -141,13 +147,24 @@ class CommandPreparationOwner:
             and current.digest == self.package.digest and current.manifest == self.package.manifest
             and current.lock == self.package.lock)
 
-    def admit(self, spec):
+    async def publication_check(self):
+        if not self._authority_current():
+            return False
+        task = asyncio.create_task(asyncio.to_thread(self._verify_package))
+        try:
+            verified = await asyncio.shield(task)
+        finally:
+            await _join(asyncio.gather(task, return_exceptions=True))
+        return verified and self._authority_current()
+
+    async def admit(self, spec):
         ticket = self.live.get(spec.authority_digest)
         return (ticket is not None and ticket[0] == spec.digest and not ticket[1].closed
-                and time.monotonic() < ticket[2] and self.publication_check())
+                and time.monotonic() < ticket[2] and await self.publication_check()
+                and not ticket[1].closed and time.monotonic() < ticket[2])
 
     async def session(self, package):
-        if package.digest != self.package.digest or not self.publication_check() or self.sessions:
+        if package.digest != self.package.digest or not await self.publication_check() or self.sessions:
             raise PreparationError("command_preparation_not_admitted")
         handle = CommandSession(self, None, package, publication_check=self.publication_check)
         self.sessions[handle.instance_id] = handle
@@ -160,8 +177,10 @@ class CommandPreparationOwner:
 
     async def invoke(self, session, name, arguments, request_id):
         package, contract = self.package, self.package.manifest.command
-        if session not in self.sessions.values() or session.closed or not self.publication_check():
-            raise CommandExecutionError("command_authority_changed")
+        deadline = min(self.deadline, time.monotonic() + contract.deadline_ms / 1000)
+        async with asyncio.timeout_at(deadline):
+            if session not in self.sessions.values() or session.closed or not await self.publication_check():
+                raise CommandExecutionError("command_authority_changed")
         fixture = next((item for item in self.descriptor.validation if item.tool == name
             and canonical_bytes(item.arguments) == canonical_bytes(arguments)), None)
         tool = next((item for item in package.manifest.tools if item.name == name), None)
@@ -175,7 +194,6 @@ class CommandPreparationOwner:
         instance = secrets.token_hex(16)
         authority = _digest([self.metadata, session.instance_id, request_id, instance, tool.mcp_schema(), contract.model_dump()])
         declaration = contract.commands[name]
-        deadline = min(self.deadline, time.monotonic() + contract.deadline_ms / 1000)
         spec = CommandSpecV2(package.root, package.root / declaration.executable,
             (package.root / declaration.cwd).resolve(), package.digest, tuple(declaration.args),
             deadline_ms=contract.deadline_ms, input_limit=contract.input_bytes, output_limit=contract.output_bytes,
@@ -188,8 +206,9 @@ class CommandPreparationOwner:
                 result = await self.executor.execute(spec, payload, instance_id=instance)
             value = load_json(result.stdout)
             encode(value)
-            if type(value) is not dict or not Draft202012Validator(tool.output_schema).is_valid(value) or not self.admit(spec):
-                raise CommandExecutionError("invalid_command_result")
+            async with asyncio.timeout_at(deadline):
+                if type(value) is not dict or not Draft202012Validator(tool.output_schema).is_valid(value) or not await self.admit(spec):
+                    raise CommandExecutionError("invalid_command_result")
             response = {"content": [{"type": "text", "text": encode(value).decode()}], "structuredContent": value, "isError": False}
             if len(encode({"jsonrpc": "2.0", "id": request_id, "result": response})) > MAX_MESSAGE_BYTES:
                 raise CommandExecutionError("command_output_limit")
@@ -206,7 +225,10 @@ class CommandPreparationOwner:
     def confirm_completed(self):
         if not self.closed or self.live or self.sessions:
             return False
+        if self.confirmed:
+            return not self.store.command_ownership(self.job_id)
         identity = recover_command_ownership(self.workspace, self.metadata)
         if identity is not None:
             self.store.confirm_command_ownership(self.job_id, self.metadata["instance_id"], identity)
-        return not self.store.command_ownership(self.job_id)
+            self.confirmed = not self.store.command_ownership(self.job_id)
+        return self.confirmed

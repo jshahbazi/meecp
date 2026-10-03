@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from dataclasses import dataclass
+import inspect
 import os
 from pathlib import Path
 import secrets
@@ -306,9 +307,12 @@ class CommandSession:
         async with self.write_lock, asyncio.timeout(2):
             view = memoryview(body)
             while view:
-                current = (self.publication_check() is True if self.slot is None else
-                    not self.service.host.closing and self.service.current(self.slot)
-                    and self.service.host.package(self.slot).digest == self.package.digest)
+                if self.slot is None:
+                    current = self.publication_check()
+                    current = (await current if inspect.isawaitable(current) else current) is True
+                else:
+                    current = (not self.service.host.closing and self.service.current(self.slot)
+                        and self.service.host.package(self.slot).digest == self.package.digest)
                 if (self.closed or not current
                         or deadline is not None and time.monotonic() >= deadline):
                     raise CommandExecutionError("command_authority_changed")

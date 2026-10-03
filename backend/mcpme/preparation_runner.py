@@ -731,12 +731,18 @@ class PreparationRunner:
                 family = self._require_admission(descriptor)
                 if getattr(family, "preparation_owner_kind", None) == "command-v3":
                     from .preparation_command_owner import CommandPreparationOwner
-                    probe_owner = CommandPreparationOwner(self.command_admission, self.store, attempt.job_id,
-                        attempt.workspace, package, descriptor, attempt_id=attempt.command_attempt_id,
-                        check=attempt.check, deadline=attempt.deadline)
+                    def create_command_owner():
+                        created = CommandPreparationOwner(self.command_admission, self.store, attempt.job_id,
+                            attempt.workspace, package, descriptor, attempt_id=attempt.command_attempt_id,
+                            check=attempt.check, deadline=attempt.deadline)
+                        # Cancellation joins this thread before cleanup reads the
+                        # list, so a just-created owner cannot be abandoned.
+                        attempt.owners.append(created)
+                        return created
+                    probe_owner = await self._thread(attempt, create_command_owner)
                 else:
                     probe_owner = JournaledPreparationOwner(self.reaper, self.store, attempt.job_id, attempt.workspace)
-                attempt.owners.append(probe_owner)
+                    attempt.owners.append(probe_owner)
                 report = await self._controlled(attempt, self._verify(package.root, descriptor,
                     probe_workspace, timeout_seconds=attempt.deadline - time.monotonic(), owner=probe_owner))
                 probe_owner.confirm_completed()

@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import fcntl
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -276,16 +277,24 @@ class CommandExecutorV2:
                 raise CommandExecutionError("command_ownership_unsettled")
             if len(self.journal["entries"]) >= 256:
                 raise CommandExecutionError("command_journal_limit")
-            self._verify_helper()
-            if not self._admitted(spec):
+            verification = asyncio.create_task(asyncio.to_thread(self._verify_helper))
+            try:
+                await asyncio.shield(verification)
+            finally:
+                await _join(asyncio.gather(verification, return_exceptions=True))
+            if self.closed:
+                raise CommandExecutionError("command_ownership_unsettled")
+            if not await self._admitted(spec):
                 raise CommandExecutionError("command_not_admitted")
             if any(item["instance"] == instance_id for item in self.journal["entries"]):
                 raise CommandExecutionError("command_instance_reused")
             return await self._execute(spec, payload, instance_id)
 
-    def _admitted(self, spec: CommandSpecV2) -> bool:
+    async def _admitted(self, spec: CommandSpecV2) -> bool:
         try:
-            return self.admit(spec) is True
+            value = self.admit(spec)
+            accepted = (await value if inspect.isawaitable(value) else value) is True
+            return accepted and not self.closed
         except Exception:
             raise CommandExecutionError("command_admission_failed") from None
 
@@ -402,7 +411,7 @@ class CommandExecutorV2:
             self.reconcile()
         if item["state"] != "settled":
             raise CommandExecutionError("command_ownership_unsettled")
-        if not self._admitted(spec):
+        if not await self._admitted(spec):
             raise CommandExecutionError("command_authority_changed")
         assert result is not None
         return result

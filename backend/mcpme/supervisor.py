@@ -185,7 +185,12 @@ class Supervisor(UpgradeHost):
         try:
             self.imports = ImportStore(self.root)
             self.recipes = RecipeStore(self.imports)
+            from .preparation_builtin_recipes import seed_builtin_recipes
+            self.builtin_recipe_metadata = seed_builtin_recipes(self.recipes)
             self.preparations = PreparationStore(self.imports, self.recipes)
+            from .preparation_forms import PreparationForms
+            self.preparation_forms = PreparationForms(self.preparations, preferred_recipes=tuple(
+                record["recipe"] for record in self.builtin_recipe_metadata["recipes"] if record["ready"]))
             self.preparations.recover()
             self.grants = GrantStore(self.registry)
             self.resource_policy = self.load_resource_policy()
@@ -298,6 +303,41 @@ class Supervisor(UpgradeHost):
         return [{**draft, "preparation": ({key: value for key, value in latest[draft["draft_id"]].items()
                                           if key != "import_id"} if draft["draft_id"] in latest else None)}
                 for draft in drafts]
+
+    async def plan_preparation_form(self, payload):
+        """Resolve opaque answers, persist their revision, then review authority."""
+        from .preparation_runner import _policy
+        available = self.preparation_runner.enabled is True
+        value, context = await self.static_work(lambda: self.preparation_forms.resolve(
+            payload["import_id"], payload["revision"], candidate_id=payload["candidate_id"],
+            recipe=payload["recipe"], form_digest=payload["form_digest"], answers=payload["answers"],
+            execution_available=available))
+        policy = _policy(payload.get("execution_policy"), value)
+        draft = await self.static_work(lambda: self.preparations.select_descriptor(
+            payload["import_id"], payload["revision"], value.model_dump(exclude_none=True),
+            candidate_id=payload["candidate_id"], form_digest=context.form.form_digest))
+        self.invalidate_import_plans(payload["import_id"])
+        plan, blockers = None, ["preparation_runner_unavailable", "independent_runtime_verifier_unavailable"]
+        if available:
+            try:
+                plan = await self.preparation_runner.plan(payload["import_id"], draft["revision"],
+                    value.model_dump(exclude_none=True), policy)
+                blockers = []
+            except PreparationError as error:
+                blockers = [error.code]
+        with self.imports._lock:
+            current = self.imports._get(payload["import_id"], draft["revision"])
+            self.imports._mutable(current)
+            self.preparations._check_selection(value, current)
+        return {"schema_version": 1, "import_id": payload["import_id"], "revision": current["revision"],
+            "source_revision": current["source"]["revision"], "form_digest": context.form.form_digest,
+            "recipe": value.recipe.model_dump(), "descriptor_digest": value.digest,
+            "execution_available": plan is not None, "plan_id": plan["plan_id"] if plan else None,
+            "plan_digest": plan["plan_digest"] if plan else None, "expires_at": plan["expires_at"] if plan else None,
+            "tools": [tool.model_dump(exclude_none=True) for tool in value.interface.tools],
+            "access": value.access.model_dump(), "resources": value.resources.model_dump(),
+            "downloads": [], "execution_policy": policy.model_dump(), "blockers": blockers,
+            "draft": self.import_preparation_views([current])[0]}
 
     async def static_work(self, function, *args):
         """Keep bounded file work owned until its thread has actually settled."""
@@ -1840,6 +1880,20 @@ def management_app(host: Supervisor, token: str, port: int):
                             or set(payload) != {"recipe_id", "version"}):
                         raise HostError("invalid_recipe_request")
                     result = await host.static_work(getattr(host.recipes, action), payload["recipe_id"], payload["version"])
+                elif route == "/v1/preparations/form":
+                    if ({"import_id", "revision"} - set(payload) or
+                            set(payload) - {"import_id", "revision", "candidate_id", "recipe"}):
+                        raise HostError("invalid_preparation_request")
+                    await host.recover_preparations()
+                    result = await host.static_work(lambda: host.preparation_forms.form(
+                        payload["import_id"], payload["revision"], candidate_id=payload.get("candidate_id"),
+                        recipe=payload.get("recipe"), execution_available=host.preparation_runner.enabled is True))
+                elif route == "/v1/preparations/plan-form":
+                    required = {"import_id", "revision", "candidate_id", "recipe", "form_digest", "answers"}
+                    if required - set(payload) or set(payload) - (required | {"execution_policy"}):
+                        raise HostError("invalid_preparation_request")
+                    await host.recover_preparations()
+                    result = await host.plan_preparation_form(payload)
                 elif route == "/v1/preparations/plan":
                     if set(payload) not in ({"import_id", "revision", "descriptor"},
                                             {"import_id", "revision", "descriptor", "execution_policy"}):
@@ -1962,6 +2016,8 @@ def management_app(host: Supervisor, token: str, port: int):
         Route("/v1/recipes", dispatch, methods=["GET", "POST"]),
         Route("/v1/recipes/{action}", dispatch, methods=["POST"]),
         Route("/v1/preparations", dispatch),
+        Route("/v1/preparations/form", dispatch, methods=["POST"]),
+        Route("/v1/preparations/plan-form", dispatch, methods=["POST"]),
         Route("/v1/preparations/plan", dispatch, methods=["POST"]),
         Route("/v1/preparations/inspect-source", dispatch, methods=["POST"]),
         Route("/v1/preparations/start", dispatch, methods=["POST"]),

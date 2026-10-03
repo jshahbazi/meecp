@@ -1,0 +1,34 @@
+{
+  "artifacts": [
+    {
+      "license": "LICENSE",
+      "origin": "mcpme-shipped-recipe-v1",
+      "path": "LICENSE",
+      "sha256": "581dcf167cf2fd0f557cb99f829e2b7e4f5901fa53beebd5dfced3746df505b4",
+      "size": 1075
+    },
+    {
+      "license": "LICENSE",
+      "origin": "mcpme-shipped-recipe-v1",
+      "path": "README.md",
+      "sha256": "b873f174ff68272a012d59439d7ae21c5625fc78fdd8aa80a0ef4a4a60b7a646",
+      "size": 642
+    },
+    {
+      "license": "LICENSE",
+      "origin": "mcpme-shipped-recipe-v1",
+      "path": "THIRD_PARTY_NOTICES.md",
+      "sha256": "53be553408a52f170c52e501cd926e27e150cc19f61fe52ce569e9c2ccdc095b",
+      "size": 384
+    },
+    {
+      "license": "LICENSE",
+      "origin": "mcpme-shipped-recipe-v1",
+      "path": "fixtures/metadata.json",
+      "sha256": "936d88eaaee409d5fe9e501f15bc1923b3b9090f554c2f3d732b9488982dc9d7",
+      "size": 156
+    }
+  ],
+  "manifest_sha256": "8c1c46e47299422bb12447b458d8d159706b5990d9c27570627b00f61ff62a53",
+  "schema_version": 1
+}

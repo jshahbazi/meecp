@@ -16,10 +16,12 @@ hash do not establish eligibility for another export. Local selection retains
 the `publisher_unverified` origin record.
 
 The original captured collection and revision remain the source identity. A
-folder's supplementary captured collection can supply the same bytes while the
-folder revision remains unchanged. Source validation binds the exact captured
-entry hashes and sizes. It declares no original dependency lock: the runtime
-project and frozen wheel closure belong to the pinned host component.
+folder's supplementary captured collection can be validated by the component's
+helper while preserving the folder revision. The current family routes captured
+collection sources; folder candidate routing and combined source bindings still
+require shared host integration. Source validation binds the exact captured entry
+hashes and sizes. It declares no original dependency lock: the runtime project
+and frozen wheel closure belong to the pinned host component.
 
 The builder acquires a durable job reference before materialization. Each copy
 uses `ArtifactCaptureStore.open_artifact`, which holds a durable read lease and
@@ -54,7 +56,8 @@ host-controlled transport. Installation runs offline, without an index or source
 build, with required hashes and copied files. Full dependency notices and the
 private Python license closure are retained. Exact upstream FlatBuffers and
 HTTPX full texts supplement their wheels' missing texts; all additions enter
-the sealed package lock.
+the sealed package lock. ONNX Runtime's LICENSE and complete ThirdPartyNotices.txt
+are retained from the exact wheel and also indexed in its distribution metadata.
 
 The adapter hashes the exact model bytes before parsing them and loads those
 verified bytes through [ONNX Runtime's Python API](https://onnxruntime.ai/docs/api/python/api_summary.html).
@@ -120,6 +123,29 @@ proof directory for reconciliation. The original file supplied through `--model`
 is never modified or removed.
 
 The harness reports metadata, hashes, counts, declared budgets and measured peaks.
-It does not install a slot. A2 remains open until the exact committed host run
-and native/install acceptance pass; the complete Phase 3 goal includes further
-app families and independent adversarial review.
+It does not install a slot. A2 remains open until the shared directory/captured
+input path and native/install acceptance pass; the complete Phase 3 goal includes
+further app families and independent adversarial review.
+
+### Measured captured-input checkpoint
+
+The default-cleanup harness passed on 2026-10-03 against clean committed CLI host
+`54fe9d8892044beb363815ed540a4b6bde65f320`, verifying all 1,624 host artifact hashes.
+It acquired 35 locked wheels (40,779,828 bytes), completed six owned commands,
+attached the package to the selected revision, then ran three real SDK fixtures
+after removing selected source copies, captured state and builder inputs.
+
+The builder validated the exact model, ran three real blank images, six controlled
+tensor cases, seven maximum image workloads and three boundary rejections. Its
+peak RSS was 254,083,072 bytes; the slowest maximum workload took 0.021038 seconds.
+The relocated SDK probe peaked at 264,929,280 bytes. The separate exact 1 MiB /
+1,048,576-pixel SDK call took 0.075586 seconds and peaked at 278,298,624 bytes,
+within the declared 512 MiB reservation. Four concurrent calls produced three
+fixed busy rejections; both SDK boundary cases were rejected. Total harness wall
+time was 32.795048 seconds, with zero remaining owned work, native receipts or job
+references. Public execution stayed disabled and no slot was installed.
+
+These are measured synthetic workload bounds for this pinned export and machine.
+They establish package behavior and resource admission evidence, not recognition
+accuracy on real photographs. The frozen integration host must repeat the harness
+after the family is registered in the product and complete the native gate.

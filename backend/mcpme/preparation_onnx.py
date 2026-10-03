@@ -48,6 +48,29 @@ def _assets(root):
     return {name: _read(root / name, 4 * 1024 * 1024) for name in ASSETS}
 
 
+def _supplement_dependency_notices(site, assets, check_canceled):
+    for distribution, name in (("flatbuffers-25.12.19.dist-info", "LICENSE-FLATBUFFERS"),
+                               ("httpx-0.28.1.dist-info", "LICENSE-HTTPX")):
+        location = site / distribution
+        if not location.is_dir() or location.is_symlink():
+            raise PreparationError("onnx_dependency_identity_mismatch")
+        check_canceled()
+        (location / "LICENSE-mcpme-supplement.txt").write_bytes(assets[name])
+    # This exact frozen wheel retains its notices in the import package rather
+    # than its distribution metadata. Index copies of both actual wheel texts;
+    # keep the original files as well. No runtime package is imported here.
+    location = site / "onnxruntime-1.30.0.dist-info"
+    if not location.is_dir() or location.is_symlink():
+        raise PreparationError("onnx_dependency_identity_mismatch")
+    for source, target in (("LICENSE", "LICENSE-mcpme-wheel.txt"),
+                           ("ThirdPartyNotices.txt", "NOTICE-mcpme-wheel.txt")):
+        check_canceled()
+        content = _read(site / "onnxruntime" / source, 4 * 1024 * 1024)
+        if not content:
+            raise PreparationError("dependency_notice_required")
+        (location / target).write_bytes(content)
+
+
 def builtin_onnx_components():
     assets = _assets(_asset_root())
     identity = contract_digest("mcpme-onnx-hotdog-component-v1", {
@@ -357,12 +380,7 @@ def prepare_onnx_bound(descriptor, draft, toolchain, output, run, check_canceled
             if spec.operation == "dependency_install":
                 # Exact upstream full texts supplement older wheels which omit
                 # them. These additions are hash-bound package artifacts too.
-                for distribution, name in (("flatbuffers-25.12.19.dist-info", "LICENSE-FLATBUFFERS"),
-                                           ("httpx-0.28.1.dist-info", "LICENSE-HTTPX")):
-                    location = output / "python/site-packages" / distribution
-                    if not location.is_dir() or location.is_symlink():
-                        raise PreparationError("onnx_dependency_identity_mismatch")
-                    (location / "LICENSE-mcpme-supplement.txt").write_bytes(assets[name])
+                _supplement_dependency_notices(output / "python/site-packages", assets, check_canceled)
             return result
         runtime = _runtime(output, work, current, controlled_run, check_canceled, work, acquire_wheels)
         (output / "bin").mkdir(mode=0o700)

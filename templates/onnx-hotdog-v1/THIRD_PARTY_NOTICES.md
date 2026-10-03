@@ -34,6 +34,12 @@ Both texts are added only to those exact installed distribution directories;
 the frozen wheel identities remain unchanged and the additions enter the final
 sealed package lock.
 
+ONNX Runtime 1.30.0's exact locked wheel keeps LICENSE and ThirdPartyNotices.txt
+inside its import package. The builder retains both original texts and copies
+them into that distribution's metadata directory so dependency-notices.json
+indexes its MIT license and complete native dependency notices. Those copies
+come from the verified wheel bytes and enter the final package lock.
+
 Inference explicitly selects CPUExecutionProvider. The model's single float
 input `[1,3,640,640]`, single float output `[1,84,8400]`, complete COCO labels,
 task/export metadata and model bytes must all match. See the

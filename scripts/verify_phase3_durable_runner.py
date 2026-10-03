@@ -24,6 +24,20 @@ from verify_phase3_primitives import VerificationError, _check_module_origins, _
 WALL_SECONDS = 300
 JOB_WALL_SECONDS = 120
 DISK_BYTES = 4 * 1024**3
+_DIAGNOSTIC = {"stage": "bootstrap", "case": "none"}
+_STAGES = frozenset({"bootstrap", "source_intake", "planning", "starting", "waiting", "probe_cancel",
+                     "restart_proof", "restart_recovery", "relocating", "removing_inputs", "relocation_recheck", "closing"})
+_CASES = frozenset({"none", "callable", "existing", "canceled", "restart"})
+_ERROR_TYPES = frozenset({"AssertionError", "AttributeError", "Exception", "FileNotFoundError", "ImportError",
+    "IntegrityError", "KeyError", "KeyboardInterrupt", "ModuleNotFoundError", "NotADirectoryError", "OperationalError",
+    "OSError", "OwnershipLost", "PermissionError", "PreparationError", "PrivateStateError", "RuntimeError", "TimeoutError",
+    "TypeError", "ValueError", "VerificationError"})
+
+
+def _stage(value, case=None):
+    _DIAGNOSTIC["stage"] = value if value in _STAGES else "bootstrap"
+    if case is not None:
+        _DIAGNOSTIC["case"] = case if case in _CASES else "none"
 
 CALLABLE_SOURCE = "def double(n: int) -> dict[str, int]:\n    return {'value': n * 2}\n"
 WAITING_SOURCE = "import time\ndef double(n: int) -> dict[str, int]:\n    time.sleep(100)\n    return {'value': n * 2}\n"
@@ -106,6 +120,7 @@ async def verify(host: Path, base: Path) -> dict:
                              wall_seconds=JOB_WALL_SECONDS, disk_bytes=DISK_BYTES, memory_mb=2048)
 
     def fixture(label, kind, source_text):
+        _stage("source_intake", label)
         source = base / (label + "-source")
         source.mkdir(mode=0o700)
         for name in ("pyproject.toml", "uv.lock"):
@@ -145,6 +160,7 @@ async def verify(host: Path, base: Path) -> dict:
 
     async def wait_task(job_id):
         nonlocal peak_disk
+        _stage("waiting")
         task = runner.tasks[job_id]
         while not task.done():
             check()
@@ -166,8 +182,10 @@ async def verify(host: Path, base: Path) -> dict:
             for label, kind, text in (("callable", "python-callable", CALLABLE_SOURCE),
                                       ("existing", "python-mcp", MCP_SOURCE)):
                 draft, descriptor = await files(fixture, label, kind, text)
+                _stage("planning")
                 plan = await runner.plan(draft["draft_id"], 1, descriptor, policy)
                 key = str(uuid.uuid4())
+                _stage("starting")
                 job = await runner.start(plan["plan_id"], plan["plan_digest"], key)
                 duplicate = await runner.start(plan["plan_id"], plan["plan_digest"], key)
                 if duplicate["job_id"] != job["job_id"]:
@@ -191,8 +209,11 @@ async def verify(host: Path, base: Path) -> dict:
                     "probe_peak_memory_bytes": final["verification"]["peak_memory_bytes"]})
 
             draft, descriptor = await files(fixture, "canceled", "python-callable", WAITING_SOURCE)
+            _stage("planning")
             plan = await runner.plan(draft["draft_id"], 1, descriptor, policy)
+            _stage("starting")
             job = await runner.start(plan["plan_id"], plan["plan_digest"], str(uuid.uuid4()))
+            _stage("waiting")
             while (store.get(job["job_id"])["state"] != "verifying" or
                     len(runner.attempts[job["job_id"]].owners) < 2 or
                     not runner.attempts[job["job_id"]].owners[-1].instances):
@@ -200,6 +221,7 @@ async def verify(host: Path, base: Path) -> dict:
                 if runner.tasks[job["job_id"]].done():
                     raise PreparationError(store.get(job["job_id"])["error_code"] or "phase3_durable_cancel_probe_missing")
                 await asyncio.sleep(0.01)
+            _stage("probe_cancel")
             canceled = await runner.cancel(job["job_id"])
             if (canceled["state"] != "canceled" or not canceled["ownership_settled"] or canceled["reservation_retained"]
                     or store.ownership_receipts(job["job_id"]) or not clean_owners(job["job_id"])
@@ -211,7 +233,9 @@ async def verify(host: Path, base: Path) -> dict:
             # Native completion persists before the coordinator records settle.
             # A reconstructed runner releases it without adopting or replaying.
             draft, descriptor = await files(fixture, "restart", "python-callable", CALLABLE_SOURCE)
+            _stage("planning")
             plan = await runner.plan(draft["draft_id"], 1, descriptor, policy)
+            _stage("restart_proof")
             job = await files(store.authorize_start, plan["plan_id"], plan["plan_digest"], str(uuid.uuid4()))
             store.transition(job["job_id"], "snapshotting")
             workspace = imports.root / "preparations" / job["job_id"]
@@ -231,6 +255,7 @@ async def verify(host: Path, base: Path) -> dict:
             restarted = PreparationRunner(store, host, host / "bin/mcpme-reap", enabled=True,
                                           reserve_resources=reserve, release_resources=release)
             runners.append(restarted)
+            _stage("restart_recovery")
             await restarted.recover()
             recovered = store.get(job["job_id"])
             if (recovered["state"] != "interrupted" or not recovered["ownership_settled"] or recovered["reservation_retained"]
@@ -240,9 +265,11 @@ async def verify(host: Path, base: Path) -> dict:
                              "owned_steps_remaining": 0, "pending_receipts": 0})
             if reserved or len(released) != 4:
                 raise PreparationError("phase3_durable_resource_reservation_remaining")
+            _stage("closing")
             for item in runners:
                 await item.close()
             _check_module_origins(host)
+            _stage("relocating")
             moved = base / "relocated"
             moved.mkdir(mode=0o700)
             relocated = []
@@ -252,9 +279,11 @@ async def verify(host: Path, base: Path) -> dict:
                 relocated.append((destination, digest))
             imports.close()
             imports = None
+            _stage("removing_inputs")
             for source in sources:
                 shutil.rmtree(source)
             shutil.rmtree(base / "state")
+            _stage("relocation_recheck")
             for destination, digest in relocated:
                 package = await files(validate_package, destination)
                 if package.digest != digest:
@@ -267,7 +296,13 @@ async def verify(host: Path, base: Path) -> dict:
                     "wall_limit_seconds": WALL_SECONDS, "job_wall_limit_seconds": JOB_WALL_SECONDS,
                     "disk_limit_bytes": DISK_BYTES, "peak_workspace_bytes": peak_disk,
                     "elapsed_seconds": round(time.monotonic() - started, 3), "cases": outcomes}
+    except BaseException:
+        # Preserve only fixed boundary labels before cleanup changes the stage.
+        _DIAGNOSTIC["failure_stage"] = _DIAGNOSTIC["stage"]
+        _DIAGNOSTIC["failure_case"] = _DIAGNOSTIC["case"]
+        raise
     finally:
+        _stage("closing")
         lost = False
         for item in reversed(runners):
             try:
@@ -293,16 +328,19 @@ def main() -> int:
     parser.add_argument("--keep-artifacts", action="store_true", help="Retain the private fixture directory and relocated packages.")
     arguments = parser.parse_args()
     os.umask(0o077)
-    base = result = failure = None
+    base = result = failure = exception_type = None
     try:
         _host_paths(arguments.host)
         base = Path(tempfile.mkdtemp(prefix="mcpme-phase3-durable-", dir="/private/tmp")).resolve()
         result = asyncio.run(verify(arguments.host, base))
     except KeyboardInterrupt:
         failure = "phase3_durable_interrupted"
+        exception_type = "KeyboardInterrupt"
     except Exception as error:
         code = getattr(error, "code", "phase3_durable_verification_failed")
         failure = code if isinstance(code, str) and re.fullmatch(r"[a-z][a-z0-9_]{1,127}", code) else "phase3_durable_verification_failed"
+        name = type(error).__name__
+        exception_type = name if name in _ERROR_TYPES else "OtherError"
     preserve = base is not None and (arguments.keep_artifacts or (base / "ownership-unsettled").exists())
     if base is not None and not preserve:
         try:
@@ -314,7 +352,9 @@ def main() -> int:
         except OSError:
             failure = "phase3_durable_cleanup_failed"
     if failure is not None:
-        result = {"verified": False, "error": failure}
+        result = {"verified": False, "error": failure, "exception_type": exception_type or "OSError",
+                  "failure_stage": _DIAGNOSTIC.get("failure_stage", _DIAGNOSTIC["stage"]),
+                  "failure_case": _DIAGNOSTIC.get("failure_case", _DIAGNOSTIC["case"])}
     if preserve:
         result["artifact_directory"] = str(base)
     print(json.dumps(result, sort_keys=True))

@@ -34,7 +34,7 @@ from .processes import OwnershipLost, _await_ownership, _watch_ownership
 
 FILES = ("preparation_resolution.py", "preparation_resolution_runner.py", "preparation_resolution_network.py",
          "preparation_builder.py", "preparation_acquisition.py", "preparation_inspection.py", "preparation_components.py",
-         "preparation_processes.py", "preparation_verifier.py", "preparation_runner.py", "processes.py",
+         "preparation_processes.py", "preparation_verifier.py", "preparation_probe_confinement.py", "preparation_runner.py", "processes.py",
          "ownership_receipts.py", "downloads.py", "preparation_contracts.py", "preparation_inputs.py",
          "contracts.py", "imports.py", "preparation_application_source.py", "recipes.py", "private.py",
          "_native_tls/__init__.py", "_native_tls/_api.py", "_native_tls/_macos.py",

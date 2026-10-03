@@ -84,13 +84,15 @@ async def _owned_transport(process: OwnedProcess):
 
 async def verify_prepared_package(
     package_root: Path, descriptor: PreparationDescriptor, reaper: Path, workspace: Path, *,
-    timeout_seconds: float = 60, owner: ProcessOwner | None = None,
+    timeout_seconds: float = 60, owner: ProcessOwner | None = None, probe_confinement=None,
 ) -> VerificationReport:
     """Use a real MCP SDK session; check schemas, fixtures, mutation and cleanup.
 
     The caller supplies a relocated closed package and private probe workspace.
-    OS filesystem/network restrictions are a separate gate; this primitive does
-    not claim them. Only the current tools-only stdio profile is implemented.
+    The optional host-created v1 confinement plan admits only the exact private
+    Python launchers; ordinary callers retain their existing behavior. Actual
+    installed policy acceptance remains separate. Only tools-only stdio is
+    implemented here.
     """
     if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or not 0 < timeout_seconds <= 3600:
         raise PreparationError("invalid_preparation_probe_limit")
@@ -113,9 +115,20 @@ async def verify_prepared_package(
     try:
         async with asyncio.timeout(timeout_seconds):
             entry = package.manifest.entrypoint
+            if probe_confinement is None:
+                launch = (package.root / entry.executable, entry.args, package.root / entry.cwd,
+                          {"PATH": "/usr/bin:/bin", "HOME": str(workspace), "TMPDIR": str(workspace), "LANG": "en_US.UTF-8"})
+            else:
+                from .preparation_probe_confinement import ProbeConfinementV1
+                if type(probe_confinement) is not ProbeConfinementV1 or probe_confinement.workspace != workspace:
+                    raise PreparationError("preparation_probe_confinement_mismatch")
+                task = asyncio.create_task(asyncio.to_thread(probe_confinement.launch, package, reaper))
+                try:
+                    launch = await asyncio.shield(task)
+                finally:
+                    await _await_ownership(asyncio.gather(task, return_exceptions=True))
             process = await owner.launch(
-                package.root / entry.executable, entry.args, package.root / entry.cwd,
-                {"PATH": "/usr/bin:/bin", "HOME": str(workspace), "TMPDIR": str(workspace), "LANG": "en_US.UTF-8"},
+                *launch,
                 owned_group=True, startup_timeout=min(timeout_seconds, 120), stop_grace=0.1,
             )
             async def probe():
@@ -149,6 +162,12 @@ async def verify_prepared_package(
             raise PreparationError("preparation_package_mutated") from None
         if current.digest != package.digest:
             raise PreparationError("preparation_package_mutated")
+        if probe_confinement is not None:
+            task = asyncio.create_task(asyncio.to_thread(probe_confinement.check, current, reaper))
+            try:
+                await asyncio.shield(task)
+            finally:
+                await _await_ownership(asyncio.gather(task, return_exceptions=True))
         return VerificationReport(package.digest, len(listing.tools), len(descriptor.validation), result.protocolVersion, peak)
     except OwnershipLost:
         raise

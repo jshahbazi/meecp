@@ -119,7 +119,8 @@ private struct Project: Equatable {
 }
 
 private func managementRequestTimeout(_ path: String, method: String) -> TimeInterval {
-    let preparesFiles = path == "v1/imports" || ["/plan", "/attach", "/engine"].contains { path.hasSuffix($0) }
+    let preparesFiles = path == "v1/imports" || path == "v1/preparations/plan-form" ||
+        ["/plan", "/attach", "/engine"].contains { path.hasSuffix($0) }
     return method == "POST" && preparesFiles ? 300 : 30
 }
 

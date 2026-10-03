@@ -70,3 +70,46 @@ async def test_native_unknown_policy_fails_before_source_execution(binaries, tmp
         assert not report.result_admissible
     finally:
         await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fallback", [False, True])
+async def test_leader_exit_between_waitid_and_live_usage_read(binaries, tmp_path, fallback):
+    header = (ROOT / "scripts/mcpme-command-resource-v1.h").read_text()
+    line = "        int result = resource_observe(m, first[i], leader, leader_exited && first[i] == leader, &footprint);"
+    assert header.count(line) == 1
+    # After a real first sample and source release, retain the outer live
+    # observation while the actual original child exits. Never synthesize
+    # cached counters, PID identity, or native exit status.
+    barrier = '''        if (m->report.samples && first[i] == leader && !leader_exited) {
+            siginfo_t proof = {0};
+            for (int n = 0; n < 60 && proof.si_pid != leader; ++n) {
+                if (waitid(P_PID, (id_t)leader, &proof, WEXITED | WNOHANG | WNOWAIT)) return resource_fail(m, RR_METRIC);
+                usleep(1000);
+            }
+            if (proof.si_pid != leader) return resource_fail(m, RR_METRIC);
+        }
+'''
+    header = header.replace(line, barrier + line)
+    if not fallback:
+        condition = "if ((result == RR_METRIC || result == RR_IDENTITY) && first[i] == leader && !leader_exited)"
+        assert header.count(condition) == 1
+        header = header.replace(condition, "if (0)")
+    (tmp_path / "mcpme-command-resource-v1.h").write_text(header)
+    source = tmp_path / "helper.c"
+    source.write_bytes((ROOT / "scripts/mcpme-command-resource-reap.c").read_bytes())
+    helper = tmp_path / "helper"
+    compiled = subprocess.run(["clang", "-Wall", "-Wextra", "-Werror", "-O2", str(source), "-o", str(helper)],
+        capture_output=True, timeout=30)
+    assert compiled.returncode == 0
+    pair = helper, binaries[1]
+    owner = executor(pair, tmp_path / "state")
+    try:
+        policy = ResourcePolicyV1(read_window_ns=100_000_000, sample_gap_ns=1_000_000_000)
+        result = await owner.execute(spec(pair, "echo", policy))
+        assert result.report.reason == ("exited" if fallback else "metric_unavailable")
+        assert result.report.sample_windows_valid is fallback
+        assert not result.result_admissible
+        assert owner.reconcile()["pending"] == 0
+    finally:
+        await owner.close()

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from dataclasses import asdict, dataclass
 import os
 
 import anyio
@@ -14,6 +15,14 @@ from .command_execution_v2 import _join
 from .preparation_command_owner import CommandPreparationOwner
 from .preparation_contracts import PreparationError, canonical_bytes
 from .preparation_verifier import MAX_PROBE_MESSAGE, VerificationReport, _validate_joined
+
+
+@dataclass(frozen=True)
+class CommandVerificationReport(VerificationReport):
+    # The common peak field is the maximum observed sequential-read scope
+    # footprint. It is neither a lifetime peak nor an enforced allocation cap.
+    measurement_scope: str
+    command_resource_evidence: tuple[dict, ...]
 
 
 @asynccontextmanager
@@ -115,8 +124,26 @@ async def verify_command_package(package_root, descriptor, reaper, workspace, *,
         current = await _validate_joined(package.root)
         if current.digest != package.digest:
             raise PreparationError("preparation_package_mutated")
-        # No aggregate process-tree memory measurement/enforcement exists here.
-        # Zero means unavailable and must not be presented as a measured peak.
+        if owner.resource_admission is not None:
+            from .command_resource_execution_v1 import read_resource_completion
+            entries = owner.executor.journal["entries"]
+            if len(owner.resource_reports) != len(descriptor.validation) or len(entries) != len(owner.resource_reports):
+                raise PreparationError("command_resource_verification_failed")
+            evidence = []
+            for entry, (instance, spec_digest, measured) in zip(entries, owner.resource_reports):
+                valid, code, recorded = read_resource_completion(owner.executor.state, entry)
+                if (not valid or code != 0 or recorded != measured or entry["instance"] != instance
+                        or entry["contract_digest"] != spec_digest or entry["state"] != "settled"):
+                    raise PreparationError("command_resource_verification_failed")
+                evidence.append({"instance": instance, "spec_digest": spec_digest,
+                    "owner_journal_identity": owner.metadata["journal_identity"],
+                    "fixture_digest": owner.metadata["fixture_digest"], "job_binding_digest": owner.metadata["job_binding_digest"],
+                    "helper_sha256": entry["helper_digest"], "platform_policy": entry["policy_digest"],
+                    "resource_policy_digest": entry["resource_policy_digest"], "report": asdict(measured)})
+            return CommandVerificationReport(package.digest, len(listing.tools), len(descriptor.validation),
+                initialized.protocolVersion, max(item[2].max_scope_window_footprint_bytes for item in owner.resource_reports),
+                "held-group-plus-helper-windowed-footprint-v1", tuple(evidence))
+        # Unmeasured format-3 probes retain the closed common attachment gate.
         return VerificationReport(package.digest, len(listing.tools), len(descriptor.validation), initialized.protocolVersion, 0)
     except TimeoutError:
         raise PreparationError("preparation_probe_timeout") from None

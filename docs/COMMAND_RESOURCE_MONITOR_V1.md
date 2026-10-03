@@ -1,6 +1,6 @@
 # Native command resource monitor, version 1
 
-This additive checkpoint implements monitored accounting and cancellation for the existing confined fork/exec topology. It does not admit command results, satisfy verified attachment, or establish a kernel aggregate physical-memory/process ceiling. Full supported-command acceptance remains the end state. A supported hard resource domain and final signed/relocated integration remain separate open gates.
+This monitor implements measured accounting and cancellation for the existing confined fork/exec topology. Its stronger result-admission, lifetime and hard-enforcement flags remain false. The later [measured preparation contract](COMMAND_MEASURED_PREPARATION.md) permits a trusted caller to retain bounded output transiently and independently accept a narrower measured workload after actual SDK and exact ownership checks. The monitor establishes no kernel aggregate physical-memory/process ceiling. Final signed/relocated integration remains an open gate.
 
 ## Protocol and authority
 

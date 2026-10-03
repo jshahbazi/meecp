@@ -18,6 +18,7 @@ from mcpme.preparations import PreparationStore
 from mcpme.recipes import RecipeStore
 from test_host_command import native, digest, pytestmark
 from test_preparation_command_managed import intake
+from test_preparation_command_measured import measured_admission
 
 
 CHILD = '''import asyncio,os,sys,time
@@ -26,7 +27,7 @@ from mcpme.contracts import validate_package
 from mcpme.host_command import HostCommandAdmission
 from mcpme.imports import ImportStore
 from mcpme.preparation_command import CommandFamily,component_catalog
-from mcpme.preparation_command_owner import CommandPreparationOwner
+from mcpme.preparation_command_owner import CommandPreparationOwner,CommandPreparationResourceAdmission
 from mcpme.preparations import PreparationStore
 from mcpme.recipes import RecipeStore
 async def main():
@@ -36,7 +37,8 @@ async def main():
  job=store.get(sys.argv[2])
  descriptor,_,_=store.job_inputs(job["job_id"])
  workspace=Path(job["workspace"])
- owner=CommandPreparationOwner(HostCommandAdmission(Path(sys.argv[3]),sys.argv[4]),store,job["job_id"],workspace,validate_package(workspace/"candidate"),descriptor,attempt_id="a"*32,check=lambda:None,deadline=time.monotonic()+10)
+ resource=CommandPreparationResourceAdmission(Path(sys.argv[5]),sys.argv[6],sys.argv[7]) if len(sys.argv)>5 else None
+ owner=CommandPreparationOwner(HostCommandAdmission(Path(sys.argv[3]),sys.argv[4]),store,job["job_id"],workspace,validate_package(workspace/"candidate"),descriptor,attempt_id="a"*32,check=lambda:None,deadline=time.monotonic()+10,resource_admission=resource)
  handle=await owner.session(owner.package)
  launched=asyncio.Event()
  original_read=os.read
@@ -55,7 +57,8 @@ asyncio.run(main())
 
 
 @pytest.mark.asyncio
-async def test_actual_host_sigkill_reopened_store_retains_until_exact_native_receipt(tmp_path, native):
+@pytest.mark.parametrize("measured", [False, True])
+async def test_actual_host_sigkill_reopened_store_retains_until_exact_native_receipt(tmp_path, native, measured_admission, measured):
     source = tmp_path / "restart-target.c"
     source.write_text('#include <signal.h>\n#include <unistd.h>\nint main(void) { alarm(4); '
         'if (fork()==0) { signal(SIGTERM,SIG_IGN); while(1) pause(); } '
@@ -72,7 +75,8 @@ async def test_actual_host_sigkill_reopened_store_retains_until_exact_native_rec
     workspace = Path(job["workspace"])
     imports.close()
     environment = {"PATH": "/usr/bin:/bin", "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "backend")}
-    child = subprocess.Popen([sys.executable, "-B", "-c", CHILD, str(state), identifier, str(native[1]), digest(native[1])],
+    extra = [str(measured_admission.helper), measured_admission.helper_sha256, measured_admission.platform_policy] if measured else []
+    child = subprocess.Popen([sys.executable, "-B", "-c", CHILD, str(state), identifier, str(native[1]), digest(native[1]), *extra],
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=environment, start_new_session=True)
     reopened = None
     runner = None
@@ -99,8 +103,9 @@ async def test_actual_host_sigkill_reopened_store_retains_until_exact_native_rec
         async with asyncio.timeout(5):
             while recover_command_ownership(workspace, metadata) is None:
                 await asyncio.sleep(.01)
-        receipt, = (workspace / "command-probe-v3").glob("*.complete")
-        assert receipt.read_bytes()[296:297] == b"C"
+        receipt, = (workspace / ("command-probe-v4" if measured else "command-probe-v3")).glob("*.complete")
+        offset = 360 if measured else 296
+        assert receipt.read_bytes()[offset:offset+1] == b"C"
         retained = receipt.with_suffix(".held")
         receipt.rename(retained)
         reservations = set()

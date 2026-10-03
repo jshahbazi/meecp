@@ -2,6 +2,7 @@
 #include <mach/mach_time.h>
 #include <sys/proc.h>
 #include <sys/proc_info.h>
+#include <sys/wait.h>
 
 #define RESOURCE_POLICY_FIELDS 8
 #define RESOURCE_REPORT_FIELDS 16
@@ -136,6 +137,26 @@ static int resource_sample(struct resource_monitor *m, pid_t leader, int leader_
     for (int i = 0; i < count; ++i) {
         uint64_t footprint = 0;
         int result = resource_observe(m, first[i], leader, leader_exited && first[i] == leader, &footprint);
+        /* The original direct child can exit between outer waitid and its
+         * live BSD reads. Re-read only that held identity with a fresh exit
+         * proof. resource_observe still requires an already observed birth
+         * and stable nonzero terminal timestamp. Descendants never qualify. */
+        if ((result == RR_METRIC || result == RR_IDENTITY) && first[i] == leader && !leader_exited) {
+            siginfo_t terminal;
+            /* BSD visibility may disappear just before waitid becomes ready.
+             * Wait only within this sample's existing read-window budget. */
+            for (;;) {
+                uint64_t current;
+                if (resource_clock(m, &current) || current < begin || current - begin >= m->policy.window) break;
+                memset(&terminal, 0, sizeof(terminal));
+                if (waitid(P_PID, (id_t)leader, &terminal, WEXITED | WNOHANG | WNOWAIT)) break;
+                if (terminal.si_pid == leader) {
+                    result = resource_observe(m, leader, leader, 1, &footprint);
+                    break;
+                }
+                usleep(100);
+            }
+        }
         if (result) return resource_fail(m, (unsigned)result);
         if (resource_add(sum, footprint, &sum)) return resource_fail(m, RR_OVERFLOW);
     }

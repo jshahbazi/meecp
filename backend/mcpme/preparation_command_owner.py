@@ -7,6 +7,7 @@ Recovery never creates missing files, adopts PIDs, or executes package code.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, replace
 import fcntl
 import os
 from pathlib import Path
@@ -17,6 +18,8 @@ from jsonschema import Draft202012Validator
 
 from .command_execution_v2 import (CommandExecutionError, CommandExecutorV2, CommandSpecV2,
     _digest, _hex, _join, validate_command_journal, verify_command_completion)
+from . import command_resource_execution_v1 as resource_execution
+from .command_resource_policy_v1 import ResourcePolicyV1
 from .contracts import validate_package
 from .gateway import MAX_MESSAGE_BYTES, encode
 from .host_command import CommandSession, HostCommandAdmission
@@ -25,12 +28,45 @@ from .preparation_contracts import PreparationError, canonical_bytes, contract_d
 from .private import check_private_file, ensure_private_directory, read_private_json, write_private_json
 
 
+@dataclass(frozen=True)
+class CommandPreparationResourceAdmission:
+    """Host-selected helper and exact-platform measured-workload capability."""
+    helper: Path
+    helper_sha256: str
+    platform_policy: str
+    policy: ResourcePolicyV1 = ResourcePolicyV1()
+
+    def __post_init__(self):
+        if (not isinstance(self.helper, Path) or not _hex(self.helper_sha256)
+                or not _hex(self.platform_policy) or type(self.policy) is not ResourcePolicyV1):
+            raise PreparationError("command_preparation_not_admitted")
+
+
+def command_owner_paths(workspace, metadata):
+    validate_command_ownership(metadata)
+    if metadata["receipt_format"] == 4:
+        return Path(workspace) / "command-probe-v4", "command-resource-v1"
+    return Path(workspace) / "command-probe-v3", "command-v2"
+
+
+def validate_initial_command_owner(workspace, metadata):
+    state, journal = command_owner_paths(workspace, metadata)
+    check_private_file(state / (journal + ".lock"))
+    if (read_private_json(state / "owner.json") != metadata
+            or read_private_json(state / "invocations.json") != {"version": 1, "entries": []}
+            or read_private_json(state / (journal + ".json")) != {"version": metadata["receipt_format"], "entries": []}):
+        raise PreparationError("invalid_command_ownership")
+
+
 def validate_command_ownership(value):
     keys = {"schema_version", "kind", "instance_id", "attempt_id", "job_binding_digest", "candidate_digest",
             "fixture_digest", "helper_sha256", "policy_digest", "journal_identity", "receipt_format"}
+    measured = type(value) is dict and value.get("receipt_format") == 4
+    if measured:
+        keys |= {"resource_helper_sha256", "resource_policy_digest"}
     if (type(value) is not dict or set(value) != keys or type(value["schema_version"]) is not int
-            or value["schema_version"] != 1 or value["kind"] != "command-v3"
-            or type(value["receipt_format"]) is not int or value["receipt_format"] != 3
+            or value["schema_version"] != 1 or value["kind"] != ("command-v4" if measured else "command-v3")
+            or type(value["receipt_format"]) is not int or value["receipt_format"] != (4 if measured else 3)
             or any(not _hex(value[key], 32) for key in ("instance_id", "attempt_id"))
             or any(not _hex(value[key]) for key in keys - {"schema_version", "kind", "instance_id", "attempt_id", "receipt_format"})):
         raise PreparationError("invalid_command_ownership")
@@ -62,11 +98,11 @@ def recover_command_ownership(workspace: Path, metadata: dict) -> str | None:
     fd = None
     try:
         validate_command_ownership(metadata)
-        state = Path(workspace) / "command-probe-v3"
+        state, journal_name = command_owner_paths(workspace, metadata)
         if not state.is_dir():
             return None
         ensure_private_directory(state)
-        lock = state / "command-v2.lock"
+        lock = state / (journal_name + ".lock")
         check_private_file(lock)
         fd = os.open(lock, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -74,14 +110,18 @@ def recover_command_ownership(workspace: Path, metadata: dict) -> str | None:
             return None
         intents = read_private_json(state / "invocations.json")
         indexed = _invocations(intents)
-        journal = read_private_json(state / "command-v2.json")
-        validate_command_journal(journal)
+        journal = read_private_json(state / (journal_name + ".json"))
+        measured = metadata["receipt_format"] == 4
+        validator = resource_execution.validate_command_journal if measured else validate_command_journal
+        validator(journal)
         for entry in journal["entries"]:
             intent = indexed.get(entry["instance"])
             if (intent is None or entry["contract_digest"] != intent["spec"]
-                    or entry["helper_digest"] != metadata["helper_sha256"]
+                    or entry["helper_digest"] != metadata["resource_helper_sha256" if measured else "helper_sha256"]
                     or entry["policy_digest"] != metadata["policy_digest"]
-                    or not verify_command_completion(state, entry)[0]):
+                    or measured and entry["resource_policy_digest"] != metadata["resource_policy_digest"]
+                    or not (resource_execution.read_resource_completion(state, entry)[0] if measured
+                            else verify_command_completion(state, entry)[0])):
                 return None
         return contract_digest("preparation-command-settlement-v1", {
             "owner": metadata, "invocations": intents, "journal": journal})
@@ -95,7 +135,7 @@ def recover_command_ownership(workspace: Path, metadata: dict) -> str | None:
 class CommandPreparationOwner:
     """Trusted runner capability: exact job, attempt, candidate and fixtures."""
     def __init__(self, admission: HostCommandAdmission, store, job_id: str, workspace: Path,
-                 package, descriptor, *, attempt_id: str, check, deadline: float):
+                 package, descriptor, *, attempt_id: str, check, deadline: float, resource_admission=None):
         if type(admission) is not HostCommandAdmission or not callable(check) or not _hex(attempt_id, 32):
             raise PreparationError("command_preparation_not_admitted")
         if package.manifest.profile != "host-command" or package.manifest.command.helper_sha256 != admission.helper_sha256:
@@ -106,15 +146,29 @@ class CommandPreparationOwner:
         self.check, self.deadline = check, deadline
         self.closed, self.sessions, self.live = False, {}, {}
         self.confirmed = False
+        if resource_admission is not None and type(resource_admission) is not CommandPreparationResourceAdmission:
+            raise PreparationError("command_preparation_not_admitted")
+        self.resource_admission = resource_admission
+        self.resource_reports = []
         self.intents = {"version": 1, "entries": []}
-        state = workspace / "command-probe-v3"
+        measured = resource_admission is not None
+        state = workspace / ("command-probe-v4" if measured else "command-probe-v3")
         state.mkdir(mode=0o700)  # Never reopen a previous attempt as fresh authority.
-        self.executor = CommandExecutorV2(admission.helper, admission.helper_sha256, state, admit=self.admit)
+        if measured:
+            self.resource_policy = replace(resource_admission.policy,
+                footprint_bytes=min(resource_admission.policy.footprint_bytes, descriptor.resources.memory_mb * 1024**2))
+            self.executor = resource_execution.CommandResourceExecutorV1(resource_admission.helper,
+                resource_admission.helper_sha256, state, expected_platform_policy=resource_admission.platform_policy, admit=self.admit)
+        else:
+            self.executor = CommandExecutorV2(admission.helper, admission.helper_sha256, state, admit=self.admit)
         metadata = {"schema_version": 1, "kind": "command-v3", "instance_id": secrets.token_hex(16),
             "attempt_id": attempt_id, "job_binding_digest": contract_digest("preparation-command-job-binding-v1", store.get(job_id)["binding"]),
             "candidate_digest": package.digest, "fixture_digest": contract_digest("preparation-command-fixtures-v1",
                 [item.model_dump(exclude_none=True) for item in descriptor.validation]),
             "helper_sha256": admission.helper_sha256, "policy_digest": self.executor.policy_digest, "receipt_format": 3}
+        if measured:
+            metadata.update(kind="command-v4", receipt_format=4, resource_helper_sha256=resource_admission.helper_sha256,
+                resource_policy_digest=self.resource_policy.digest)
         metadata["journal_identity"] = contract_digest("preparation-command-journal-v1", metadata)
         self.metadata = metadata
         try:
@@ -194,16 +248,32 @@ class CommandPreparationOwner:
         instance = secrets.token_hex(16)
         authority = _digest([self.metadata, session.instance_id, request_id, instance, tool.mcp_schema(), contract.model_dump()])
         declaration = contract.commands[name]
-        spec = CommandSpecV2(package.root, package.root / declaration.executable,
+        spec_type = resource_execution.CommandResourceSpecV1 if self.resource_admission is not None else CommandSpecV2
+        extra = {"resource_policy": self.resource_policy} if self.resource_admission is not None else {}
+        spec = spec_type(package.root, package.root / declaration.executable,
             (package.root / declaration.cwd).resolve(), package.digest, tuple(declaration.args),
             deadline_ms=contract.deadline_ms, input_limit=contract.input_bytes, output_limit=contract.output_bytes,
-            authority_digest=authority)
+            authority_digest=authority, **extra)
         self.live[authority] = (spec.digest, session, deadline)
         try:
             self.intents["entries"].append({"instance": instance, "spec": spec.digest, "authority": authority})
             write_private_json(self.executor.state / "invocations.json", self.intents)
             async with asyncio.timeout_at(deadline):
-                result = await self.executor.execute(spec, payload, instance_id=instance)
+                try:
+                    result = await self.executor.execute(spec, payload, instance_id=instance,
+                        **({"capture_output": True} if self.resource_admission is not None else {}))
+                except resource_execution.CommandExecutionError as failure:
+                    raise CommandExecutionError(failure.code) from None
+            if self.resource_admission is not None:
+                report = result.report
+                if (result.returncode != 0 or report.reason != "exited" or not report.sample_windows_valid
+                        or not report.samples or report.max_group_window_footprint_bytes <= 0
+                        or not 0 < report.max_scope_window_footprint_bytes <= self.resource_policy.footprint_bytes
+                        or report.max_group_members > self.resource_policy.group_members
+                        or report.observed_own_cpu_ns > self.resource_policy.cpu_ns
+                        or report.hard_aggregate_enforced or report.lifetime_coverage_complete):
+                    raise CommandExecutionError("command_resource_verification_failed")
+                self.resource_reports.append((instance, spec.digest, report))
             value = load_json(result.stdout)
             encode(value)
             async with asyncio.timeout_at(deadline):

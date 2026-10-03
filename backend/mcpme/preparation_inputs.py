@@ -177,7 +177,7 @@ class BoundPreparationInputsV1(InputContract):
                 files[file.path] = file
         if self.captured_collection is not None and self.captured_collection.kind != "captured_artifact_collection":
             raise PreparationError("captured_collection_required")
-        if self.captured_collection is None and self.source.kind not in {"local_folder", "document"}:
+        if self.captured_collection is None and self.source.kind not in {"local_folder", "document", "application_directory"}:
             raise PreparationError("captured_collection_required")
         if self.derived_collection is not None and self.derived_collection.kind != "derived_input_collection":
             raise PreparationError("derived_collection_required")

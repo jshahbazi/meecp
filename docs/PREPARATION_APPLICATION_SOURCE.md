@@ -22,7 +22,13 @@ artifacts continue through the separately bounded artifact-capture contract.
 
 The reader rechecks the complete private snapshot inventory, file permissions,
 classification, bytes and metadata identity. Inspection never invokes selected
-code. An unsupported directory can be captured without being executable: each
+code. Python inspection accepts version-2 directories containing binary assets
+or unrecognized regular files and keeps their complete original closure bound.
+Python and command candidates share the existing explicit selection flow. The
+common preparation and resolution identities include the version-2 reader.
+ONNX and text-generation supplements still require their separately verified
+source-family compatibility paths; this intake checkpoint does not close them.
+An unsupported directory can be captured without being executable: each
 trusted family still needs its own interface, runtime, provenance, resource and
 authority checks before preparation. Automatic command attachment and public
 execution remain gated separately.

@@ -36,7 +36,7 @@ FILES = ("preparation_resolution.py", "preparation_resolution_runner.py", "prepa
          "preparation_builder.py", "preparation_acquisition.py", "preparation_inspection.py", "preparation_components.py",
          "preparation_processes.py", "preparation_verifier.py", "preparation_runner.py", "processes.py",
          "ownership_receipts.py", "downloads.py", "preparation_contracts.py", "preparation_inputs.py",
-         "contracts.py", "imports.py", "recipes.py", "private.py",
+         "contracts.py", "imports.py", "preparation_application_source.py", "recipes.py", "private.py",
          "_native_tls/__init__.py", "_native_tls/_api.py", "_native_tls/_macos.py",
          "_native_tls/_openssl.py", "_native_tls/_ssl_constants.py", "_native_tls/_windows.py")
 SANDBOX = Path("/usr/bin/sandbox-exec")

@@ -178,7 +178,7 @@ class PreparationStore(PreparationAuthority):
         kind = draft["source"]["kind"]
         matching = [family for family in self.families.values() if
             (family.supports_source(draft) if hasattr(family, "supports_source") else family.source_kind == kind)]
-        legacy = inspect_source(draft) if kind in {"local_folder", "document"} or not matching else None
+        legacy = inspect_source(draft) if kind in {"local_folder", "document", "application_directory"} or not matching else None
         if not matching:
             return legacy
         inspections = [legacy] if legacy is not None else []

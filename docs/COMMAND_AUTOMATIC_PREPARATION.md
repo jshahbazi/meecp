@@ -4,6 +4,11 @@ The trusted `host-command-json-v1` family converts a captured application direct
 
 ## Supported source and questions
 
+The [default registration checkpoint](COMMAND_DEFAULT_REGISTRATION.md) makes
+these static questions available on a supported packaged host with an exact
+format-3 helper inventory. Recipe metadata and helper identity do not enable
+execution.
+
 The source is `application_directory` contract version 2. The host byte reader verifies the exact captured file closure, executable flags, text/binary kinds and source identity without following links. Legacy text-directory and document contracts retain their existing behavior.
 
 The initial family accepts a thin arm64 Mach-O executable with a macOS system loader and system-only dynamic libraries. Inspection parses bounded load commands without launching the source. External libraries, loader environment commands, rpaths and unknown loader commands are rejected. At most eight executable candidates and eight schema pairs are considered.

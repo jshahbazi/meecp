@@ -4,15 +4,19 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import platform
 import re
 import shutil
+import stat
 import subprocess
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON_VERSION = "3.12.13"
+MAX_RUNTIME_FILES = 16384
+MAX_RUNTIME_BYTES = 512 * 1024**2
 
 
 def project_version(version: str | None = None) -> str:
@@ -209,6 +213,53 @@ def refresh_command_inventory(destination: Path) -> None:
     path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n")
 
 
+def copy_private_runtime(runtime: Path, destination: Path) -> None:
+    """Copy bounded regular bytes, resolving only internal file links.
+
+    Directory links are unsupported, avoiding traversal cycles and implicit
+    closure expansion. The selected managed runtime contains only file links.
+    """
+    root = runtime.resolve(strict=True)
+    records, total, count = [], 0, 0
+    for path in root.rglob("*"):
+        count += 1
+        if count > MAX_RUNTIME_FILES:
+            raise ValueError("private_python_runtime_limit")
+        relative = path.relative_to(root)
+        if "__pycache__" in relative.parts or path.suffix == ".pyc":
+            continue
+        target = path.resolve(strict=True)
+        if not target.is_relative_to(root):
+            raise ValueError("private_python_runtime_escape")
+        mode = target.stat().st_mode
+        if stat.S_ISDIR(mode) and not path.is_symlink():
+            continue
+        if not stat.S_ISREG(mode):
+            raise ValueError("private_python_runtime_type")
+        size = target.stat().st_size
+        total += size
+        if total > MAX_RUNTIME_BYTES:
+            raise ValueError("private_python_runtime_limit")
+        records.append((relative, target, size, mode))
+    destination.mkdir()
+    for relative, source, size, mode in records:
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Source is the validated resolved path. O_NOFOLLOW also rejects a final
+        # link substituted after validation. Copied bytes must match its bound.
+        fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, "rb") as read, target.open("xb") as write:
+            remaining = size
+            while remaining:
+                chunk = read.read(min(1024**2, remaining))
+                if not chunk:
+                    raise ValueError("private_python_runtime_changed")
+                write.write(chunk); remaining -= len(chunk)
+            if read.read(1):
+                raise ValueError("private_python_runtime_changed")
+        target.chmod(stat.S_IMODE(mode))
+
+
 def build(destination: Path, version: str | None = None, *, textgen_engine: Path | None = None):
     version = project_version(version)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
@@ -217,8 +268,7 @@ def build(destination: Path, version: str | None = None, *, textgen_engine: Path
         raise SystemExit("Destination already exists; select a new output directory")
     destination.mkdir(parents=True)
     runtime = Path(run("uv", "python", "find", "--managed-python", PYTHON_VERSION)).resolve().parent.parent
-    shutil.copytree(runtime, destination / "python", symlinks=True,
-                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    copy_private_runtime(runtime, destination / "python")
     shutil.copytree(ROOT / "backend/mcpme", destination / "backend/mcpme",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copyfile(ROOT / "backend/mcpme_local_transport.py", destination / "backend/mcpme_local_transport.py")
@@ -251,13 +301,9 @@ def build(destination: Path, version: str | None = None, *, textgen_engine: Path
     shutil.copyfile(runtime / "lib/python3.12/LICENSE.txt", licenses / "python-LICENSE.txt")
     shutil.copyfile(ROOT / "THIRD_PARTY_NOTICES.md", licenses / "THIRD_PARTY_NOTICES.md")
     run("/usr/bin/codesign", "--force", "--sign", "-", str(destination / "bin/mcpme-reap"))
-    source_files = [*[path for path in sorted((destination / "backend").rglob("*")) if path.is_file()],
-                    *[path for path in sorted((destination / "assets/brand").rglob("*")) if path.is_file()],
-                    *[path for path in sorted((destination / "docs").rglob("*")) if path.is_file()], destination / "uv.lock",
-                    destination / "pyproject.toml", *[path for path in sorted((destination / "templates").rglob("*")) if path.is_file()],
-                    destination / "requirements.txt", destination / "README.md", destination / "bin/mcpme-reap",
-                    destination / "bin/mcpme-command-reap", destination / "command-execution.json"]
-    source_files.extend(path for path in sorted((destination / "preparation-toolchain").rglob("*")) if path.is_file())
+    # Freeze the whole payload, including Python, installed wheels, launchers and
+    # licenses. build.json is created only after this list, so it cannot hash itself.
+    source_files = [path for path in sorted(destination.rglob("*")) if path.is_file()]
     source_hashes = {str(path.relative_to(destination)): hashlib.sha256(path.read_bytes()).hexdigest()
                      for path in source_files}
     (destination / "build.json").write_text(json.dumps({"host_version": version, "artifact_sha256": source_hashes,

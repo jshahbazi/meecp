@@ -264,8 +264,14 @@ class HostCommands:
 
 class CommandSession:
     """A protocol handle, deliberately not a legacy OwnedProcess/PID receipt."""
-    def __init__(self, service, slot, package):
+    def __init__(self, service, slot, package, *, publication_check=None):
+        # Preparation ownership is a separate trusted constructor capability.
+        # Installed sessions must always retain the generation/package guard.
+        if ((slot is None and not callable(publication_check))
+                or (slot is not None and publication_check is not None)):
+            raise CommandExecutionError("command_admission_required")
         self.service, self.slot, self.package = service, slot, package
+        self.publication_check = publication_check
         self.instance_id = secrets.token_hex(16)
         self.closed = False
         self.initialized = False
@@ -300,8 +306,10 @@ class CommandSession:
         async with self.write_lock, asyncio.timeout(2):
             view = memoryview(body)
             while view:
-                if (self.closed or self.service.host.closing or not self.service.current(self.slot)
-                        or self.service.host.package(self.slot).digest != self.package.digest
+                current = (self.publication_check() is True if self.slot is None else
+                    not self.service.host.closing and self.service.current(self.slot)
+                    and self.service.host.package(self.slot).digest == self.package.digest)
+                if (self.closed or not current
                         or deadline is not None and time.monotonic() >= deadline):
                     raise CommandExecutionError("command_authority_changed")
                 try:

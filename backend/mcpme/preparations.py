@@ -396,7 +396,7 @@ class PreparationStore(PreparationAuthority):
                 settled = False if state in {"snapshotting", "preparing", "verifying"} else job["ownership_settled"]
             if state in {"canceled", "failed"} and not settled:
                 raise PreparationError("preparation_ownership_unsettled")
-            if settled and job.get("managed") and self.ownership_receipts(job_id):
+            if settled and job.get("managed") and self.pending_ownership(job_id):
                 raise PreparationError("preparation_ownership_unsettled")
             job.update(state=state, error_code=error_code, ownership_settled=settled)
             if state == "preparing" and job.get("managed") and job["execution_started_at"] is None:
@@ -414,7 +414,7 @@ class PreparationStore(PreparationAuthority):
         """
         with self.imports._transaction():
             job = self._get(job_id)
-            if job.get("managed") and self.ownership_receipts(job_id):
+            if job.get("managed") and self.pending_ownership(job_id):
                 raise PreparationError("preparation_ownership_unsettled")
             job["ownership_settled"] = True
             if job["state"] == "cancel_requested":
@@ -427,6 +427,9 @@ class PreparationStore(PreparationAuthority):
     def cancel(self, job_id):
         with self.imports._transaction():
             job = self._get(job_id)
+            if self.pending_ownership(job_id):
+                job.update(ownership_settled=False, reservation_retained=True)
+                self._save(job)
             if job["state"] in TERMINAL or job["state"] == "cancel_requested":
                 return job
             job["state"] = "canceled" if job["ownership_settled"] else "cancel_requested"
@@ -467,8 +470,8 @@ class PreparationStore(PreparationAuthority):
         with self.imports._transaction():
             job = self._get(job_id)
             self._current_inputs(job)
-            ownership_ok = job["ownership_settled"] or (job.get("managed")
-                and job.get("verification_publication_pending") and not self.ownership_receipts(job_id))
+            ownership_ok = not self.pending_ownership(job_id) and (job["ownership_settled"] or (job.get("managed")
+                and job.get("verification_publication_pending")))
             if (job["state"] != "verifying" or not ownership_ok
                     or receipt.binding.model_dump() != job["binding"]
                     or (receipt.schema_version == 1 and (job.get("bound_inputs") is not None
@@ -504,7 +507,7 @@ class PreparationStore(PreparationAuthority):
             job = self._get(job_id)
             self._current_inputs(job)
             if (not job.get("managed") or job["state"] != "verifying" or not job["ownership_settled"]
-                    or self.ownership_receipts(job_id)):
+                    or self.pending_ownership(job_id)):
                 raise PreparationError("preparation_ownership_unsettled")
             job.update(ownership_settled=False, verification_publication_pending=True)
             self._save(job)
@@ -517,6 +520,8 @@ class PreparationStore(PreparationAuthority):
             self._current_inputs(job)
             if not job.get("managed") or job["state"] != "ready_to_attach" or not job.get("verification"):
                 raise PreparationError("preparation_not_verified")
+            if self.pending_ownership(job_id):
+                raise PreparationError("preparation_ownership_unsettled")
             job.update(state="attaching", ownership_settled=False)
             if job.get("progress") is not None:
                 job["progress"]["stage"] = "attaching"
@@ -529,7 +534,7 @@ class PreparationStore(PreparationAuthority):
             job = self._get(job_id)
             if job["state"] not in ({"attaching"} if job.get("managed") else {"ready_to_attach"}):
                 raise PreparationError("preparation_not_verified")
-            if job.get("managed") and self.ownership_receipts(job_id) or not job.get("managed") and not job["ownership_settled"]:
+            if job.get("managed") and self.pending_ownership(job_id) or not job.get("managed") and not job["ownership_settled"]:
                 raise PreparationError("preparation_ownership_unsettled")
             if job.get("managed") and (not job.get("verification")
                     or job["verification"]["package_digest"] != job["expected_package_digest"]):
@@ -551,6 +556,9 @@ class PreparationStore(PreparationAuthority):
         """Explicit coordinator restart recovery. Never invoked by readers."""
         with self.imports._transaction():
             for job in self.list():
+                if self.pending_ownership(job["job_id"]):
+                    job.update(ownership_settled=False, reservation_retained=True)
+                    self._save(job)
                 if job["state"] not in TERMINAL:
                     # There is no process adoption or PID lookup. A live owner
                     # must reconcile/reap before reservations can be released.

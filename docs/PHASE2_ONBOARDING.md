@@ -6,6 +6,22 @@ This first Phase 2 milestone implements source intake and resumable preparation.
 
 Add App accepts a prepared package, a local source folder, or a UTF-8 Markdown/text document through a file chooser or drag-and-drop. Drafts appear in Manage Apps and survive window closure and host restart. An unfinished source draft asks what tools the assistant should receive. Documents require an explicit `instructions` or `reference` role. Reference information remains blocked on a supported document-service template.
 
+## First app without package assembly
+
+Open **Add App** and select **Try JSON Utilities**. The bundled starter is compiled during the native app build, signed, locked, and statically validated before the outer app signature seals it. Selecting it creates a normal prepared-package draft; **Review Package** and **Add App** retain the same snapshot, authorization, and supervised candidate checks as other installations. Select **Start after install** to add and start it. No user compiler, model download, package archive URL, or development checkout is required.
+
+**I already have a package download link** reveals the manual publisher form. **Enter Package Link…** requires the publisher's direct HTTPS ZIP URL, byte count, and SHA-256; it does not discover or generate apps. Existing download jobs remain visible. Supported automatic directory/service preparation is the next milestone and is not advertised as runnable by this change.
+
+Verify an actual bundled starter through relocated private host storage and real MCP clients:
+
+```sh
+uv run --locked python scripts/verify_mcpme.py --host /absolute/path/to/mcpme.app/Contents/Resources/host --package /absolute/path/to/mcpme.app/Contents/Resources/starter-packages/json-utilities
+```
+
+The app build receipt records the starter package identity, digest, and lock hash. It binds the package after nested executable signing; the final app signature then seals that exact package.
+
+The 2026-10-03 usability check completed **Try JSON Utilities → Review Package → Add & Start App → Open Installed App** in a fresh private native installation. The UI reported JSON Utilities ready with `validate_json`; the relocated bundled-host verifier passed all 16 checks, including real HTTP/stdio calls, independent Stop, restart and cleanup. The regression run passed 1,514 Python tests and 18 Swift tests, with one filesystem and three opt-in native installer lifecycle skips. The native contract and management UI self-tests passed. An independent adversarial review led to fixes for host restart state, strict JSON syntax, incomplete draft navigation, and bundled documentation; the native checks also covered saved partial drafts, explicit discard of invalid edits, and Retry Connection followed by a new starter draft. See [the review and fix record](reviews/USABLE_ONBOARDING_ADVERSARIAL.md). This check establishes the included-app flow; automatic directory preparation and actual remote-provider integration remain separate acceptance work.
+
 Source intake reads metadata and selected content without importing modules or running source/build code. It snapshots an explicit file list and SHA-256 identities in owner-only staging. Folder discovery selects supported source files and excludes hidden paths, credentials, environments, caches, and generated directories. Review the selected file list in the exported specification; use repeated `--file` arguments to narrow CLI intake. Recognized credential content is rejected; authors must still select nonsecret source.
 
 The first source snapshot limits are 2,048 files, 16 MiB per file, 64 MiB total, and 10,000 scanned entries. Draft metadata is capped at 512 KiB. List discovery returns compact summaries; inspect/export returns the full draft, and the native editor fetches it before editing. Prepared-package inventories remain in the verified package lock rather than duplicating thousands of runtime files in a draft. Raw weight artifacts and binary document parsers are outside this intake milestone. Prepared model packages remain supported through the existing package path.

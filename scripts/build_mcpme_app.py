@@ -11,12 +11,57 @@ import shutil
 import subprocess
 
 from build_mcpme_host import ROOT, BuildCommandError, build as build_host, project_version, run
+from prepare_json_package import prepare as prepare_json_package
 
 MACHO_MAGIC = {b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xce",
                b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca", b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca"}
 DEVELOPER_ID_REQUIREMENT = (
     "anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
 )
+STARTER_PACKAGE_PATH = Path("starter-packages/json-utilities")
+
+
+def prepare_starter_package(resources: Path) -> Path:
+    """Compile the starter during the app build, never during user installation."""
+    destination = resources / STARTER_PACKAGE_PATH
+    destination.parent.mkdir()
+    return prepare_json_package(destination)
+
+
+def finalize_starter_package(package: Path, host: Path, *, release: bool) -> dict:
+    """Bind package integrity to the signed files before the app seals Resources."""
+    lock_path = package / "mcpme.lock.json"
+    lock = json.loads(lock_path.read_bytes())
+    # Re-signing modifies Mach-O bytes. Keep the original source/license hashes
+    # intact so final validation still catches changes outside that operation.
+    for artifact in lock["artifacts"]:
+        path = package / artifact["path"]
+        with path.open("rb") as source:
+            magic = source.read(4)
+        if magic in MACHO_MAGIC:
+            artifact["sha256"] = sha256(path)
+            artifact["size"] = path.stat().st_size
+            artifact["provenance"] += (
+                " Signed during the mcpme app build with "
+                + ("Developer ID." if release else "an ad hoc signature.")
+            )
+    lock["build"]["recipe"] += "; app build signs bundled Mach-O files with " + (
+        "Developer ID" if release else "ad hoc codesign"
+    )
+    lock["build"]["builder"] += " + mcpme build_mcpme_app.py v1"
+    lock_path.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n")
+    # Use the packaged validator and dependency closure, with no package code
+    # execution or running host required, before publishing the app.
+    validation = json.loads(run(str(host / "bin/mcpme"), "validate", "--package", str(package), "--json"))
+    manifest = validation.get("package", {})
+    package_digest = validation.get("package_digest", "")
+    if (validation.get("valid") is not True or manifest.get("package_id") != "local.json-utilities"
+            or manifest.get("version") != "1.0.0"
+            or not isinstance(package_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", package_digest)):
+        raise SystemExit("bundled_starter_package_invalid")
+    return {"path": STARTER_PACKAGE_PATH.as_posix(), "package_id": manifest["package_id"],
+            "version": manifest["version"], "package_digest": package_digest,
+            "lock_sha256": sha256(lock_path)}
 
 
 def sha256(path: Path) -> str:
@@ -123,6 +168,7 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
     shutil.copytree(ROOT / "assets/brand", resources / "assets/brand")
     host = (build_host(resources / "host", version=version) if version is not None
             else build_host(resources / "host"))
+    starter = prepare_starter_package(resources)
     shutil.copy2(native, host / "bin/mcpme-handoff")
     (host / "native-app.json").write_text(json.dumps({"schema_version": 1, "bundle_identifier": "com.jshahbazi.mcpme",
                                                      "native_executable": "../../MacOS/mcpme"}, sort_keys=True) + "\n")
@@ -141,14 +187,13 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
             "NSHighResolutionCapable": True, "NSPrincipalClass": "NSApplication", "CFBundleIconFile": "AppIcon"}
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
     shutil.copyfile(ROOT / "README.md", resources / "README.md")
-    bundled_docs = resources / "docs"
-    bundled_docs.mkdir()
-    for document in sorted((ROOT / "docs").glob("*.md")):
-        shutil.copyfile(document, bundled_docs / document.name)
+    shutil.copytree(ROOT / "docs", resources / "docs",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     for name in ("model-manifest.json", "THIRD_PARTY_NOTICES.md"):
         shutil.copyfile(ROOT / name, resources / name)
     native_input_hash = sha256(native)
     signed_files = sign_runtime(staged, identity, release, keychain)
+    starter_receipt = finalize_starter_package(starter, host, release=release)
     # Signing changes the reaper hash recorded by the host builder. Refresh that
     # receipt before sealing Resources; never leave development labels on a release.
     host_receipt_path = host / "build.json"
@@ -169,6 +214,7 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
                "native_input_sha256": native_input_hash, "swift_source_sha256": sha256(ROOT / "Sources/McpmeMenuBar/main.swift"),
                "branding_source_sha256": sha256(ROOT / "Sources/McpmeMenuBar/Brand.swift"),
                "app_icon_sha256": sha256(resources / "AppIcon.icns"),
+               "starter_packages": [starter_receipt],
                "host_receipt_sha256": sha256(host / "build.json"), "legacy_handoff": legacy_recovery_app is not None}
     # Add the receipt before the final signature seals Resources.
     (resources / "app-build.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")

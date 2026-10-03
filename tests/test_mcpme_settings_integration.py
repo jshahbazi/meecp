@@ -233,6 +233,49 @@ async def test_import_revision_binds_configuration_and_only_opaque_references(tm
         await host.close()
 
 
+async def test_partial_attached_draft_can_resume_but_unavailable_secret_cannot_plan(tmp_path):
+    state = tmp_path.resolve() / "state"
+    host = Supervisor(state, tmp_path / "unused")
+    material = "private_synthetic_partial_import_value"
+    try:
+        package = configured_package(tmp_path)
+        secret = host.secrets.create("Service", material)
+        draft = host.imports.create(package, name="Configured")
+        partial = host.imports.revise(draft["draft_id"], 1, carry_attachment=True, name="Continue later",
+            requirements={"configuration": {"enabled": False}, "secret_references": {"service_key": secret["secret_id"]}})
+        assert partial["attachment"] == draft["attachment"] and partial["source"] == draft["source"]
+        with pytest.raises(ImportDraftError, match="^import_not_ready$"):
+            await host.plan_install_async({"import_id": draft["draft_id"], "revision": 2})
+        assert host.registry.list_operations() == []
+        assert material.encode() not in host.imports.path.read_bytes()
+    finally:
+        await host.close()
+
+    host = Supervisor(state, tmp_path / "unused")
+    try:
+        assert host.imports.inspect(draft["draft_id"]) == partial
+        host.secrets.revoke(secret["secret_id"])
+        configured = host.imports.revise(draft["draft_id"], 2, carry_attachment=True,
+            requirements={"configuration": {"enabled": False, "greeting": "Hello"},
+                          "secret_references": {"service_key": secret["secret_id"]}})
+        assert configured["state"] == "ready_to_plan"  # Opaque references are resolved by the owner at plan/apply.
+        with pytest.raises(SettingsError, match="^secret_reference_unavailable$"):
+            await host.plan_install_async({"import_id": draft["draft_id"], "revision": 3})
+        assert host.registry.list_operations() == []
+        replacement = host.secrets.create("Replacement", "private_synthetic_replacement_value")
+        complete = host.imports.revise(draft["draft_id"], 3, carry_attachment=True,
+            requirements={**configured["requirements"], "secret_references": {"service_key": replacement["secret_id"]}})
+        plan = await host.plan_install_async({"import_id": draft["draft_id"], "revision": complete["revision"]})
+        assert plan["settings"] == {"schema_version": 1, "configuration": {"enabled": False, "greeting": "Hello"},
+                                    "secret_references": {"service_key": replacement["secret_id"]}}
+        host.secrets.revoke(replacement["secret_id"])
+        with pytest.raises(SettingsError, match="^secret_reference_unavailable$"):
+            await host.apply_install(plan["plan_id"])
+        assert host.registry.list_operations() == []
+    finally:
+        await host.close()
+
+
 async def test_legacy_empty_secret_reference_list_can_still_plan(tmp_path):
     host = Supervisor(tmp_path.resolve() / "state", tmp_path / "unused")
     try:

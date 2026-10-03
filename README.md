@@ -27,7 +27,7 @@ Open the disk image, open `mcpme.app` on the image, and choose **Install and Res
 
 The installer waits up to 75 seconds for the current app to quit. A refusal or timeout stops replacement. A confirmed launch failure restores the previous bundle; an unconfirmed launch leaves a recovery copy. Installing manually by dragging the app from the DMG to Applications requires quitting mcpme before copying, then opening the installed app. See [macOS distribution](docs/MACOS_DISTRIBUTION.md) for installation and recovery details.
 
-The host installer does not include a model or tool package. Add a prepared package through **Add App…**, or build the JSON Utilities example below. Application updates currently use this installation flow; an [automatic updater is planned](docs/AUTO_UPDATE_PLAN.md).
+The installer includes **JSON Utilities**, a small local tool you can try immediately. Open **Add App…**, select **Try JSON Utilities**, review its tool and access, then select **Add App** or **Add & Start App**. No package download, compiler, or model is needed. Other apps can be added from a prepared package or through the source-preparation workflow below. Application updates currently use this installation flow; an [automatic updater is planned](docs/AUTO_UPDATE_PLAN.md).
 
 ## Build from source and try JSON Utilities
 
@@ -71,11 +71,13 @@ Describe what you want your assistant to do, then use **Copy Agent Instructions*
 
 The agent does the work of exposing your code through MCP. mcpme snapshots and inspects the source without running it, binds the returned package to the saved source revision, then checks the package before installation. Installation runs candidate readiness and protocol checks, including when **Start after install** is off. See [source onboarding](docs/PHASE2_ONBOARDING.md) for the implemented workflow and the [package-authoring guide](docs/PACKAGE_AUTHORING.md) for manifests, locked artifacts, and templates.
 
-The owner CLI also supports [pinned prepared-package downloads](docs/PINNED_DOWNLOADS.md): fetch a ZIP by its exact size and SHA-256, then review and install the verified package.
+If a publisher gives you a prepared package link, open **I already have a package download link** in Add App and select **Enter Package Link…**. Supply the publisher's URL, size, and checksum, then review the verified package. This is a manual download option; there is no public package browser. The owner CLI supports the same [pinned downloads](docs/PINNED_DOWNLOADS.md).
 
 Packages can declare [typed configuration and secret references](docs/CONFIGURATION_SECRETS.md). The owner selects nonsecret settings and private credential references in the installation plan; package processes receive the selected values through a private descriptor.
 
 Add App supports pinned package downloads, typed configuration and secret references, and raw pinned JevK5 weights with a selected verified engine. Reviewed [upgrades and recovery](docs/UPGRADES_RECOVERY.md) preserve app identity and data. Reference-document services and integrated provider preparation remain later work; see the [completion audit](docs/PHASE2_COMPLETION.md).
+
+The next onboarding milestone is [automatic app preparation](docs/AUTOMATIC_PREPARATION.md): select an app directory or configure a service connection, answer missing questions, and let mcpme assemble and test the integration. Packages are generated installation artifacts; users should not need to write manifests or assemble dependency trees. The merged preparation foundation manages recipes and job identities, but automatic build execution is not yet available. Supported build recipes and agent-assisted adapter creation will use the same review/install path.
 
 ## Let an assistant manage apps
 

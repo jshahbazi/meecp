@@ -12,6 +12,8 @@ Use a deterministic **drop, review, add** workflow with optional agent preparati
 
 The first release uses the user's external coding agent for custom preparation. An integrated agent with user-supplied LLM API credentials is a later extension of the same workflow. No LLM connection is required to begin setup or install a compatible prepared package.
 
+The next onboarding milestone, [Phase 3 automatic preparation](MCPME_DESIGN.md#phase-3-automatic-app-preparation), removes that manual handoff for supported inputs. Users select an app directory or configure a service connection; mcpme inspects it, asks for missing information, assembles dependencies and adapters, tests the result, and presents the installation review. Packages remain an internal installation boundary. User-authored manifests and manually collected runtime files are not the target experience. Deterministic recipes handle known combinations; agent assistance handles unfamiliar integration work through the same modular contracts. This execution path is not available in the current foundation.
+
 The product should minimize what the user must explain: inspect the supplied source, identify missing information, and ask the next useful question. Inspection can identify a likely source type; it cannot establish which tools the user wants or turn an arbitrary program into an MCP service automatically.
 
 ## Product vocabulary
@@ -92,6 +94,8 @@ Keep source documents as explicitly selected source references or artifacts unde
 ### 3. Prepare only when needed
 
 A compatible prepared package skips agent preparation and proceeds through static validation, configuration, and planning.
+
+**Try JSON Utilities** provides an included first app through that path, with no model download or user build step. Users who already have a publisher's package ZIP link can reveal **I already have a package download link** and supply its URL, size, and checksum. This advanced option is not a public package browser.
 
 For other inputs, save a private import draft and offer:
 
@@ -197,8 +201,9 @@ The existing JevK5 decision runtime does not supply a general-purpose coding age
 1. Implement the persistent native setup window, resumable drafts, prepared-package review, and installation integration.
 2. Add source-folder intake and external-agent preparation using the versioned templates and package contract.
 3. Accept Markdown/text setup briefs with explicit intent and missing-requirement handling.
-4. Add a supported document-service template before advertising reference-document onboarding; extend supported parsers deliberately.
-5. Add integrated provider preparation once the common draft, validation, and recovery path is established.
+4. Complete automatic directory/service preparation with modular recipes, private build toolchains, independent verification, and native progress. Keep current external-agent preparation available during this transition.
+5. Add agent-assisted adapter creation through the same preparation contracts and explicit execution/transfer authority.
+6. Add a supported document-service template before advertising reference-document onboarding; extend supported parsers deliberately.
 
 Expose only host-supported profiles and capabilities. The broader architecture's model and HTTP-service paths remain contingent on their implementation and validation. Do not make onboarding promises from proposed contracts alone.
 

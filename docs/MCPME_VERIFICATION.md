@@ -52,4 +52,4 @@ Actual VS Code Insiders 1.141.0-insider verification used a new empty window wit
 
 ## Claim boundaries
 
-The execution profile uses trusted local packages with the current user's permissions. Access declarations are not an OS sandbox. The initial GPU policy admits one resident managed GPU package; multi-engine contention and fairness belong to Phase 3. Reaper-loss tests establish blocked replacement and retained reservations, not guaranteed target cleanup after losing its reaper. Decision transport parity does not establish new model-quality or calibration results.
+The execution profile uses trusted local packages with the current user's permissions. Access declarations are not an OS sandbox. The initial GPU policy admits one resident managed GPU package; multi-engine contention and fairness belong to Phase 4 in the updated roadmap. Reaper-loss tests establish blocked replacement and retained reservations, not guaranteed target cleanup after losing its reaper. Decision transport parity does not establish new model-quality or calibration results.

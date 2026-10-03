@@ -9,6 +9,7 @@ import stat
 import struct
 import threading
 from types import SimpleNamespace
+import uuid
 
 import pytest
 
@@ -224,10 +225,79 @@ def test_carry_attachment_settings_revision_preserves_artifact_and_invalidates_r
         with pytest.raises(ImportError, match="invalid_import_update"):
             store.revise(draft["draft_id"], 2, carry_attachment=True, intent="changed")
         with pytest.raises(ImportError, match="invalid_import_update"):
+            store.revise(draft["draft_id"], 2, carry_attachment=True, document_role="instructions")
+        with pytest.raises(ImportError, match="invalid_import_update"):
             store.revise(draft["draft_id"], 2, carry_attachment=True, requirements={"tools": ["other"]})
         (path / "LICENSE").write_text("changed")
         with pytest.raises((ImportError, ValueError)):
             store.revise(draft["draft_id"], 2, carry_attachment=True, start=False)
+
+
+def test_carry_attachment_cannot_bypass_preparation_for_unattached_source(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "tool.py").write_text("pass\n")
+    with ImportStore(tmp_path / "state") as store:
+        draft = store.create(source, name="Unprepared", intent="Expose validator")
+        with pytest.raises(ImportError, match="^invalid_import_update$"):
+            store.revise(draft["draft_id"], 1, carry_attachment=True, name="Renamed",
+                         requirements={"configuration": {}, "secret_references": {}})
+        assert store.inspect(draft["draft_id"]) == draft
+
+
+def test_carry_attachment_saves_partial_settings_and_retains_installation_blockers(tmp_path):
+    package = make_package(tmp_path / "package")
+    edit_manifest(package, configuration={"fields": {
+        "greeting": {"type": "string", "required": True, "min_length": 1},
+        "count": {"type": "integer", "required": True, "minimum": 0},
+        "enabled": {"type": "boolean", "default": True}}}, access={"secrets": ["service_key", "other_key"]})
+    reference = str(uuid.uuid4())
+    state = tmp_path / "state"
+    with ImportStore(state) as store:
+        draft = store.create(package, name="Configured")
+        partial = store.revise(draft["draft_id"], 1, carry_attachment=True, name="Saved partial", start=True,
+            requirements={"configuration": {"count": 2, "enabled": False}, "secret_references": {"service_key": reference}})
+        assert partial["attachment"] == draft["attachment"] and partial["source"] == draft["source"]
+        assert partial["revision"] == 2 and partial["name"] == "Saved partial" and partial["start"] is True
+        assert partial["state"] == "package_received"
+        assert {item["code"] for item in partial["blockers"]} == {"configuration_required"}
+        with pytest.raises(ImportError, match="^import_not_ready$"):
+            store.validate_binding(draft["draft_id"], 2, draft["attachment"]["digest"])
+        with pytest.raises(ImportError, match="^import_not_ready$"):
+            store.submit(draft["draft_id"], 2, draft["attachment"]["digest"], str(uuid.uuid4()))
+    with ImportStore(state) as store:
+        assert store.inspect(draft["draft_id"]) == partial
+        configured = store.revise(draft["draft_id"], 2, carry_attachment=True,
+            requirements={"configuration": {"count": 2, "enabled": False, "greeting": "Hello"},
+                          "secret_references": {"service_key": reference}})
+        assert configured["state"] == "package_received"
+        assert {item["code"] for item in configured["blockers"]} == {"secret_reference_unavailable"}
+        with pytest.raises(ImportError, match="^import_not_ready$"):
+            store.validate_binding(draft["draft_id"], 3, draft["attachment"]["digest"])
+        complete = store.revise(draft["draft_id"], 3, carry_attachment=True,
+            requirements={**configured["requirements"], "secret_references": {"service_key": reference, "other_key": str(uuid.uuid4())}})
+        assert complete["revision"] == 4 and complete["attachment"] == draft["attachment"]
+        assert complete["source"] == draft["source"] and complete["state"] == "ready_to_plan"
+        assert store.validate_binding(draft["draft_id"], 4, draft["attachment"]["digest"]) == complete
+        with pytest.raises(ImportError, match="^stale_import_revision$"):
+            store.validate_binding(draft["draft_id"], 3, draft["attachment"]["digest"])
+
+
+@pytest.mark.parametrize("requirements", [
+    {"configuration": {"count": "2"}, "secret_references": {}},
+    {"configuration": {"count": -1}, "secret_references": {}},
+    {"configuration": {"unknown": True}, "secret_references": {}},
+    {"configuration": {}, "secret_references": {"unknown": "00000000-0000-4000-8000-000000000001"}},
+])
+def test_carry_attachment_rejects_invalid_supplied_partial_choices(tmp_path, requirements):
+    package = make_package(tmp_path / "package")
+    edit_manifest(package, configuration={"fields": {"count": {"type": "integer", "required": True, "minimum": 0}}},
+                  access={"secrets": ["service_key"]})
+    with ImportStore(tmp_path / "state") as store:
+        draft = store.create(package, name="Configured")
+        with pytest.raises(ImportError, match="^invalid_import_requirements$"):
+            store.revise(draft["draft_id"], 1, carry_attachment=True, name="Invalid partial", requirements=requirements)
+        assert store.inspect(draft["draft_id"]) == draft
 
 
 def generator():

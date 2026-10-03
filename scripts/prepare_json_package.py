@@ -9,6 +9,8 @@ import shutil
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
+TOOL_DESCRIPTION = ("Validate JSON syntax and report its top-level type. Documents are limited to 256 KiB of UTF-8 "
+                    "and 512 nested containers; exceeding either limit returns json_limit_exceeded.")
 
 
 def digest(path: Path) -> str:
@@ -39,7 +41,7 @@ def prepare(destination: Path, *, idle_seconds: int = 300) -> Path:
         "protocol": {"version": "2025-11-25", "capabilities": ["tools"]},
         "lifecycle": {"max_sessions": 8, "idle_timeout_seconds": idle_seconds, "operation_timeout_seconds": 30,
                       "startup_timeout_seconds": 10, "stop_grace_seconds": 2},
-        "tools": [{"name": "validate_json", "description": "Validate a JSON document and report its top-level type.",
+        "tools": [{"name": "validate_json", "description": TOOL_DESCRIPTION,
                    "input_schema": schema, "output_schema": output}],
         "access": {"filesystem": [], "network": [], "secrets": [], "writes": False},
         "resources": {"memory_mb": 32, "cpu_only": True}, "licenses": ["LICENSE"],

@@ -4,6 +4,8 @@ Measured on October 3, 2026, on this MacBook Pro. Bonsai generated **301 tokens/
 
 These results establish local execution speed. Onboarding accuracy, tool use, and installation correctness were not evaluated.
 
+The subsequent [onboarding prompt evaluation](BONSAI_ONBOARDING_EVALUATION.md) measures bounded source discovery, preparation decisions, and adapter generation on the same model and machine.
+
 ## Machine and runtime
 
 | Item | Value |

@@ -55,6 +55,7 @@ class CheckedDescriptorSelection:
     form_digest: str
     resolution_digest: str | None
     resolution_proof: object
+    snapshot_metadata: object
 
 
 @dataclass(frozen=True)
@@ -279,6 +280,11 @@ class PreparationStore(PreparationAuthority):
         for digest in (candidate_id, form_digest):
             if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
                 raise PreparationError("invalid_preparation_form")
+        from .preparation_selection_snapshot import selection_snapshot_metadata
+        with self.imports._lock:
+            baseline = self.imports._get(import_id, revision)
+            self.imports._mutable(baseline)
+        snapshot_metadata = selection_snapshot_metadata(baseline)
         value, observed, _ = self._bound_descriptor(import_id, revision, descriptor, enforce_selection=False)
         proof = None
         if value.schema_version == 2:
@@ -294,8 +300,10 @@ class PreparationStore(PreparationAuthority):
         elif resolution_digest is not None:
             raise PreparationError("resolution_result_mismatch")
         from .preparation_contracts import canonical_bytes
+        if baseline["source"] != observed["source"] or selection_snapshot_metadata(observed) != snapshot_metadata:
+            raise PreparationError("source_identity_mismatch")
         checked = CheckedDescriptorSelection(self._selection_owner, canonical_bytes(value.model_dump(mode="json", exclude_none=True)),
-            canonical_bytes(observed), candidate_id, form_digest, resolution_digest, proof)
+            canonical_bytes(observed), candidate_id, form_digest, resolution_digest, proof, snapshot_metadata)
         self._checked_selections[id(checked)] = checked
         return checked
 
@@ -314,6 +322,9 @@ class PreparationStore(PreparationAuthority):
         previous_attachment = None
         with self.imports._transaction():
             current = self._recheck_descriptor(value, observed, enforce_selection=False)
+            from .preparation_selection_snapshot import selection_snapshot_metadata
+            if selection_snapshot_metadata(current) != checked.snapshot_metadata:
+                raise PreparationError("source_identity_mismatch")
             if check_current() is not True:
                 raise PreparationError("descriptor_selection_authority_denied")
             previous = self.selected_descriptor(import_id)

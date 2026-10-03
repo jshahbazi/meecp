@@ -287,9 +287,11 @@ class PreparationStore(PreparationAuthority):
         return current
 
     @staticmethod
-    def _candidate_contract(value, source_revision):
+    def _candidate_contract(value, source_revision, *, profile="mcp-stdio"):
+        if profile not in {"mcp-stdio", "mcp-http", "model-service"}:
+            raise PreparationError("unsupported_execution_profile")
         return {"package_id": value.package.id, "version": value.package.version, "name": value.package.name,
-                "source_revision": source_revision, "profile": "mcp-stdio",
+                "source_revision": source_revision, "profile": profile,
                 "tools": [tool.model_dump(exclude_none=True) for tool in descriptor_tools(value)],
                 "access": value.access.model_dump(), "resources": value.resources.model_dump(),
                 "lifecycle": value.lifecycle.model_dump()}
@@ -319,7 +321,10 @@ class PreparationStore(PreparationAuthority):
             inputs.update(plan_id=authorization["plan_id"], runner_digest=authorization["runner_digest"],
                           verifier_digest=authorization["verifier_digest"], runtime_digest=authorization["runtime_digest"])
         identity = contract_digest("preparation-start-v1", inputs)
-        candidate_digest = contract_digest("preparation-candidate-v1", self._candidate_contract(value, observed["source"]["revision"]))
+        profile = (getattr(self.family_for(value), "target_profile", "mcp-stdio")
+                   if value.schema_version == 2 else "mcp-stdio")
+        candidate_digest = contract_digest("preparation-candidate-v1", self._candidate_contract(
+            value, observed["source"]["revision"], profile=profile))
         fixture_digest = contract_digest("preparation-fixtures-v1", [item.model_dump() for item in value.validation])
         artifact_digest = contract_digest("artifact-collection-v1", [item.model_dump() for item in value.artifacts])
         if bound_inputs is not None and bound_inputs.captured_collection is not None:

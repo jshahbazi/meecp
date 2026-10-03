@@ -160,7 +160,9 @@ async def verify_textgen_package(package_root: Path, descriptor, reaper: Path, w
                                 "profile": model["profile"], "context_tokens": 512, "max_output_tokens": 64,
                                 "queue_depth": 0, "completed": len(descriptor.validation) + 4,
                                 "generation": 1, "engine_instance_id": engine.instance_id})
-                            return len(listing.tools), len(descriptor.validation) + 8
+                            # Fixed protocol/admission checks must all pass,
+                            # while the common receipt counts declared fixtures.
+                            return len(listing.tools), len(descriptor.validation)
             tools, fixtures = await _watch_ownership(engine, _watch_ownership(adapter, probe()))
         for process in reversed(processes):
             await _settle(process)

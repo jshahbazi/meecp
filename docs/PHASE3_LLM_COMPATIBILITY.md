@@ -252,3 +252,33 @@ not establish an installed capability.
 
 The complete source suite passed 2,198 tests with 12 skips after this change,
 including the actual pinned secret scanner. No test failures remained.
+
+## Composed receipt publication
+
+Fresh clean host `819ec71` verified all 1,771 artifact hashes. The captured
+managed run completed five build commands and the real inference probe, then
+failed at receipt publication with `preparation_receipt_mismatch`. Its job
+settled ownership and released its reservation. Installation was not reached.
+
+Two common interface mismatches were identified. The candidate digest assumed
+the stdio profile for every family, while this package uses the trusted family's
+model-service profile. The LLM verifier also included eight fixed additional
+calls in `fixtures_checked`, while common authority requires exactly the declared
+descriptor fixture count. Reservation now selects the profile from the complete
+trusted family identity. The verifier reports the declared fixture count, with
+all concurrent, invalid-input and status assertions still required before return.
+
+The generated-form regression now continues through selection, reviewed planning
+and authorized reservation for both captured and folder-plus-capture sources.
+It checks the candidate digest against the bound model-service contract and the
+exact expected fixture count. The focused authority/runner/family/verifier packet
+passed 71 tests with five opt-in skips.
+
+These changes receive new component and recipe version `1.0.3`, preserving the
+earlier immutable bundles. Actual composed installation and native evidence must
+be rerun from the new clean host; A4 remains open.
+
+The repaired complete source suite passed 2,206 tests with 12 skips, including
+the actual pinned secret scanner. Independent focused verification passed 102
+tests with five opt-in skips and confirmed unchanged protocol assertions,
+deadlines and owned cleanup.

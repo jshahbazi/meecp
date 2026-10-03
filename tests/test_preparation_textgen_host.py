@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+import uuid
 
 import pytest
 
 from mcpme import preparation_textgen as textgen
 from mcpme.preparation_artifacts import AcquisitionRequestV1
 from mcpme.preparation_capture import AttachImportTargetV1, CapturePolicyV1, CreateImportTargetV1
+from mcpme.preparation_contracts import ExecutionPolicy, contract_digest
+from mcpme.preparation_inputs import adapt_descriptor
 from mcpme.supervisor import Supervisor
 
 
@@ -77,8 +80,21 @@ async def test_cold_host_textgen_capture_preserves_source_and_form_identity(tmp_
         assert form_enabled()["execution_available"] is False
         host.preparation_runner.enabled_families = frozenset({textgen.references()[1].key})
         assert form_enabled()["execution_available"] is True
-        host.preparations.select_descriptor(draft["draft_id"], draft["revision"], descriptor,
+        draft = host.preparations.select_descriptor(draft["draft_id"], draft["revision"], descriptor,
             candidate_id=form["candidate_id"], form_digest=form["form_digest"])
+        # Exercise the actual reviewed start binding through the default family;
+        # a stdio candidate digest would reject the built model-service receipt.
+        policy = ExecutionPolicy(schema_version=1, operations=["build", "probe"], network=[],
+                                 wall_seconds=60, disk_bytes=1024**3, memory_mb=2048)
+        plan = host.preparations.execution_plan(draft["draft_id"], draft["revision"], descriptor, policy,
+            runner_digest="a" * 64, verifier_digest="b" * 64, runtime_digest="c" * 64)
+        reserved = host.preparations.authorize_start(plan["plan_id"], plan["plan_digest"], str(uuid.uuid4()))
+        recipe = host.recipes.resolve(descriptor.recipe.id, descriptor.recipe.version, descriptor.recipe.digest)
+        view = adapt_descriptor(descriptor, draft=draft, recipe=recipe, registry=host.preparations.components)
+        expected = view.expected_package_contract(draft["source"]["revision"], profile="model-service")
+        assert reserved["candidate_contract_digest"] == contract_digest("preparation-candidate-v1", expected)
+        assert reserved["expected_fixtures"] == len(descriptor.validation)
+        host.preparations.cancel(reserved["job_id"])
     finally:
         await host.close()
 

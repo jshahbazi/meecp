@@ -145,10 +145,7 @@ only this narrower initial-proposal transition under the shared transaction.
             return (_summary(entry, "preserved", current, ["builtin_recipe_lifecycle_preserved"]) if opted_out
                     else _preserved(store, entry, current))
         current.update(state="enabled", epoch=2, updated_at=time.time(), blockers=[],
-            evidence={"schema_version": 1, "recipe_digest": entry.digest,
-                "component_catalog_digest": canonical_digest("recipe-components-v1", store.component_catalog),
-                "identities": store.identities, "gate": "static-declarative-compatibility-v1",
-                "outcome": "passed", "runnable": False})
+            evidence=store.static_evidence(current))
         store._save(current)
         store.imports._connection.execute(
             "UPDATE builtin_recipe_seeds SET state='seeded' WHERE recipe_id=? AND version=?",

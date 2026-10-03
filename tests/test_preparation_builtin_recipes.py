@@ -16,6 +16,20 @@ from mcpme.preparation_contracts import PreparationError, schema_accepts
 from mcpme.recipes import RecipeStore, builtin_components, validate_bundle
 
 
+@pytest.fixture(autouse=True)
+def single_legacy_catalog(tmp_path, monkeypatch):
+    """Exercise each legacy seed lifecycle with its original one-entry catalog.
+
+    The additive shipped resolved recipe is exercised by derived-build tests.
+    """
+    root = tmp_path / "legacy-catalog"
+    shutil.copytree(seeds.CATALOG_ROOT, root)
+    catalog = json.loads((root / "catalog.json").read_text())
+    catalog["recipes"] = [item for item in catalog["recipes"] if item["recipe_id"] == "mcpme.python-callable"]
+    (root / "catalog.json").write_text(json.dumps(catalog))
+    monkeypatch.setattr(seeds, "CATALOG_ROOT", root)
+
+
 @pytest.fixture
 def store(tmp_path):
     with ImportStore(tmp_path / "state") as imports:
@@ -71,7 +85,7 @@ def test_cold_start_seeds_exact_empty_input_metadata_without_execution(store, mo
     record = store.resolve(result["recipe_id"], result["version"], result["digest"])
     assert result["recipe"] == {"id": record["recipe_id"], "version": record["version"], "digest": record["digest"]}
     assert record["runnable"] is False and record["evidence"]["runnable"] is False
-    assert record["evidence"]["gate"] == "static-declarative-compatibility-v1"
+    assert record["evidence"]["gate"] == "static-declarative-compatibility-v2"
     assert record["manifest"]["form"] == []
     assert schema_accepts(record["manifest"]["input_schema"], {})
     assert not schema_accepts(record["manifest"]["input_schema"], {"label": "irrelevant"})

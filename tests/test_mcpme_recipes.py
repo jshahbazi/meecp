@@ -68,7 +68,7 @@ def test_static_add_enable_pinned_resolution_and_private_snapshot(tmp_path, monk
             store.resolve(added["recipe_id"], added["version"], added["digest"])
         enabled = store.enable(added["recipe_id"], added["version"])
         assert enabled["state"] == "enabled" and enabled["runnable"] is False
-        assert enabled["evidence"]["gate"] == "static-declarative-compatibility-v1"
+        assert enabled["evidence"]["gate"] == "static-declarative-compatibility-v2"
         assert store.resolve(added["recipe_id"], added["version"], added["digest"])["digest"] == added["digest"]
         assert store.list() == [enabled]
         (root / "README.md").write_text("Changed original input")

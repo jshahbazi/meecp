@@ -17,7 +17,7 @@ The source snapshot is never edited. A separate project preserves each declared 
 
 The result contains a separately identified dependency project, lock and, for discovery, full interface metadata. Every derived reference binds the original source revision, request and policy digests, producer, private runtime and immutable derived collection. The result supplies no builder, attachment or installation authority. No generated lock enters an original `SourceBinding`.
 
-When selection advances a draft's metadata revision, call `store.bind_result(import_id, prior_revision, new_revision, candidate_id, result_digest)` explicitly. Inside an existing import transaction, that accepted reference commits or rolls back with selection. The helper checks a successful settled result, its prior accepted revision, unchanged source/candidate and exact derived bytes. It preserves the original result/request/digests. Later revisions require another explicit carry; reads never broaden authority automatically. Final execution must bind both the immutable result digest and the selected current revision.
+When selection advances a draft's metadata revision, call `prepare_result_binding(import_id, revision, candidate_id, result_digest)` off-loop before its write transaction, then `commit_result_binding(proof, new_revision)` inside that transaction. Only bounded metadata and authority checks occur under the transaction. The accepted reference commits or rolls back with selection. The standalone `bind_result` convenience method performs both phases and must not be called inside a transaction. The helper preserves the original result/request/digests. Later revisions require another explicit carry; reads never broaden authority automatically. Final execution binds both the immutable result digest and the selected current revision and rechecks derived bytes while consuming them.
 
 ## Network and execution boundaries
 
@@ -41,4 +41,4 @@ Opt-in cases use a real built private host and fresh empty caches:
 MCPME_RESOLUTION_HOST=/absolute/path/to/private-host uv run pytest -q tests/test_preparation_resolution.py
 ```
 
-The unlocked-callable case resolves a real registry closure without an original lock. The foreground MCP case installs real pinned runtime wheels and discovers a dynamic schema from a running SDK server. These verify the core primitive; native selection, derived-input package building and installation remain integration work.
+The unlocked-callable case resolves a real registry closure without an original lock. The foreground MCP case installs real pinned runtime wheels and discovers a dynamic schema from a running SDK server. The subsequent [derived build checkpoint](DERIVED_PREPARATION_BUILD.md) verifies generated questions, owned package construction, SDK fixtures, attachment and relocation. Installed/native acceptance and public activation remain separate gates.

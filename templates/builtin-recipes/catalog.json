@@ -5,6 +5,12 @@
       "directory": "python-callable-v1",
       "recipe_id": "mcpme.python-callable",
       "version": "1.0.0"
+    },
+    {
+      "digest": "64b4a9727453b41ebbecc5ed5ec94f8abe7a96d1bdbc7096e9c26553b2f3b49f",
+      "directory": "resolved-python-v1",
+      "recipe_id": "mcpme.resolved-python",
+      "version": "1.0.0"
     }
   ],
   "schema_version": 1

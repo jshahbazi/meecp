@@ -235,10 +235,13 @@ def create_server():
                 response = await http.delete(connection["endpoint"], headers={**auth, "mcp-session-id": closed_id, "mcp-protocol-version": "2025-11-25"})
                 require(response.status_code == 404)
                 checks["session_delete"] = True
+            report["stage"] = "restart_stop"
             await finish(await cli("slots", "stop", slot_id, "--json"))
             await stop()
+            report["stage"] = "restart_host"
             await start()
             await finish(await cli("slots", "start", slot_id, "--json"))
+            report["stage"] = "restart_identity"
             restarted = await details(slot_id)
             new = restarted["processes"][0]
             new_keys = list((state / "slots" / slot_id / "runtime").glob("service-*.key"))
@@ -246,15 +249,20 @@ def create_server():
             require(new_key != key and new["instance_id"] != resident["instance_id"] and new["generation"] > resident["generation"]
                     and restarted["slot"]["public_port"] == value["slot"]["public_port"])
             async with httpx.AsyncClient(trust_env=False, timeout=10) as http:
+                report["stage"] = "restart_private_nonce"
                 require((await http.get(new["endpoint"] + "/health", headers={"authorization": "Bearer " + key})).status_code == 401)
                 fresh_health = await http.get(new["endpoint"] + "/health", headers={"authorization": "Bearer " + new_key})
                 require(fresh_health.status_code == 200 and fresh_health.json()["nonce"] != health.json()["nonce"]
                         and fresh_health.json()["generation"] == new["generation"])
+                report["stage"] = "restart_stale_session"
                 require((await http.post(connection["endpoint"], headers={**auth, "mcp-session-id": closed_id,
-                    "mcp-protocol-version": "2025-11-25"}, json={"jsonrpc": "2.0", "id": 1, "method": "ping"})).status_code == 404)
+                    "mcp-protocol-version": "2025-11-25", "accept": "application/json, text/event-stream"},
+                    json={"jsonrpc": "2.0", "id": 1, "method": "ping"})).status_code == 404)
             async with http_session(connection) as (client, _):
+                report["stage"] = "restart_fresh_call"
                 require(await call(client, "add", {"left": 1, "right": 2}) == {"total": 9})
             checks["generation_restart_key_rotation"] = True
+            report["stage"] = "cleanup"
             await stop()
             require(all(json.loads(path.read_bytes()) == {} for path in (state / "slots").glob("*/ownership.json")))
             checks["cleanup"] = True

@@ -65,6 +65,6 @@ Typed nonsecret configuration and immutable owner-managed secret references are 
 - Authenticated descriptor-configured MCP HTTP factories use a shared resident service with bounded sessions and explicit DELETE cleanup.
 - [Reviewed upgrades](UPGRADES_RECOVERY.md) use private candidate data snapshots, durable exposure permission, pre-exposure rollback and selected-generation recovery. Removal retains all private data generations.
 - Raw pinned JevK5 GGUF and engine intake, resumed engine selection, export-driven preparation and actual model-client acceptance are implemented.
-- [The completion audit](PHASE2_COMPLETION.md) tracks final committed-build checks. Reference-document services and integrated provider preparation remain later work.
+- [The completion audit](PHASE2_COMPLETION.md) records passed committed-build checks. Reference-document services and integrated provider preparation remain later work.
 
 Read [verification](MCPME_PHASE2_VERIFICATION.md) for the checks performed on this milestone. The repeatable bundled-host acceptance command is `uv run --locked python scripts/verify_phase2.py --host /absolute/path/to/host`. It uses only synthetic source and a temporary private installation. Neither prepared-package declarations nor synthetic integration checks establish publisher trust or model quality.

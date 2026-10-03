@@ -51,9 +51,9 @@ Draft, job and reader references protect committed objects. Draft changes transf
 | A0 | Strict contracts and identities; legacy compatibility; no inspection execution; exact receipts; old grants cannot run code | Component/inspection and existing foundation regression checks available; complete integrated job/receipt audit remains open |
 | A0R | Independently authored recipe added through CLI/native forms, prepared, attached and retained after restart with no host edits; lifecycle/race gates | Generic native recipe/questions and owner lifecycle routes tested; actual independent recipe preparation/attachment/restart gate remains open |
 | A1 | Separate Python callable and foreground MCP native/API paths; private closure; full MCP probes; relocation; matching attachment; install/invoke/restart; cancellation/crash/revision races | Three actual native Python cases prepared, attached, installed, invoked over HTTP/stdio and restarted at the ONNX checkpoint; complete integrated race, isolation and resource gates remain open |
-| A2 | Explicit ONNX artifact; exact CPU detector compatibility; real inference; tensor tests; complete notices; maximum image limits measured | Default-host ONNX preparation, exact two-component receipt, real inference/tensors, maximum-image measurements and source-free relocation passed in PR #37; new visible native intake/installed evidence is being frozen independently |
-| A3 | Bounded supervised CLI; argv/input/output/exit contract; descendants, cancellation, crash/restart and closure | No-fork CLI spike has real execution/relocation evidence; separately reviewed fork/exec containment feasibility passed 38 native checks. Stronger helper/receipt, CLI integration, resource and complete topology acceptance remain open |
-| A4 | Pinned general model/engine/template; actual inference; token limits; shared serialized queue; resource/cancellation settlement; JevK5 parity | Exact CPU compatibility, actual direct installed inference/lifecycle and JevK5 regressions passed. Default-host family/form/runner/verification integration is implemented; immutable composed runs, native integration, isolation/resource and signed-closure gates remain open |
+| A2 | Explicit ONNX artifact; exact CPU detector compatibility; real inference; tensor tests; complete notices; maximum image limits measured | Default-host and native captured/folder-supplement preparation, exact receipts, installed HTTP/stdio inference, restart and source-free relocation have checkpoint evidence. Later combined-host rechecks and inherited common isolation/resource/race gates remain open |
+| A3 | Bounded supervised CLI; argv/input/output/exit contract; descendants, cancellation, crash/restart and closure | Reviewed host-owned installed CLI checkpoint is pushed in isolated branch codex/phase3-command-installed at 7c85ef0. Independent native/installed checks and lifecycle repairs passed. Combined-host integration, aggregate OS resource enforcement and signed/relocated native app acceptance remain open; default admission is closed |
+| A4 | Pinned general model/engine/template; actual inference; token limits; shared serialized queue; resource/cancellation settlement; JevK5 parity | Exact CPU compatibility, direct installed inference/lifecycle and JevK5 regressions passed. Actual composed construction/inference exposed receipt profile/count mismatches; source repairs and immutable version 1.0.3 passed complete regression. Fresh composed installation/native, isolation/resource and signed-closure gates remain open |
 | A5 | Concrete programmatic agent backend; unfamiliar source end to end; scoped transfer/execution; bounded usage; parallel integration; cancellation/restart; stale-result rejection | Additive provider backend/coordinator checkpoint has simulated transport and real local journal/race tests in an isolated branch. No configured credential for a concrete live run; unfamiliar-source generation and host/native integration remain open |
 | A6 | Each additional runtime/provider/family has its own compatibility and authority evidence before advertisement | Schema-2 fake component is a contract test; no additional runtime/provider capability advertised |
 
@@ -160,8 +160,11 @@ generated forms and package construction without hand-authored descriptors or lo
 Their recorded native checkpoint passes; containment/resource/race requirements
 remain independently gated.
 
-Complete native ONNX prepare/install/invoke/restart acceptance from a relocated
-artifact and independently recheck the integrated runtime. Preserve legacy GGUF
-and folder identities. Continue CLI, general LLM/service connectors and
-integrated-agent work under the original independent acceptance gates. Full
-Phase 3 and its final adversarial review remain required.
+Freeze the repaired complete host and run captured and folder-supplement LLM
+construction, installation, invocation and native acceptance. Independently
+recheck Python and ONNX against that same combined artifact. Preserve legacy
+GGUF and folder identities. Integrate the separately reviewed CLI checkpoint
+with fresh immutable component identities, then complete its aggregate resource
+and final bundle gates. Run actual unfamiliar-directory preparation with a
+configured provider and finish common recipe, isolation, crash and race gates.
+Full Phase 3 and its final adversarial review remain required.

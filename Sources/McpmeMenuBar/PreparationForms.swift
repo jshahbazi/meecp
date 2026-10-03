@@ -414,7 +414,7 @@ struct PreparationReview {
 
     init?(_ object: [String: Any], form: OnboardingFormV1) {
         let required: Set<String> = ["schema_version", "import_id", "revision", "source_revision", "form_digest", "execution_available", "plan_id", "plan_digest", "expires_at", "tools", "access", "resources", "downloads", "blockers", "draft"]
-        let optional: Set<String> = ["api_version", "effects", "execution_policy", "recipe", "descriptor_digest"]
+        let optional: Set<String> = ["api_version", "effects", "execution_policy", "recipe", "descriptor_digest", "resolution_digest"]
         guard required.isSubset(of: Set(object.keys)), Set(object.keys).isSubset(of: required.union(optional)),
               preparationInteger(object["schema_version"]) == 1, object["import_id"] as? String == form.importID,
               let revision = preparationInteger(object["revision"]), revision >= form.revision,
@@ -423,6 +423,8 @@ struct PreparationReview {
               let draft = object["draft"] as? [String: Any], let context = PreparationContext(draft),
               context.importID == form.importID, context.revision == revision, context.sourceRevision == form.sourceRevision,
               let available = preparationBoolean(object["execution_available"]),
+              object["resolution_digest"] == nil || (object["resolution_digest"] is NSNull && form.resolutionDigest == nil) ||
+                  (preparationDigest(object["resolution_digest"]) == form.resolutionDigest && form.resolutionDigest != nil),
               let blockers = object["blockers"] as? [String], blockers.count <= 128, blockers.allSatisfy({ preparationCode($0) != nil }),
               let tools = object["tools"] as? [[String: Any]], tools.count <= 128,
               tools.allSatisfy({ preparationText($0["name"], maximum: 128) != nil && $0["input_schema"] is [String: Any] }),
@@ -1139,6 +1141,11 @@ extension PreparationWorkspaceView {
         guard calls.count == 1, calls[0].path == "v1/preparations/form", calls[0].body?["resolution_digest"] as? String == String(repeating: "f", count: 64), calls[0].body?["candidate_id"] as? String == PreparationTestData.candidate else { return false }
         calls.removeFirst().complete(PreparationTestData.resolutionForm(resolved: true), nil)
         guard view.reviewButton.isEnabled, view.form?.resolutionDigest != nil else { return false }
+        var carriedReview = PreparationTestData.review(revision: 2, available: true)
+        carriedReview["resolution_digest"] = String(repeating: "f", count: 64)
+        guard PreparationReview(carriedReview, form: view.form!) != nil else { return false }
+        carriedReview["resolution_digest"] = String(repeating: "0", count: 64)
+        guard PreparationReview(carriedReview, form: view.form!) == nil else { return false }
         view.reviewForm(); guard calls.count == 1, calls[0].body?["resolution_digest"] as? String == view.form?.resolutionDigest else { return false }
         calls.removeFirst().complete(PreparationTestData.review(revision: 2, available: true), nil)
         guard view.review?.context.revision == 2, view.resolutionJob?.revision == 1, view.startButton.isEnabled else { return false }

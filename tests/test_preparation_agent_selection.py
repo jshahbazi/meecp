@@ -41,7 +41,7 @@ def test_metadata_commit_performs_no_source_or_recipe_hashing(foundation, monkey
     assert store.cleanup_descriptor_selection(committed)["revision"] == 2
 
 
-@pytest.mark.parametrize("action", ["cancel", "revision", "recipe", "caller_cancel"])
+@pytest.mark.parametrize("action", ["cancel", "revision", "recipe", "caller_cancel", "snapshot"])
 async def test_adoption_hash_worker_is_responsive_and_joined_before_denied_commit(foundation, tmp_path, monkeypatch, action):
     imports, recipes, store, draft, descriptor = foundation
     agent = AgentPreparationHost(store, tmp_path / "agent", providers=(provider(handler_for(descriptor)),), simulated_enabled=True)
@@ -68,8 +68,12 @@ async def test_adoption_hash_worker_is_responsive_and_joined_before_denied_commi
             adoption.cancel(); adoption.cancel()
         elif action == "revision":
             imports.revise(draft["draft_id"], 1, intent="Changed intent")
-        else:
+        elif action == "recipe":
             recipes.disable(descriptor["recipe"]["id"], descriptor["recipe"]["version"])
+        else:
+            from pathlib import Path
+            with (Path(draft["source"]["snapshot_path"]) / "validator.py").open("a") as output:
+                output.write("\n# changed after checked validation\n")
         await asyncio.sleep(0.02)
         assert not adoption.done() and not agent.get(job["job_id"])["local_io_settled"]
         release.set()
@@ -82,6 +86,55 @@ async def test_adoption_hash_worker_is_responsive_and_joined_before_denied_commi
         assert not agent.tasks and agent.get(job["job_id"])["local_io_settled"]
     finally:
         release.set(); await agent.close()
+
+
+@pytest.mark.parametrize("mutation", ["restore_bytes", "file_replace", "root_replace", "mode", "new_directory", "new_file", "fifo"])
+def test_checked_snapshot_metadata_fences_mutation_at_actual_transaction(foundation, mutation):
+    import os
+    from pathlib import Path
+    imports, _, store, draft, descriptor = foundation
+    root = Path(draft["source"]["snapshot_path"])
+    target = root / "validator.py"
+    checked = store.prepare_descriptor_selection(draft["draft_id"], 1, descriptor, candidate_id="a" * 64, form_digest="b" * 64)
+    assert checked.snapshot_metadata is not None
+    if mutation == "restore_bytes":
+        data, details = target.read_bytes(), target.stat()
+        target.write_bytes(data + b"\n"); target.write_bytes(data)
+        os.utime(target, ns=(details.st_atime_ns, details.st_mtime_ns))
+    elif mutation == "file_replace":
+        data = target.read_bytes(); target.unlink(); target.write_bytes(data); target.chmod(0o600)
+    elif mutation == "root_replace":
+        import shutil
+        previous = root.with_name(root.name + "-old"); root.rename(previous)
+        shutil.copytree(previous, root)
+    elif mutation == "mode":
+        target.chmod(0o640)
+    elif mutation == "new_directory":
+        (root / "unknown").mkdir(mode=0o700)
+    elif mutation == "new_file":
+        extra = root / "unknown.txt"; extra.write_bytes(b"synthetic"); extra.chmod(0o600)
+    else:
+        target.unlink(); os.mkfifo(target, 0o600)
+    with pytest.raises(PreparationError, match="source_identity_mismatch"):
+        store.commit_descriptor_selection(checked, check_current=lambda: True)
+    assert imports.inspect(draft["draft_id"])["revision"] == 1
+    assert store.selected_descriptor(draft["draft_id"]) is None
+
+
+def test_snapshot_metadata_baseline_is_taken_before_full_validation_and_never_refreshed(foundation, monkeypatch):
+    from pathlib import Path
+    imports, _, store, draft, descriptor = foundation
+    original = store._bound_descriptor
+    def changed_after_validation(*args, **kwargs):
+        result = original(*args, **kwargs)
+        with (Path(draft["source"]["snapshot_path"]) / "validator.py").open("a") as output:
+            output.write("\n# changed after byte proof\n")
+        return result
+    monkeypatch.setattr(store, "_bound_descriptor", changed_after_validation)
+    with pytest.raises(PreparationError, match="source_identity_mismatch"):
+        store.prepare_descriptor_selection(draft["draft_id"], 1, descriptor, candidate_id="a" * 64, form_digest="b" * 64)
+    assert imports.inspect(draft["draft_id"])["revision"] == 1
+    assert store.selected_descriptor(draft["draft_id"]) is None
 
 
 async def test_options_does_not_restore_a_job_from_another_revision(foundation, tmp_path):
@@ -147,3 +200,88 @@ async def test_repeated_concurrent_shutdown_joins_held_snapshot_before_store_clo
         await agent.close()
     finally:
         release.set(); await agent.close()
+
+
+@pytest.mark.parametrize("mixed_analysis", [False, True])
+async def test_adoption_and_analysis_share_exact_four_task_cap(foundation, tmp_path, monkeypatch, mixed_analysis):
+    from pathlib import Path
+    import uuid
+    imports, _, store, draft, descriptor = foundation
+    agent = AgentPreparationHost(store, tmp_path / "agent", providers=(provider(handler_for(descriptor)),), simulated_enabled=True)
+    entered, released = threading.Event(), threading.Event()
+    analysis_entered = threading.Event()
+    original = store.prepare_descriptor_selection
+    selected = agent._selected_bytes
+    lock, count, tasks = threading.Lock(), 0, []
+    try:
+        jobs = []
+        for index in range(5):
+            current = draft if index == 0 else imports.create(Path(draft["source"]["locator"]), name="Independent directory", intent=draft["intent"])
+            _, _, job = await planned_start(agent, current, descriptor)
+            jobs.append(await completed(agent, job))
+        if mixed_analysis:
+            current = imports.create(Path(draft["source"]["locator"]), name="Pending analysis", intent=draft["intent"])
+            from test_preparation_agent_host import selection
+            plan = await agent.plan(selection(current, descriptor))
+            def held_source(*args):
+                analysis_entered.set(); released.wait(3)
+                return selected(*args)
+            monkeypatch.setattr(agent, "_selected_bytes", held_source)
+            await agent.start({"action": "analyze", "plan_id": plan["plan_id"], "plan_digest": plan["plan_digest"], "idempotency_key": str(uuid.uuid4())})
+            assert await asyncio.to_thread(analysis_entered.wait, 2)
+        allowed = 3 if mixed_analysis else 4
+        def held(*args, **kwargs):
+            nonlocal count
+            checked = original(*args, **kwargs)
+            with lock:
+                count += 1
+                if count == allowed:
+                    entered.set()
+            released.wait(3)
+            return checked
+        monkeypatch.setattr(store, "prepare_descriptor_selection", held)
+        for job in jobs[:allowed + 1]:
+            tasks.append(asyncio.create_task(agent.adopt({"action": "adopt-candidate", "job_id": job["job_id"], "proposal_digest": job["proposal_digest"]})))
+        assert await asyncio.to_thread(entered.wait, 2)
+        assert count == allowed and len(agent.tasks) == 4
+        denied = tasks[-1]
+        with pytest.raises(PreparationError, match="agent_pending_limit"):
+            await denied
+        assert agent.get(jobs[allowed]["job_id"])["state"] == "succeeded"
+        assert imports.inspect(jobs[allowed]["import_id"])["revision"] == 1
+    finally:
+        released.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await agent.close()
+
+
+async def test_shutdown_fences_recipe_to_source_worker_handoff(foundation, tmp_path, monkeypatch):
+    from test_preparation_agent_host import selection
+    _, recipes, store, draft, descriptor = foundation
+    agent = AgentPreparationHost(store, tmp_path / "agent", providers=(provider(handler_for(descriptor)),), simulated_enabled=True)
+    entered, released = threading.Event(), threading.Event()
+    original, source_reads = recipes.resolve, []
+    planning = closing = None
+    try:
+        def held(*args):
+            result = original(*args); entered.set(); released.wait(3)
+            return result
+        def forbidden(*args):
+            source_reads.append(True)
+            raise AssertionError("late_source_worker")
+        monkeypatch.setattr(recipes, "resolve", held)
+        monkeypatch.setattr(agent, "_selected_bytes", forbidden)
+        planning = asyncio.create_task(agent.plan(selection(draft, descriptor)))
+        assert await asyncio.to_thread(entered.wait, 2)
+        closing = asyncio.create_task(agent.close())
+        await asyncio.sleep(0)
+        assert not closing.done()
+        released.set()
+        with pytest.raises(PreparationError, match="agent_host_closing"):
+            await planning
+        await closing
+        assert not source_reads and not agent.static_workers
+    finally:
+        released.set()
+        await asyncio.gather(*[task for task in (planning, closing) if task is not None], return_exceptions=True)
+        await agent.close()

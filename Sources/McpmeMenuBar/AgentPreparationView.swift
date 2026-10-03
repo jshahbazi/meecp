@@ -105,7 +105,29 @@ extension AgentPreparationView {
         race.retryButton.performClick(nil)
         guard race.job?.context == context, race.blocksNavigation, !race.adoptButton.isEnabled else { return false }
         race.cancelButton.performClick(nil)
-        return race.job?.state == "canceled" && race.job?.settled == true && !race.blocksNavigation
+        guard race.job?.state == "canceled" && race.job?.settled == true && !race.blocksNavigation else { return false }
+        // A GET sent before cancellation cannot overwrite its later settled
+        // acknowledgment or admit the stale candidate into this view.
+        let delayed = AgentPreparationView(); delayed.available = { true }; delayed.bind(context, saved: true)
+        delayed.job = AgentPreparationJob(row("analyzing", settled: false)); delayed.refreshAvailability()
+        var held: (([String: Any]?, String?) -> Void)?
+        delayed.request = { path, method, _, complete in
+            if method == "GET" { held = complete }
+            else if path.hasSuffix("/cancel") { complete(row("canceled"), nil) }
+        }
+        delayed.poll(force: true); delayed.cancelButton.performClick(nil)
+        guard delayed.job?.state == "canceled", delayed.job?.settled == true, held != nil else { return false }
+        held?(row("succeeded", candidate: true), nil)
+        guard delayed.job?.state == "canceled", !delayed.adoptButton.isEnabled else { return false }
+        // The exact current job identity also fences a late reply from a prior
+        // terminal job even if a replacement is independently restored.
+        delayed.job = AgentPreparationJob(row("succeeded", candidate: true)); delayed.refreshAvailability()
+        delayed.poll(force: true)
+        var replacement = row("analyzing", settled: false)
+        replacement["job_id"] = "10000000-0000-4000-8000-000000000004"
+        delayed.job = AgentPreparationJob(replacement); delayed.refreshAvailability()
+        held?(row("succeeded", candidate: true), nil)
+        return delayed.job?.id == replacement["job_id"] as? String && !delayed.adoptButton.isEnabled
     }
 }
 
@@ -121,6 +143,7 @@ final class AgentPreparationView: NSStackView {
     private var context: PreparationContext?
     private var saved = false
     private var epoch: UInt64 = 0
+    private var jobEpoch: UInt64 = 0
     private var polling = false
     private(set) var busy = false
     private(set) var job: AgentPreparationJob?
@@ -179,6 +202,7 @@ final class AgentPreparationView: NSStackView {
 
     func bind(_ next: PreparationContext?, saved: Bool) {
         if next != context || saved != self.saved {
+            invalidateJobResponses()
             epoch &+= 1; context = next; self.saved = saved; options = nil; plan = nil
             // Keep a known pending request/job across draft changes. The owner
             // remains visible and cancellable until the host reports settlement.
@@ -186,7 +210,8 @@ final class AgentPreparationView: NSStackView {
         }
         refreshAvailability()
     }
-    func invalidate() { epoch &+= 1; options = nil; plan = nil; refreshAvailability() }
+    private func invalidateJobResponses() { jobEpoch &+= 1; polling = false }
+    func invalidate() { invalidateJobResponses(); epoch &+= 1; options = nil; plan = nil; refreshAvailability() }
     func registryChanged() { if !blocksNavigation { invalidate() } }
     func refreshAvailability() {
         let online = available?() == true
@@ -223,6 +248,7 @@ final class AgentPreparationView: NSStackView {
     }
     @objc func loadOptions() {
         guard available?() == true, !blocksNavigation, saved, let context, let request else { return }
+        invalidateJobResponses()
         busy = true; refreshAvailability(); let expected = epoch
         request("v1/agent-preparations/plans", "POST", ["import_id": context.importID, "revision": context.revision]) { [weak self] object, code in
             guard let self else { return }; self.finishRequest()
@@ -319,6 +345,7 @@ final class AgentPreparationView: NSStackView {
     }
     private func sendPending() {
         guard let body = pendingStart, let request, !busy else { return }
+        invalidateJobResponses()
         busy = true; refreshAvailability()
         request("v1/agent-preparations/start", "POST", body) { [weak self] object, code in
             guard let self else { return }; self.finishRequest()
@@ -335,15 +362,17 @@ final class AgentPreparationView: NSStackView {
     @objc func retryStatus() { if pendingStart != nil { sendPending() } else { poll(force: true) } }
     func poll(force: Bool = false) {
         guard available?() == true, !busy, !polling, let job, force || job.active, let request else { return }
-        polling = true
+        polling = true; let expected = jobEpoch
         request("v1/agent-preparations/jobs/" + job.id, "GET", nil) { [weak self] object, code in
-            guard let self else { return }; self.polling = false
+            guard let self, expected == self.jobEpoch, self.job?.id == job.id, self.job?.context == job.context else { return }
+            self.polling = false
             guard let object, let next = AgentPreparationJob(object), next.id == job.id, next.context == job.context else { self.fail(code ?? "agent_job_invalid"); return }
             self.job = next; self.showJob()
         }
     }
     @objc func cancelAnalysis() {
         guard !busy, let job, job.active, let request else { return }
+        invalidateJobResponses()
         busy = true; refreshAvailability()
         request("v1/agent-preparations/jobs/" + job.id + "/cancel", "POST", [:]) { [weak self] object, code in
             guard let self else { return }; self.finishRequest()
@@ -354,6 +383,7 @@ final class AgentPreparationView: NSStackView {
     @objc func adoptCandidate() {
         guard !blocksNavigation, let job, job.context == context, job.state == "succeeded", job.settled,
               let digest = job.proposalDigest, job.candidateDigest != nil, let request else { return }
+        invalidateJobResponses()
         busy = true; refreshAvailability()
         request("v1/agent-preparations/start", "POST", ["action": "adopt-candidate", "job_id": job.id, "proposal_digest": digest]) { [weak self] object, code in
             guard let self else { return }; self.finishRequest()

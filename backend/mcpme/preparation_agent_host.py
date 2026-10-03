@@ -265,6 +265,9 @@ class AgentPreparationHost:
             raise PreparationError("agent_plan_invalid") from None
         # Static review proves the selected captured bytes are text and exactly
         # bound. It retains no source bytes in a plan or journal.
+        # A joined recipe worker is not authority to create another worker after
+        # shutdown has begun. This fence and task registration have no await.
+        self._validate(plan)
         worker = asyncio.create_task(asyncio.to_thread(self._selected_bytes, draft, selected, lambda: None))
         self.static_workers.add(worker)
         try:
@@ -519,6 +522,8 @@ class AgentPreparationHost:
         result = self.store.proposal(job["attempt_id"], request, lambda _: self._validate(plan))
         if job["job_id"] in self.tasks:
             raise PreparationError("agent_job_busy")
+        if len(self.tasks) >= 4:
+            raise PreparationError("agent_pending_limit")
         stop = threading.Event(); self.stops[job["job_id"]] = stop
         job.update(state="adopting", local_io_settled=False); self._save_job(job)
         task = asyncio.create_task(self._adopt(job, plan, result, stop))

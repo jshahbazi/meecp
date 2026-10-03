@@ -54,7 +54,8 @@ class PreparationStore(PreparationAuthority):
         for family in families:
             if family.component.reference.key in self.families:
                 raise PreparationError("duplicate_preparation_component")
-            self.components.register(family.component)
+            for component in getattr(family, "components", (family.component,)):
+                self.components.register(component)
             self.families[family.component.reference.key] = family
         self.db = imports._connection
         with imports._transaction():
@@ -133,7 +134,11 @@ class PreparationStore(PreparationAuthority):
         self.components.validate_source(descriptor, draft, recipe)
         if descriptor.schema_version == 2:
             self.resolved_inputs(descriptor, draft)
-        if draft["requirements"].get("profile") not in {None, "mcp-stdio"}:
+        profile = (getattr(self.family_for(descriptor), "target_profile", "mcp-stdio")
+                   if descriptor.schema_version == 2 else "mcp-stdio")
+        if profile not in {"mcp-stdio", "mcp-http", "model-service"}:
+            raise PreparationError("unsupported_execution_profile")
+        if draft["requirements"].get("profile") not in {None, profile}:
             raise PreparationError("unsupported_execution_profile")
         if draft["requirements"].get("secret_references"):
             raise PreparationError("secret_reference_unavailable")
@@ -149,19 +154,32 @@ class PreparationStore(PreparationAuthority):
         return self.family_for(descriptor).validate_inputs(descriptor, draft)
 
     def family_for(self, descriptor):
-        if descriptor.schema_version != 2 or len(descriptor.components) != 1:
+        if descriptor.schema_version != 2:
             raise PreparationError("unsupported_component_descriptor")
-        family = self.families.get(descriptor.components[0].component.key)
-        if family is None:
+        selected = {item.component.key for item in descriptor.components}
+        matching = [family for family in self.families.values() if selected == {
+            item.reference.key for item in getattr(family, "components", (family.component,))}]
+        if not matching:
             raise PreparationError("unknown_preparation_component")
-        return family
+        if len(matching) != 1:
+            raise PreparationError("ambiguous_preparation_provider")
+        return matching[0]
 
     def inspect_source(self, draft):
         from .preparation_inspection import inspect_source
-        matching = [family for family in self.families.values() if family.source_kind == draft["source"]["kind"]]
-        if len(matching) > 1:
+        kind = draft["source"]["kind"]
+        matching = [family for family in self.families.values() if
+            (family.supports_source(draft) if hasattr(family, "supports_source") else family.source_kind == kind)]
+        inspections = ([inspect_source(draft)] if kind in {"local_folder", "document"} or not matching else [])
+        inspections.extend(family.inspect_source(draft) for family in matching)
+        if any(item["source_revision"] != draft["source"]["revision"] for item in inspections):
+            raise PreparationError("source_identity_mismatch")
+        candidates = [candidate for item in inspections for candidate in item["candidates"]]
+        if len({item["candidate_id"] for item in candidates}) != len(candidates):
             raise PreparationError("ambiguous_preparation_provider")
-        return matching[0].inspect_source(draft) if matching else inspect_source(draft)
+        return {"schema_version": 1, "source_revision": draft["source"]["revision"],
+                "candidates": sorted(candidates, key=lambda item: item["candidate_id"]),
+                "blockers": [] if candidates else sorted({code for item in inspections for code in item["blockers"]})}
 
     def release_family_inputs(self, job_id):
         with self.imports._lock:

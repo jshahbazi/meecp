@@ -62,7 +62,8 @@ class CommandInput(Contract):
 
 def component_catalog():
     names = ("preparation_command.py", "preparation_command_source.py", "preparation_command_forms.py",
-             "preparation_command_owner.py", "preparation_command_verifier.py", "command_execution_v2.py", "host_command.py")
+             "preparation_command_owner.py", "preparation_command_verifier.py", "preparation_application_source.py",
+             "command_execution_v2.py", "host_command.py")
     root = Path(__file__).parent
     digest = contract_digest("preparation-host-command-component-v1", [
         {"path": name, "sha256": hashlib.sha256((root / name).read_bytes()).hexdigest()} for name in names])
@@ -119,6 +120,13 @@ def write_command_recipe(destination):
 
 class CommandComponent:
     input_schema = CommandInput.model_json_schema()
+    # Common planning deliberately rejects even host-generated regex keywords.
+    # Closed typed parsing still verifies hexadecimal identities afterwards.
+    for _name in ("candidate_id", "helper_sha256"):
+        input_schema["properties"][_name].pop("pattern")
+        input_schema["properties"][_name].update(minLength=64, maxLength=64)
+    for _name in ("license_paths", "fixed_args"):
+        input_schema["properties"][_name]["items"]["maxLength"] = 1024
     legacy_interface_kinds = frozenset()
 
     def __init__(self, family):
@@ -195,9 +203,12 @@ class CommandFamily:
                 except PreparationError as failure:
                     result["blockers"].append(failure.code)
                     continue
-                candidate = {"kind": "native-json-command", "module": executable, "declared_entrypoint": executable,
+                candidate = {"kind": "native-json-command", "module": executable,
+                    "declared_entrypoint": executable + " using " + input_path.removesuffix(".input.schema.json"),
                     "unresolved": [], "input_schema_path": input_path, "output_schema_path": output_path,
-                    "input_schema": input_schema, "output_schema": output_schema, "runtime": runtime}
+                    "input_schema": input_schema, "output_schema": output_schema, "runtime": runtime,
+                    "tools": [{"name": "run", "description": "Run the selected JSON command",
+                        "input_schema": input_schema, "output_schema": output_schema}]}
                 candidate["candidate_id"] = contract_digest("preparation-command-source-candidate-v1", {
                     "source_revision": snapshot.revision, "component": self.component.reference.model_dump(), "candidate": candidate})
                 result["candidates"].append(candidate)

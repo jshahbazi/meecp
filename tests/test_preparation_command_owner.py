@@ -23,6 +23,49 @@ from test_host_command import native, digest, pytestmark
 from test_preparation_command import selected
 
 
+@pytest.mark.asyncio
+async def test_canceled_transport_setup_transfers_fd_before_await(monkeypatch):
+    from types import SimpleNamespace
+    from mcpme.preparation_command_verifier import command_transport
+    service = SimpleNamespace(sessions={})
+    package = SimpleNamespace(manifest=SimpleNamespace(lifecycle=SimpleNamespace(max_request_bytes=65536)))
+    handle = CommandSession(service, None, package, publication_check=lambda: True)
+    service.sessions[handle.instance_id] = handle
+    collateral = []
+    original = asyncio.StreamReaderProtocol
+    try:
+        await handle.start()
+        target_fd = handle.stdout_fd
+
+        class CancelAtConnect(original):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                asyncio.get_running_loop().call_soon(asyncio.current_task().cancel)
+
+        monkeypatch.setattr(asyncio, "StreamReaderProtocol", CancelAtConnect)
+
+        async def connecting():
+            async with command_transport(handle):
+                pytest.fail("canceled connection was published")
+
+        result = (await asyncio.gather(asyncio.create_task(connecting()), return_exceptions=True))[0]
+        assert isinstance(result, asyncio.CancelledError)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert handle.stdout_fd is None
+        with pytest.raises(OSError):
+            os.fstat(target_fd)
+        collateral = list(os.pipe())
+        assert collateral[0] == target_fd  # concrete descriptor reuse
+        await handle.close()
+        os.fstat(collateral[0])
+        assert not service.sessions
+    finally:
+        await handle.close()
+        for fd in collateral:
+            os.close(fd)
+
+
 class Store:
     """In-memory coordinator double only; target and ownership are real native."""
     def __init__(self, workspace):

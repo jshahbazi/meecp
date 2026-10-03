@@ -19,11 +19,28 @@ from .preparation_verifier import MAX_PROBE_MESSAGE, VerificationReport, _valida
 @asynccontextmanager
 async def command_transport(handle):
     reader = asyncio.StreamReader(limit=MAX_PROBE_MESSAGE)
-    transport, _ = await asyncio.get_running_loop().connect_read_pipe(
-        lambda: asyncio.StreamReaderProtocol(reader), os.fdopen(handle.stdout_fd, "rb", buffering=0))
-    handle.stdout_fd = None
-    writer, handle.stdin_fd = handle.stdin_fd, None
-    os.set_blocking(writer, False)
+    # Transfer ownership before an await: connection cancellation can close the
+    # pipe, and its integer may already identify an unrelated descriptor later.
+    read_fd, handle.stdout_fd = handle.stdout_fd, None
+    pipe = None
+    transport = None
+    writer = None
+    try:
+        pipe = os.fdopen(read_fd, "rb", buffering=0)
+        transport, _ = await asyncio.get_running_loop().connect_read_pipe(
+            lambda: asyncio.StreamReaderProtocol(reader), pipe)
+        writer, handle.stdin_fd = handle.stdin_fd, None
+        os.set_blocking(writer, False)
+    except BaseException:
+        if transport is not None:
+            transport.close()
+        if pipe is not None:
+            pipe.close()
+        else:
+            os.close(read_fd)
+        if writer is not None:
+            os.close(writer)
+        raise
     incoming_send, incoming = anyio.create_memory_object_stream[SessionMessage | Exception](1)
     outgoing, outgoing_receive = anyio.create_memory_object_stream[SessionMessage](1)
 

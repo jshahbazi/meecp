@@ -211,7 +211,7 @@ class PreparationAuthority:
         from .preparation_command_owner import validate_command_ownership
         from .private import check_private_file, read_private_json
         validate_command_ownership(metadata)
-        with self.imports._transaction():
+        with self.imports._lock:
             job = self._get(job_id)
             self._current_inputs(job)
             if (not job.get("managed") or not job.get("workspace") or job["state"] != "verifying"
@@ -221,25 +221,32 @@ class PreparationAuthority:
             family = self.family_for(descriptor)
             if getattr(family, "preparation_owner_kind", None) != "command-v3":
                 raise PreparationError("invalid_command_ownership")
-            workspace = Path(job["workspace"])
-            package = validate_package(workspace / "candidate")
-            if (package.digest != metadata["candidate_digest"] or package.manifest.profile != "host-command"
-                    or package.manifest.command.helper_sha256 != metadata["helper_sha256"]
-                    or metadata["fixture_digest"] != contract_digest("preparation-command-fixtures-v1",
-                        [item.model_dump(exclude_none=True) for item in descriptor.validation])):
+        workspace = Path(job["workspace"])
+        package = validate_package(workspace / "candidate")
+        if (package.digest != metadata["candidate_digest"] or package.manifest.profile != "host-command"
+                or package.manifest.command.helper_sha256 != metadata["helper_sha256"]
+                or metadata["fixture_digest"] != contract_digest("preparation-command-fixtures-v1",
+                    [item.model_dump(exclude_none=True) for item in descriptor.validation])):
+            raise PreparationError("invalid_command_ownership")
+        expected = family.expected_package_contract(descriptor, draft)
+        manifest = package.manifest.model_dump(exclude_none=True)
+        if (any(manifest.get(key) != value for key, value in expected.items() if key != "source_artifacts")
+                or [item.model_dump() for item in package.lock.artifacts if item.path != "mcpme.preparation.json"]
+                != expected["source_artifacts"]):
+            raise PreparationError("invalid_command_ownership")
+        state = workspace / "command-probe-v3"
+        check_private_file(state / "command-v2.lock")
+        if (read_private_json(state / "owner.json") != metadata
+                or read_private_json(state / "invocations.json") != {"version": 1, "entries": []}
+                or read_private_json(state / "command-v2.json") != {"version": 3, "entries": []}):
+            raise PreparationError("invalid_command_ownership")
+        with self.imports._transaction():
+            current = self._get(job_id)
+            self._current_inputs(current)
+            if (current["binding"] != job["binding"] or current.get("workspace") != job["workspace"]
+                    or current["state"] != "verifying" or not current.get("managed")):
                 raise PreparationError("invalid_command_ownership")
-            expected = family.expected_package_contract(descriptor, draft)
-            manifest = package.manifest.model_dump(exclude_none=True)
-            if (any(manifest.get(key) != value for key, value in expected.items() if key != "source_artifacts")
-                    or [item.model_dump() for item in package.lock.artifacts if item.path != "mcpme.preparation.json"]
-                    != expected["source_artifacts"]):
-                raise PreparationError("invalid_command_ownership")
-            state = workspace / "command-probe-v3"
-            check_private_file(state / "command-v2.lock")
-            if (read_private_json(state / "owner.json") != metadata
-                    or read_private_json(state / "invocations.json") != {"version": 1, "entries": []}
-                    or read_private_json(state / "command-v2.json") != {"version": 3, "entries": []}):
-                raise PreparationError("invalid_command_ownership")
+            job = current
             if self.command_ownership(job_id):
                 raise PreparationError("duplicate_preparation_ownership")
             self.db.execute("INSERT INTO preparation_command_ownership VALUES (?,?,?)",

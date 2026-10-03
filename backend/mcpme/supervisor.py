@@ -217,8 +217,11 @@ class Supervisor(UpgradeHost):
             self.captures = ArtifactCaptureStore(self.imports, self.artifacts, storage_policy=storage_policy)
             from .preparation_onnx import OnnxPreparationFamily
             from .preparation_textgen import TextGenerationFamily
+            from .preparation_command_registration import shipped_command_family
+            command_family = shipped_command_family(self.reaper.parent.parent)
             self.preparations = PreparationStore(self.imports, self.recipes, resolutions=self.resolutions,
-                                                families=(OnnxPreparationFamily(self.captures), TextGenerationFamily(self.captures)))
+                families=(OnnxPreparationFamily(self.captures), TextGenerationFamily(self.captures),
+                          *((command_family,) if command_family is not None else ())))
             from .preparation_forms import PreparationForms
             self.preparation_forms = PreparationForms(self.preparations, preferred_recipes=tuple(
                 record["recipe"] for record in self.builtin_recipe_metadata["recipes"] if record["ready"]),

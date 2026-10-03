@@ -23,6 +23,12 @@
       "directory": "text-generation-v1-0-5",
       "recipe_id": "mcpme.text-generation",
       "version": "1.0.5"
+    },
+    {
+      "digest": "84cf4753aa429fe80304527ec8781b7e76c9db15a902970a63e18bd41c716e75",
+      "directory": "native-command-v1",
+      "recipe_id": "mcpme.native-command",
+      "version": "1.0.0"
     }
   ],
   "schema_version": 1

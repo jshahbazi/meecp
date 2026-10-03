@@ -58,7 +58,8 @@ also requires a document-service template before it can be advertised. Both rema
 visible unsupported capabilities; accepting Markdown/text setup instructions does
 not claim a reference library or an integrated coding agent.
 
-Phase 3 covers a second model engine and measured resource contention. Aggregate
+The updated roadmap makes automatic directory/service preparation Phase 3;
+a second managed model engine and measured resource contention move to Phase 4. Aggregate
 MCP routing, remote workers, containers, a marketplace, automatic updates, shared
 engines across slots, Intel and remote exposure remain explicitly deferred in the
 architecture. Partial byte-range download resumption and first-call wake loading

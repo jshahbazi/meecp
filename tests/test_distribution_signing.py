@@ -17,6 +17,8 @@ import build_mcpme_dmg as dmg_builder  # noqa: E402
 import build_mcpme_host as host_builder  # noqa: E402
 from build_mcpme_host import BuildCommandError  # noqa: E402
 from build_mcpme_host import project_version  # noqa: E402
+from mcpme.contracts import PackageError, validate_package  # noqa: E402
+from test_mcpme_packages import edit_manifest, make_package, relock  # noqa: E402
 
 
 CERTIFICATE = "A" * 40
@@ -74,7 +76,16 @@ def test_dmg_rejects_invalid_override_before_external_build(monkeypatch, tmp_pat
     assert called == []
 
 
-def test_app_build_records_selected_version_and_passes_it_to_host(monkeypatch, tmp_path):
+def synthetic_starter(destination):
+    starter = make_package(destination)
+    edit_manifest(starter, package_id="local.json-utilities", name="JSON Utilities")
+    (starter / "bin/service").write_bytes(b"\xcf\xfa\xed\xfe" + b"synthetic starter binary")
+    relock(starter)
+    return starter
+
+
+@pytest.mark.parametrize("release", [False, True])
+def test_app_build_records_selected_version_and_validates_signed_starter(monkeypatch, tmp_path, release):
     source = tmp_path / "source"
     for relative in ("Sources/McpmeMenuBar/main.swift", "Sources/McpmeMenuBar/Brand.swift",
                      "README.md", "model-manifest.json", "THIRD_PARTY_NOTICES.md",
@@ -88,14 +99,28 @@ def test_app_build_records_selected_version_and_passes_it_to_host(monkeypatch, t
     (binary_directory / "McpmeMenuBar").write_bytes(b"synthetic native app")
     before = (source / "pyproject.toml").read_bytes()
     host_versions = []
+    signed_starter = None
+    validated_digest = None
 
     def run(*arguments):
+        nonlocal validated_digest
         if "--show-bin-path" in arguments:
             return str(binary_directory)
         if arguments[0] == "/usr/bin/iconutil":
             Path(arguments[arguments.index("-o") + 1]).write_bytes(b"synthetic icon")
         if "rev-parse" in arguments:
             return "a" * 40
+        if "validate" in arguments:
+            assert signed_starter is not None
+            package = validate_package(Path(arguments[arguments.index("--package") + 1]))
+            validated_digest = package.digest
+            return json.dumps({"valid": True, "package_digest": package.digest,
+                               "package": package.manifest.model_dump()})
+        if arguments[0] == "/usr/bin/codesign":
+            # The final app seal must include the post-signing package receipt.
+            assert validated_digest is not None
+            receipt = json.loads((Path(arguments[-1]) / "Contents/Resources/app-build.json").read_text())
+            assert receipt["starter_packages"][0]["package_digest"] == validated_digest
         return ""
 
     def build_host(destination, *, version):
@@ -106,13 +131,26 @@ def test_app_build_records_selected_version_and_passes_it_to_host(monkeypatch, t
         }))
         return destination
 
+    def sign_runtime(staged, identity, signed_release, keychain):
+        nonlocal signed_starter
+        assert signed_release is release
+        starter = staged / "Contents/Resources" / app_builder.STARTER_PACKAGE_PATH
+        signed_starter = starter / "bin/service"
+        signed_starter.write_bytes(signed_starter.read_bytes() + b" changed by codesign")
+        # The previously valid lock must fail until the app builder refreshes
+        # the signed native artifact, as happens with actual codesign output.
+        with pytest.raises(PackageError, match="artifact_(?:hash|size)_mismatch"):
+            validate_package(starter)
+        return 1
+
     monkeypatch.setattr(app_builder, "ROOT", source)
     monkeypatch.setattr(app_builder, "run", run)
     monkeypatch.setattr(app_builder, "build_host", build_host)
+    monkeypatch.setattr(app_builder, "prepare_json_package", synthetic_starter)
     monkeypatch.setattr(app_builder, "developer_identity", lambda *args: CERTIFICATE)
-    monkeypatch.setattr(app_builder, "sign_runtime", lambda *args: 0)
+    monkeypatch.setattr(app_builder, "sign_runtime", sign_runtime)
     monkeypatch.setattr(app_builder, "verify_signature", lambda *args, **kwargs: None)
-    app = app_builder.build(tmp_path / "mcpme.app", sign_identity=IDENTITY, version="2.4.6")
+    app = app_builder.build(tmp_path / "mcpme.app", sign_identity=IDENTITY if release else None, version="2.4.6")
     resources = app / "Contents/Resources"
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
     receipt = json.loads((resources / "app-build.json").read_text())
@@ -121,8 +159,31 @@ def test_app_build_records_selected_version_and_passes_it_to_host(monkeypatch, t
     assert host_versions == ["2.4.6"]
     assert receipt["source_commit"] == "a" * 40
     assert receipt["source_tree_dirty"] is False
-    assert receipt["signing"] == host_receipt["signing"] == "developer_id"
+    assert receipt["signing"] == host_receipt["signing"] == ("developer_id" if release else "ad_hoc")
+    starter = resources / app_builder.STARTER_PACKAGE_PATH
+    verified = validate_package(starter)
+    assert receipt["starter_packages"] == [{"path": "starter-packages/json-utilities",
+        "package_id": "local.json-utilities", "version": "1.0.0", "package_digest": verified.digest,
+        "lock_sha256": app_builder.sha256(starter / "mcpme.lock.json")}]
+    assert verified.digest == validated_digest
     assert (source / "pyproject.toml").read_bytes() == before
+
+
+def test_final_starter_validation_rejects_unsigned_artifact_changes(monkeypatch, tmp_path):
+    starter = synthetic_starter(tmp_path / "starter")
+    (starter / "LICENSE").write_text("unexpected license change")
+    calls = []
+
+    def validate(*arguments):
+        calls.append(arguments)
+        package = validate_package(Path(arguments[arguments.index("--package") + 1]))
+        return json.dumps({"valid": True, "package_digest": package.digest,
+                           "package": package.manifest.model_dump()})
+
+    monkeypatch.setattr(app_builder, "run", validate)
+    with pytest.raises(PackageError, match="artifact_(?:hash|size)_mismatch"):
+        app_builder.finalize_starter_package(starter, tmp_path / "host", release=False)
+    assert calls[0][0] == str(tmp_path / "host/bin/mcpme")
 
 
 def test_all_native_helpers_and_extensions_get_hardened_signatures(monkeypatch, tmp_path):

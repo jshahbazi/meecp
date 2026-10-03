@@ -2,6 +2,8 @@
 
 The owner CLI can fetch a prepared package ZIP using its exact SHA-256 and byte size. Downloading performs no package execution or installation. A completed job returns a private sealed package path and package digest; use that path in the existing reviewed installation flow.
 
+In **Add App**, reveal **I already have a package download link** and select **Enter Package Link…**. The publisher supplies the URL and verification values; this form has no package discovery service. For an immediate first app, choose the bundled **Try JSON Utilities** route instead. Packages are produced by authors or preparation tooling, rather than assembled by the ordinary user.
+
 ## Fetch, inspect, and install
 
 Use the same launcher and state directory as the running supervisor. Obtain the pins through a source you trust; a matching hash establishes agreement with those pins, not publisher trust.

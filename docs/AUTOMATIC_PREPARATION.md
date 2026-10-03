@@ -1,12 +1,16 @@
 # Automatic and agent-assisted app preparation
 
-Status: proposed implementation plan, 2026-10-02. Implementation has not started.
+Status: implementation plan, updated 2026-10-03. The [metadata and admission foundation](PREPARATION_FOUNDATION.md) is implemented; automatic build execution remains unavailable. This is the Phase 3 product milestone. Multiple managed model engines follow in Phase 4.
 
 Baseline: `1d723e5af50639aa40702091c3e39e47dc3020dd`, including the standalone hotdog example. This plan extends [project onboarding](PROJECT_ONBOARDING.md), [package authoring](PACKAGE_AUTHORING.md), and the [implemented Phase 2 boundary](PHASE2_ONBOARDING.md).
 
 ## Intended result
 
 A user selects source, a program, or model artifacts, supplies any missing intent, and prepares a package inside mcpme. Complete supported recipes run without an LLM. Optional integrated agents resolve unfamiliar interfaces or implement adapters. Every route produces the same sealed package and resumes the same import review and installation flow.
+
+Users should not author package manifests, collect dependency trees, or manually return prepared artifacts for the supported automatic path. A directory may contain several services or languages; inspection proposes bounded integration candidates and asks only for missing choices. Package generation is a host preparation responsibility. Preserve the external-agent route while automatic capabilities are being implemented.
+
+Keep source family independent from execution target. A local adapter can expose tools backed by a remote LLM provider, an existing local LLM endpoint, or a managed local engine. Remote connectors need protocol/auth components, configuration and secret references, rather than local weights or engine metadata. Provider-specific behavior belongs in versioned modules and recipes, with actual compatibility and credential/cancellation tests before enablement. The [directory-to-app review](reviews/DIRECTORY_ONBOARDING_REVIEW.md) records the component boundaries, current Python-only planner limitations, and next execution packet.
 
 Broad app support means an extensible set of adapters and tested runtime combinations. An unfamiliar GUI application needs a supported API, CLI, or automation adapter. Unresolved compatibility remains visible. Adding an agent does not establish runtime compatibility.
 
@@ -20,7 +24,7 @@ The first usable milestone must prepare both a Python callable and the exact hot
 | Text-source intake excludes models, runtime trees and binaries, with 16 MiB/file and 64 MiB total bounds. | Add separate binary-artifact intake and ownership. Preserve existing source discovery and digest rules. |
 | [The preparation generator](../templates/prepare.py) packages explicitly selected Python callables and existing foreground MCP servers using private Python and locked wheels. | Reuse the deterministic builder behind a durable preparation worker. Interface selection and recipe completeness need new support. |
 | [The catalog](../templates/catalog.json) includes Python, existing MCP, and a JevK5-specific recipe. | These identifiers do not establish general CLI, YOLO, or LLM support. |
-| [Schema 1](../backend/mcpme/contracts.py) supports macOS arm64/macOS 26+, tools-only MCP 2025-11-25, `mcp-stdio` and `model-service`. | Keep the compatibility target explicit. HTTP-only servers and additional platforms need separate capability work. |
+| [Schema 1](../backend/mcpme/contracts.py) supports macOS arm64/macOS 26+, tools-only MCP 2025-11-25, `mcp-stdio`, constrained authenticated `mcp-http`, and `model-service`. | Package HTTP support is implemented; automatic HTTP preparation remains unsupported by the current planner. Additional platforms need separate capability work. |
 | Schema-1 stdio requires CPU-only operation, no model/process-graph fields and a memory declaration of at most 4096 MiB. | Package the first detector as embedded CPU ONNX with one session. GPU or resident vision requires a later contract extension. |
 | Model-service metadata requires `context_tokens`. [JevK5 preparation](../templates/jevk5-llamacpp-v1/README.md) uses a specific engine, scorer and model identity. | Preserve JevK5 semantics. Introduce separate engine recipes and task adapters; avoid fictional context metadata for vision. |
 | [Preparation grants](../backend/mcpme/grants.py) authorize bounded metadata/attachment/planning without package execution. | Create distinct job-bound authority for preparation execution and probes. Existing grants retain their scope. |
@@ -31,6 +35,8 @@ The [recorded hotdog preparation baseline](HOTDOG_PREPARATION_BASELINE.md) estab
 ## Common preparation contract
 
 Add `mcpme.prepare.json` with **preparation descriptor schema 1**. Keep descriptor, import/export and package versions independent. Preserve package schema 1 initially. The descriptor is bounded declarative data interpreted by versioned recipes; it contains no arbitrary shell commands.
+
+The implemented descriptor-v1 foundation is limited to Python callable/MCP inputs and requires a source lock and complete tool schemas. Generalize new families through a new descriptor version and component validation/result seam; preserve v1 parsing and identities. Missing source locks or dynamically discovered interfaces require a bounded discovery/resolution attempt that produces separately identified derived artifacts before the final build is bound. Do not pretend generated locks were original source inputs. A fresh Python recipe proves extension within Python capabilities; separately verify a non-Python implementation before advertising family-independent execution.
 
 A repository may supply a descriptor. The setup wizard may produce the same descriptor. Source descriptors and agent proposals are untrusted inputs requiring structural validation and explicit bindings.
 

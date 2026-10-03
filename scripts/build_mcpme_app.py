@@ -187,10 +187,8 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
             "NSHighResolutionCapable": True, "NSPrincipalClass": "NSApplication", "CFBundleIconFile": "AppIcon"}
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
     shutil.copyfile(ROOT / "README.md", resources / "README.md")
-    bundled_docs = resources / "docs"
-    bundled_docs.mkdir()
-    for document in sorted((ROOT / "docs").glob("*.md")):
-        shutil.copyfile(document, bundled_docs / document.name)
+    shutil.copytree(ROOT / "docs", resources / "docs",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     for name in ("model-manifest.json", "THIRD_PARTY_NOTICES.md"):
         shutil.copyfile(ROOT / name, resources / name)
     native_input_hash = sha256(native)

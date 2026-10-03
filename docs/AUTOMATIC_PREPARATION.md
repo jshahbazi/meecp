@@ -38,6 +38,8 @@ Add `mcpme.prepare.json` with **preparation descriptor schema 1**. Keep descript
 
 The implemented descriptor-v1 foundation is limited to Python callable/MCP inputs and requires a source lock and complete tool schemas. Generalize new families through a new descriptor version and component validation/result seam; preserve v1 parsing and identities. Missing source locks or dynamically discovered interfaces require a bounded discovery/resolution attempt that produces separately identified derived artifacts before the final build is bound. Do not pretend generated locks were original source inputs. A fresh Python recipe proves extension within Python capabilities; separately verify a non-Python implementation before advertising family-independent execution.
 
+Service-only onboarding also needs a versioned input identity: the current `ImportStore.create()` requires a filesystem source. Add an explicit service-connection source/descriptor binding for nonsecret endpoint, protocol/auth component, model/tool choices, and opaque secret references. Generate and seal the adapter snapshot from that binding inside preparation, recording its derivation. The user should not create a dummy directory or write an adapter to add a provider connection. Keep original directory digests unchanged and require actual connector probes before admitting the generated package.
+
 A repository may supply a descriptor. The setup wizard may produce the same descriptor. Source descriptors and agent proposals are untrusted inputs requiring structural validation and explicit bindings.
 
 Separate the portable descriptor from the host job binding:

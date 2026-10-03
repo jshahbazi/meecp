@@ -747,9 +747,17 @@ class ImportStore:
             else:
                 # The explicit settings-only path binds a new revision to the
                 # same static artifact; all installation plans are invalidated.
-                _refresh(draft)
-                if draft["blockers"]:
-                    raise ImportError(draft["blockers"][0]["code"])
+                # A draft may keep valid partial choices while the required
+                # fields or secret references remain installation blockers.
+                # Supplied choices still bind to the verified package contract.
+                configuration = draft["requirements"].get("configuration", {})
+                references = draft["requirements"].get("secret_references", {})
+                fields = sealed.manifest.configuration.fields
+                if (set(configuration) - set(fields)
+                        or any(not fields[name].accepts(value) for name, value in configuration.items())
+                        or (references and not isinstance(references, dict))
+                        or set(references) - set(sealed.manifest.access.secrets)):
+                    raise ImportError("invalid_import_requirements")
             draft["expires_at"] = time.time() + RETENTION_SECONDS
             self._save(draft)
         if not carry_attachment and previous_attachment is not None and previous_attachment["path"] != draft["source"]["snapshot_path"]:

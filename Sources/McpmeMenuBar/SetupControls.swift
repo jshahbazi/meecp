@@ -241,12 +241,14 @@ final class SetupConfigurationView: NSStackView, NSTextFieldDelegate {
         references.values.forEach { $0.isEnabled = enabled }; createButtons.forEach { $0.isEnabled = enabled }
     }
 
-    func settings() throws -> [String: Any] {
+    /// Incomplete choices may be saved as a draft; installation uses the strict default.
+    func settings(allowIncomplete: Bool = false) throws -> [String: Any] {
         guard validContract else { throw SetupChoiceError.invalid }
         var configuration: [String: Any] = [:], secrets: [String: String] = [:]
         for field in fields where included[field.name]?.state == .on {
             let value: Any
             if let text = inputs[field.name] as? NSTextField {
+                if allowIncomplete && field.required && text.stringValue.isEmpty && !field.accepts("") { continue }
                 if field.type == "integer" {
                     guard text.stringValue.range(of: "^-?[0-9]+$", options: .regularExpression) != nil,
                           let number = Int(text.stringValue) else { throw SetupChoiceError.invalid }; value = number
@@ -256,8 +258,13 @@ final class SetupConfigurationView: NSStackView, NSTextFieldDelegate {
             guard field.accepts(value) else { throw SetupChoiceError.invalid }; configuration[field.name] = value
         }
         for (name, picker) in references {
-            guard let id = picker.selectedItem?.representedObject as? String,
-                  secretChoices.contains(where: { $0.id == id }) else { throw SetupChoiceError.invalid }; secrets[name] = id
+            guard let id = picker.selectedItem?.representedObject as? String else {
+                if allowIncomplete { continue }
+                throw SetupChoiceError.invalid
+            }
+            guard UUID(uuidString: id)?.uuidString.lowercased() == id,
+                  allowIncomplete || secretChoices.contains(where: { $0.id == id }) else { throw SetupChoiceError.invalid }
+            secrets[name] = id
         }
         let object: [String: Any] = ["schema_version": 1, "configuration": configuration, "secret_references": secrets]
         guard let bytes = try? JSONSerialization.data(withJSONObject: configuration), bytes.count <= 16_384 else { throw SetupChoiceError.invalid }
@@ -287,10 +294,42 @@ func setupControlsSelfTest() -> Bool {
           values["Label"] as? String == "Synthetic", settingInteger(values["Count"]) == -1,
           values["Enabled"] as? Bool == false, settings["secret_references"] as? [String: String] == ["API_KEY": id] else { return false }
     form.setEditable(false); form.updateSecrets([])
-    return (try? form.settings()) == nil && SetupConfigurationView.verifyChoices() && verifyPrivateSecretInput()
+    return (try? form.settings()) == nil && SetupConfigurationView.verifyChoices() &&
+        SetupConfigurationView.verifyIncompleteChoices() && verifyPrivateSecretInput()
 }
 
 extension SetupConfigurationView {
+    fileprivate static func verifyIncompleteChoices() -> Bool {
+        let form = SetupConfigurationView(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
+        let package: [String: Any] = ["configuration": ["fields": [
+            "Count": ["type": "integer", "required": true, "minimum": 0],
+            "Label": ["type": "string", "required": true, "min_length": 2],
+            "Enabled": ["type": "boolean"]]], "access": ["secrets": ["API_KEY", "OTHER_KEY"]]]
+        let id = "00000000-0000-4000-8000-000000000001"
+        form.configure(package: package, settings: ["configuration": ["Enabled": false], "secret_references": ["API_KEY": id]])
+        guard let partial = try? form.settings(allowIncomplete: true),
+              let configuration = partial["configuration"] as? [String: Any],
+              configuration.count == 1, configuration["Enabled"] as? Bool == false,
+              partial["secret_references"] as? [String: String] == ["API_KEY": id],
+              (try? form.settings()) == nil,
+              let count = form.inputs["Count"] as? NSTextField,
+              let label = form.inputs["Label"] as? NSTextField else { return false }
+        count.stringValue = "1.2"
+        guard (try? form.settings(allowIncomplete: true)) == nil else { return false }
+        count.stringValue = "2"; label.stringValue = "x"
+        guard (try? form.settings(allowIncomplete: true)) == nil else { return false }
+        label.stringValue = "ready"
+        guard (try? form.settings(allowIncomplete: true)) != nil, (try? form.settings()) == nil,
+              let secret = SetupSecret(["secret_id": id, "name": "Synthetic", "status": "active"]) else { return false }
+        form.updateSecrets([secret])
+        guard (try? form.settings()) == nil else { return false }
+        form.selectSecret(secret, for: "OTHER_KEY")
+        guard (try? form.settings()) != nil else { return false }
+        form.configure(package: package, settings: ["configuration": ["Count": 2, "Label": "ready"],
+            "secret_references": ["API_KEY": "invalid-reference"]])
+        return (try? form.settings(allowIncomplete: true)) == nil && (try? form.settings()) == nil
+    }
+
     fileprivate static func verifyChoices() -> Bool {
         let form = SetupConfigurationView(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
         let package: [String: Any] = ["configuration": ["fields": [

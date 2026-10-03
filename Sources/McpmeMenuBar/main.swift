@@ -545,12 +545,18 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private var hostRoot: URL? { Bundle.main.resourceURL?.appendingPathComponent("host", isDirectory: true) }
     private var setupFile: URL { stateDirectory.appendingPathComponent("ui-project-setup.json") }
 
+    private func resetHostRequestState() {
+        pollInFlight = false; importsPollInFlight = false; downloadsPolling = false
+        setupRequest = false; detailRequests = []; pendingAppRequests = []
+    }
+
     private func startHost() {
         guard !uiPreviewMode else { return }
         guard process == nil, !quitting, !stopping, let host = hostRoot else { return }
         let executable = host.appendingPathComponent("bin/mcpme")
         guard FileManager.default.isExecutableFile(atPath: executable.path) else { hostMessage = "Bundled host is unavailable"; rebuildMenu(); return }
-        generation &+= 1; hostAvailable = false; detailRequests = []; hostMessage = "Starting host…"; projects = []; operations = []; pendingAppRequests = []; pollInFlight = false; importsPollInFlight = false
+        generation &+= 1; hostAvailable = false; resetHostRequestState()
+        hostMessage = "Starting host…"; projects = []; operations = []
         let service = Process()
         service.executableURL = executable
         service.arguments = ["--state-dir", stateDirectory.path, "serve", "--reaper", host.appendingPathComponent("bin/mcpme-reap").path,
@@ -562,9 +568,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         service.terminationHandler = { [weak self, weak service] _ in
             DispatchQueue.main.async {
                 guard let self = self, let service = service, self.process === service else { return }
-                self.process = nil; self.generation &+= 1; self.pollInFlight = false; self.importsPollInFlight = false
-                self.hostAvailable = false; self.detailRequests = []
-                self.projects = []; self.operations = []; self.pendingAppRequests = []
+                self.process = nil; self.generation &+= 1; self.resetHostRequestState()
+                self.hostAvailable = false; self.projects = []; self.operations = []
                 let completion = self.stopCompletion; self.stopCompletion = nil; self.stopping = false
                 self.hostMessage = "Host stopped. Another host may own this installation."
                 self.rebuildMenu(); self.refreshWindow(); completion?()
@@ -1596,12 +1601,22 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private func updateDraftPicker() {
         guard let picker = draftField else { return }
         let selectedID = currentDraft?.id ?? savedSetup["import_id"] as? String
-        picker.removeAllItems(); picker.addItem(withTitle: "New draft")
-        for draft in drafts {
-            picker.addItem(withTitle: draft.name + " — " + draft.label)
-            picker.lastItem?.representedObject = draft.id
+        // A poll begun before a save or import can still return an older list.
+        // Keep the visible draft identified until inventory catches up.
+        var displayedDrafts = drafts
+        if let currentDraft {
+            if let index = displayedDrafts.firstIndex(where: { $0.id == currentDraft.id }) {
+                if displayedDrafts[index].revision <= currentDraft.revision { displayedDrafts[index] = currentDraft }
+            } else { displayedDrafts.insert(currentDraft, at: 0) }
         }
-        if let id = selectedID, let index = drafts.firstIndex(where: { $0.id == id }) { picker.selectItem(at: index + 1) }
+        picker.removeAllItems(); picker.addItem(withTitle: "New draft")
+        for draft in displayedDrafts {
+            let item = NSMenuItem(title: draft.name + " — " + draft.label, action: nil, keyEquivalent: "")
+            item.representedObject = draft.id; picker.menu?.addItem(item)
+        }
+        if let id = selectedID, let item = picker.itemArray.first(where: { $0.representedObject as? String == id }) {
+            picker.select(item)
+        }
     }
 
     private func displayDraft(_ draft: ImportDraft) {
@@ -1661,7 +1676,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
 
     @objc private func selectDraft() {
         let id = draftField?.selectedItem?.representedObject as? String
-        saveCurrentDraft { [weak self] saved in
+        saveDraftBeforeNavigation { [weak self] saved in
             guard let self = self, saved else { return }
             guard let id = id else { self.clearDraft(); return }
             self.setupRequest = true; self.refreshWindow()
@@ -1675,7 +1690,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         }
     }
 
-    @objc private func newDraft() { saveCurrentDraft { [weak self] saved in if saved { self?.clearDraft() } } }
+    @objc private func newDraft() { saveDraftBeforeNavigation { [weak self] saved in if saved { self?.clearDraft() } } }
 
     private func clearDraft() {
         importViewGeneration &+= 1
@@ -1701,7 +1716,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
 
     private func beginImport(_ source: URL, name suppliedName: String? = nil) {
         guard intakeEnabled else { return }
-        saveCurrentDraft { [weak self] saved in
+        saveDraftBeforeNavigation { [weak self] saved in
             guard let self = self, saved else { return }
             let directory = (try? source.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
             let name = suppliedName ?? (directory ? source.lastPathComponent : source.deletingPathExtension().lastPathComponent)
@@ -1760,7 +1775,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
 
     private func configurationChanged(_ draft: ImportDraft) -> Bool {
         guard draft.attachment != nil else { return false }
-        guard let choices = try? configurationView.settings() else { return true }
+        guard let choices = try? configurationView.settings(allowIncomplete: true) else { return true }
         return !NSDictionary(dictionary: choices).isEqual(to: setupSettings)
     }
 
@@ -1775,8 +1790,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             else { payload["document_role"] = NSNull() }
         }
         if draft.attachment != nil {
-            guard let settings = try? configurationView.settings() else {
-                setupLabel?.stringValue = "Complete the required settings and select an available saved secret."; completion(false); return
+            guard let settings = try? configurationView.settings(allowIncomplete: true) else {
+                setupLabel?.stringValue = "Correct the entered settings before saving this draft."; completion(false); return
             }
             var requirements = draft.requirements
             requirements["configuration"] = settings["configuration"]; requirements["secret_references"] = settings["secret_references"]
@@ -1804,6 +1819,26 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                     self.displayDraft(attached); completion(true)
                 }
             } else { completion(true) }
+        }
+    }
+
+    private func saveDraftBeforeNavigation(completion: @escaping (Bool) -> Void) {
+        saveCurrentDraft { [weak self] saved in
+            guard !saved else { completion(true); return }
+            guard let self, self.draftDirty, !self.setupRequest, let draft = self.currentDraft,
+                  draft.editable, let window = self.window else { completion(false); return }
+            let expectedView = self.importViewGeneration
+            let alert = NSAlert(); alert.messageText = "Keep editing this draft?"
+            alert.informativeText = "These edits could not be saved. You can keep editing, or continue with the last saved version of this draft. Continuing discards only the unsaved edits; the saved draft and its source are kept."
+            alert.addButton(withTitle: "Keep Editing"); alert.addButton(withTitle: "Discard Edits and Continue")
+            alert.beginSheetModal(for: window) { [weak self] response in
+                guard let self, self.importViewGeneration == expectedView, self.currentDraft?.id == draft.id,
+                      self.currentDraft?.revision == draft.revision, !self.setupRequest else { completion(false); return }
+                guard response == .alertSecondButtonReturn else {
+                    self.updateDraftPicker(); completion(false); return
+                }
+                self.displayDraft(draft); completion(true)
+            }
         }
     }
 
@@ -2134,7 +2169,38 @@ extension McpmeApp {
         guard app.publisherDownloadCard?.isHidden == false else { return false }
         app.publisherDownloadToggle?.state = .off
         app.downloadRows = [["download_id": "11111111-2222-4333-8444-555555555555"]]; app.refreshWindow()
-        return app.publisherDownloadCard?.isHidden == false && app.starterButton?.isEnabled == false
+        guard app.publisherDownloadCard?.isHidden == false && app.starterButton?.isEnabled == false else { return false }
+        app.setupRequest = true; app.downloadsPolling = true; app.pollInFlight = true; app.importsPollInFlight = true
+        app.detailRequests = ["stale"]; app.pendingAppRequests = ["stale"]
+        app.resetHostRequestState()
+        guard !app.setupRequest && !app.downloadsPolling && !app.pollInFlight && !app.importsPollInFlight
+            && app.detailRequests.isEmpty && app.pendingAppRequests.isEmpty else { return false }
+        let id = "11111111-2222-4333-8444-555555555555"
+        let old: [String: Any] = ["summary": true, "draft_id": id, "revision": 1, "state": "package_received",
+                                 "name": "Old name", "source": ["kind": "prepared_package"], "start": false, "start_policy": "manual"]
+        var updated = old; updated["revision"] = 2; updated["name"] = "Saved name"
+        guard let current = ImportDraft(updated), let stale = ImportDraft(old) else { return false }
+        app.currentDraft = current; app.drafts = []; app.updateDraftPicker()
+        guard app.draftField?.selectedItem?.representedObject as? String == id,
+              app.draftField?.titleOfSelectedItem == "Saved name — Prepared package received" else { return false }
+        app.drafts = [stale]; app.updateDraftPicker()
+        guard app.draftField?.numberOfItems == 2,
+              app.draftField?.titleOfSelectedItem == "Saved name — Prepared package received" else { return false }
+        var equalRevision = updated; equalRevision["state"] = "waiting_for_agent"
+        guard let staleState = ImportDraft(equalRevision) else { return false }
+        app.drafts = [staleState]; app.updateDraftPicker()
+        guard app.draftField?.titleOfSelectedItem == "Saved name — Prepared package received" else { return false }
+        var duplicate = updated; duplicate["draft_id"] = "99999999-2222-4333-8444-555555555555"
+        guard let duplicateDraft = ImportDraft(duplicate) else { return false }
+        app.drafts = [duplicateDraft, current]; app.updateDraftPicker()
+        guard app.draftField?.numberOfItems == 3,
+              app.draftField?.selectedItem?.representedObject as? String == id,
+              Set(app.draftField?.itemArray.compactMap { $0.representedObject as? String } ?? []).count == 2 else { return false }
+        updated["revision"] = 3; updated["name"] = "Newer name"
+        guard let newer = ImportDraft(updated) else { return false }
+        app.drafts = [newer]; app.updateDraftPicker()
+        return app.draftField?.selectedItem?.representedObject as? String == id
+            && app.draftField?.titleOfSelectedItem == "Newer name — Prepared package received"
     }
 
     /// Verifies recovery button availability without starting a host or issuing requests.

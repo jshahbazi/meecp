@@ -93,7 +93,11 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
         path = source / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('[project]\nversion = "0.1.0"\n' if relative == "pyproject.toml" else "synthetic")
-    (source / "docs").mkdir()
+    (source / "docs/reviews").mkdir(parents=True)
+    review = source / "docs/reviews/DIRECTORY_ONBOARDING_REVIEW.md"
+    review.write_text("# Directory onboarding review\n")
+    (source / "docs/AUTOMATIC_PREPARATION.md").write_text(
+        "[Review](reviews/DIRECTORY_ONBOARDING_REVIEW.md)\n")
     binary_directory = tmp_path / "native"
     binary_directory.mkdir()
     (binary_directory / "McpmeMenuBar").write_bytes(b"synthetic native app")
@@ -166,6 +170,8 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
         "package_id": "local.json-utilities", "version": "1.0.0", "package_digest": verified.digest,
         "lock_sha256": app_builder.sha256(starter / "mcpme.lock.json")}]
     assert verified.digest == validated_digest
+    assert (resources / "docs/reviews/DIRECTORY_ONBOARDING_REVIEW.md").read_bytes() == review.read_bytes()
+    assert (resources / "docs/AUTOMATIC_PREPARATION.md").read_bytes() == (source / "docs/AUTOMATIC_PREPARATION.md").read_bytes()
     assert (source / "pyproject.toml").read_bytes() == before
 
 

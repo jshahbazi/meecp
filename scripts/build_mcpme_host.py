@@ -191,9 +191,8 @@ def build(destination: Path, version: str | None = None):
     bundle_model_template_assets(destination)
     shutil.copyfile(ROOT / "README.md", destination / "README.md")
     shutil.copytree(ROOT / "assets/brand", destination / "assets/brand")
-    (destination / "docs").mkdir()
-    for document in sorted((ROOT / "docs").glob("*.md")):
-        shutil.copyfile(document, destination / "docs" / document.name)
+    shutil.copytree(ROOT / "docs", destination / "docs",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     licenses = destination / "licenses"
     licenses.mkdir()
     shutil.copyfile(runtime / "lib/python3.12/LICENSE.txt", licenses / "python-LICENSE.txt")
@@ -201,7 +200,7 @@ def build(destination: Path, version: str | None = None):
     run("/usr/bin/codesign", "--force", "--sign", "-", str(destination / "bin/mcpme-reap"))
     source_files = [*[path for path in sorted((destination / "backend").rglob("*")) if path.is_file()],
                     *[path for path in sorted((destination / "assets/brand").rglob("*")) if path.is_file()],
-                    *sorted((destination / "docs").glob("*.md")), destination / "uv.lock",
+                    *[path for path in sorted((destination / "docs").rglob("*")) if path.is_file()], destination / "uv.lock",
                     destination / "pyproject.toml", *[path for path in sorted((destination / "templates").rglob("*")) if path.is_file()],
                     destination / "requirements.txt", destination / "README.md", destination / "bin/mcpme-reap"]
     source_hashes = {str(path.relative_to(destination)): hashlib.sha256(path.read_bytes()).hexdigest()

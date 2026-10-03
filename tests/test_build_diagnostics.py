@@ -1,6 +1,7 @@
 """Build failures identify the tool without exposing credentials or tool output."""
 from pathlib import Path
 import hashlib
+import json
 import runpy
 import subprocess
 import sys
@@ -148,3 +149,61 @@ def test_bundled_model_generator_has_licensed_source_closure_without_checkout(tm
         assert copied.is_file()
         assert hashlib.sha256(copied.read_bytes()).hexdigest() == hashlib.sha256((host_builder.ROOT / name).read_bytes()).hexdigest()
     assert not list(assets.rglob("*.pyc")) and not list(assets.rglob("__pycache__"))
+
+
+def test_host_build_preserves_nested_document_links_and_binds_all_document_hashes(monkeypatch, tmp_path):
+    source = tmp_path / "source"
+    files = {"pyproject.toml": '[project]\nversion = "0.1.0"\n', "uv.lock": "synthetic lock",
+             "backend/mcpme/service.py": "synthetic source", "backend/mcpme_local_transport.py": "synthetic transport",
+             "README.md": "synthetic readme", "THIRD_PARTY_NOTICES.md": "synthetic notices",
+             "assets/brand/source.svg": "synthetic branding", "templates/catalog.json": "{}",
+             "docs/AUTOMATIC_PREPARATION.md": "[Review](reviews/DIRECTORY_ONBOARDING_REVIEW.md)\n",
+             "docs/reviews/DIRECTORY_ONBOARDING_REVIEW.md": "# Directory onboarding review\n",
+             "docs/reviews/figure.svg": "synthetic documentation figure",
+             "docs/reviews/__pycache__/ignored.pyc": "ignored cache", "docs/reviews/ignored.pyc": "ignored bytecode"}
+    for relative, value in files.items():
+        path = source / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value)
+    runtime = tmp_path / "runtime"
+    (runtime / "bin").mkdir(parents=True)
+    (runtime / "bin/python3.12").write_text("synthetic Python")
+    (runtime / "lib/python3.12").mkdir(parents=True)
+    (runtime / "lib/python3.12/LICENSE.txt").write_text("synthetic Python license")
+    calls = []
+
+    def run(*arguments):
+        calls.append(arguments)
+        if arguments[:3] == ("uv", "python", "find"):
+            return str(runtime / "bin/python3.12")
+        if arguments[0] == "/usr/bin/cc" and "-o" in arguments:
+            Path(arguments[arguments.index("-o") + 1]).write_bytes(b"synthetic native reaper")
+        if arguments[:2] == ("uv", "export"):
+            Path(arguments[arguments.index("--output-file") + 1]).write_text("synthetic requirements")
+        if arguments[0] == "/usr/bin/codesign":
+            reaper = Path(arguments[-1])
+            reaper.write_bytes(reaper.read_bytes() + b" signed")
+        if arguments[0] == "/usr/bin/cc" and "--version" in arguments:
+            return "synthetic compiler"
+        if arguments[-1:] == ("--version",):
+            return "Python 3.12.13"
+        if "rev-parse" in arguments:
+            return "a" * 40
+        return ""
+
+    monkeypatch.setattr(host_builder, "ROOT", source)
+    monkeypatch.setattr(host_builder.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(host_builder.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(host_builder, "run", run)
+    monkeypatch.setattr(host_builder, "bundle_model_template_assets", lambda destination: None)
+    host = host_builder.build(tmp_path / "host")
+    receipt = json.loads((host / "build.json").read_text())
+    included = {"docs/AUTOMATIC_PREPARATION.md", "docs/reviews/DIRECTORY_ONBOARDING_REVIEW.md", "docs/reviews/figure.svg"}
+    for relative in included:
+        assert (host / relative).read_bytes() == (source / relative).read_bytes()
+        assert receipt["artifact_sha256"][relative] == hashlib.sha256((source / relative).read_bytes()).hexdigest()
+    assert {name for name in receipt["artifact_sha256"] if name.startswith("docs/")} == included
+    assert not list((host / "docs").rglob("__pycache__")) and not list((host / "docs").rglob("*.pyc"))
+    assert receipt["signing"] == "ad_hoc_reaper_only"
+    assert receipt["artifact_sha256"]["bin/mcpme-reap"] == hashlib.sha256((host / "bin/mcpme-reap").read_bytes()).hexdigest()
+    assert len([call for call in calls if call[0] == "/usr/bin/codesign"]) == 1

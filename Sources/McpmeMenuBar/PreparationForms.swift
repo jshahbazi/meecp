@@ -412,17 +412,63 @@ struct PreparationReview {
               object["expires_at"] is NSNull || expiresAt.map({ $0 > 0 }) == true,
               (planID == nil && planDigest == nil && expiresAt == nil) || (planID != nil && planDigest != nil && expiresAt != nil),
               !available || (planID != nil && blockers.isEmpty) else { return nil }
-        var review: [String: Any] = ["source_revision": context.sourceRevision, "import_id": context.importID, "revision": context.revision,
-            "candidate_id": form.candidateID ?? NSNull(), "recipe": form.recipe?.object ?? NSNull(),
-            "tools": tools, "access": object["access"]!, "resources": object["resources"]!, "downloads": downloads, "blockers": blockers,
-            "execution_available": available, "plan_id": planID ?? NSNull(), "plan_digest": planDigest ?? NSNull()]
-        for key in ["effects", "execution_policy", "descriptor_digest"] { if let value = object[key] { review[key] = value } }
-        guard let display = preparationJSON(review, maximum: 1_048_576) else { return nil }
+        guard let display = PreparationReviewSummary.render(draft: draft, tools: tools,
+            access: object["access"] as! [String: Any], resources: object["resources"] as! [String: Any],
+            policy: object["execution_policy"] as? [String: Any], downloads: downloads, available: available, blockers: blockers) else { return nil }
         self.context = context; self.formDigest = form.digest; self.planID = planID; self.planDigest = planDigest; self.expiresAt = expiresAt
         self.executionAvailable = available; self.blockers = blockers; self.draft = draft; self.display = display
     }
     func canStart(at time: Double = Date().timeIntervalSince1970) -> Bool {
         executionAvailable && blockers.isEmpty && planID != nil && planDigest != nil && (expiresAt ?? 0) > time
+    }
+}
+
+private enum PreparationReviewSummary {
+    private static func names(_ value: Any?, maximum: Int = 4096) -> [String]? {
+        guard let list = value as? [String], list.count <= 128, list.allSatisfy({ preparationText($0, maximum: maximum) != nil }) else { return nil }; return list
+    }
+    private static func list(_ values: [String]) -> String { values.isEmpty ? "None declared" : values.joined(separator: ", ") }
+    private static func bytes(_ value: Int) -> String { ByteCountFormatter.string(fromByteCount: Int64(value), countStyle: .file) }
+    static func render(draft: [String: Any], tools: [[String: Any]], access: [String: Any], resources: [String: Any],
+                       policy: [String: Any]?, downloads: [[String: Any]], available: Bool, blockers: [String]) -> String? {
+        guard let name = preparationText(draft["name"], maximum: 256), let files = names(access["filesystem"]),
+              let network = names(access["network"]), let secrets = names(access["secrets"], maximum: 256), secrets.count <= 16,
+              let writes = preparationBoolean(access["writes"]), let memory = preparationInteger(resources["memory_mb"]), (1...4096).contains(memory), downloads.isEmpty else { return nil }
+        var lines = [name, "", "Tools"]
+        if tools.isEmpty { lines.append("No tools resolved yet.") }
+        for tool in tools {
+            guard let name = preparationText(tool["name"], maximum: 128) else { return nil }
+            let description: String
+            if tool["description"] == nil || tool["description"] is NSNull { description = "" }
+            else { guard let text = preparationText(tool["description"], maximum: 4096, empty: true) else { return nil }; description = text }
+            lines.append("- " + name + (description.isEmpty ? "" : ": " + description))
+        }
+        lines += ["", "App access and resources", "Files: " + list(files), "Network: " + list(network),
+            "Writes: " + (writes ? "Declared by this app" : "None declared"), "Saved secret access: " + list(secrets), "Memory: \(memory) MB"]
+        lines += ["", "Preparation scope and limits"]
+        if let policy {
+            guard preparationInteger(policy["schema_version"]) == 1,
+                  let operations = names(policy["operations"], maximum: 64), (1...2).contains(operations.count),
+                  Set(operations).count == operations.count, Set(operations).isSubset(of: ["build", "probe"]),
+                  let network = names(policy["network"], maximum: 256), network.count <= 32,
+                  let seconds = preparationInteger(policy["wall_seconds"]), (1...3600).contains(seconds),
+                  let disk = preparationInteger(policy["disk_bytes"]), (1...68_719_476_736).contains(disk),
+                  let memory = preparationInteger(policy["memory_mb"]), (1...4096).contains(memory) else { return nil }
+            lines += ["Work: " + list(operations.map { $0.replacingOccurrences(of: "_", with: " ").capitalized }),
+                "Network: " + list(network), "Deadline: \(seconds) seconds", "Disk budget: " + bytes(disk), "Memory budget: \(memory) MB"]
+        } else {
+            guard !available else { return nil }; lines.append("The host has not supplied an executable preparation scope.")
+        }
+        lines += ["", "Selected downloads"]
+        lines += ["No additional app artifacts selected.", "Preparation may acquire locked dependencies from the reviewed hosts."]
+        lines += ["", available ? "Preparation is available for this reviewed plan." : "Automatic preparation is unavailable on this host."]
+        let explanations = ["preparation_runner_unavailable": "The preparation runner is unavailable.",
+            "independent_runtime_verifier_unavailable": "Independent package verification is unavailable.",
+            "candidate_required": "Choose a detected candidate.", "recipe_required": "Choose a compatible recipe.",
+            "required_input_missing": "Complete the required questions.", "dynamic_tool_discovery_required": "The host must resolve the app's tools before preparing it."]
+        for blocker in blockers { lines.append("- " + (explanations[blocker] ?? blocker.replacingOccurrences(of: "_", with: " ").capitalized)) }
+        let display = lines.joined(separator: "\n")
+        return display.utf8.count <= 1_048_576 ? display : nil
     }
 }
 
@@ -480,7 +526,7 @@ final class PreparationWorkspaceView: NSStackView {
         for button in [refreshButton!, reviewButton!, startButton!, cancelButton!] { button.bezelStyle = .rounded }
         addArrangedSubview(workspaceStack([refreshButton, reviewButton, startButton, cancelButton], horizontal: true))
         let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
-        reviewText.isEditable = false; reviewText.isSelectable = true; reviewText.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        reviewText.isEditable = false; reviewText.isSelectable = true; reviewText.font = .systemFont(ofSize: 13)
         reviewText.autoresizingMask = [.width]; reviewText.isVerticallyResizable = true; reviewText.textContainer?.widthTracksTextView = true
         reviewText.textContainerInset = NSSize(width: 8, height: 8); reviewText.setAccessibilityLabel("Reviewed preparation tools, access, resources and downloads")
         scroll.documentView = reviewText; scroll.heightAnchor.constraint(equalToConstant: 190).isActive = true
@@ -613,7 +659,7 @@ final class PreparationWorkspaceView: NSStackView {
             guard let rows = object?["preparations"] as? [[String: Any]], rows.count <= 1024 else { self.polling = false; return }
             let jobs = rows.compactMap(PreparationJob.init)
             guard jobs.count == rows.count, Set(jobs.map(\.id)).count == jobs.count else { self.polling = false; return }
-            guard let latest = jobs.filter({ $0.importID == context.importID && $0.revision <= context.revision }).max(by: { $0.updatedAt < $1.updatedAt }) else { self.polling = false; return }
+            guard let latest = jobs.filter({ $0.importID == context.importID && $0.revision <= context.revision && $0.sourceRevision == context.sourceRevision }).max(by: { $0.updatedAt < $1.updatedAt }) else { self.polling = false; return }
             if self.job?.id == latest.id, (self.job?.updatedAt ?? -1) >= latest.updatedAt { self.polling = false; return }
             request("v1/preparations/" + latest.id, "GET", nil) { [weak self] object, _ in
                 guard let self, self.epoch == expected, self.context == context else { return }; self.polling = false
@@ -823,10 +869,11 @@ private enum PreparationTestData {
         ["schema_version": 1, "import_id": importID, "revision": revision, "source_revision": source, "form_digest": formDigest,
          "execution_available": available, "plan_id": available ? planID : NSNull(), "plan_digest": available ? planDigest : NSNull(),
          "expires_at": available ? Date().timeIntervalSince1970 + 600 : NSNull(),
-         "tools": [["name": "synthetic", "input_schema": ["type": "object"]]], "access": ["network": []], "resources": ["memory_mb": 128],
+         "tools": [["name": "synthetic", "description": "A synthetic tool.", "input_schema": ["type": "object"]]],
+         "access": ["filesystem": ["/tmp/selected-input"], "network": ["example.test"], "secrets": [], "writes": false], "resources": ["memory_mb": 128],
          "downloads": [], "blockers": available ? [] : ["preparation_runner_unavailable"],
-         "effects": ["writes": ["private_workspace"]], "execution_policy": ["operations": ["build", "probe"], "deadline_seconds": 60],
-         "draft": ["draft_id": importID, "revision": revision, "source": ["revision": source]]]
+         "effects": ["writes": ["private_workspace"]], "execution_policy": ["schema_version": 1, "operations": ["build", "probe"], "network": ["downloads.example.test"], "wall_seconds": 60, "disk_bytes": 104857600, "memory_mb": 256],
+         "draft": ["draft_id": importID, "revision": revision, "name": "Synthetic app", "source": ["revision": source]]]
     }
     static func job(state: String = "preparing", revision: Int = 1, updated: Double = 1) -> [String: Any] {
         ["job_id": jobID, "binding": ["import_id": importID, "revision": revision, "source_revision": source], "state": state,
@@ -835,7 +882,7 @@ private enum PreparationTestData {
     }
     static func summary(_ job: [String: Any]) -> [String: Any] {
         let binding = job["binding"] as! [String: Any]
-        return ["job_id": job["job_id"]!, "import_id": binding["import_id"]!, "revision": binding["revision"]!,
+        return ["job_id": job["job_id"]!, "import_id": binding["import_id"]!, "revision": binding["revision"]!, "source_revision": binding["source_revision"]!,
             "state": job["state"]!, "updated_at": job["updated_at"]!, "error_code": job["error_code"]!, "progress": job["progress"]!]
     }
 }
@@ -887,7 +934,17 @@ extension PreparationWorkspaceView {
               answers[String(repeating: "7", count: 64)] is [String: Any], answers[String(repeating: "8", count: 64)] == nil else { return false }
         invalid = PreparationTestData.review(); invalid["form_digest"] = String(repeating: "f", count: 64)
         guard PreparationReview(invalid, form: parsed) == nil else { return false }
-        guard let disabled = PreparationReview(PreparationTestData.review(), form: parsed), !disabled.canStart(), disabled.display.contains("private_workspace"), disabled.display.contains("memory_mb") else { return false }
+        guard let disabled = PreparationReview(PreparationTestData.review(), form: parsed), !disabled.canStart(),
+              disabled.display.contains("Synthetic app"), disabled.display.contains("synthetic: A synthetic tool."),
+              disabled.display.contains("/tmp/selected-input"), disabled.display.contains("example.test"), disabled.display.contains("Memory: 128 MB"),
+              disabled.display.contains("Work: Build, Probe"), disabled.display.contains("Deadline: 60 seconds"), disabled.display.contains("Disk budget:"),
+              disabled.display.contains("Memory budget: 256 MB"), disabled.display.contains("No additional app artifacts selected."),
+              disabled.display.contains("Preparation may acquire locked dependencies from the reviewed hosts."),
+              !disabled.display.contains(PreparationTestData.importID), !disabled.display.contains(PreparationTestData.source),
+              !disabled.display.contains(PreparationTestData.recipeDigest), !disabled.display.contains("input_schema"),
+              !disabled.display.contains("form_digest"), !disabled.display.contains("wall_seconds"), !disabled.display.contains("recipe_id") else { return false }
+        invalid = PreparationTestData.review(); invalid["downloads"] = [["unknown": "future artifact shape"]]
+        guard PreparationReview(invalid, form: parsed) == nil else { return false }
         invalid = PreparationTestData.job(); invalid["progress"] = ["stage": "unknown_stage", "commands_finished": 0, "wheels_acquired": 0, "bytes_acquired": 0, "files_checked": 0, "fixtures_checked": 0]
         guard PreparationJob(invalid) == nil else { return false }
         invalid = PreparationTestData.job(); var counters = invalid["progress"] as! [String: Any]; counters["files_checked"] = 200001; invalid["progress"] = counters
@@ -925,6 +982,15 @@ extension PreparationWorkspaceView {
         view.startPreparation(); guard calls[0].body?["idempotency_key"] as? String == key else { return false }
         calls.removeFirst().complete(PreparationTestData.job(revision: 4), nil)
         guard view.hasActiveJob, view.job?.progress["bytes_acquired"] == 4096, !view.startButton.isEnabled, view.cancelButton.isEnabled else { return false }
+        // A newer update for another source must not mask this source's active job.
+        view.poll(); var otherSource = PreparationTestData.job(revision: 4, updated: 99)
+        otherSource["job_id"] = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"
+        otherSource["binding"] = ["import_id": PreparationTestData.importID, "revision": 4, "source_revision": "different-source"]
+        let ownedUpdate = PreparationTestData.job(revision: 4, updated: 1.5)
+        calls.removeFirst().complete(["preparations": [PreparationTestData.summary(otherSource), PreparationTestData.summary(ownedUpdate)]], nil)
+        guard calls.count == 1, calls[0].path == "v1/preparations/" + PreparationTestData.jobID else { return false }
+        calls.removeFirst().complete(ownedUpdate, nil)
+        guard view.job?.id == PreparationTestData.jobID, view.job?.updatedAt == 1.5, view.hasActiveJob else { return false }
         view.cancelPreparation(); guard calls.count == 1, calls[0].path == "v1/preparations/" + PreparationTestData.jobID + "/cancel", calls[0].body?.isEmpty == true else { return false }
         calls.removeFirst().complete(PreparationTestData.job(state: "cancel_requested", revision: 4, updated: 2), nil)
         guard view.hasActiveJob, !view.cancelButton.isEnabled else { return false }
@@ -942,8 +1008,8 @@ extension PreparationWorkspaceView {
         guard view.job?.revision == 4, attached == 1 else { return false }
         view.poll(); var foreign = PreparationTestData.job(state: "preparing", revision: 4, updated: 5)
         foreign["binding"] = ["import_id": PreparationTestData.importID, "revision": 4, "source_revision": "different-source"]
-        calls.removeFirst().complete(["preparations": [PreparationTestData.summary(foreign)]], nil); calls.removeFirst().complete(foreign, nil)
-        guard view.job?.state == "succeeded", !view.hasActiveJob else { return false }
+        calls.removeFirst().complete(["preparations": [PreparationTestData.summary(foreign)]], nil)
+        guard calls.isEmpty, view.job?.state == "succeeded", !view.hasActiveJob else { return false }
         view.invalidate(); guard calls.isEmpty, view.job?.state == "succeeded", view.review == nil else { return false }
         view.bind(PreparationTestData.context, saved: true, eligible: true); view.refreshForm(); calls.removeFirst().complete(nil, "caller\nsecret")
         guard !view.status.stringValue.contains("secret") else { return false }

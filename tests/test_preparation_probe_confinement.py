@@ -154,6 +154,89 @@ async def test_supplied_owner_must_use_bound_native_helper(private_runtime, prob
     assert not owner.instances and not owner._launches
 
 
+def test_private_data_directory_cannot_leave_workspace(private_runtime, probe_reaper, tmp_path):
+    package, descriptor, workspace = _private_fixture(tmp_path, private_runtime)
+    validated = validate_package(package)
+    plan = ProbeConfinementV1.capture(validated, workspace, probe_reaper)
+    outside = tmp_path / "outside-private-home"
+    outside.mkdir(mode=0o700)
+    with pytest.raises(PreparationError) as caught:
+        replace(plan, home=outside).check(validated, probe_reaper)
+    assert caught.value.code == "unsafe_preparation_probe_path"
+
+
+@pytest.mark.parametrize("replacement", ["home", "workspace"])
+def test_directory_replacement_during_final_hash_is_rejected(private_runtime, probe_reaper, tmp_path, monkeypatch, replacement):
+    from mcpme import preparation_probe_confinement as confinement
+    package, descriptor, workspace = _private_fixture(tmp_path, private_runtime)
+    validated = validate_package(package)
+    plan = ProbeConfinementV1.capture(validated, workspace, probe_reaper)
+    original = confinement._file
+    replaced = False
+    def held(path, **kwargs):
+        nonlocal replaced
+        result = original(path, **kwargs)
+        if path == package / "bootstrap.py" and not replaced:
+            replaced = True
+            if replacement == "home":
+                plan.home.rename(workspace / "displaced-home")
+                plan.home.mkdir(mode=0o700)
+            else:
+                workspace.rename(tmp_path / "displaced-workspace")
+                workspace.mkdir(mode=0o700)
+                plan.home.mkdir(mode=0o700)
+                plan.temporary.mkdir(mode=0o700)
+        return result
+    monkeypatch.setattr(confinement, "_file", held)
+    with pytest.raises(PreparationError) as caught:
+        plan.check(validated, probe_reaper)
+    assert caught.value.code == "preparation_probe_confinement_mismatch"
+
+
+@pytest.mark.parametrize("barrier", ["hash", "native_launch"])
+async def test_helper_change_during_owned_handoff_suppresses_launch(private_runtime, probe_reaper, tmp_path, monkeypatch, barrier):
+    import threading
+    package, descriptor, workspace = _private_fixture(tmp_path, private_runtime)
+    validated = validate_package(package)
+    plan = ProbeConfinementV1.capture(validated, workspace, probe_reaper)
+    owner = ProcessOwner(probe_reaper)
+    alternate = tmp_path / "same-bytes-other-helper"
+    shutil.copyfile(probe_reaper, alternate)
+    alternate.chmod(0o700)
+    native_creations = []
+    original_create = asyncio.create_subprocess_exec
+    async def observed_create(*args, **kwargs):
+        native_creations.append(True)
+        return await original_create(*args, **kwargs)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", observed_create)
+    if barrier == "hash":
+        entered, release = threading.Event(), threading.Event()
+        original = ProbeConfinementV1.launch
+        def held(self, *args):
+            entered.set()
+            assert release.wait(5)
+            return original(self, *args)
+        monkeypatch.setattr(ProbeConfinementV1, "launch", held)
+    else:
+        entered, release = asyncio.Event(), asyncio.Event()
+        original = owner._launch
+        async def held(*args):
+            entered.set()
+            await release.wait()
+            return await original(*args)
+        monkeypatch.setattr(owner, "_launch", held)
+    task = asyncio.create_task(verify_prepared_package(package, descriptor, probe_reaper, workspace,
+                                                     owner=owner, probe_confinement=plan))
+    async with asyncio.timeout(10):
+        while not entered.is_set():
+            await asyncio.sleep(.01)
+    owner.reaper = alternate
+    release.set()
+    with pytest.raises(PreparationError):
+        await task
+    assert not native_creations and not owner.instances and not owner._launches
+
+
 async def test_canceled_confinement_check_is_joined_before_return(private_runtime, probe_reaper, tmp_path, monkeypatch):
     import threading
     package, descriptor, workspace = _private_fixture(tmp_path, private_runtime)

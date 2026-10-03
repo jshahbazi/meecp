@@ -128,9 +128,12 @@ async def verify_prepared_package(
                     launch = await asyncio.shield(task)
                 finally:
                     await _await_ownership(asyncio.gather(task, return_exceptions=True))
+                if owner.reaper != probe_confinement.reaper:
+                    raise PreparationError("preparation_probe_confinement_mismatch")
             process = await owner.launch(
                 *launch,
                 owned_group=True, startup_timeout=min(timeout_seconds, 120), stop_grace=0.1,
+                **({"expected_reaper": probe_confinement.reaper} if probe_confinement is not None else {}),
             )
             async def probe():
                 async with _owned_transport(process) as (incoming, outgoing):
@@ -169,6 +172,8 @@ async def verify_prepared_package(
                 await asyncio.shield(task)
             finally:
                 await _await_ownership(asyncio.gather(task, return_exceptions=True))
+            if owner.reaper != probe_confinement.reaper:
+                raise PreparationError("preparation_probe_confinement_mismatch")
         return VerificationReport(package.digest, len(listing.tools), len(descriptor.validation), result.protocolVersion, peak)
     except OwnershipLost:
         raise

@@ -252,7 +252,7 @@ class ProcessOwner:
         inherited_fds: tuple[int, ...] = (), startup_timeout: float = 10,
         stop_grace: float = 2, completion_fd: int | None = None,
         completion_nonce: str | None = None, owned_group: bool = False,
-        nonlaunch_callback=None,
+        nonlaunch_callback=None, expected_reaper: Path | None = None,
     ) -> OwnedProcess:
         if nonlaunch_callback is not None and not callable(nonlaunch_callback):
             raise ProcessError("invalid_launch")
@@ -261,9 +261,12 @@ class ProcessOwner:
         try:
             self._preflight(identifier, io_mode, inherited_fds, startup_timeout, stop_grace,
                             completion_fd, completion_nonce, owned_group)
+            if expected_reaper is not None and Path(expected_reaper) != self.reaper:
+                raise ProcessError("native_reaper_changed")
             inputs = (Path(executable).absolute(), list(args), Path(cwd).absolute(), dict(env),
                       identifier, io_mode, tuple(inherited_fds), startup_timeout, stop_grace,
-                      completion_fd, completion_nonce, owned_group, launch_status)
+                      completion_fd, completion_nonce, owned_group, launch_status,
+                      None if expected_reaper is None else Path(expected_reaper))
         except BaseException:
             # No native creation task exists at this point. This proof is
             # independent of any unrelated instance still owned by the host.
@@ -298,9 +301,12 @@ class ProcessOwner:
         completion_fd: int | None, completion_nonce: str | None,
         owned_group: bool,
         launch_status: dict,
+        expected_reaper: Path | None = None,
     ) -> OwnedProcess:
         if any(not isinstance(v, str) or "\0" in v for v in args):
             raise ProcessError("invalid_launch")
+        if expected_reaper is not None and self.reaper != expected_reaper:
+            raise ProcessError("native_reaper_changed")
         environment = []
         for key, value in env.items():
             if not isinstance(key, str) or not isinstance(value, str) or not key or "=" in key or "\0" in key + value:
@@ -348,7 +354,8 @@ class ProcessOwner:
             launch_status["attempted"] = True
             try:
                 wrapper = await asyncio.create_subprocess_exec(
-                    str(self.reaper), str(spec_child.fileno()), str(control_child.fileno()), str(os.getpid()),
+                    str(self.reaper if expected_reaper is None else expected_reaper),
+                    str(spec_child.fileno()), str(control_child.fileno()), str(os.getpid()),
                     *([str(completion_fd)] if completion_fd is not None else []),
                     stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL, env={},

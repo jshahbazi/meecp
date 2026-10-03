@@ -48,11 +48,11 @@ Draft, job and reader references protect committed objects. Draft changes transf
 
 | Gate | Evidence required by the original plan | Current state |
 | --- | --- | --- |
-| A0 | Strict contracts and identities; legacy compatibility; no inspection execution; exact receipts; old grants cannot run code | Component/inspection and existing foundation regression checks available; complete integrated job/receipt audit remains open |
-| A0R | Independently authored recipe added through CLI/native forms, prepared, attached and retained after restart with no host edits; lifecycle/race gates | Generic native recipe/questions and owner lifecycle routes tested; actual independent recipe preparation/attachment/restart gate remains open |
-| A1 | Separate Python callable and foreground MCP native/API paths; private closure; full MCP probes; relocation; matching attachment; install/invoke/restart; cancellation/crash/revision races | Three actual native Python cases prepared, attached, installed, invoked over HTTP/stdio and restarted at the ONNX checkpoint; complete integrated race, isolation and resource gates remain open |
+| A0 | Strict contracts and identities; legacy compatibility; no inspection execution; exact receipts; old grants cannot run code | Version-2 application-directory capture and host-command package contracts are integrated with bounded private-file identities; complete integrated job/receipt audit remains open |
+| A0R | Independently authored recipe added through CLI/native forms, prepared, attached and retained after restart with no host edits; lifecycle/race gates | Nine actual independently authored recipe lifecycle cases have native/API, attachment and restart checkpoint evidence; broader race and final combined-host rechecks remain open |
+| A1 | Separate Python callable and foreground MCP native/API paths; private closure; full MCP probes; relocation; matching attachment; install/invoke/restart; cancellation/crash/revision races | Earlier native Python cases plus the new original-removed mixed Python/PNG/unknown-payload native flow passed preparation, attachment, installation, HTTP/stdio and restart. An additive restricted private-runtime SDK probe also passed. Common policy integration, complete race/isolation/resource and final artifact gates remain open |
 | A2 | Explicit ONNX artifact; exact CPU detector compatibility; real inference; tensor tests; complete notices; maximum image limits measured | Default-host and native captured/folder-supplement preparation, exact receipts, installed HTTP/stdio inference, restart and source-free relocation have checkpoint evidence. Later combined-host rechecks and inherited common isolation/resource/race gates remain open |
-| A3 | Bounded supervised CLI; argv/input/output/exit contract; descendants, cancellation, crash/restart and closure | Reviewed host-owned installed CLI checkpoint is pushed in isolated branch codex/phase3-command-installed at 7c85ef0. Independent native/installed checks and lifecycle repairs passed. Combined-host integration, aggregate OS resource enforcement and signed/relocated native app acceptance remain open; default admission is closed |
+| A3 | Bounded supervised CLI; argv/input/output/exit contract; descendants, cancellation, crash/restart and closure | Host-owned installed CLI and automatic directory/forms/native-probe checkpoints are integrated; the latest authority/recovery packet passed 119 independent checks. An additive format-4 native resource monitor passed 146 independent checks, with lifetime coverage, hard aggregate enforcement and positive result admission explicitly false. Default family/recipe/native registration, aggregate release enforcement and final artifact acceptance remain open |
 | A4 | Pinned general model/engine/template; actual inference; token limits; shared serialized queue; resource/cancellation settlement; JevK5 parity | Exact CPU compatibility, JevK5 regressions and fresh captured/folder managed build, matching-import installation, HTTP/stdio inference, crash/restart and source-free relocation have checkpoint evidence. One earlier folder lifecycle verifier RuntimeError remains unexplained. Complete combined-host closure, native, isolation/resource and signed-app gates remain open |
 | A5 | Concrete programmatic agent backend; unfamiliar source end to end; scoped transfer/execution; bounded usage; parallel integration; cancellation/restart; stale-result rejection | Additive provider backend/coordinator checkpoint has simulated transport and real local journal/race tests in an isolated branch. No configured credential for a concrete live run; unfamiliar-source generation and host/native integration remain open |
 | A6 | Each additional runtime/provider/family has its own compatibility and authority evidence before advertisement | Schema-2 fake component is a contract test; no additional runtime/provider capability advertised |
@@ -73,6 +73,37 @@ An independent reviewer reproduced six failures that existing focused tests miss
 | Buffered synchronous chunks bypassed the event-loop timeout | Check an explicit monotonic deadline around sink work and final publication |
 
 Final adversarial review is still required after the full Phase 3 implementation and acceptance evidence exist.
+
+## Application-directory and shared-control checkpoints
+
+Automatic intake now retains bounded regular text, binary and unknown-name
+files under an explicit version-2 source identity. Source flags, private
+snapshot bytes and complete membership are independently checked. The legacy
+text-only capture identity and published generators remain unchanged.
+
+The [mixed Python builder checkpoint](MIXED_PYTHON_BUILD_CHECKPOINT.md) adds a
+versioned builder adapter and ResolvedPython 1.0.1 default. Its independently
+reviewed native run deleted the original four-file directory before resolution,
+prepared five commands/29 wheels, probed one fixture, attached revision 2,
+installed and exercised HTTP/stdio plus restart. A first resource-denied attempt
+is preserved as inconclusive capacity evidence; the passing attempt used
+unchanged budgets. Existing recipe lifecycle choices and old published bytes
+remain preserved.
+
+The [probe confinement checkpoint](PREPARATION_PROBE_CONFINEMENT.md) adds an
+optional host-created policy for the exact private Python/ONNX launchers.
+Actual private-runtime controls deny outside file reads/stat, package writes,
+TCP/UDP/Unix connections and fork/spawn/group escapes. The retained real mixed
+package also passed the restricted SDK probe after original-source deletion.
+Ordinary caller behavior and public admission remain unchanged; actual default
+policy integration and complete combined installed acceptance are still needed.
+
+The [resource monitor checkpoint](COMMAND_RESOURCE_MONITOR_V1.md) adds native
+held-group footprint/count/own-CPU sampling, threshold cleanup and format-4
+settlement proofs without changing format 3. The independent 146-case packet
+and 2,048 held-leader windows passed. Sampled windows do not prove full lifetime
+coverage or a hard physical-memory ceiling. Its report-only executor remains
+unregistered and cannot supply a positive preparation result.
 
 The durable-job review additionally reproduced pre-execution recipe disable bypass, missing-wrapper ownership that could never settle, cached recovery/failed shutdown that missed later completion, cancellation during attachment and publication hashes, and initial/post-probe verifier hashing that outlived cancellation. Repairs add first-execution fencing, explicit proven-nonlaunch receipts, refreshable recovery/shutdown, and owned thread barriers. Each has a checked-in regression case; independent reproductions also exercise the publication responsiveness and cancellation winners. This review covers the checkpoint and does not replace the final complete Phase 3 review.
 

@@ -29,8 +29,12 @@ kernel, sandbox binary and policy digest.
 The SDK verifier optionally accepts this typed plan from trusted host code.
 It checks the plan before launch and after owned shutdown/package revalidation.
 Directory identities prevent an identical-mode replacement from satisfying the
-original plan. A supplied process owner must use the plan's actual native
-helper. Hashing runs in a joined worker; repeated cancellation cannot
+original plan. Their identities are checked again after the final file hash.
+The plan checks that its home/temp paths are derived from its workspace and
+that the package and workspace are disjoint, including for a reconstructed
+typed plan. A supplied process owner must use the plan's actual native
+helper; the owner pins that helper through the scheduled native launch task.
+Hashing runs in a joined worker; repeated cancellation cannot
 return while that worker still reads the package. The common verifier and
 resolution implementation identities include the confinement module bytes.
 
@@ -56,6 +60,20 @@ processes. Its private receipt SHA-256 is
 `6d83baff4505f19a3ac9111ab74005f8bff2a3bdfb15d66077b03bdd7ea02b65`.
 This source-level policy execution used the unchanged helper from the frozen
 mixed host; that earlier host does not contain this new confinement module.
+
+The independent follow-up reproduced three trusted-host authority races:
+rebound writable directories, directory replacement during the final hash and
+an owner helper change during the joined hash. The corrections reject all
+three, plus a helper change at the actual native launch-task barrier with zero
+native creations. The final focused source packet passed 68 checks with five
+opt-in host cases skipped; the independent ownership packet passed 34 checks
+and 16 binding/FD/directory negative controls. Repeated post-settlement
+cancellation joined every worker. The corrected real SDK probe passed one tool
+and one fixture at 68,485,120 foreground bytes against 128 MiB, denied four
+canonical/Data-alias external read/stat controls and left zero owned processes.
+Its independent receipt SHA-256 is
+`5325161ee717293cd2d81d3ecdc5cc71ac15bd2a5d0979aa5de0ba9a35ff48f3`.
+These overlapping packets are separate checks, not additive test totals.
 
 This policy uses the existing deprecated macOS custom Seatbelt mechanism.
 Passing exact-build controls does not establish a supported public isolation

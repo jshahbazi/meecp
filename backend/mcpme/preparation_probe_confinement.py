@@ -181,6 +181,17 @@ class ProbeConfinementV1:
     def check(self, package: ValidatedPackage, reaper: Path) -> None:
         if package.root != self.package_root or package.digest != self.package_digest or Path(reaper) != self.reaper:
             _failure()
+        if (self.home != self.workspace / "confined-home" or self.temporary != self.workspace / "confined-tmp"
+                or self.package_root == self.workspace or self.package_root in self.workspace.parents
+                or self.workspace in self.package_root.parents):
+            _failure("unsafe_preparation_probe_path")
+        entry = package.manifest.entrypoint
+        if (package.manifest.profile != "mcp-stdio" or entry is None
+                or entry.executable != "bin/service" or entry.cwd != "."):
+            _failure("unsupported_preparation_probe_confinement")
+        launcher = _file(self.package_root / "bin/service", maximum=4096)[1]
+        if launcher not in _LAUNCHERS or (b'"$@"' not in launcher and entry.args):
+            _failure("unsupported_preparation_probe_confinement")
         _directory(self.workspace, private=True)
         _directory(self.home, private=True)
         _directory(self.temporary, private=True)
@@ -204,6 +215,13 @@ class ProbeConfinementV1:
                                (self.package_root / _BOOTSTRAP, self.bootstrap_sha256)):
             if _file(path)[0] != expected:
                 _failure()
+        # The last file read may yield to a trusted filesystem mutation. A
+        # successful check must still describe the same private directories.
+        _directory(self.workspace, private=True)
+        _directory(self.home, private=True)
+        _directory(self.temporary, private=True)
+        if tuple(_directory(directory) for directory in (self.package_root, self.workspace, self.home, self.temporary)) != self.directory_identities:
+            _failure()
 
     def launch(self, package: ValidatedPackage, reaper: Path):
         self.check(package, reaper)

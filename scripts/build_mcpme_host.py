@@ -213,6 +213,50 @@ def refresh_command_inventory(destination: Path) -> None:
     path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n")
 
 
+def _resource_inventory_contract() -> dict:
+    return {
+        "schema_version": 1, "component": "macos26-arm64-command-resource-v1", "receipt_format": 4,
+        "helper": "bin/mcpme-command-resource-reap", "resource_policy": "held-group-windowed-usage-v1",
+        "confinement_policy": "macos26-arm64-monitored-fork-exec-v1",
+        "platform": {"os": "macos", "major": 26, "architecture": "arm64"},
+        "production_admission": "disabled", "configuration_authority": "inventory-only",
+        "lifetime_coverage_complete": False, "hard_aggregate_enforced": False, "result_admissible": False,
+        "open_gates": ["complete-lifetime-accounting", "aggregate-process-memory-enforcement",
+                       "release-platform-acceptance", "signed-relocated-native-app"],
+    }
+
+
+def bundle_command_resource_helper(destination: Path) -> None:
+    """Package the report-only monitor without granting execution admission."""
+    source = ROOT / "scripts/mcpme-command-resource-reap.c"
+    header = ROOT / "scripts/mcpme-command-resource-v1.h"
+    value = _resource_inventory_contract()
+    helper = destination / value["helper"]
+    run("/usr/bin/cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", str(source), "-o", str(helper))
+    run("/usr/bin/codesign", "--force", "--sign", "-", str(helper))
+    run("/usr/bin/codesign", "--verify", "--strict", str(helper))
+    value.update(helper_sha256=hashlib.sha256(helper.read_bytes()).hexdigest(),
+                 helper_source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+                 helper_header_sha256=hashlib.sha256(header.read_bytes()).hexdigest())
+    (destination / "command-resource-execution.json").write_text(json.dumps(value, sort_keys=True, indent=2) + "\n")
+
+
+def refresh_command_resource_inventory(destination: Path) -> None:
+    """Rebind signed artifact bytes without changing source identities or gates."""
+    path = destination / "command-resource-execution.json"
+    value = json.loads(path.read_bytes())
+    contract = _resource_inventory_contract()
+    hashes = {"helper_sha256", "helper_source_sha256", "helper_header_sha256"}
+    if (not isinstance(value, dict) or set(value) != set(contract) | hashes
+            or any(type(value.get(key)) is not type(expected) or value[key] != expected
+                   for key, expected in contract.items())
+            or any(not isinstance(value.get(key), str) or re.fullmatch(r"[0-9a-f]{64}", value[key]) is None
+                   for key in hashes)):
+        raise ValueError("command_resource_inventory_invalid")
+    value["helper_sha256"] = hashlib.sha256((destination / contract["helper"]).read_bytes()).hexdigest()
+    path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n")
+
+
 def _resolved_runtime_path(path: Path) -> Path:
     try:
         return path.resolve(strict=True)
@@ -294,6 +338,7 @@ def build(destination: Path, version: str | None = None, *, textgen_engine: Path
     run("/usr/bin/cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
         str(ROOT / "scripts/mcpme-reap.c"), "-o", str(destination / "bin/mcpme-reap"))
     bundle_command_helper(destination)
+    bundle_command_resource_helper(destination)
     requirements = destination / "requirements.txt"
     run("uv", "export", "--frozen", "--no-dev", "--no-emit-project", "--format", "requirements-txt",
         "--output-file", str(requirements))

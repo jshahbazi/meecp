@@ -150,7 +150,8 @@ class Resident:
 
 
 class Supervisor(UpgradeHost):
-    def __init__(self, state_dir: Path, reaper: Path, *, preparation_runner_factory=None, resolution_runner_factory=None):
+    def __init__(self, state_dir: Path, reaper: Path, *, preparation_runner_factory=None, resolution_runner_factory=None,
+                 command_admission=None):
         self.root = ensure_private_directory(state_dir.absolute())
         self.lock_fd = os.open(self.root / "supervisor.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         try:
@@ -192,6 +193,8 @@ class Supervisor(UpgradeHost):
         self.package_cache: dict[str, tuple[object, tuple]] = {}
         self.plan_imports: dict[str, tuple[str, int]] = {}
         self.candidate_slots = {}
+        from .host_command import HostCommands
+        self.commands = HostCommands(self, command_admission)
         self.upgrade_cancels = {}
         try:
             self.imports = ImportStore(self.root)
@@ -911,6 +914,8 @@ class Supervisor(UpgradeHost):
 
     async def release_model(self, slot_id: str):
         async with self.resource_lock:
+            if self.commands.pending(slot_id):
+                return
             if any(process.ownership_lost for process in self.owner(slot_id).instances.values()):
                 return
             if self.residents.get(slot_id):
@@ -1126,6 +1131,9 @@ class Supervisor(UpgradeHost):
 
     async def check_candidate(self, slot, *, business_smoke: bool = True):
         package = self.package(slot)
+        if package.manifest.profile == "host-command":
+            await self.commands.verify(slot, business_smoke)
+            return
         if package.manifest.profile in {"model-service", "mcp-http"}:
             await self.start_residents(slot, business_smoke=business_smoke)
             return
@@ -1301,7 +1309,7 @@ class Supervisor(UpgradeHost):
                         if self.workers.get(slot.id) is not worker or worker.closing or not self.activation(slot.id).get("legacy_jev"):
                             raise HostError("invalid_control")
                         response = await self.legacy_model_control(slot.id, request["control"])
-                    elif (package.manifest.profile == "mcp-stdio" and set(request) == {"action", "session_id"}
+                    elif (package.manifest.profile in {"mcp-stdio", "host-command"} and set(request) == {"action", "session_id"}
                           and request["action"] == "launch_session"):
                         session_id = request["session_id"]
                         if not isinstance(session_id, str) or not 16 <= len(session_id) <= 128 or session_id in session_ids:
@@ -1312,19 +1320,20 @@ class Supervisor(UpgradeHost):
                         if len(instances) >= package.manifest.lifecycle.max_sessions:
                             raise HostError("session_limit")
                         session_ids.add(session_id)
-                        process = await self.package_process(slot, io_mode="fds")
+                        process = (await self.commands.session(slot) if package.manifest.profile == "host-command"
+                                   else await self.package_process(slot, io_mode="fds"))
                         instances[process.instance_id] = process
                         instance_sessions[process.instance_id] = session_id
                         # Recheck after launch acknowledgment before exporting capabilities.
                         if worker.closing or self.registry.get_slot(slot.id).generation != slot.generation:
-                            await self.reap(slot.id, process)
+                            await self.close_session_handle(slot.id, process)
                             raise HostError("slot_stopped")
                         response = {"instance_id": process.instance_id}
                         fds = [process.stdin_fd, process.stdout_fd]
                     elif set(request) == {"action", "instance_id"} and request["action"] == "close_session":
                         target = instances.get(request["instance_id"])
                         if target:
-                            await self.reap(slot.id, target)
+                            await self.close_session_handle(slot.id, target)
                             instances.pop(target.instance_id, None)
                             session_ids.discard(instance_sessions.pop(target.instance_id, ""))
                         response = {"closed": True}
@@ -1341,7 +1350,7 @@ class Supervisor(UpgradeHost):
         finally:
             for process in list(instances.values()):
                 with contextlib.suppress(Exception):
-                    await self.reap(slot.id, process)
+                    await self.close_session_handle(slot.id, process)
             if not worker.closing and not self.closing:
                 async def channel_lost():
                     if self.registry.get_slot(slot.id).error_code != "ownership_lost":
@@ -1349,6 +1358,13 @@ class Supervisor(UpgradeHost):
                     with contextlib.suppress(Exception):
                         await self.stop_gateway(slot.id)
                 self.track(asyncio.create_task(channel_lost()))
+
+    async def close_session_handle(self, slot_id, handle):
+        from .host_command import CommandSession
+        if isinstance(handle, CommandSession):
+            await handle.close()
+        else:
+            await self.reap(slot_id, handle)
 
     async def monitor_gateway(self, slot_id: str, worker: Worker):
         try:
@@ -1373,6 +1389,10 @@ class Supervisor(UpgradeHost):
             self.registry.update_slot(slot_id, observed_state="ownership_lost" if code == "ownership_lost" else "failed", error_code=code)
 
     async def stop_gateway(self, slot_id: str, *, stop_runtime: bool = True):
+        worker = self.workers.get(slot_id)
+        if worker is not None:
+            worker.closing = True
+        await self.commands.stop(slot_id)
         worker = self.workers.pop(slot_id, None)
         if worker is None:
             if stop_runtime:
@@ -1457,7 +1477,7 @@ class Supervisor(UpgradeHost):
         owner = self.owner(slot.id)
         for process in list(owner.instances.values()):
             await self.reap(slot.id, process)
-        if owner.instances or self.ledger(slot.id) or owner.persistence_failed:
+        if owner.instances or self.ledger(slot.id) or owner.persistence_failed or self.commands.pending(slot.id):
             raise HostError("ownership_lost" if any(process.ownership_lost for process in owner.instances.values())
                             else "shutdown_unconfirmed", 409)
         await self.release_model(slot.id)
@@ -1474,6 +1494,7 @@ class Supervisor(UpgradeHost):
         from .migrations import retire_transfer
         retire_transfer(self, slot.id, operation_id)
         self.registry.update_slot(slot.id, observed_state="stopped", error_code=None)
+        await self.commands.retire(slot.id)
         self.registry.complete_removal(slot.id, operation_id, expected_generation=slot.generation)
         await owner.close()
         self.owners.pop(slot.id, None)
@@ -1508,6 +1529,8 @@ class Supervisor(UpgradeHost):
             self.registry.update_slot(slot_id, observed_state="draining")
             await self.stop_gateway(slot_id)
             await self.stop_residents(slot_id)
+            if self.commands.pending(slot_id):
+                raise HostError("command_ownership_unsettled", 409)
             slot = self.registry.update_slot(slot_id, generation=slot.generation + 1, error_code=None,
                 desired_state="stopped" if action == "stop" else "running", observed_state="stopped" if action == "stop" else "starting",
                 wake_suppressed=action == "stop")
@@ -1585,6 +1608,9 @@ class Supervisor(UpgradeHost):
             return {"status": await self.legacy_status(slot_id), "runtime": self.model_runtime(slot_id)}
 
     async def initialize(self):
+        # Exact command receipts/reservations settle before any gateway opens.
+        for slot in self.registry.list_slots():
+            self.commands.recover(slot)
         await self.recover_captures()
         await self.recover_resolutions()
         await self.recover_preparations()
@@ -1604,10 +1630,13 @@ class Supervisor(UpgradeHost):
                 if (set(reservation) != {"memory_mb", "gpu"} or type(reservation["memory_mb"]) is not int
                         or reservation["memory_mb"] < 1 or type(reservation["gpu"]) is not bool):
                     raise HostError("invalid_resource_reservation")
-                if self.ledger(slot.id):
+                if self.ledger(slot.id) or self.commands.pending(slot.id):
                     self.reservations[slot.id] = reservation
                 else:
                     path.unlink()
+                    self.reservations.pop(slot.id, None)
+            elif not self.ledger(slot.id) and not self.commands.pending(slot.id):
+                self.reservations.pop(slot.id, None)
         interrupted = set()
         for operation in self.registry.list_unfinished_operations():
             if operation.status in {"pending", "running"}:
@@ -1619,7 +1648,7 @@ class Supervisor(UpgradeHost):
         for operation in self.registry.list_unfinished_operations():
             if operation.action != "remove":
                 continue
-            if self.ledger(operation.slot_id):
+            if self.ledger(operation.slot_id) or self.commands.pending(operation.slot_id):
                 self.registry.update_operation(operation.id, "recovery_required", error_code="ownership_lost")
                 continue
             await self.execute_control(operation)
@@ -1630,7 +1659,7 @@ class Supervisor(UpgradeHost):
             if operation.action != "upgrade":
                 continue
             recovered_upgrades.add(operation.slot_id)
-            if self.ledger(operation.slot_id):
+            if self.ledger(operation.slot_id) or self.commands.pending(operation.slot_id):
                 self.registry.update_slot(operation.slot_id, observed_state="ownership_lost", error_code="ownership_lost")
                 self.registry.update_operation(operation.id, "recovery_required", error_code="ownership_lost")
                 continue
@@ -1644,7 +1673,7 @@ class Supervisor(UpgradeHost):
                 # launched a new held gateway. Do not treat its fresh ledger
                 # as an unresolved owner from the previous supervisor.
                 continue
-            if self.ledger(slot.id):
+            if self.ledger(slot.id) or self.commands.pending(slot.id):
                 self.registry.update_slot(slot.id, observed_state="ownership_lost", error_code="ownership_lost")
                 continue
             if slot.id in pending_removals:
@@ -1754,6 +1783,9 @@ class Supervisor(UpgradeHost):
         if start_policy not in {"manual", "host"} or type(payload.get("start", False)) is not bool:
             raise HostError("unsupported_start_policy")
         package = _prepared or validate_package(Path(payload["package"]))
+        if (package.manifest.profile == "host-command" and (self.commands.admission is None
+                or package.manifest.command.helper_sha256 != self.commands.admission.helper_sha256)):
+            raise HostError("host_command_not_admitted", 409)
         settings = normalize_settings(package.manifest, payload.get("settings"))
         self.secrets.resolve(settings["secret_references"])
         name = payload.get("name", package.manifest.name)
@@ -1995,6 +2027,7 @@ class Supervisor(UpgradeHost):
         for slot_id in list(self.residents):
             with contextlib.suppress(Exception):
                 await self.stop_residents(slot_id)
+        await self.commands.close()
         for slot_id, owner in self.owners.items():
             for process in list(owner.instances.values()):
                 if not process.ownership_lost:

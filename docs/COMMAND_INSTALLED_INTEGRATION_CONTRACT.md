@@ -2,6 +2,8 @@
 
 Status: proposed implementation contract, 2026-10-03. **A3 remains open.** This report changes no runtime or advertised capability. It builds on reviewed command ownership commits `755615b` + `babd029`, including publication-format-3 receipts, and the original CLI spike `fbe87c5` / `05b8f1e`. The original gate requires installed command execution, bounded argv/input/output, exit mapping, cancellation/deadlines, descendant cleanup, crash/restart, private closure and declared effects. The no-fork spike and this proposal do not replace that gate.
 
+The subsequent [installed development-host checkpoint](COMMAND_INSTALLED_CHECKPOINT.md) implements the explicit admission/session/reservation seam. This document preserves the original design decision and release gates; it is not a claim that the final native app or aggregate resource boundary has been verified.
+
 ## Decision and topology
 
 Own `CommandExecutorV2` in the backend `Supervisor`. Do not instantiate it inside the CLI MCP adapter, gateway worker, recipe worker or another process whose outer owner may kill its group. Prefer a host-owned MCP protocol session connected to the existing gateway through private pipes. Selected command code runs only behind the native command helper.

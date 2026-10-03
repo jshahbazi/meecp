@@ -1,0 +1,62 @@
+[
+  {
+    "arguments": {
+      "image_base64": "iVBORw0KGgoAAAANSUhEUgAAACAAAAAYCAIAAAAUMWhjAAAAGklEQVR4nO3QAQ0AAADCoPdP7ewBESgAAD4wCRgAAequ/qQAAAAASUVORK5CYII="
+    },
+    "expected": {
+      "confidence": null,
+      "detections": [],
+      "hotdog": false,
+      "image": {
+        "height": 24,
+        "width": 32
+      },
+      "model": "YOLO11n / COCO / ONNX CPU",
+      "threshold": 0.35,
+      "verdict": "not_hotdog"
+    },
+    "id": "blank_png",
+    "synthetic": true,
+    "tool": "detect_hotdog"
+  },
+  {
+    "arguments": {
+      "image_base64": "iVBORw0KGgoAAAANSUhEUgAABAAAAAABCAIAAADPbEtiAAAAGUlEQVR4nO3BAQEAAACCIP+vbkhAAQAAvRgMAQAB7PJeQAAAAABJRU5ErkJggg=="
+    },
+    "expected": {
+      "confidence": null,
+      "detections": [],
+      "hotdog": false,
+      "image": {
+        "height": 1,
+        "width": 1024
+      },
+      "model": "YOLO11n / COCO / ONNX CPU",
+      "threshold": 0.35,
+      "verdict": "not_hotdog"
+    },
+    "id": "extreme_png",
+    "synthetic": true,
+    "tool": "detect_hotdog"
+  },
+  {
+    "arguments": {
+      "image_base64": "R0lGODdhCAAGAIEAAAAAAAAAAAAAAAAAACwAAAAACAAGAAAIDgABCBxIsKDBgwgTDgwIADs="
+    },
+    "expected": {
+      "confidence": null,
+      "detections": [],
+      "hotdog": false,
+      "image": {
+        "height": 6,
+        "width": 8
+      },
+      "model": "YOLO11n / COCO / ONNX CPU",
+      "threshold": 0.35,
+      "verdict": "not_hotdog"
+    },
+    "id": "first_frame_gif",
+    "synthetic": true,
+    "tool": "detect_hotdog"
+  }
+]

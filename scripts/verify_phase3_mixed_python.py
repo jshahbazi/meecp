@@ -55,7 +55,17 @@ class MixedPythonHarness(native.Harness):
             "mixed_snapshot_binding_mismatch")
 
     async def case(self, label):
-        result = await super().case(label)
+        try:
+            result = await super().case(label)
+        except BaseException as error:
+            self.lease["safe_to_remove"] = False
+            if isinstance(error, native.AcceptanceError) and error.code == "resource_blocked":
+                state = self.states[-1]
+                policy = native.private_json(state / "resource-policy.json")
+                error.resource_observation = {"memory_budget_mb": policy["memory_budget_mb"],
+                    "headroom_mb": policy["headroom_mb"], "disk_free_bytes": shutil.disk_usage(state).free,
+                    "owned_children_joined": not self.children}
+            raise
         from mcpme.imports import ImportStore
         from mcpme.contracts import validate_package
         from mcpme.preparation_resolved_python import ResolvedPythonComponent
@@ -123,7 +133,7 @@ def main():
         report["error_context"] = getattr(bounded, "context", getattr(error, "acceptance_context", dict(native.DIAGNOSTIC)))
         if types:
             report["nested_error_types"] = types
-        for name in ("native_stage", "native_observation"):
+        for name in ("native_stage", "native_observation", "resource_observation"):
             if hasattr(bounded, name):
                 report[name] = getattr(bounded, name)
     report["harness_sha256"] = implementation

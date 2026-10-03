@@ -126,7 +126,17 @@ def write_onnx_recipe(destination):
 def captured_collection(draft):
     try:
         source = draft["source"]
-        captured = source if source["kind"] == "captured_artifact_collection" else draft["captured_artifacts"]
+        if source["kind"] == "captured_artifact_collection":
+            captured = source
+            if type(source.get("contract_version")) is not int or source["contract_version"] != 1:
+                raise PreparationError("onnx_captured_input_required")
+        elif source["kind"] in {"local_folder", "document"}:
+            captured = draft["captured_artifacts"]
+            if (set(captured) != {"schema_version", "kind", "digest", "collection"}
+                    or type(captured.get("schema_version")) is not int or captured["schema_version"] != 1):
+                raise PreparationError("onnx_captured_input_required")
+        else:
+            raise PreparationError("onnx_captured_input_required")
         if captured["kind"] != "captured_artifact_collection":
             raise PreparationError("onnx_captured_input_required")
         collection = CapturedArtifactCollectionV1.model_validate(captured["collection"])

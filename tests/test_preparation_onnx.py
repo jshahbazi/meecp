@@ -31,7 +31,7 @@ def collection(**model_changes):
 
 def source(value):
     return {"draft_id": str(uuid.uuid4()), "revision": 1, "requirements": {}, "source": {
-        "kind": "captured_artifact_collection", "revision": "sha256:" + value.digest,
+        "kind": "captured_artifact_collection", "contract_version": 1, "revision": "sha256:" + value.digest,
         "digest": value.digest, "collection": value.model_dump(mode="json"), "files": []}}
 
 
@@ -73,7 +73,7 @@ def test_manifest_labels_are_not_model_proof():
         onnx.validate_captured_model(CapturedArtifactCollectionV1.model_validate(value))
 
 
-@pytest.mark.parametrize("mutation", ["digest", "revision", "kind"])
+@pytest.mark.parametrize("mutation", ["digest", "revision", "kind", "contract_version"])
 def test_source_collection_binding_rejects_tampered_reference(mutation):
     draft = source(collection())
     draft["source"][mutation] = "0" * 64
@@ -83,12 +83,25 @@ def test_source_collection_binding_rejects_tampered_reference(mutation):
 
 def test_folder_supplement_preserves_original_folder_revision():
     value = collection(); draft = source(value)
-    draft["captured_artifacts"] = {"kind": "captured_artifact_collection", "digest": value.digest,
+    draft["captured_artifacts"] = {"schema_version":1,"kind": "captured_artifact_collection", "digest": value.digest,
                                   "collection": value.model_dump(mode="json")}
     draft["source"] = {"kind": "local_folder", "revision": "sha256:" + "b" * 64, "files": []}
     binding = onnx.OnnxHotdogComponent().validate_source(descriptor(draft), draft, {})
     assert binding.source_revision == "sha256:" + "b" * 64
     assert json.loads(binding.metadata_bytes)["collection_digest"] == value.digest
+
+
+@pytest.mark.parametrize("version", [True, 1.0, "1", None])
+def test_captured_reference_versions_are_strict(version):
+    draft = source(collection()); draft["source"]["contract_version"] = version
+    with pytest.raises(PreparationError, match="onnx_captured_input_required"):
+        onnx.captured_collection(draft)
+    collection_data = draft["source"]
+    draft["captured_artifacts"] = {"schema_version":version,"kind":"captured_artifact_collection",
+                                  "digest":collection_data["digest"],"collection":collection_data["collection"]}
+    draft["source"] = {"kind":"local_folder","revision":"sha256:"+"b"*64}
+    with pytest.raises(PreparationError, match="onnx_captured_input_required"):
+        onnx.captured_collection(draft)
 
 
 @pytest.mark.parametrize("field,value", [("memory_mb", 511), ("max_sessions", 2), ("max_request_bytes", 1024),

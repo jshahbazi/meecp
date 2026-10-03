@@ -17,6 +17,7 @@ from mcpme.contracts import validate_package
 from mcpme.preparation_contracts import PreparationError
 from mcpme.preparation_probe_confinement import ProbeConfinementV1
 from mcpme.preparation_verifier import verify_prepared_package
+from mcpme.processes import ProcessOwner
 from test_preparation_verifier import probe_fixture, probe_reaper
 
 pytestmark = pytest.mark.skipif(sys.platform != "darwin" or platform.machine() != "arm64"
@@ -140,6 +141,17 @@ def test_policy_cannot_be_widened_after_capture(private_runtime, probe_reaper, t
     with pytest.raises(PreparationError) as caught:
         widened.check(validated, probe_reaper)
     assert caught.value.code == "preparation_probe_confinement_mismatch"
+
+
+async def test_supplied_owner_must_use_bound_native_helper(private_runtime, probe_reaper, tmp_path):
+    package, descriptor, workspace = _private_fixture(tmp_path, private_runtime)
+    validated = validate_package(package)
+    plan = ProbeConfinementV1.capture(validated, workspace, probe_reaper)
+    owner = ProcessOwner(tmp_path / "different-native-helper")
+    with pytest.raises(PreparationError) as caught:
+        await verify_prepared_package(package, descriptor, probe_reaper, workspace, owner=owner, probe_confinement=plan)
+    assert caught.value.code == "preparation_probe_confinement_mismatch"
+    assert not owner.instances and not owner._launches
 
 
 async def test_canceled_confinement_check_is_joined_before_return(private_runtime, probe_reaper, tmp_path, monkeypatch):

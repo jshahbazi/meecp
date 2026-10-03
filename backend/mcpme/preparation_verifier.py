@@ -120,7 +120,8 @@ async def verify_prepared_package(
                           {"PATH": "/usr/bin:/bin", "HOME": str(workspace), "TMPDIR": str(workspace), "LANG": "en_US.UTF-8"})
             else:
                 from .preparation_probe_confinement import ProbeConfinementV1
-                if type(probe_confinement) is not ProbeConfinementV1 or probe_confinement.workspace != workspace:
+                if (type(probe_confinement) is not ProbeConfinementV1 or probe_confinement.workspace != workspace
+                        or owner.reaper != Path(reaper)):
                     raise PreparationError("preparation_probe_confinement_mismatch")
                 task = asyncio.create_task(asyncio.to_thread(probe_confinement.launch, package, reaper))
                 try:

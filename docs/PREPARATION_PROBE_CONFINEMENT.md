@@ -29,7 +29,8 @@ kernel, sandbox binary and policy digest.
 The SDK verifier optionally accepts this typed plan from trusted host code.
 It checks the plan before launch and after owned shutdown/package revalidation.
 Directory identities prevent an identical-mode replacement from satisfying the
-original plan. Hashing runs in a joined worker; repeated cancellation cannot
+original plan. A supplied process owner must use the plan's actual native
+helper. Hashing runs in a joined worker; repeated cancellation cannot
 return while that worker still reads the package. The common verifier and
 resolution implementation identities include the confinement module bytes.
 
@@ -44,6 +45,17 @@ spawn escape attributes. Private home/temp writes succeeded. Unknown launchers,
 widened policies, replaced directories and repeated cancellation were also
 checked. These cases use synthetic canaries and emit no source/request/output
 content to test diagnostics.
+
+An additional 16 probe/verifier checks passed after binding the supplied owner
+to the exact reaper. The retained actual mixed-directory Python package from
+the [native builder checkpoint](MIXED_PYTHON_BUILD_CHECKPOINT.md) also passed
+this policy with one real SDK schema/fixture probe, the original source absent,
+exact current ResolvedPython 1.0.1/component/package/descriptor bindings, an
+observed peak of 68,468,736 bytes against 128 MiB and zero remaining owned
+processes. Its private receipt SHA-256 is
+`6d83baff4505f19a3ac9111ab74005f8bff2a3bdfb15d66077b03bdd7ea02b65`.
+This source-level policy execution used the unchanged helper from the frozen
+mixed host; that earlier host does not contain this new confinement module.
 
 This policy uses the existing deprecated macOS custom Seatbelt mechanism.
 Passing exact-build controls does not establish a supported public isolation

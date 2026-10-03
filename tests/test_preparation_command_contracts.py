@@ -8,10 +8,10 @@ from pydantic import ValidationError
 
 from mcpme.imports import ImportStore
 from mcpme.preparation_contracts import PreparationError, contract_digest
-from mcpme.preparation_inputs import OriginalSourceReference, candidate_contract_digest
+from mcpme.preparation_inputs import OriginalSourceReference, candidate_contract_digest, parse_bound_inputs
 from mcpme.recipes import RecipeStore, builtin_components
 from test_mcpme_recipes import recipe
-from test_preparation_inputs import source_binding, view  # noqa: F401
+from test_preparation_inputs import bind, source_binding, view  # noqa: F401
 
 
 def command_fields(view):
@@ -81,6 +81,15 @@ def test_original_source_versions_cannot_be_reinterpreted(kind, version):
 def test_application_source_reference_is_explicit_version_two():
     reference = OriginalSourceReference(kind="application_directory", schema_version=2, revision="sha256:" + "a" * 64)
     assert reference.model_dump()["schema_version"] == 2
+
+
+def test_explicit_application_source_does_not_require_a_captured_collection(view):
+    view, draft = view
+    bound = bind(view, draft).model_dump(mode="json")
+    bound["source"].update(kind="application_directory", schema_version=2)
+    bound["captured_collection"] = None
+    parsed = parse_bound_inputs(bound)
+    assert parsed.source.schema_version == 2 and parsed.captured_collection is None
 
 
 def test_schema_two_recipe_requires_explicit_host_catalog_capability(tmp_path):

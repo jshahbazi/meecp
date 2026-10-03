@@ -1,6 +1,6 @@
 """Development-only installed command proof using one relocated private host.
 
-Run with that host's Python -I. The fixture is an explicitly supplied compiled
+Run with that host's Python -B -I. The fixture is an explicitly supplied compiled
 synthetic executable. This harness never enables production admission and never
 prints command payloads, responses, owner credentials, or exception details.
 """
@@ -30,11 +30,12 @@ def require(value):
         raise ValueError("command_host_verification_failed")
 
 
-def bootstrap(host):
+def verify_payload(host):
     require(host.is_absolute() and host.resolve() == host)
-    require(Path(sys.executable).resolve() == host / "python/bin/python3.12")
     receipt = json.loads((host / "build.json").read_bytes())
     require(receipt["source_tree_dirty"] is False)
+    require(set(receipt["artifact_sha256"]) == {path.relative_to(host).as_posix() for path in host.rglob("*")
+                                               if path.is_file() and path != host / "build.json"})
     for name, expected in receipt["artifact_sha256"].items():
         path = host / name
         require(path.resolve() == path and path.is_relative_to(host) and sha(path) == expected)
@@ -43,6 +44,13 @@ def bootstrap(host):
     require(inventory["production_admission"] == "disabled" and inventory["configuration_authority"] == "inventory-only")
     require(inventory["receipt_format"] == 3 and inventory["package_schema"] == 2)
     require(inventory["helper"] == "bin/mcpme-command-reap" and sha(host / inventory["helper"]) == inventory["helper_sha256"])
+    return receipt, inventory
+
+
+def bootstrap(host):
+    require(Path(sys.executable).resolve() == host / "python/bin/python3.12")
+    require(sys.dont_write_bytecode)
+    receipt, inventory = verify_payload(host)
     stdlib = Path(sysconfig.get_path("stdlib"))
     sys.path[:] = [str(host / "backend"), str(host / "python/site-packages"), str(stdlib), str(stdlib / "lib-dynload")]
     sys.dont_write_bytecode = True
@@ -199,7 +207,7 @@ async def verify(args, receipt, inventory):
     for group in (False, True):
         base = args.workspace / ("group-kill" if group else "owner-kill")
         package(base, args.fixture, inventory, "hang")
-        process = subprocess.Popen([str(args.host / "python/bin/python3.12"), "-I", str(Path(__file__).resolve()),
+        process = subprocess.Popen([str(args.host / "python/bin/python3.12"), "-B", "-I", str(Path(__file__).resolve()),
             "--host", str(args.host), "--workspace", str(base), "--worker"], stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, start_new_session=True, env={"PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"})
         try:

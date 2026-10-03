@@ -230,6 +230,9 @@ def test_host_build_preserves_nested_document_links_and_binds_all_document_hashe
     assert metadata["helper_sha256"] == hashlib.sha256((host / metadata["helper"]).read_bytes()).hexdigest()
     for name in (metadata["helper"], "command-execution.json"):
         assert receipt["artifact_sha256"][name] == hashlib.sha256((host / name).read_bytes()).hexdigest()
+    assert set(receipt["artifact_sha256"]) == {path.relative_to(host).as_posix() for path in host.rglob("*")
+                                             if path.is_file() and path != host / "build.json"}
+    assert {"python/bin/python3.12", "bin/mcpme", "licenses/python-LICENSE.txt"} <= receipt["artifact_sha256"].keys()
     helper = host / metadata["helper"]
     helper.write_bytes(helper.read_bytes() + b" distribution signature")
     host_builder.refresh_command_inventory(host)
@@ -239,3 +242,38 @@ def test_host_build_preserves_nested_document_links_and_binds_all_document_hashe
     (host / "command-execution.json").write_text(json.dumps(refreshed))
     with pytest.raises(ValueError, match="command_inventory_invalid"):
         host_builder.refresh_command_inventory(host)
+
+
+def test_private_runtime_copy_dereferences_internal_files_and_excludes_bytecode(tmp_path):
+    source = tmp_path / "runtime"; source.mkdir()
+    (source / "python").write_bytes(b"synthetic runtime")
+    (source / "python").chmod(0o755)
+    (source / "python3").symlink_to("python")
+    (source / "__pycache__").mkdir()
+    (source / "__pycache__/ignored.pyc").write_bytes(b"ignored")
+    (source / "ignored.pyc").write_bytes(b"ignored")
+    target = tmp_path / "copied"
+    host_builder.copy_private_runtime(source, target)
+    assert (target / "python3").read_bytes() == b"synthetic runtime"
+    assert not (target / "python3").is_symlink()
+    assert (target / "python3").stat().st_mode & 0o111
+    assert {path.name for path in target.iterdir()} == {"python", "python3"}
+
+
+@pytest.mark.parametrize("kind", ["escape", "directory", "size", "count"])
+def test_private_runtime_copy_rejects_unbounded_or_external_closure_before_copy(tmp_path, monkeypatch, kind):
+    source = tmp_path / "runtime"; source.mkdir()
+    (source / "python").write_bytes(b"synthetic runtime")
+    if kind == "escape":
+        outside = tmp_path / "outside"; outside.write_bytes(b"unadmitted")
+        (source / "link").symlink_to(outside)
+    elif kind == "directory":
+        (source / "directory").mkdir(); (source / "link").symlink_to("directory")
+    elif kind == "size":
+        monkeypatch.setattr(host_builder, "MAX_RUNTIME_BYTES", 1)
+    else:
+        monkeypatch.setattr(host_builder, "MAX_RUNTIME_FILES", 0)
+    target = tmp_path / "copied"
+    with pytest.raises(ValueError, match="private_python_runtime_"):
+        host_builder.copy_private_runtime(source, target)
+    assert not target.exists()

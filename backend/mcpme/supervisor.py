@@ -185,9 +185,12 @@ class Supervisor(UpgradeHost):
         try:
             self.imports = ImportStore(self.root)
             self.recipes = RecipeStore(self.imports)
+            from .preparation_builtin_recipes import seed_builtin_recipes
+            self.builtin_recipe_metadata = seed_builtin_recipes(self.recipes)
             self.preparations = PreparationStore(self.imports, self.recipes)
             from .preparation_forms import PreparationForms
-            self.preparation_forms = PreparationForms(self.preparations)
+            self.preparation_forms = PreparationForms(self.preparations, preferred_recipes=tuple(
+                record["recipe"] for record in self.builtin_recipe_metadata["recipes"] if record["ready"]))
             self.preparations.recover()
             self.grants = GrantStore(self.registry)
             self.resource_policy = self.load_resource_policy()

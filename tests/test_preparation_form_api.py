@@ -14,7 +14,7 @@ from mcpme.recipe_sdk import scaffold_recipe
 from mcpme.supervisor import Supervisor, management_app
 
 
-def prepare_source(host, root):
+def prepare_source(host, root, *, custom_recipe=True):
     source = root / "source"
     source.mkdir()
     marker = root / "unexpected-execution"
@@ -23,9 +23,10 @@ def prepare_source(host, root):
     (source / "LICENSE").write_text("Synthetic permission notice.\n")
     (source / "pyproject.toml").write_text("[project]\nname='synthetic'\nversion='1.0.0'\n")
     (source / "uv.lock").write_text("version=1\nrevision=3\n")
-    scaffold_recipe(root / "recipe", "test.generated")
-    record = host.recipes.add(root / "recipe")
-    host.recipes.enable(record["recipe_id"], record["version"])
+    if custom_recipe:
+        scaffold_recipe(root / "recipe", "test.generated")
+        record = host.recipes.add(root / "recipe")
+        host.recipes.enable(record["recipe_id"], record["version"])
     return host.imports.create(source, name="Synthetic double", intent="Expose the selected transformation"), marker
 
 
@@ -123,3 +124,25 @@ async def test_invalid_form_answers_and_policy_do_not_advance_revision(tmp_path)
             assert not marker.exists()
     finally:
         await host.close()
+
+
+async def test_normal_cold_host_needs_no_user_recipe_and_preserves_disable(tmp_path):
+    host = Supervisor(tmp_path / "state", tmp_path / "unused-reaper")
+    try:
+        draft, marker = prepare_source(host, tmp_path, custom_recipe=False)
+        form = host.preparation_forms.form(draft["draft_id"], 1)
+        assert form["recipe"]["id"] == "mcpme.python-callable" and form["blockers"] == []
+        value, _ = host.preparation_forms.resolve(**request_body(form, **{"Expected test result": {"value": 2}}))
+        assert value.inputs == {} and not marker.exists()
+        assert all(record["runnable"] is False for record in host.recipes.list())
+        host.recipes.disable(form["recipe"]["id"], form["recipe"]["version"])
+    finally:
+        await host.close()
+    restarted = Supervisor(tmp_path / "state", tmp_path / "unused-reaper")
+    try:
+        assert restarted.builtin_recipe_metadata["recipes"][0]["ready"] is False
+        assert restarted.recipes.list()[0]["state"] == "disabled"
+        questions = restarted.preparation_forms.form(draft["draft_id"], 1)
+        assert questions["recipe"] is None and "compatible_recipe_required" in questions["blockers"]
+    finally:
+        await restarted.close()

@@ -284,9 +284,12 @@ class PythonCallableFormProvider:
 
 
 class PreparationForms:
-    def __init__(self, store, *, providers=None):
+    def __init__(self, store, *, providers=None, preferred_recipes=()):
         self.store, self.imports, self.recipes = store, store.imports, store.recipes
         self.providers = tuple(providers) if providers is not None else (PythonCallableFormProvider(),)
+        if len(preferred_recipes) > MAX_CHOICES:
+            raise PreparationError("preparation_form_limit")
+        self.preferred_recipes = tuple(RecipeReference.model_validate(value) for value in preferred_recipes)
 
     def context(self, import_id, revision, *, candidate_id=None, recipe=None, execution_available=False):
         with self.imports._lock:
@@ -335,6 +338,10 @@ class PreparationForms:
             if selected is None and previous is not None and previous["candidate_id"] == candidate_id:
                 saved = previous["descriptor"]["recipe"]
                 selected = next((choice.recipe for choice in recipe_choices if choice.recipe.model_dump() == saved), None)
+            if selected is None:
+                preferred = [choice.recipe for choice in recipe_choices if choice.recipe in self.preferred_recipes]
+                if len(preferred) == 1:
+                    selected = preferred[0]
             if selected is None and len(recipe_choices) == 1:
                 selected = recipe_choices[0].recipe
         record = next((item for item in records if selected is not None and

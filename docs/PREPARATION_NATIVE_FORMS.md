@@ -2,6 +2,8 @@
 
 The owner API generates typed questions from an immutable source snapshot and compatible, enabled recipe metadata. The native setup workspace submits opaque answers and reviews the resulting host-selected scope. It does not construct a descriptor or execute recipe UI hooks.
 
+Cold hosts seed a pinned, host-owned Python callable recipe for ordinary setup; users do not author or add a recipe bundle to obtain these questions. Host-supplied preferred references select that compatible default among third-party recipes. Explicit recipe choices and saved selections take precedence. Disable, revoke, remove and version-collision decisions survive restart; startup never re-enables an opted-out default. See [bundled recipe metadata](BUILTIN_PREPARATION_RECIPES.md).
+
 This checkpoint supplies setup and review infrastructure. Public automatic preparation remains disabled until the installed and relocated A0, A0R, A1 and A2 acceptance gates in [the Phase 3 plan](AUTOMATIC_PREPARATION.md) pass. Missing dependency resolution and dynamic MCP interface discovery remain explicit blockers. Static review cannot create a job, claim runtime verification or install an app.
 
 ## API

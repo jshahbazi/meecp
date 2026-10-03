@@ -299,8 +299,11 @@ class PythonCallableFormProvider:
 
 class ResolvedPythonFormProvider(PythonCallableFormProvider):
     def accepts(self, candidate, recipe):
+        from .preparation_resolved_python import ResolvedPythonComponent
+        reference = ResolvedPythonComponent().reference
         return (candidate.get("_resolved_path", False) and len(recipe["manifest"]["steps"]) == 1
-            and recipe["manifest"]["steps"][0]["component"] == "resolved-python-v1")
+            and tuple(recipe["manifest"]["steps"][0].get(key) for key in ("component", "version", "digest"))
+                == reference.key)
 
     def fields(self, draft, candidate, recipe):
         if not candidate.get("_resolved"):

@@ -257,8 +257,10 @@ def snapshot_application_directory(source: Path, destination: Path, files=None):
             "file_metadata": metadata, "digest": digest, "revision": "sha256:" + digest, "bytes": total}
 
 
-def read_application_snapshot(draft) -> dict[str, ApplicationSnapshotFile]:
+def read_application_snapshot(draft, check_canceled=None) -> dict[str, ApplicationSnapshotFile]:
     """Recheck private full membership, classification and byte identities."""
+    if check_canceled is not None:
+        check_canceled()
     records = application_source_records(draft)
     try:
         root = Path(draft["source"]["snapshot_path"])
@@ -266,6 +268,8 @@ def read_application_snapshot(draft) -> dict[str, ApplicationSnapshotFile]:
             raise SourceError("source_identity_mismatch")
         result = {}
         for item, flags in zip(records, draft["source"]["file_metadata"], strict=True):
+            if check_canceled is not None:
+                check_canceled()
             data, _, kind = _read_file(root / item["path"], snapshot=True)
             if len(data) != item["size"] or hashlib.sha256(data).hexdigest() != item["sha256"] or kind != flags["kind"]:
                 raise SourceError("source_identity_mismatch")
@@ -273,8 +277,12 @@ def read_application_snapshot(draft) -> dict[str, ApplicationSnapshotFile]:
         if _scan(root, private=True) != list(result):
             raise SourceError("source_identity_mismatch")
         for item in result.values():
+            if check_canceled is not None:
+                check_canceled()
             if _read_file(root / item.path, snapshot=True)[0] != item.data:
                 raise SourceError("source_identity_mismatch")
+        if check_canceled is not None:
+            check_canceled()
         return result
     except (OSError, TypeError, KeyError):
         raise SourceError("unsafe_source_file") from None

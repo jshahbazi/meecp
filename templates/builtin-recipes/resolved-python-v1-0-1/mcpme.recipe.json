@@ -1,0 +1,38 @@
+{
+  "form": [],
+  "id": "mcpme.resolved-python",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "kind": "declarative",
+  "licenses": [
+    "LICENSE"
+  ],
+  "provenance": {
+    "origin": "mcpme-shipped-recipe-v1",
+    "publisher": "mcpme contributors"
+  },
+  "requirements": {
+    "architecture": "arm64",
+    "capabilities": [
+      "declarative-composition"
+    ],
+    "host_api_version": 1,
+    "os": "macos",
+    "package_schema": 1,
+    "protocol": "2025-11-25"
+  },
+  "schema_version": 1,
+  "steps": [
+    {
+      "component": "resolved-python-v1",
+      "config": {},
+      "digest": "3c24410b46415cb83b9d945ebf0049f552e9f7493943164f311939a79b49000e",
+      "version": "1.0.1"
+    }
+  ],
+  "version": "1.0.1",
+  "worker_api_version": 1
+}

@@ -383,6 +383,18 @@ class Harness:
         finally:
             await self.shutdown(child, state)
 
+    def source_fixture(self, source, label):
+        (source / "worker.py").write_text(MCP_SOURCE if label == "dynamic_mcp" else CALLABLE_SOURCE)
+        (source / "LICENSE").write_text("Synthetic fixture dedicated to the public domain under CC0.\n")
+        if label == "dynamic_mcp":
+            (source / "pyproject.toml").write_text(MCP_PROJECT)
+        return {path.name: digest(path) for path in source.iterdir()}
+
+    def source_check(self, source, original_files, *, remove=False):
+        require(original_files == {path.name: digest(path) for path in source.iterdir()}, "original_source_mutated")
+        if remove:
+            shutil.rmtree(source)
+
     async def case(self, label):
         from mcpme.contracts import Tool, validate_package
         from mcpme.preparation_inputs import parse_preparation_receipt
@@ -391,11 +403,7 @@ class Harness:
         base, state, home, environment = self.new_case(label)
         source = base / "ordinary source"
         source.mkdir(mode=0o700)
-        (source / "worker.py").write_text(MCP_SOURCE if label == "dynamic_mcp" else CALLABLE_SOURCE)
-        (source / "LICENSE").write_text("Synthetic fixture dedicated to the public domain under CC0.\n")
-        if label == "dynamic_mcp":
-            (source / "pyproject.toml").write_text(MCP_PROJECT)
-        original_files = {path.name: digest(path) for path in source.iterdir()}
+        original_files = self.source_fixture(source, label)
         require("uv.lock" not in original_files and "mcpme.prepare.json" not in original_files
             and (label == "dynamic_mcp" or "pyproject.toml" not in original_files), "fixture_prepared_in_advance")
         child = await self.start(state, environment, home, enabled=True)
@@ -498,7 +506,7 @@ class Harness:
                 and proof.binding.source_revision == draft["source"]["revision"]
                 and not proof.inputs.original_dependency_locks and proof.inputs.derived_inputs
                 and not (package_root / "source/uv.lock").exists(), "derived_source_identity_mismatch")
-            require(original_files == {path.name: digest(path) for path in source.iterdir()}, "original_source_mutated")
+            self.source_check(source, original_files)
             require(prepared["verification"]["tools_checked"] == len(names)
                 and prepared["verification"]["fixtures_checked"] == len(names)
                 and prepared["verification"]["package_digest"] == package.digest, "independent_probe_count_mismatch")
@@ -521,7 +529,7 @@ class Harness:
             http_calls = await self.sdk(state, environment, home, slot_id, expected_tools, calls, "http")
             stdio_calls = await self.sdk(state, environment, home, slot_id, expected_tools, calls, "stdio")
             stage("source_removal")
-            shutil.rmtree(source)
+            self.source_check(source, original_files, remove=True)
             if bundle:
                 shutil.rmtree(bundle)
             await self.shutdown(child, state)
@@ -600,8 +608,32 @@ class Harness:
             directory.rmdir()
 
 
-async def verify(host_path, native_path, report):
+def verify_host_payload(host):
+    build = json.loads((host / "build.json").read_bytes())
+    require(isinstance(build.get("source_commit"), str)
+        and re.fullmatch(r"[0-9a-f]{40}", build["source_commit"]), "relocated_host_source_commit_invalid")
+    require(build.get("source_tree_dirty") is False, "relocated_host_dirty_source")
+    artifacts = build["artifact_sha256"]
+    require(isinstance(artifacts, dict) and 1 <= len(artifacts) <= 20000
+        and all(isinstance(path, str) and len(path) <= 4096 and not Path(path).is_absolute()
+            and ".." not in Path(path).parts and (host / path).resolve() == host / path
+            and isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
+            for path, value in artifacts.items()), "relocated_host_manifest_invalid")
+    members = set()
+    for path in host.rglob("*"):
+        details = path.lstat()
+        require(stat.S_ISDIR(details.st_mode) or stat.S_ISREG(details.st_mode), "relocated_host_unsafe_member")
+        if stat.S_ISREG(details.st_mode):
+            members.add(path.relative_to(host).as_posix())
+            require(len(members) <= 20001, "relocated_host_member_limit")
+    require(members == set(artifacts) | {"build.json"}, "relocated_host_membership_mismatch")
+    require(all(digest(host / path) == value for path, value in artifacts.items()), "relocated_host_artifact_mismatch")
+    return build
+
+
+async def verify(host_path, native_path, report, *, harness_factory=Harness, cases=CASES):
     _host_paths(host_path)
+    verify_host_payload(host_path)
     require(native_path.is_absolute() and native_path.resolve() == native_path and native_path.is_file()
         and os.access(native_path, os.X_OK), "native_acceptance_binary_required")
     with isolated_workspace(report) as (root, lease):
@@ -611,27 +643,18 @@ async def verify(host_path, native_path, report):
         shutil.copyfile(native_path, native)
         native.chmod(0o700)
         _host_paths(host)
-        _host_imports(host)
-        build = json.loads((host / "build.json").read_bytes())
-        require(isinstance(build.get("source_commit"), str)
-            and re.fullmatch(r"[0-9a-f]{40}", build["source_commit"]), "relocated_host_source_commit_invalid")
-        require(build.get("source_tree_dirty") is False, "relocated_host_dirty_source")
+        build = verify_host_payload(host)
         artifacts = build["artifact_sha256"]
-        require(isinstance(artifacts, dict) and 1 <= len(artifacts) <= 20000
-            and all(isinstance(path, str) and len(path) <= 4096 and not Path(path).is_absolute()
-                and ".." not in Path(path).parts and (host / path).resolve() == host / path
-                and isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
-                for path, value in artifacts.items()), "relocated_host_manifest_invalid")
-        require(all(digest(host / path) == value for path, value in artifacts.items()), "relocated_host_artifact_mismatch")
+        _host_imports(host)
         report.update({"host_source_commit": build["source_commit"],
             "host_source_tree_dirty": False,
             "host_build_sha256": digest(host / "build.json"), "host_artifacts_checked": len(artifacts),
             "native_binary_sha256": digest(native), "relocated_host": True, "minimal_environment": True,
             "private_sdk": True, "development_execution_only": True})
-        harness = Harness(root, host, native, lease)
+        harness = harness_factory(root, host, native, lease)
         try:
             report["production_defaults_disabled"] = await harness.defaults()
-            for case in CASES:
+            for case in cases:
                 report["cases"][case] = await harness.case(case)
             _check_module_origins(host)
         except BaseException as error:

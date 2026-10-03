@@ -220,6 +220,8 @@ def copy_private_runtime(runtime: Path, destination: Path) -> None:
     closure expansion. The selected managed runtime contains only file links.
     """
     root = runtime.resolve(strict=True)
+    def identity(details):
+        return (details.st_dev, details.st_ino, details.st_size, details.st_mtime_ns, details.st_ctime_ns)
     records, total, count = [], 0, 0
     for path in root.rglob("*"):
         count += 1
@@ -231,32 +233,38 @@ def copy_private_runtime(runtime: Path, destination: Path) -> None:
         target = path.resolve(strict=True)
         if not target.is_relative_to(root):
             raise ValueError("private_python_runtime_escape")
-        mode = target.stat().st_mode
+        details = target.stat()
+        mode = details.st_mode
         if stat.S_ISDIR(mode) and not path.is_symlink():
             continue
         if not stat.S_ISREG(mode):
             raise ValueError("private_python_runtime_type")
-        size = target.stat().st_size
+        size = details.st_size
         total += size
         if total > MAX_RUNTIME_BYTES:
             raise ValueError("private_python_runtime_limit")
-        records.append((relative, target, size, mode))
+        records.append((relative, target, size, mode, identity(details)))
     destination.mkdir()
-    for relative, source, size, mode in records:
+    for relative, source, size, mode, expected in records:
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        # Source is the validated resolved path. O_NOFOLLOW also rejects a final
-        # link substituted after validation. Copied bytes must match its bound.
-        fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
-        with os.fdopen(fd, "rb") as read, target.open("xb") as write:
-            remaining = size
-            while remaining:
-                chunk = read.read(min(1024**2, remaining))
-                if not chunk:
-                    raise ValueError("private_python_runtime_changed")
-                write.write(chunk); remaining -= len(chunk)
-            if read.read(1):
+        # A substituted FIFO must not block open before the regular-file check.
+        # Pin the validated inode/size/timestamps on the held descriptor both
+        # before and after the bounded read; final symlinks cannot be followed.
+        fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as read:
+            opened = os.fstat(read.fileno())
+            if not stat.S_ISREG(opened.st_mode) or identity(opened) != expected:
                 raise ValueError("private_python_runtime_changed")
+            with target.open("xb") as write:
+                remaining = size
+                while remaining:
+                    chunk = read.read(min(1024**2, remaining))
+                    if not chunk:
+                        raise ValueError("private_python_runtime_changed")
+                    write.write(chunk); remaining -= len(chunk)
+                if read.read(1) or identity(os.fstat(read.fileno())) != expected:
+                    raise ValueError("private_python_runtime_changed")
         target.chmod(stat.S_IMODE(mode))
 
 

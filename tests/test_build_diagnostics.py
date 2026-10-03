@@ -277,3 +277,31 @@ def test_private_runtime_copy_rejects_unbounded_or_external_closure_before_copy(
     with pytest.raises(ValueError, match="private_python_runtime_"):
         host_builder.copy_private_runtime(source, target)
     assert not target.exists()
+
+
+@pytest.mark.parametrize("replacement", ["fifo", "regular_inode", "same_inode_write"])
+def test_private_runtime_copy_rejects_concurrent_source_substitution_without_blocking(tmp_path, replacement):
+    # Exercise the actual replacement in an owned bounded subprocess, so the
+    # previous blocking FIFO behavior fails within the test deadline.
+    source = tmp_path / "runtime"; source.mkdir()
+    (source / "python").write_bytes(b"original")
+    code = "\n".join([
+        "import os, sys", "from pathlib import Path", "sys.path.insert(0, sys.argv[1])",
+        "import build_mcpme_host as builder", "source = Path(sys.argv[2])", "original = os.open",
+        "def replace(path, flags, *args, **kwargs):",
+        "    if Path(path) == source / 'python':",
+        "        if sys.argv[4] == 'fifo':",
+        "            Path(path).unlink(); os.mkfifo(path)",
+        "        elif sys.argv[4] == 'regular_inode':",
+        "            other = source / 'replacement'; other.write_bytes(b'original'); other.replace(path)",
+        "        else: Path(path).write_bytes(b'modified')",
+        "    return original(path, flags, *args, **kwargs)",
+        "os.open = replace",
+        "try: builder.copy_private_runtime(source, Path(sys.argv[3]))",
+        "except ValueError as error: assert str(error) == 'private_python_runtime_changed'",
+        "else: raise AssertionError('source replacement accepted')",
+    ])
+    result = subprocess.run([sys.executable, "-c", code, str(SCRIPTS), str(source), str(tmp_path / "copy"), replacement],
+                            capture_output=True, timeout=3)
+    assert result.returncode == 0
+    assert not (tmp_path / "copy/python").exists()

@@ -69,16 +69,27 @@ def _host_imports(host: Path) -> None:
 
 
 def _check_module_origins(host: Path) -> None:
+    backend = host / "backend"
+    site = host / "python/site-packages"
     for name, module in tuple(sys.modules.items()):
+        filename = getattr(module, "__file__", None)
+        if name == "mcpme._private_preparation_generator":
+            if not filename or Path(filename).resolve() != host / "preparation-toolchain/templates/prepare.py":
+                raise VerificationError("phase3_primitives_bundled_import_required")
+            continue
         if name == "mcpme" or name.startswith("mcpme."):
-            root = host / "backend"
+            allowed = (backend,)
         elif name in {"mcp", "packaging"} or name.startswith(("mcp.", "packaging.")):
-            root = host / "python/site-packages"
+            allowed = (site,)
         else:
             continue
-        filename = getattr(module, "__file__", None)
-        if not filename or not Path(filename).resolve().is_relative_to(root):
+        origins = [filename] if filename else list(getattr(module, "__path__", ()))
+        if not origins or len(origins) > 64:
             raise VerificationError("phase3_primitives_bundled_import_required")
+        for origin in origins:
+            path = Path(origin).resolve()
+            if not any(path.is_relative_to(root) for root in allowed):
+                raise VerificationError("phase3_primitives_bundled_import_required")
 
 
 def _workspace_bytes(base: Path) -> int:

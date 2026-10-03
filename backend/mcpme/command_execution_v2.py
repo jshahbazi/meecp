@@ -7,6 +7,7 @@ Payloads and process output are transient and are never journaled or logged.
 from __future__ import annotations
 
 import asyncio
+import ctypes
 from collections.abc import Callable
 from dataclasses import dataclass
 import fcntl
@@ -96,13 +97,32 @@ class CommandResultV2:
 
 
 def _seed(item: dict) -> bytes:
-    return ("MCPMECR2" + item["instance"] + item["nonce"] + item["helper_digest"] +
+    return ("MCPMECR3" + item["instance"] + item["nonce"] + item["helper_digest"] +
             item["policy_digest"] + item["contract_digest"]).encode("ascii")
 
 
 def _string(value: str) -> bytes:
     encoded = value.encode()
     return struct.pack("!I", len(encoded)) + encoded
+
+
+def _publish_nonlaunch(directory: int, staged: str, complete: str) -> None:
+    # Darwin RENAME_EXCL, from sys/stdio.h. The source's full payload/mode have
+    # been fsynced and all writable descriptors closed before this final step.
+    rename = ctypes.CDLL(None, use_errno=True).renameatx_np
+    rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    rename.restype = ctypes.c_int
+    if rename(directory, os.fsencode(staged), directory, os.fsencode(complete), 0x00000004):
+        raise CommandExecutionError("command_receipt_publication_failed")
+
+
+def _verify_staged(fd: int, directory: int, name: str) -> None:
+    opened = os.fstat(fd)
+    named = os.stat(name, dir_fd=directory, follow_symlinks=False)
+    if (not stat.S_ISREG(named.st_mode) or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino) or
+            named.st_uid != os.getuid() or stat.S_IMODE(named.st_mode) != 0o400 or
+            named.st_nlink != 1 or named.st_size != RECEIPT_SIZE):
+        raise CommandExecutionError("command_receipt_publication_failed")
 
 
 async def _join(awaitable):
@@ -132,7 +152,7 @@ class CommandExecutorV2:
         try:
             check_private_file(lock_path)
             fcntl.flock(self.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            self.journal = read_private_json(self.journal_path) if self.journal_path.exists() else {"version": 2, "entries": []}
+            self.journal = read_private_json(self.journal_path) if self.journal_path.exists() else {"version": 3, "entries": []}
             self._validate_journal()
             self.reconcile()
         except BaseException:
@@ -158,7 +178,7 @@ class CommandExecutorV2:
 
     def _validate_journal(self) -> None:
         value = self.journal
-        if type(value) is not dict or set(value) != {"version", "entries"} or type(value["version"]) is not int or value["version"] != 2 or type(value["entries"]) is not list or len(value["entries"]) > 256:
+        if type(value) is not dict or set(value) != {"version", "entries"} or type(value["version"]) is not int or value["version"] != 3 or type(value["entries"]) is not list or len(value["entries"]) > 256:
             raise CommandExecutionError("invalid_command_journal")
         identities = set()
         for item in value["entries"]:
@@ -171,7 +191,10 @@ class CommandExecutorV2:
             identities.add(item["instance"])
 
     def _receipt_path(self, item: dict) -> Path:
-        return self.state / (item["instance"] + ".command-v2")
+        return self.state / (item["instance"] + ".command-v3.complete")
+
+    def _staged_path(self, item: dict) -> Path:
+        return self.state / (item["instance"] + ".command-v3.pending")
 
     def _proof(self, item: dict) -> tuple[bool, int]:
         if item["receipt_failed"]:
@@ -183,11 +206,10 @@ class CommandExecutorV2:
             return False, 0
         try:
             path = self._receipt_path(item)
-            check_private_file(path)
             fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             try:
                 info = os.fstat(fd)
-                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1 or info.st_size != RECEIPT_SIZE:
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o400 or info.st_nlink != 1 or info.st_size != RECEIPT_SIZE:
                     return False, 0
                 frame = os.read(fd, RECEIPT_SIZE + 1)
             finally:
@@ -256,7 +278,8 @@ class CommandExecutorV2:
         item = {"instance": secrets.token_hex(16), "nonce": secrets.token_hex(32), "helper_digest": self.helper_digest,
                 "policy_digest": self.policy_digest, "contract_digest": spec.digest, "units": spec.reservation_units,
                 "state": "pending", "receipt_failed": False}
-        fd = os.open(self._receipt_path(item), os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        directory = os.open(self.state, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        fd = None
         process = None
         control_read = None
         started = time.monotonic()
@@ -264,13 +287,14 @@ class CommandExecutorV2:
         output = bytearray()
         result = None
         try:
+            fd = os.open(self._staged_path(item).name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
             frame = _seed(item) + b"P" + struct.pack("!i", 0)
             if os.write(fd, frame) != RECEIPT_SIZE:
                 raise OSError()
             os.fsync(fd)
             self.journal["entries"].append(item)
             write_private_json(self.journal_path, self.journal)
-            wire = (b"MCPMEC02" + _seed(item) + struct.pack("!III", spec.deadline_ms, spec.grace_ms, spec.settlement_ms) +
+            wire = (b"MCPMEC03" + _seed(item) + struct.pack("!III", spec.deadline_ms, spec.grace_ms, spec.settlement_ms) +
                     b"".join(_string(str(value)) for value in (POLICY, spec.package, spec.executable, spec.cwd)) +
                     struct.pack("!I", len(spec.argv)) + b"".join(_string(arg) for arg in spec.argv))
             control_read, self._control = os.pipe()
@@ -280,10 +304,14 @@ class CommandExecutorV2:
                 transport.write(wire)
                 transport.flush()
                 transport.seek(0)
-                process = subprocess.Popen([str(self.helper), str(transport.fileno()), str(control_read), str(fd), str(os.getpid())],
+                process = subprocess.Popen([str(self.helper), str(transport.fileno()), str(control_read), str(fd), str(directory), str(os.getpid())],
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env={}, close_fds=True,
-                    pass_fds=(transport.fileno(), control_read, fd))
+                    pass_fds=(transport.fileno(), control_read, fd, directory))
                 self._native[item["instance"]] = process
+                os.close(fd)
+                fd = None
+                if os.write(self._control, b"G") != 1:
+                    raise OSError()
             self._active = process
             os.close(control_read)
             control_read = None
@@ -329,11 +357,18 @@ class CommandExecutorV2:
             if control_read is not None:
                 os.close(control_read)
             try:
-                if process is None:
+                if process is None and fd is not None:
                     # Only this pre-Popen path may acknowledge proven nonlaunch.
-                    os.pwrite(fd, b"N", SEED_SIZE)
+                    frame = _seed(item) + b"N" + struct.pack("!i", 0)
+                    if os.pwrite(fd, frame, 0) != RECEIPT_SIZE:
+                        raise OSError()
+                    os.fchmod(fd, 0o400)
                     os.fsync(fd)
-                else:
+                    _verify_staged(fd, directory, self._staged_path(item).name)
+                    os.close(fd)
+                    fd = None
+                    _publish_nonlaunch(directory, self._staged_path(item).name, self._receipt_path(item).name)
+                elif process is not None:
                     settle_by = min(hard_deadline, time.monotonic() + (spec.grace_ms + spec.settlement_ms) / 1000 + 7)
                     await _join(self._finish(process, settle_by))
                     if process.poll() not in (None, 0, 64):
@@ -345,7 +380,9 @@ class CommandExecutorV2:
                         process.stdin.close()
                     if process.stdout is not None:
                         process.stdout.close()
-                os.close(fd)
+                if fd is not None:
+                    os.close(fd)
+                os.close(directory)
                 self._active = None
             self.reconcile()
         if item["state"] != "settled":

@@ -2,6 +2,10 @@
 
 Objective: complete [automatic and agent-assisted app preparation](AUTOMATIC_PREPARATION.md), verify each implementation checkpoint, then run and remediate an independent adversarial review of the complete result. Phase 3 remains in progress. This ledger does not replace or reduce the plan's acceptance gates.
 
+The [trust and resource scope](PHASE3_TRUST_AND_RESOURCE_SCOPE.md) preserves the
+original same-user execution target and distinguishes measured acceptance from
+later stronger CLI resource conditions. All original acceptance gates remain.
+
 ## Components and controlled preparation primitives
 
 The common component registry resolves exact ID, version and implementation digest. Source-specific validation belongs to a host-owned component. The existing schema-1 planner uses that seam for Python source validation; its descriptor digest is unchanged. The closed schema-2 envelope now selects the host-owned resolved Python component and binds exact original and derived inputs. Additional families enter through reviewed host objects. Public execution remains disabled. See [component details](PHASE3_COMPONENTS.md) and [derived preparation](DERIVED_PREPARATION_BUILD.md).
@@ -52,8 +56,8 @@ Draft, job and reader references protect committed objects. Draft changes transf
 | A0R | Independently authored recipe added through CLI/native forms, prepared, attached and retained after restart with no host edits; lifecycle/race gates | Nine actual independently authored recipe lifecycle cases have native/API, attachment and restart checkpoint evidence; broader race and final combined-host rechecks remain open |
 | A1 | Separate Python callable and foreground MCP native/API paths; private closure; full MCP probes; relocation; matching attachment; install/invoke/restart; cancellation/crash/revision races | Earlier native Python cases plus the new original-removed mixed Python/PNG/unknown-payload native flow passed preparation, attachment, installation, HTTP/stdio and restart. An additive restricted private-runtime SDK probe also passed. Common policy integration, complete race/isolation/resource and final artifact gates remain open |
 | A2 | Explicit ONNX artifact; exact CPU detector compatibility; real inference; tensor tests; complete notices; maximum image limits measured | Default-host and native captured/folder-supplement preparation, exact receipts, installed HTTP/stdio inference, restart and source-free relocation have checkpoint evidence. Later combined-host rechecks and inherited common isolation/resource/race gates remain open |
-| A3 | Bounded supervised CLI; argv/input/output/exit contract; descendants, cancellation, crash/restart and closure | Host-owned installed CLI and automatic directory/forms/native-probe checkpoints are integrated; the latest authority/recovery packet passed 119 independent checks. An additive format-4 native resource monitor passed 146 independent checks, with lifetime coverage, hard aggregate enforcement and positive result admission explicitly false. Default family/recipe/native registration, aggregate release enforcement and final artifact acceptance remain open |
-| A4 | Pinned general model/engine/template; actual inference; token limits; shared serialized queue; resource/cancellation settlement; JevK5 parity | Exact CPU compatibility, JevK5 regressions and fresh captured/folder managed build, matching-import installation, HTTP/stdio inference, crash/restart and source-free relocation have checkpoint evidence. One earlier folder lifecycle verifier RuntimeError remains unexplained. Complete combined-host closure, native, isolation/resource and signed-app gates remain open |
+| A3 | Bounded supervised CLI; argv/input/output/exit contract; descendants, cancellation, crash/restart and closure | Host-owned installed CLI and automatic directory/forms/native-probe checkpoints are integrated; the authority/recovery packet passed 119 independent checks. Default family and recipe metadata now register from a closed packaged format-3 inventory, with 102 independent static/form/lifecycle checks and zero external creation in cold form resolution. Format-4 lifetime coverage, hard aggregate enforcement and positive result admission remain false. Resource release enforcement and final installed/native acceptance remain open |
+| A4 | Pinned general model/engine/template; actual inference; token limits; shared serialized queue; resource/cancellation settlement; JevK5 parity | The clean 68a7533 combined host passed actual native captured and folder-supplement preparation, matching attachment, installed HTTP/stdio inference, shared queue limits, official SDK cancellation, restart and source-free relocation. All 4,782 host artifacts and native/model/harness hashes matched before and after. Historical failed runs are retained separately. Later combined-host, shared isolation/resource and signed-app gates remain open |
 | A5 | Concrete programmatic agent backend; unfamiliar source end to end; scoped transfer/execution; bounded usage; parallel integration; cancellation/restart; stale-result rejection | Additive provider backend/coordinator checkpoint has simulated transport and real local journal/race tests in an isolated branch. No configured credential for a concrete live run; unfamiliar-source generation and host/native integration remain open |
 | A6 | Each additional runtime/provider/family has its own compatibility and authority evidence before advertisement | Schema-2 fake component is a contract test; no additional runtime/provider capability advertised |
 
@@ -73,6 +77,40 @@ An independent reviewer reproduced six failures that existing focused tests miss
 | Buffered synchronous chunks bypassed the event-loop timeout | Check an explicit monotonic deadline around sink work and final publication |
 
 Final adversarial review is still required after the full Phase 3 implementation and acceptance evidence exist.
+
+## October 3 integration checkpoints
+
+The [native text-generation acceptance](NATIVE_INSTALLED_TEXTGEN_ACCEPTANCE.md)
+passed against the immutable 68a7533 host and native binary. Captured and folder
+cases took 206.084 and 228.420 seconds. Both cases joined all owned children,
+removed their selected inputs and captured state, and successfully verified an
+independently relocated installed package. This is installed-flow evidence for
+the pinned CPU model, with public preparation still disabled.
+
+The [fixed foreground graph](FIXED_PROCESS_GRAPH_ACCOUNTING_V1.md) adds optional
+typed ownership and terminal RSS recording to the existing native owner. An
+independent recheck matched all 15 frozen packet hashes and all five unchanged
+native/resource control files, then passed 45 actual owner/graph, synthetic A4
+and public-Mach checks. Generic synchronous native-boundary admission can fence
+managed execution without enabling graph reporting. Separate maxima do not
+establish simultaneous aggregate footprint, lifetime descendant accounting or
+a hard memory cap. The actual owned-self footprint API returned
+`KERN_NO_ACCESS`; [the API checkpoint](PUBLIC_FOOTPRINT_API_CHECKPOINT.md)
+preserves that negative evidence.
+
+The [default command registration](COMMAND_DEFAULT_REGISTRATION.md) passed 82
+producer checks and 102 independent registration, generated-form and lifecycle
+checks. Review caught an intake fixture using legacy source mode and an inventory
+comparison accepting a nested floating-point platform version. Both reproductions
+now reject or resolve as intended. An additional static check matched the actual
+compiled format-3 helper in the frozen 68a7533 host with all external-creation
+entrypoints forbidden. Metadata registration supplies no command execution or
+verified-attachment capability.
+
+These additive backend integrations change the text-generation producer identity.
+The next combined checkpoint must mint a new immutable recipe and rerun its
+complete catalog checks before building another host. Published 1.0.5 and earlier
+recipe bytes, their historical evidence and user lifecycle choices are preserved.
 
 ## Application-directory and shared-control checkpoints
 

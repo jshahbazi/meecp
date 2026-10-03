@@ -147,5 +147,20 @@ aggregate memory or a hard kernel ceiling.
 
 The native-creation callback and optional recorder depend on the immutable
 `6eabf261` process-graph checkpoint. Author verification of this integration
-and independent review of that dependency are separate evidence. The complete
-managed integration still requires its own independent checkpoint review.
+and independent review of that dependency are separate evidence. Final combined
+artifact acceptance remains required. The original trusted selected-app target
+and later stronger CLI resource conditions are distinguished in
+[the scope reconciliation](PHASE3_TRUST_AND_RESOURCE_SCOPE.md).
+
+## Independent managed checkpoint review
+
+Root independently matched all 16 frozen source/control hashes at `925ae0f`.
+The selected common guard and actual native admission suites passed 66 checks
+with no skips or failures. Controls pause the scheduled native task or joined
+graph hash while monitor polling is held; lost job authority or changed package
+and workspace identities result in zero native creations and joined settlement.
+The checkpoint is integrated as `c0051b6`.
+
+The combined common/A4 review receipt has SHA-256
+`9921872b7eb67b6ef9ecb03339b4fd6b46ac1569451520153647003e02f79b9e`.
+Actual current ONNX inference and the final installed artifact remain open.

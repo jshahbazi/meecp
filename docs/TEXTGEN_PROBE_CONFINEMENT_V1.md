@@ -83,3 +83,16 @@ Custom Seatbelt remains an exact-platform mechanism with a deprecated API and
 maintenance limitations. Resource reports retain foreground RSS/maxima scope;
 hard aggregate physical-memory enforcement and lifetime descendant accounting
 are not claimed. No release gate or default capability is enabled here.
+
+## Independent checkpoint review
+
+Root independently matched all 12 source/control hashes in the frozen
+`92f0de90` packet and passed 111 policy, verifier, family and process-graph checks
+with no skips or failures. Actual small native controls include outside effects,
+permitted endpoints, the pinned-loopback case and the separately recorded
+wildcard limitation. The source checkpoint is integrated as `55781f0`.
+
+The combined common/A4 review receipt has SHA-256
+`9921872b7eb67b6ef9ecb03339b4fd6b46ac1569451520153647003e02f79b9e`.
+This clearance covers the source and small native controls. Current-model
+inference and combined installed acceptance remain open.

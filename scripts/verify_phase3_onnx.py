@@ -111,13 +111,26 @@ async def transport(process):
 async def max_probe(package, reaper, workspace, memory_mb):
     from mcp import ClientSession
     from mcpme.preparation_contracts import PreparationError
+    from mcpme.preparation_probe_confinement import ProbeConfinementV1
+    from mcpme.preparation_verifier import capture_confined_probe_launch
     from mcpme.processes import ProcessOwner, _await_ownership, _watch_ownership
     owner, process = ProcessOwner(reaper), None
     started = time.monotonic()
     try:
         async with asyncio.timeout(120):
-            process = await owner.launch(package.root / "bin/service",[],package.root,
-                {"PATH":"/usr/bin:/bin","HOME":str(workspace),"TMPDIR":str(workspace),"LANG":"C"},
+            deadline = time.monotonic() + 120
+            task = asyncio.create_task(asyncio.to_thread(ProbeConfinementV1.capture, package, workspace, reaper))
+            try:
+                confinement = await asyncio.shield(task)
+            finally:
+                await _await_ownership(asyncio.gather(task, return_exceptions=True))
+            launch, identity = await capture_confined_probe_launch(package, confinement, reaper)
+            def admit():
+                identity.admit()
+                if time.monotonic() >= deadline:
+                    raise PreparationError("phase3_onnx_probe_timeout")
+                return True
+            process = await owner.launch(*launch, admit=admit, expected_reaper=confinement.reaper,
                 owned_group=True,startup_timeout=30,stop_grace=.1)
             async def calls():
                 async with transport(process) as (incoming,outgoing):
@@ -155,8 +168,25 @@ async def max_probe(package, reaper, workspace, memory_mb):
         await _await_ownership(process.stop())
         if not process.peak_memory_bytes or process.peak_memory_bytes > memory_mb*1024**2:
             raise PreparationError("phase3_onnx_memory_limit")
+        def validate_finished():
+            from mcpme.contracts import validate_package
+            identity.check()
+            current = validate_package(package.root)
+            if current.digest != package.digest:
+                raise PreparationError("phase3_onnx_probe_mutated_package")
+            confinement.check(current, reaper)
+            identity.check()
+        task = asyncio.create_task(asyncio.to_thread(validate_finished))
+        try:
+            await asyncio.shield(task)
+        finally:
+            await _await_ownership(asyncio.gather(task, return_exceptions=True))
+        if owner.reaper != confinement.reaper:
+            raise PreparationError("phase3_onnx_probe_identity_mismatch")
         result["max_sdk_peak_memory_bytes"] = process.peak_memory_bytes
         result["max_sdk_wall_seconds"] = round(time.monotonic()-started,6)
+        result["max_sdk_confined"] = True
+        result["max_sdk_policy_digest"] = confinement.policy_digest
         return result
     finally:
         try:
@@ -177,7 +207,7 @@ async def relocation_probe(package_root, descriptor, reaper, workspace):
     owner = ProcessOwner(reaper)
     try:
         return await verify_prepared_package(package_root, descriptor, reaper, workspace,
-                                             timeout_seconds=60, owner=owner)
+                                             timeout_seconds=60, owner=owner, confine_private_python=True)
     finally:
         try:
             await _await_ownership(owner.close())
@@ -278,7 +308,8 @@ async def verify(host, model, base):
             stage("relocation_probe")
             report = await relocation_probe(relocated,descriptor,host / "bin/mcpme-reap",probe)
             stage("max_image_probe")
-            max_report = await max_probe(package,host / "bin/mcpme-reap",probe,descriptor.resources.memory_mb)
+            maximum_workspace = base / "maximum probe"; maximum_workspace.mkdir(mode=0o700)
+            max_report = await max_probe(package,host / "bin/mcpme-reap",maximum_workspace,descriptor.resources.memory_mb)
             after = await files(validate_package,relocated)
             if after.digest != digest:
                 raise PreparationError("phase3_onnx_probe_mutated_package")
@@ -291,7 +322,8 @@ async def verify(host, model, base):
                 "selected_sources_removed":True,"captured_state_removed_before_relocation_probe":True,
                 "commands":final["progress"]["commands_finished"],"wheels":final["progress"]["wheels_acquired"],
                 "dependency_bytes":final["progress"]["bytes_acquired"],"fixtures":report.fixtures_checked,
-                "relocation_probe_peak_memory_bytes":report.peak_memory_bytes,"declared_memory_mb":descriptor.resources.memory_mb,
+                "relocation_probe_peak_memory_bytes":report.peak_memory_bytes,"relocation_probe_confined":True,
+                "declared_memory_mb":descriptor.resources.memory_mb,
                 "owned_work_remaining":0,"pending_receipts":0,"job_references_remaining":0,
                 "workload":workload,**max_report,"wall_seconds":round(time.monotonic()-started,6)}
     finally:

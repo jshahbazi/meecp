@@ -388,7 +388,9 @@ class Harness(common.Harness):
             workspace = base / "probe"
             workspace.mkdir(mode=0o700)
             verification = await onnx.relocation_probe(relocated, descriptor, self.reaper, workspace)
-            maximum = await onnx.max_probe(independent, self.reaper, workspace, package.manifest.resources.memory_mb)
+            maximum_workspace = base / "maximum probe"
+            maximum_workspace.mkdir(mode=0o700)
+            maximum = await onnx.max_probe(independent, self.reaper, maximum_workspace, package.manifest.resources.memory_mb)
             common.require(validate_package(relocated).digest == package.digest, "onnx_probe_mutated_package")
             return {"passed": True, "capture_target": label, "native_receipt_sha256": common.digest(output),
                 "native_routes": sorted(routes), "captured_collection_digest": captured["collection_digest"],
@@ -401,6 +403,7 @@ class Harness(common.Harness):
                 "http_calls": http_calls, "stdio_calls": stdio_calls, "source_removed": True, "restart_invoked": True,
                 "captured_state_removed_before_relocation_probe": True, "relocation_fixtures": verification.fixtures_checked,
                 "relocation_probe_peak_memory_bytes": verification.peak_memory_bytes,
+                "relocation_probe_confined": True,
                 "declared_app_memory_mb": package.manifest.resources.memory_mb,
                 "preparation_progress": prepared["progress"], "probe_peak_memory_bytes": prepared["verification"]["peak_memory_bytes"],
                 "capture_ownership_remaining": ownership, "workload": workload, **maximum,
@@ -464,7 +467,7 @@ def main():
     os.umask(0o077); logging.disable(logging.CRITICAL)
     report = {"schema_version": 1, "verified": False, "scope": "native_installed_onnx_onboarding", "cases": {},
         "limits": ["synthetic_fixtures_do_not_measure_recognition_accuracy", "crash_revision_cancel_races_unverified",
-            "probe_filesystem_network_isolation_unverified", "hard_aggregate_live_memory_unverified", "public_execution_disabled"]}
+            "probe_confinement_is_exact_platform", "hard_aggregate_live_memory_unverified", "public_execution_disabled"]}
     try:
         asyncio.run(verify(args.host.resolve(strict=True), args.native.resolve(strict=True), args.model.resolve(strict=True), report))
     except (Exception, KeyboardInterrupt) as error:

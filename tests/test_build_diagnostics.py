@@ -305,3 +305,37 @@ def test_private_runtime_copy_rejects_concurrent_source_substitution_without_blo
                             capture_output=True, timeout=3)
     assert result.returncode == 0
     assert not (tmp_path / "copy/python").exists()
+
+
+@pytest.mark.parametrize("cycle_root", [False, True])
+def test_private_runtime_cycle_has_fixed_diagnostic_before_copy(tmp_path, cycle_root):
+    source = tmp_path / SECRET
+    if cycle_root:
+        source.symlink_to(source.name)
+    else:
+        source.mkdir(); (source / SECRET).symlink_to(SECRET)
+    target = tmp_path / "copy"
+    with pytest.raises(ValueError, match="^private_python_runtime_invalid$") as raised:
+        host_builder.copy_private_runtime(source, target)
+    assert raised.value.__suppress_context__ is True
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("cycle_root", [False, True])
+def test_host_cli_sanitizes_actual_runtime_cycle(monkeypatch, tmp_path, capsys, cycle_root):
+    source = tmp_path / SECRET
+    if cycle_root:
+        source.symlink_to(source.name)
+    else:
+        (source / "bin").mkdir(parents=True)
+        (source / "bin/python3.12").write_bytes(b"synthetic runtime")
+        (source / SECRET).symlink_to(SECRET)
+    monkeypatch.setattr(host_builder.subprocess, "check_output", lambda *args, **kwargs: str(source / "bin/python3.12"))
+    monkeypatch.setattr(host_builder.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(host_builder.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(sys, "argv", ["build_mcpme_host.py", "--output", str(tmp_path / "output")])
+    with pytest.raises(SystemExit) as raised:
+        runpy.run_path(str(SCRIPTS / "build_mcpme_host.py"), run_name="__main__")
+    assert raised.value.code == "host_build_failed"
+    assert raised.value.__suppress_context__ is True
+    assert capsys.readouterr() == ("", "")

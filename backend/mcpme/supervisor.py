@@ -2045,10 +2045,13 @@ def management_app(host: Supervisor, token: str, port: int):
     return LocalPolicy(app, token=token, port=port, authenticate=authenticate)
 
 
-async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None):
+async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None, *, preparation_runner_factory=None):
     if platform.system() != "Darwin" or platform.machine() != "arm64" or int(platform.mac_ver()[0].split(".")[0]) < 26:
         raise HostError("unsupported_platform")
-    host = Supervisor(state_dir, reaper)
+    # Trusted development acceptance may inject an explicitly enabled runner.
+    # The CLI and ordinary native launch supply no factory; production remains
+    # disabled by Supervisor's default. No payload or environment selects one.
+    host = Supervisor(state_dir, reaper, preparation_runner_factory=preparation_runner_factory)
     listener = bind_listener()
     token = secrets.token_urlsafe(32)
     port = listener.getsockname()[1]

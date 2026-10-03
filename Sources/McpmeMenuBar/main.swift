@@ -204,9 +204,10 @@ private struct ImportDraft {
               let name = object["name"] as? String, !name.isEmpty, name.count <= 256,
               !name.unicodeScalars.contains(where: { $0.value < 32 }),
               let source = object["source"] as? [String: Any],
-              let path = source["locator"] as? String ?? (summary ? "" : nil),
-              (summary || path.hasPrefix("/")), !path.contains("\0"),
               let kind = safeCode(source["kind"]),
+              let path = source["locator"] as? String ?? ((summary || kind == "captured_artifact_collection") ? "" : nil),
+              (summary || path.hasPrefix("/") || (kind == "captured_artifact_collection" && path.isEmpty)),
+              !path.contains("\0"),
               let policy = object["start_policy"] as? String, ["manual", "host"].contains(policy),
               let start = object["start"] as? Bool else { return nil }
         let intent = object["intent"] as? String ?? ""
@@ -1651,7 +1652,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let changed = currentDraft?.id != draft.id || currentDraft?.revision != draft.revision || currentDraft?.packageDigest != draft.packageDigest
         currentDraft = draft; draftDirty = false
         upgradeTarget = nil
-        pathField?.stringValue = draft.sourcePath; nameField?.stringValue = draft.name; intentField?.string = draft.intent
+        pathField?.stringValue = draft.sourceKind == "captured_artifact_collection" ? "Captured artifacts" : draft.sourcePath
+        nameField?.stringValue = draft.name; intentField?.string = draft.intent
         policyField?.selectItem(at: draft.policy == "host" ? 1 : 0)
         startCheck?.state = draft.start ? .on : .off
         documentRoleField?.selectItem(at: draft.documentRole == "reference" ? 1 : draft.documentRole == "instructions" ? 2 : 0)
@@ -1996,7 +1998,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         var sections: [String] = []
         if let name = object["name"] as? String { sections.append("App: " + name) }
         if let draft = currentDraft {
-            sections.append("Source: " + draft.sourcePath)
+            sections.append("Source: " + (draft.sourceKind == "captured_artifact_collection" ? "Captured artifacts" : draft.sourcePath))
             if !draft.intent.isEmpty { sections.append("Requested capabilities\n" + draft.intent) }
         }
         if let package = object["package"] as? [String: Any] {
@@ -2145,6 +2147,13 @@ private func nativeSelfTest() -> Bool {
           managementRequestTimeout("v1/imports", method: "GET") == 30,
           managementRequestTimeout("v1/operations/" + id + "/recover", method: "POST") == 30 else { return false }
     let recoveryID = "99999999-2222-4333-8444-555555555555"
+    let captured: [String: Any] = ["draft_id": id, "revision": 1, "state": "needs_information",
+        "name": "Synthetic detector", "source": ["kind": "captured_artifact_collection", "revision": "sha256:" + String(repeating: "a", count: 64)],
+        "start_policy": "manual", "start": false]
+    guard let capturedDraft = ImportDraft(captured), capturedDraft.sourcePath.isEmpty,
+          capturedDraft.sourceSnapshotPath == nil, capturedDraft.editable else { return false }
+    var missingFolderLocator = captured; missingFolderLocator["source"] = ["kind": "local_folder"]
+    guard ImportDraft(missingFolderLocator) == nil else { return false }
     guard let ordinary = Project(good), projectCanControl(ordinary, action: "remove", operations: []) else { return false }
     for action in ["install", "upgrade"] {
         var blocked = good; blocked["observed_state"] = "failed"; blocked["error_code"] = action == "install" ? "installation_recovery_required" : "upgrade_recovery_required"

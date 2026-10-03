@@ -323,7 +323,7 @@ async def _joined(task: asyncio.Task):
 class PreparationRunner:
     def __init__(self, store, host_root: Path, reaper: Path, *, reserve_resources=None,
                  release_resources=None, enabled: bool = False, enabled_families=(), command_admission=None,
-                 probe_graph_accounting: bool = False):
+                 probe_graph_accounting: bool = False, command_resource_admission=None):
         self.store, self.host_root, self.reaper = store, host_root, reaper
         self.reserve_resources, self.release_resources = reserve_resources, release_resources
         self.enabled = enabled is True
@@ -335,6 +335,11 @@ class PreparationRunner:
             if type(command_admission) is not HostCommandAdmission:
                 raise PreparationError("command_preparation_not_admitted")
         self.command_admission = command_admission
+        if command_resource_admission is not None:
+            from .preparation_command_owner import CommandPreparationResourceAdmission
+            if command_admission is None or type(command_resource_admission) is not CommandPreparationResourceAdmission:
+                raise PreparationError("command_preparation_not_admitted")
+        self.command_resource_admission = command_resource_admission
         # Admission belongs to an exact reviewed family version. Enabling the
         # legacy runner cannot enable a newly registered composite family.
         self.enabled_families = frozenset(enabled_families)
@@ -405,6 +410,11 @@ class PreparationRunner:
             verifier = contract_digest("preparation-family-verifier-v1", {"implementation": verifier,
                 "components": identities, "profile": getattr(family, "target_profile", "mcp-stdio"),
                 "specialist": callable(getattr(family, "verify", None))})
+            if getattr(family, "preparation_owner_kind", None) == "command-v3" and self.command_resource_admission is not None:
+                admission = self.command_resource_admission
+                verifier = contract_digest("preparation-command-measured-verifier-v1", {"implementation": verifier,
+                    "helper_sha256": admission.helper_sha256, "platform_policy": admission.platform_policy,
+                    "resource_policy_digest": admission.policy.digest})
         return runner, verifier
 
     async def _verify(self, package_root, descriptor, workspace, *, timeout_seconds, owner):
@@ -767,7 +777,7 @@ class PreparationRunner:
                     def create_command_owner():
                         created = CommandPreparationOwner(self.command_admission, self.store, attempt.job_id,
                             attempt.workspace, package, descriptor, attempt_id=attempt.command_attempt_id,
-                            check=attempt.check, deadline=attempt.deadline)
+                            check=attempt.check, deadline=attempt.deadline, resource_admission=self.command_resource_admission)
                         # Cancellation joins this thread before cleanup reads the
                         # list, so a just-created owner cannot be abandoned.
                         attempt.owners.append(created)

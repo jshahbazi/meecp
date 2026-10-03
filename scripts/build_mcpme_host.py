@@ -217,7 +217,7 @@ def _resource_inventory_contract() -> dict:
     return {
         "schema_version": 1, "component": "macos26-arm64-command-resource-v1", "receipt_format": 4,
         "helper": "bin/mcpme-command-resource-reap", "resource_policy": "held-group-windowed-usage-v1",
-        "confinement_policy": "macos26-arm64-monitored-fork-exec-v1",
+        "confinement_policy": "macos26-arm64-monitored-fork-exec-v2",
         "platform": {"os": "macos", "major": 26, "architecture": "arm64"},
         "production_admission": "disabled", "configuration_authority": "inventory-only",
         "lifetime_coverage_complete": False, "hard_aggregate_enforced": False, "result_admissible": False,

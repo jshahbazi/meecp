@@ -18,7 +18,8 @@ async def test_invalid_probe_deadlines_never_hash_or_launch(limit):
         await verifier.verify_textgen_package(Path("/missing"), None, Path("/missing"), Path("/missing"), timeout_seconds=limit)
 
 
-async def test_repeated_cancel_retains_both_instances_until_native_settlement(tmp_path, monkeypatch):
+@pytest.mark.parametrize("with_graph", [False, True])
+async def test_repeated_cancel_retains_both_instances_until_native_settlement(tmp_path, monkeypatch, with_graph):
     closing, settle, launched = asyncio.Event(), asyncio.Event(), asyncio.Event()
     package = SimpleNamespace(root=tmp_path, digest="a" * 64)
     async def validated(path): return package
@@ -38,8 +39,11 @@ async def test_repeated_cancel_retains_both_instances_until_native_settlement(tm
             if not self._done.done(): self._done.set_result(None)
 
     class Owner:
-        def __init__(self): self.instances = {}
+        def __init__(self):
+            self.instances = {}
+            self.graph_accounting = object() if with_graph else None
         async def launch(self, executable, args, cwd, env, **kwargs):
+            assert kwargs.get("graph_role") == (executable.name.removeprefix("textgen-") if with_graph else None)
             config = json.loads(os.read(kwargs["inherited_fds"][0], 4096))
             process = Process(self, config, executable.name)
             self.instances[process.instance_id] = process
@@ -58,7 +62,7 @@ async def test_repeated_cancel_retains_both_instances_until_native_settlement(tm
     async def waiting_get(*args, **kwargs): await asyncio.Event().wait()
     monkeypatch.setattr(verifier.httpx.AsyncClient, "get", waiting_get)
     task = asyncio.create_task(verifier.verify_textgen_package(tmp_path, descriptor(draft()), tmp_path / "reaper",
-                                                              tmp_path, owner=owner))
+                                                              tmp_path, owner=owner, graph_accounting=owner.graph_accounting))
     await asyncio.wait_for(launched.wait(), 2)
     task.cancel()
     await asyncio.wait_for(closing.wait(), 2)

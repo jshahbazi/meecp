@@ -18,7 +18,7 @@ from mcp import ClientSession
 from mcp.shared.message import SessionMessage
 from mcp.types import JSONRPCMessage
 
-from .contracts import PackageError, validate_package
+from .contracts import LOCK_NAME, MANIFEST_NAME, MAX_ARTIFACTS, PackageError, validate_package
 from .preparation_contracts import PreparationError, PreparationDescriptor, canonical_bytes
 from .preparation_processes import _settle
 from .processes import OwnedProcess, OwnershipLost, ProcessOwner, _await_ownership, _watch_ownership
@@ -38,6 +38,79 @@ class VerificationReport:
 async def _validate_joined(package_root: Path):
     """Cancellation cannot return while package hashing still reads its tree."""
     task = asyncio.create_task(asyncio.to_thread(validate_package, package_root))
+    try:
+        return await asyncio.shield(task)
+    finally:
+        await _await_ownership(asyncio.gather(task, return_exceptions=True))
+
+
+@dataclass(frozen=True)
+class _ProbeLaunchIdentity:
+    """Metadata from the same joined validation, never a new byte authority."""
+    records: tuple
+
+    @staticmethod
+    def _identity(path, full):
+        try:
+            value = path.lstat()
+        except OSError:
+            raise PreparationError("preparation_probe_confinement_mismatch") from None
+        basic = (value.st_dev, value.st_ino, value.st_mode, value.st_uid)
+        return basic + ((value.st_nlink, value.st_size, value.st_mtime_ns, value.st_ctime_ns) if full else ())
+
+    @classmethod
+    def capture(cls, package, plan):
+        from .preparation_probe_confinement import SANDBOX
+        files = {package.root / item.path for item in package.lock.artifacts}
+        files.update((package.root / MANIFEST_NAME, package.root / LOCK_NAME, plan.reaper, SANDBOX))
+        # Every locked file's ancestor guards membership/substitution in the
+        # complete closed package. Outside ancestors use stable directory
+        # identity, so unrelated sibling creation cannot invalidate the plan.
+        directories = {plan.workspace, plan.home, plan.temporary, package.root}
+        for path in tuple(files) + tuple(directories):
+            directories.update(path.parents)
+        if len(files) > MAX_ARTIFACTS + 4 or len(directories) > MAX_ARTIFACTS * 2 + 1024:
+            raise PreparationError("preparation_probe_confinement_mismatch")
+        records = []
+        for path in sorted(files | directories):
+            full = path in files or path == package.root or package.root in path.parents
+            records.append((path, full, cls._identity(path, full)))
+        return cls(tuple(records))
+
+    def check(self):
+        for path, full, identity in self.records:
+            if self._identity(path, full) != identity:
+                raise PreparationError("preparation_probe_confinement_mismatch")
+
+    def admit(self) -> bool:
+        self.check()
+        return True
+
+
+def _bound_confined_launch(package, plan, reaper):
+    from .preparation_probe_confinement import ProbeConfinementV1
+    if type(plan) is not ProbeConfinementV1:
+        raise PreparationError("preparation_probe_confinement_mismatch")
+    identity = _ProbeLaunchIdentity.capture(package, plan)
+    try:
+        current = validate_package(package.root)
+    except PackageError:
+        raise PreparationError("preparation_package_mutated") from None
+    if current.digest != package.digest:
+        raise PreparationError("preparation_package_mutated")
+    launch = plan.launch(current, reaper)
+    identity.check()
+    return launch, identity
+
+
+async def capture_confined_probe_launch(package, plan, reaper):
+    """Trusted host seam: joined validation plus immutable native admit guard.
+
+    The caller owns a private workspace and typed plan. It must pass the
+    returned guard's ``admit`` to ProcessOwner.launch and bind expected_reaper.
+    This is not a portable/public policy selector or job authority callback.
+    """
+    task = asyncio.create_task(asyncio.to_thread(_bound_confined_launch, package, plan, reaper))
     try:
         return await asyncio.shield(task)
     finally:
@@ -85,17 +158,22 @@ async def _owned_transport(process: OwnedProcess):
 async def verify_prepared_package(
     package_root: Path, descriptor: PreparationDescriptor, reaper: Path, workspace: Path, *,
     timeout_seconds: float = 60, owner: ProcessOwner | None = None, probe_confinement=None,
+    confine_private_python: bool = False,
 ) -> VerificationReport:
     """Use a real MCP SDK session; check schemas, fixtures, mutation and cleanup.
 
     The caller supplies a relocated closed package and private probe workspace.
-    The optional host-created v1 confinement plan admits only the exact private
-    Python launchers; ordinary callers retain their existing behavior. Actual
-    installed policy acceptance remains separate. Only tools-only stdio is
-    implemented here.
+    Managed callers select confinement through a trusted host argument. The
+    verifier captures the v1 plan from the exact sealed private Python package
+    and workspace; package descriptors cannot select or widen the policy.
+    Direct callers retain their existing default and may supply a host-created
+    plan. Installed policy acceptance remains separate. Only tools-only stdio
+    is implemented here.
     """
     if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or not 0 < timeout_seconds <= 3600:
         raise PreparationError("invalid_preparation_probe_limit")
+    if type(confine_private_python) is not bool or (confine_private_python and probe_confinement is not None):
+        raise PreparationError("preparation_probe_confinement_mismatch")
     try:
         package = await _validate_joined(package_root)
     except PackageError as failure:
@@ -114,7 +192,18 @@ async def verify_prepared_package(
     process = None
     try:
         async with asyncio.timeout(timeout_seconds):
+            deadline = asyncio.get_running_loop().time() + timeout_seconds
             entry = package.manifest.entrypoint
+            launch_identity = None
+            if confine_private_python:
+                from .preparation_probe_confinement import ProbeConfinementV1
+                if owner.reaper != Path(reaper):
+                    raise PreparationError("preparation_probe_confinement_mismatch")
+                task = asyncio.create_task(asyncio.to_thread(ProbeConfinementV1.capture, package, workspace, reaper))
+                try:
+                    probe_confinement = await asyncio.shield(task)
+                finally:
+                    await _await_ownership(asyncio.gather(task, return_exceptions=True))
             if probe_confinement is None:
                 launch = (package.root / entry.executable, entry.args, package.root / entry.cwd,
                           {"PATH": "/usr/bin:/bin", "HOME": str(workspace), "TMPDIR": str(workspace), "LANG": "en_US.UTF-8"})
@@ -123,17 +212,19 @@ async def verify_prepared_package(
                 if (type(probe_confinement) is not ProbeConfinementV1 or probe_confinement.workspace != workspace
                         or owner.reaper != Path(reaper)):
                     raise PreparationError("preparation_probe_confinement_mismatch")
-                task = asyncio.create_task(asyncio.to_thread(probe_confinement.launch, package, reaper))
-                try:
-                    launch = await asyncio.shield(task)
-                finally:
-                    await _await_ownership(asyncio.gather(task, return_exceptions=True))
+                launch, launch_identity = await capture_confined_probe_launch(package, probe_confinement, reaper)
                 if owner.reaper != probe_confinement.reaper:
                     raise PreparationError("preparation_probe_confinement_mismatch")
+            def admit():
+                launch_identity.check()
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise PreparationError("preparation_probe_timeout")
+                return True
             process = await owner.launch(
                 *launch,
                 owned_group=True, startup_timeout=min(timeout_seconds, 120), stop_grace=0.1,
                 **({"expected_reaper": probe_confinement.reaper} if probe_confinement is not None else {}),
+                **({"admit": admit} if launch_identity is not None else {}),
             )
             async def probe():
                 async with _owned_transport(process) as (incoming, outgoing):
@@ -160,6 +251,11 @@ async def verify_prepared_package(
             raise PreparationError("preparation_probe_measurement_unavailable")
         if peak > descriptor.resources.memory_mb * 1024 * 1024:
             raise PreparationError("preparation_probe_memory_limit")
+        if confine_private_python and owner.graph_accounting is not None:
+            graph_report = owner.graph_accounting.report()
+            if (not graph_report.ownership_settled or not graph_report.foreground_measurements_complete
+                    or graph_report.conservative_member_rss_max_sum_bytes != peak):
+                raise PreparationError("preparation_probe_measurement_unavailable")
         try:
             current = await _validate_joined(package.root)
         except PackageError:

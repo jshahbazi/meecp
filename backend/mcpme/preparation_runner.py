@@ -44,7 +44,8 @@ RUNNER_FILES = ("preparation_runner.py", "preparation_builder.py", "preparation_
                 "preparation_authority.py", "preparation_contracts.py", "processes.py", "ownership_receipts.py",
                 "imports.py", "preparation_application_source.py", "private.py", "recipes.py", "contracts.py", "preparation_inputs.py",
                 "preparation_resolved_python.py", "preparation_resolution.py")
-VERIFIER_FILES = ("preparation_verifier.py", "preparation_probe_confinement.py", "preparation_processes.py", "preparation_contracts.py",
+VERIFIER_FILES = ("preparation_verifier.py", "preparation_probe_confinement.py", "process_graph_accounting_v1.py",
+                  "preparation_processes.py", "preparation_contracts.py",
                   "contracts.py", "processes.py", "ownership_receipts.py")
 
 
@@ -240,20 +241,41 @@ def seal_receipt(package, job: dict):
 
 class JournaledPreparationOwner(ProcessOwner):
     """Journal pending native completion proof before any child can be launched."""
-    def __init__(self, reaper: Path, store, job_id: str, workspace: Path):
-        super().__init__(reaper)
+    def __init__(self, reaper: Path, store, job_id: str, workspace: Path, *, check=None, graph_accounting=None):
         self.store, self.job_id, self.workspace = store, job_id, workspace
+        self._check = check
+        super().__init__(reaper, graph_accounting=graph_accounting,
+                         graph_admission_check=self.check_current if graph_accounting is not None else None)
 
-    async def launch(self, executable, args, cwd, env, **kwargs):
-        if not kwargs.get("owned_group") or any(key in kwargs for key in ("completion_fd", "completion_nonce", "instance_id")):
+    def check_current(self) -> bool:
+        """Trusted metadata fence, also called inside the native creation task."""
+        if self._closed:
+            raise PreparationError("preparation_canceled")
+        if self._check is not None:
+            self._check()
+        self.store.check_authority(self.job_id)
+        return True
+
+    async def launch(self, executable, args, cwd, env, *, admit=None, **kwargs):
+        if not kwargs.get("owned_group") or any(key in kwargs for key in
+                ("completion_fd", "completion_nonce", "instance_id", "graph_role")):
             raise PreparationError("invalid_preparation_ownership")
+        def current():
+            self.check_current()
+            # A trusted probe may add a metadata guard, but it cannot replace
+            # the exact job/attempt admission required by this journal owner.
+            self._check_admit(admit)
+            self.check_current()
+            return True
         identifier = uuid.uuid4().hex
         descriptor, metadata = prepare_receipt(self.workspace, identifier)
         try:
             self.store.register_ownership(self.job_id, metadata)
             return await super().launch(executable, args, cwd, env, instance_id=identifier,
                 completion_fd=descriptor, completion_nonce=metadata["nonce"],
-                nonlaunch_callback=lambda: acknowledge_nonlaunch(descriptor, identifier, metadata["nonce"]), **kwargs)
+                nonlaunch_callback=lambda: acknowledge_nonlaunch(descriptor, identifier, metadata["nonce"]),
+                admit=current,
+                **({"graph_role": "probe"} if self.graph_accounting is not None else {}), **kwargs)
         finally:
             os.close(descriptor)
 
@@ -300,10 +322,14 @@ async def _joined(task: asyncio.Task):
 
 class PreparationRunner:
     def __init__(self, store, host_root: Path, reaper: Path, *, reserve_resources=None,
-                 release_resources=None, enabled: bool = False, enabled_families=(), command_admission=None):
+                 release_resources=None, enabled: bool = False, enabled_families=(), command_admission=None,
+                 probe_graph_accounting: bool = False):
         self.store, self.host_root, self.reaper = store, host_root, reaper
         self.reserve_resources, self.release_resources = reserve_resources, release_resources
         self.enabled = enabled is True
+        if type(probe_graph_accounting) is not bool:
+            raise PreparationError("invalid_preparation_probe_accounting")
+        self.probe_graph_accounting = probe_graph_accounting
         if command_admission is not None:
             from .host_command import HostCommandAdmission
             if type(command_admission) is not HostCommandAdmission:
@@ -387,7 +413,9 @@ class PreparationRunner:
         if verifier is None:
             if family is not None and getattr(family, "target_profile", "mcp-stdio") != "mcp-stdio":
                 raise PreparationError("independent_runtime_verifier_unavailable")
-            verifier = verify_prepared_package
+            return await verify_prepared_package(package_root, descriptor, self.reaper, workspace,
+                                                 timeout_seconds=timeout_seconds, owner=owner,
+                                                 confine_private_python=True)
         return await verifier(package_root, descriptor, self.reaper, workspace,
                               timeout_seconds=timeout_seconds, owner=owner)
 
@@ -591,8 +619,10 @@ class PreparationRunner:
         finally:
             if not task.done():
                 task.cancel()
-            await _joined(task)
-            attempt.callbacks.discard(task)
+            try:
+                await _joined(task)
+            finally:
+                attempt.callbacks.discard(task)
 
     async def _monitor(self, attempt):
         try:
@@ -713,7 +743,10 @@ class PreparationRunner:
                         or job["runtime_digest"] != toolchain.identity):
                     raise PreparationError("preparation_implementation_changed")
                 self.store.transition(attempt.job_id, "preparing")
-                owner = JournaledPreparationOwner(self.reaper, self.store, attempt.job_id, attempt.workspace)
+                def current():
+                    attempt.check()
+                    self._require_admission(descriptor)
+                owner = JournaledPreparationOwner(self.reaper, self.store, attempt.job_id, attempt.workspace, check=current)
                 attempt.owners.append(owner)
                 executor = PreparationExecutor(self.reaper, owner=owner)
                 candidate = attempt.workspace / "candidate"
@@ -741,8 +774,26 @@ class PreparationRunner:
                         return created
                     probe_owner = await self._thread(attempt, create_command_owner)
                 else:
-                    probe_owner = JournaledPreparationOwner(self.reaper, self.store, attempt.job_id, attempt.workspace)
-                    attempt.owners.append(probe_owner)
+                    def create_probe_owner():
+                        current()
+                        self.store.check_authority(attempt.job_id)
+                        graph = None
+                        if self.probe_graph_accounting and getattr(family, "verify", None) is None:
+                            from .preparation_probe_confinement import SANDBOX, _file
+                            from .process_graph_accounting_v1 import FixedProcessGraphV1, GraphMemberV1
+                            # The native foreground request is sandbox-exec.
+                            # Confinement separately binds its exact exec into
+                            # the sealed private interpreter and bootstrap.
+                            sandbox_hash, _ = _file(SANDBOX)
+                            graph = FixedProcessGraphV1(package.digest,
+                                contract_digest("preparation-fixed-probe-authority-v1", {
+                                    "job_id": attempt.job_id, "binding": self.store.get(attempt.job_id)["binding"]}),
+                                (GraphMemberV1("probe", SANDBOX, sandbox_hash, descriptor.resources.memory_mb * 1024**2),))
+                        created = JournaledPreparationOwner(self.reaper, self.store, attempt.job_id,
+                            attempt.workspace, check=current, graph_accounting=graph)
+                        attempt.owners.append(created)
+                        return created
+                    probe_owner = await self._thread(attempt, create_probe_owner)
                 report = await self._controlled(attempt, self._verify(package.root, descriptor,
                     probe_workspace, timeout_seconds=attempt.deadline - time.monotonic(), owner=probe_owner))
                 probe_owner.confirm_completed()

@@ -168,7 +168,8 @@ async def fail_install(host, operation_id: str, code: str, *, created: bool, exp
         await host.quiesce_upgrade(slot_id)
     except Exception as error:
         lost = (isinstance(error, OwnershipLost) or getattr(error, "code", None) == "ownership_lost"
-                or bool(host.ledger(slot_id)) or any(value.ownership_lost for value in host.owner(slot_id).instances.values()))
+                or bool(host.ledger(slot_id)) or host.commands.pending(slot_id)
+                or any(value.ownership_lost for value in host.owner(slot_id).instances.values()))
         if not lost:
             code = "shutdown_unconfirmed"
     canceled = operation.details.get("cancel_requested") and not exposed and not lost

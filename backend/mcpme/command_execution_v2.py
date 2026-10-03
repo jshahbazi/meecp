@@ -64,6 +64,7 @@ class CommandSpecV2:
     input_limit: int = 65536
     output_limit: int = 65536
     reservation_units: int = 1
+    authority_digest: str = "0" * 64
 
     def validate(self) -> None:
         for value, low, high in ((self.deadline_ms, 1, 3600000), (self.grace_ms, 0, 1000),
@@ -71,7 +72,7 @@ class CommandSpecV2:
                                  (self.output_limit, 0, 1048576), (self.reservation_units, 1, 4096)):
             if type(value) is not int or not low <= value <= high:
                 raise CommandExecutionError("invalid_command_spec")
-        if (not _hex(self.package_digest) or type(self.argv) is not tuple or len(self.argv) > 128 or
+        if (not _hex(self.package_digest) or not _hex(self.authority_digest) or type(self.argv) is not tuple or len(self.argv) > 128 or
                 any(type(arg) is not str or "\0" in arg for arg in self.argv)):
             raise CommandExecutionError("invalid_command_spec")
         for path in (self.package, self.executable, self.cwd):
@@ -249,7 +250,7 @@ class CommandExecutorV2:
         # Never kill the native owner: losing it cannot settle its target tree.
         # At the deadline ownership remains pending; its receipt can arrive later.
 
-    async def execute(self, spec: CommandSpecV2, payload: bytes = b"") -> CommandResultV2:
+    async def execute(self, spec: CommandSpecV2, payload: bytes = b"", *, instance_id: str | None = None) -> CommandResultV2:
         if type(spec) is not CommandSpecV2 or type(payload) is not bytes:
             raise CommandExecutionError("invalid_command_spec")
         try:
@@ -258,6 +259,8 @@ class CommandExecutorV2:
             raise CommandExecutionError("invalid_command_spec") from None
         if len(payload) > spec.input_limit:
             raise CommandExecutionError("command_input_limit")
+        if instance_id is not None and not _hex(instance_id, 32):
+            raise CommandExecutionError("invalid_command_instance")
         async with self.serial:
             if self.closed or self.reconcile()["pending"]:
                 raise CommandExecutionError("command_ownership_unsettled")
@@ -266,7 +269,9 @@ class CommandExecutorV2:
             self._verify_helper()
             if not self._admitted(spec):
                 raise CommandExecutionError("command_not_admitted")
-            return await self._execute(spec, payload)
+            if any(item["instance"] == instance_id for item in self.journal["entries"]):
+                raise CommandExecutionError("command_instance_reused")
+            return await self._execute(spec, payload, instance_id)
 
     def _admitted(self, spec: CommandSpecV2) -> bool:
         try:
@@ -274,8 +279,8 @@ class CommandExecutorV2:
         except Exception:
             raise CommandExecutionError("command_admission_failed") from None
 
-    async def _execute(self, spec: CommandSpecV2, payload: bytes) -> CommandResultV2:
-        item = {"instance": secrets.token_hex(16), "nonce": secrets.token_hex(32), "helper_digest": self.helper_digest,
+    async def _execute(self, spec: CommandSpecV2, payload: bytes, instance_id: str | None = None) -> CommandResultV2:
+        item = {"instance": instance_id or secrets.token_hex(16), "nonce": secrets.token_hex(32), "helper_digest": self.helper_digest,
                 "policy_digest": self.policy_digest, "contract_digest": spec.digest, "units": spec.reservation_units,
                 "state": "pending", "receipt_failed": False}
         directory = os.open(self.state, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -306,7 +311,7 @@ class CommandExecutorV2:
                 transport.seek(0)
                 process = subprocess.Popen([str(self.helper), str(transport.fileno()), str(control_read), str(fd), str(directory), str(os.getpid())],
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env={}, close_fds=True,
-                    pass_fds=(transport.fileno(), control_read, fd, directory))
+                    pass_fds=(transport.fileno(), control_read, fd, directory), start_new_session=True)
                 self._native[item["instance"]] = process
                 os.close(fd)
                 fd = None

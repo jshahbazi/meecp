@@ -1,6 +1,6 @@
 # Confined command ownership v2
 
-Status: isolated implementation for independent review on macOS 26 arm64. No recipe, catalog, package builder, existing `ProcessOwner`, v1 receipt reader or installed application uses this API yet. **A3 remains open**, including aggregate process-count and memory enforcement and installed-package integration.
+Status: reviewed native ownership API on macOS 26 arm64, now exercised through the explicitly admitted [installed development-host checkpoint](COMMAND_INSTALLED_CHECKPOINT.md). Default admission, recipes and catalog remain disabled for this profile; the existing `ProcessOwner` and v1 receipt reader remain separate. **A3 remains open**, including aggregate process-count/memory enforcement and final native app artifact verification.
 
 ## API and admission
 
@@ -16,6 +16,8 @@ await executor.close()
 ```
 
 The spec fixes the package root, exact executable, working directory, immutable argument tuple, package digest, input/output byte ceilings, invocation deadline, TERM grace, settlement deadline and reservation units. Executable and working directory must resolve inside that package. Arguments never pass through a shell. The target environment is empty. Raw input and output remain transient. The bounded binary execution spec uses an anonymous temporary descriptor, unlinked before launch, and is closed in the target. There are no prompt, response, output or argument logs.
+
+Installed integration additionally binds `authority_digest` into the specification and supplies a preallocated `instance_id` to `execute`; the native journal rejects reuse. The helper launches in its own session before native execution, protecting it from an ancestor process-group shutdown. The host still owns the helper's direct `Popen` handle and never reconstructs that authority from a PID.
 
 Only the target's standard input/output/error descriptors survive exec. Standard error goes to `/dev/null`. The receipt, private state-directory capability, journal lock, host control channel and spec descriptor never reach selected code. A target may fork and exec the same pinned executable. Other executables and `posix_spawn` are denied. The profile admits package and named system reads; filesystem mutation, network connections, external signals and undeclared operations are denied. The admission review must check that these exact permissions suit the selected application. This implementation does not broaden a package's declared effects or enable general shell commands.
 

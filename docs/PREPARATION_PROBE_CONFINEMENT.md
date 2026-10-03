@@ -77,9 +77,11 @@ These overlapping packets are separate checks, not additive test totals.
 
 This policy uses the existing deprecated macOS custom Seatbelt mechanism.
 Passing exact-build controls does not establish a supported public isolation
-API or compatibility with another platform. The current ordinary verifier
-callers retain their existing behavior; default automatic preparation is not
-enabled by this optional host seam. Fresh real prepared Python/ONNX packages,
+API or compatibility with another platform. The
+[managed probe integration](MANAGED_PROBE_CONFINEMENT_CHECKPOINT.md) selects
+this plan in the common managed stdio verifier. Direct library calls retain
+their existing default, and public automatic preparation remains disabled.
+Fresh real prepared Python/ONNX packages,
 combined installed/native artifacts and supported-policy admission still need
 their own acceptance evidence. A4 requires a separate policy for its owned
 engine/adapter communication. Memory, CPU, process and private-disk accounting

@@ -47,6 +47,8 @@ class _CaptureContract(StrictModel):
         if isinstance(value, dict):
             if "schema_version" in value and type(value["schema_version"]) is not int:
                 raise ValueError("artifact_capture_contract_invalid")
+            if "memory_mb" in value and type(value["memory_mb"]) is not int:
+                raise ValueError("artifact_capture_contract_invalid")
             canonical_bytes(value)
         return value
 

@@ -133,6 +133,7 @@ async def test_idempotency_concurrent_starts_have_one_owned_copy(directory, monk
 @pytest.mark.parametrize("model,value", [
     (capture.CapturePolicyV1, {"disk_ceiling_bytes": True}),
     (capture.CapturePolicyV1, {"disk_ceiling_bytes": BUDGET, "memory_mb": 65}),
+    (capture.CapturePolicyV1, {"disk_ceiling_bytes": BUDGET, "memory_mb": 64.0}),
     (capture.CapturePolicyV1, {"disk_ceiling_bytes": BUDGET, "schema_version": True}),
     (capture.CapturePolicyV1, {"disk_ceiling_bytes": BUDGET, "network": []}),
     (capture.ArtifactStoragePolicyV1, {"retention_seconds": True}),

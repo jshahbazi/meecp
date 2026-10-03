@@ -4,6 +4,7 @@ struct ManagementOperation: Equatable {
     let appID: String?
     let title: String
     let status: String
+    let action: String
 }
 
 enum ManagementFilter: Int {
@@ -44,8 +45,11 @@ func managementSelfTest() -> Bool {
     return managementCanControl(app("s", "Stopped", "stopped"), available: true)
         && !managementCanControl(app("s", "Stopped", "stopped"), available: false)
         && !managementCanControl(app("s", "Starting", "starting"), available: true)
+        && !managementCanControl(app("s", "Updating", "updating"), available: true)
         && !managementCanControl(app("s", "Busy", "ready", busy: true), available: true)
         && !managementCanControl(app("s", "Blocked", "failed", error: "removal_recovery_required"), available: true)
+        && !managementCanControl(app("s", "Blocked", "stopped", error: "installation_recovery_required"), available: true)
+        && !managementCanControl(app("s", "Blocked", "stopped", error: "upgrade_recovery_required"), available: true)
 }
 
 private func managementLabel(_ text: String = "", size: CGFloat = 13, weight: NSFont.Weight = .regular,
@@ -206,6 +210,9 @@ final class ManagementDashboard: NSView, NSSearchFieldDelegate {
     var onCopy: ((String) -> Void)?
     var onPolicy: ((String, String) -> Void)?
     var onRemove: ((String) -> Void)?
+    var onUpgrade: ((String) -> Void)?
+    var onConfigure: ((String) -> Void)?
+    var onOperation: ((String) -> Void)?
     var onAdd: (() -> Void)?
     var onRetry: (() -> Void)?
     private(set) var selectedID: String?
@@ -255,6 +262,9 @@ final class ManagementDashboard: NSView, NSSearchFieldDelegate {
     private let operationSection = managementStack([], spacing: 8)
     private let operationBody = managementLabel(size: 12, color: .secondaryLabelColor, wrapping: true)
     private let remove = ManagementAction("Remove App…")
+    private let upgrade = ManagementAction("Upgrade App…")
+    private let configure = ManagementAction("Edit Configuration…")
+    private let operationDetails = ManagementAction("View Operation…")
     private var details: DashboardDetails?
     private var loadFailed = false
     private var copiedID: String?
@@ -357,7 +367,20 @@ final class ManagementDashboard: NSView, NSSearchFieldDelegate {
             guard let self, let app = self.selectedApp, managementCanControl(app, available: self.available) else { return }
             self.onRemove?(app.id)
         }
-        for view in [hero, controls, warning, activityCard, startupCard, sections, detailRetry, operationSection, managementSeparator(), removal] {
+        upgrade.handler = { [weak self] in
+            guard let self, let app = self.selectedApp, managementCanControl(app, available: self.available) else { return }
+            self.onUpgrade?(app.id)
+        }
+        configure.handler = { [weak self] in
+            guard let self, let app = self.selectedApp, managementCanControl(app, available: self.available) else { return }
+            self.onConfigure?(app.id)
+        }
+        operationDetails.handler = { [weak self] in
+            guard let self, let app = self.selectedApp, self.available, self.operations.contains(where: { $0.appID == app.id && ["install", "upgrade"].contains($0.action) }) else { return }
+            self.onOperation?(app.id)
+        }
+        let updates = managementStack([configure, upgrade, operationDetails], spacing: 8)
+        for view in [hero, controls, warning, activityCard, startupCard, sections, detailRetry, operationSection, updates, managementSeparator(), removal] {
             inspector.addArrangedSubview(view)
             if view !== controls && view !== detailRetry { managementFill(view, in: inspector) }
         }
@@ -557,7 +580,7 @@ final class ManagementDashboard: NSView, NSSearchFieldDelegate {
     private func updateInspector() {
         guard let app = selectedApp else {
             inspectorScroll.isHidden = true; emptyInspector.isHidden = false
-            [primary, restart, copy, remove, detailRetry].forEach { $0.isEnabled = false }
+            [primary, restart, copy, remove, upgrade, configure, operationDetails, detailRetry].forEach { $0.isEnabled = false }
             policy.isEnabled = false
             if apps.isEmpty {
                 emptyTitle.stringValue = available ? "Add your first app" : "Connecting to your apps"
@@ -586,6 +609,10 @@ final class ManagementDashboard: NSView, NSSearchFieldDelegate {
         copy.image = NSImage(systemSymbolName: copiedID == app.id ? "checkmark" : "doc.on.doc", accessibilityDescription: nil)
         copy.setAccessibilityLabel(copiedID == app.id ? "Connection copied" : "Copy connection for " + app.name)
         remove.isEnabled = primary.isEnabled
+        upgrade.isEnabled = primary.isEnabled; configure.isEnabled = primary.isEnabled
+        operationDetails.isEnabled = available && operations.contains(where: { $0.appID == app.id && ["install", "upgrade"].contains($0.action) })
+        upgrade.setAccessibilityLabel("Upgrade " + app.name)
+        configure.setAccessibilityLabel("Edit configuration for " + app.name)
         remove.setAccessibilityLabel("Remove " + app.name)
         let firstCall = app.policy == "On first call"
         policy.selectItem(at: firstCall ? 2 : app.policy == "Automatic" ? 1 : 0)
@@ -611,7 +638,8 @@ final class ManagementDashboard: NSView, NSSearchFieldDelegate {
         }
         if !available { warning.stringValue = "The local host is unavailable. App controls will return after reconnecting." }
         else if app.error == "removal_recovery_required" { warning.stringValue = "Removal needs recovery. Further changes are paused to protect this app's state." }
-        else if app.error == "installation_recovery_required" { warning.stringValue = "Installation needs recovery before this app can run. Review the latest operation below." }
+        else if app.error == "installation_recovery_required" { warning.stringValue = "Installation needs recovery. Open View Operation to review the available Stop and Recover actions." }
+        else if app.error == "upgrade_recovery_required" { warning.stringValue = "Upgrade needs recovery. Open View Operation to review the available Stop and Recover actions." }
         else if app.state == "ownership_lost" { warning.stringValue = "mcpme can no longer verify ownership of this app's process. Controls are paused until ownership is recovered." }
         else if app.error == "readiness_timeout" { warning.stringValue = "The app did not become ready in time. Choose Start to try again." }
         else if let error = app.error { warning.stringValue = error.replacingOccurrences(of: "_", with: " ").capitalized + ". Review app details and recent activity below." }
@@ -681,11 +709,14 @@ extension ManagementDashboard {
         view.onCopy = { actions.append($0 + ":copy") }
         view.onPolicy = { actions.append($0 + ":" + $1) }
         view.onRemove = { actions.append($0 + ":remove") }
+        view.onUpgrade = { actions.append($0 + ":upgrade") }
+        view.onConfigure = { actions.append($0 + ":configure") }
+        view.onOperation = { actions.append($0 + ":operation") }
         func update(_ apps: [DashboardApp], available: Bool = true) {
             view.update(apps: apps, hostMessage: "", available: available, operations: [])
         }
         func invokeMutations() {
-            view.primary.handler?(); view.restart.handler?(); view.remove.handler?()
+            view.primary.handler?(); view.restart.handler?(); view.remove.handler?(); view.upgrade.handler?(); view.configure.handler?()
             view.policy.selectItem(at: 1); view.policyChanged()
         }
         update([app("a", "stopped"), app("b", "ready")]); view.select(id: "a")
@@ -694,7 +725,7 @@ extension ManagementDashboard {
         update([app("b", "stopped"), app("a", "ready")])
         guard view.selectedID == "a" else { return false }
         invokeMutations(); view.copy.handler?()
-        guard actions == ["a:start", "a:stop", "a:restart", "a:remove", "a:host", "a:copy"] else { return false }
+        guard actions == ["a:start", "a:stop", "a:restart", "a:remove", "a:upgrade", "a:configure", "a:host", "a:copy"] else { return false }
         let details = DashboardDetails(appID: "a", subtitle: "Selected app", sections: [])
         view.updateDetails(details)
         view.updateDetails(DashboardDetails(appID: "b", subtitle: "Late response", sections: []))
@@ -715,12 +746,17 @@ extension ManagementDashboard {
         guard view.selectedID == "b", view.search.stringValue.isEmpty else { return false }
         let cases: [(DashboardApp, Bool, Bool)] = [
             (app("b", "ready", busy: true), true, true), (app("b", "starting"), true, true),
+            (app("b", "updating"), true, true),
             (app("b", "failed", error: "removal_recovery_required"), true, false), (app("b", "ready"), false, false),
+            (app("b", "failed", error: "upgrade_recovery_required"), true, false),
+            (app("b", "stopped", error: "installation_recovery_required"), true, false),
+            (app("b", "stopped", error: "upgrade_recovery_required"), true, false),
         ]
         for (fixture, available, canCopy) in cases {
             update([fixture], available: available); actions = []
             guard !view.primary.isEnabled, !view.restart.isEnabled, !view.policy.isEnabled,
-                  !view.remove.isEnabled, view.copy.isEnabled == canCopy else { return false }
+                  !view.remove.isEnabled, !view.upgrade.isEnabled, !view.configure.isEnabled,
+                  view.copy.isEnabled == canCopy else { return false }
             invokeMutations(); view.copy.handler?()
             guard actions == (canCopy ? ["b:copy"] : []) else { return false }
         }

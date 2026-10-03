@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from mcpme.contracts import (  # noqa: E402
-    Access, Lifecycle, PackageError, PackageManifest, Resources, Tool,
+    Access, Configuration, Lifecycle, PackageError, PackageManifest, Resources, Tool, Validation,
     package_relative_path, validate_package,
 )
 
@@ -155,7 +155,7 @@ def prepare_runtime(destination: Path, dependency_project: Path) -> str:
 
 
 def write_launcher(destination: Path, *, module: str | None = None,
-                   script: str | None = None, callable_adapter: bool = False):
+                   script: str | None = None, callable_adapter: bool = False, http_adapter: bool = False):
     (destination / "bin").mkdir(mode=0o700)
     launcher = destination / "bin/service"
     launcher.write_text('#!/bin/sh\nset -eu\n'
@@ -171,7 +171,10 @@ def write_launcher(destination: Path, *, module: str | None = None,
         "sys.path[:0] = [str(root / 'python/site-packages'), str(root / 'source')]",
         "os.chdir(root / 'source')",
     ]
-    if callable_adapter:
+    if http_adapter:
+        sys_path = "sys.path.insert(0, str(root))"
+        bootstrap.extend([sys_path, "runpy.run_path(str(root / 'http_runtime.py'), run_name='__main__')"])
+    elif callable_adapter:
         bootstrap.append("runpy.run_path(str(root / 'adapter.py'), run_name='__main__')")
     elif module:
         bootstrap.append("runpy.run_module(" + repr(module) + ", run_name='__main__', alter_sys=True)")
@@ -187,9 +190,15 @@ def prepare(args: argparse.Namespace):
     if not isinstance(export, dict) or type(export["revision"]) is not int or export["revision"] < 1:
         raise PreparationError("invalid_setup_export")
     requirements = export.get("requirements", {})
-    if requirements.get("profile") not in {None, "mcp-stdio"}:
+    is_http = bool(getattr(args, "http_factory", None))
+    profile = "mcp-http" if is_http else "mcp-stdio"
+    if requirements.get("profile") not in {None, profile}:
         raise PreparationError("unsupported_execution_profile")
-    if requirements.get("secret_references"):
+    if is_http and (args.template != "existing-mcp" or not args.module or args.script or args.executable
+                    or args.entrypoint_arg or args.extra_executable
+                    or not re.fullmatch(r"[A-Za-z_]\w*", args.http_factory)):
+        raise PreparationError("http_factory_contract_required")
+    if requirements.get("secret_references") and (not is_http or not isinstance(requirements["secret_references"], dict)):
         raise PreparationError("secret_reference_unavailable")
     tools_raw = read_json(args.tool_spec)
     tools = [Tool.model_validate(value) for value in (tools_raw if isinstance(tools_raw, list) else [tools_raw])]
@@ -200,6 +209,8 @@ def prepare(args: argparse.Namespace):
     if args.template == "python-function" and not re.fullmatch(r"[A-Za-z_]\w*", args.function):
         raise PreparationError("invalid_python_callable")
     access = Access.model_validate(read_json(args.access_spec) if args.access_spec else {})
+    configuration = Configuration.model_validate(read_json(args.configuration_spec) if args.configuration_spec else {})
+    validation = Validation.model_validate(read_json(args.validation_spec) if args.validation_spec else {})
     memory = args.memory_mb or requirements.get("memory_mb") or 128
     resources = Resources(memory_mb=memory, cpu_only=True)
     lifecycle = Lifecycle(max_sessions=args.max_sessions, operation_timeout_seconds=args.timeout_seconds)
@@ -243,20 +254,29 @@ def prepare(args: argparse.Namespace):
         toolchain = prepare_runtime(destination, args.dependency_project.absolute())
         licenses.extend(["licenses/python-LICENSE.txt", "licenses/DEPENDENCIES.md"])
         is_callable = args.template == "python-function"
-        write_launcher(destination, module=args.module, script=args.script, callable_adapter=is_callable)
+        write_launcher(destination, module=args.module, script=args.script, callable_adapter=is_callable, http_adapter=is_http)
         if is_callable:
             shutil.copyfile(ROOT / "templates/python-function-v1/adapter.py", destination / "adapter.py")
             (destination / "callable.json").write_text(json.dumps({"module": args.module,
                 "function": args.function, "tool": tools[0].model_dump(exclude_none=True)}) + "\n")
+        elif is_http:
+            shutil.copyfile(ROOT / "backend/mcpme/http_service.py", destination / "http_runtime.py")
+            shutil.copyfile(ROOT / "backend/mcpme/policy.py", destination / "http_policy.py")
+            (destination / "http-factory.json").write_text(json.dumps({"module": args.module, "factory": args.http_factory}) + "\n")
         entrypoint = {"executable": "bin/service", "args": args.entrypoint_arg, "cwd": "."}
+    execution = ({"processes": [{"id": "service", "role": "adapter", "entrypoint": entrypoint, "depends_on": [],
+                                 "readiness": {"path": "/health", "echo_generation": True}}],
+                  "adapter_process": "service", "http": {"configuration": "descriptor-v1", "session_termination": "delete"}}
+                 if is_http else {"entrypoint": entrypoint})
     manifest = PackageManifest.model_validate({
         "schema_version": 1, "host_api_version": 1, "package_id": args.package_id,
         "version": args.version, "source_revision": export["source"]["revision"],
-        "name": args.name, "profile": "mcp-stdio",
+        "name": args.name, "profile": profile,
         "platform": {"os": "macos", "architecture": "arm64", "minimum_version": "26.0"},
-        "entrypoint": entrypoint, "protocol": {"version": "2025-11-25", "capabilities": ["tools"]},
+        **execution, "protocol": {"version": "2025-11-25", "capabilities": ["tools"]},
         "lifecycle": lifecycle.model_dump(), "tools": [tool.model_dump(exclude_none=True) for tool in tools],
-        "access": access.model_dump(), "resources": resources.model_dump(), "licenses": licenses,
+        "access": access.model_dump(), "configuration": configuration.model_dump(), "validation": validation.model_dump(),
+        "resources": resources.model_dump(), "licenses": licenses,
     })
     (destination / "mcpme.package.json").write_text(json.dumps(manifest.model_dump(exclude_none=True), indent=2) + "\n")
     artifacts = []
@@ -306,17 +326,20 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--max-sessions", type=int, default=8)
         command.add_argument("--timeout-seconds", type=int, default=60)
         command.add_argument("--access-spec", type=Path)
+        command.add_argument("--configuration-spec", type=Path, help="Closed typed nonsecret configuration declaration JSON.")
+        command.add_argument("--validation-spec", type=Path, help="Closed synthetic smoke fixture JSON, at most four declared tool calls.")
         command.add_argument("--entrypoint-arg", action="append", default=[])
         command.add_argument("--extra-executable", action="append", default=[])
         if name == "python-function":
             command.add_argument("--module", required=True)
             command.add_argument("--function", required=True)
-            command.set_defaults(script=None, executable=None)
+            command.set_defaults(script=None, executable=None, http_factory=None)
         else:
             entry = command.add_mutually_exclusive_group(required=True)
             entry.add_argument("--module")
             entry.add_argument("--script")
             entry.add_argument("--executable")
+            command.add_argument("--http-factory", help="Selected module factory returning a tools-only low-level MCP Server; prepare one private HTTP resident.")
             command.set_defaults(function=None)
     return result
 

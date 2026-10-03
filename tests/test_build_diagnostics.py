@@ -1,5 +1,6 @@
 """Build failures identify the tool without exposing credentials or tool output."""
 from pathlib import Path
+import hashlib
 import runpy
 import subprocess
 import sys
@@ -135,3 +136,15 @@ def test_host_cli_exits_with_safe_command_diagnostic(monkeypatch, tmp_path, caps
         runpy.run_path(str(SCRIPTS / "build_mcpme_host.py"), run_name="__main__")
     assert raised.value.code == "build_command_uv_python_find_failed_exit_1"
     assert capsys.readouterr() == ("", "")
+
+
+def test_bundled_model_generator_has_licensed_source_closure_without_checkout(tmp_path):
+    host_builder.bundle_model_template_assets(tmp_path)
+    assets = tmp_path / "templates/jevk5-llamacpp-v1/assets"
+    for name in ("backend/jevk5_app/server.py", "backend/jevk5_app/scorer.py", "backend/mcpme_jevk5/runtime.py", "backend/mcpme_local_transport.py",
+                 "vendor/jevk5/prompt.py", "vendor/jevk5/LICENSE", "model-manifest.json",
+                 "THIRD_PARTY_NOTICES.md", "uv.lock", "scripts/jevk5-package-launcher.c"):
+        copied = assets / name
+        assert copied.is_file()
+        assert hashlib.sha256(copied.read_bytes()).hexdigest() == hashlib.sha256((host_builder.ROOT / name).read_bytes()).hexdigest()
+    assert not list(assets.rglob("*.pyc")) and not list(assets.rglob("__pycache__"))

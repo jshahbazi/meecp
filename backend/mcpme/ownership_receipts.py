@@ -1,0 +1,143 @@
+"""Private identity-bound proof that a native reaper settled its owned child.
+
+The supervisor journals opaque instance/nonce metadata before launch. A native
+reaper inherits only a pre-opened file capability; it never resolves a receipt
+path. A complete frame proves waitpid settled the held child, or that parsing
+failed before any child existed. Pending/missing receipts prove nothing.
+"""
+from __future__ import annotations
+
+import os
+import fcntl
+from pathlib import Path
+import re
+import secrets
+import stat
+from typing import Any
+
+from .private import PrivateStateError, check_private_file, ensure_private_directory
+
+MAGIC = b"MCPMEOR1"
+RECEIPT_BYTES = 105
+_INSTANCE = re.compile(r"[0-9a-f]{32}")
+_NONCE = re.compile(r"[0-9a-f]{64}")
+_ATTRIBUTES = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_mode", "st_uid", "st_nlink")
+
+
+def _metadata(value: Any) -> bool:
+    return (isinstance(value, dict) and set(value) == {"schema_version", "instance_id", "nonce"}
+            and type(value["schema_version"]) is int and value["schema_version"] == 1
+            and isinstance(value["instance_id"], str) and _INSTANCE.fullmatch(value["instance_id"]) is not None
+            and isinstance(value["nonce"], str) and _NONCE.fullmatch(value["nonce"]) is not None)
+
+
+def _frame(instance_id: str, nonce: str, state: bytes) -> bytes:
+    return MAGIC + instance_id.encode("ascii") + nonce.encode("ascii") + state
+
+
+def _private_directory(path: Path) -> None:
+    details = path.lstat()
+    if (not stat.S_ISDIR(details.st_mode) or details.st_uid != os.getuid()
+            or stat.S_IMODE(details.st_mode) != 0o700):
+        raise PrivateStateError()
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def prepare_receipt(slot_directory: Path, instance_id: str) -> tuple[int, dict[str, Any]]:
+    """Create and fsync a pending capability before the caller journals launch.
+
+    The caller owns the returned descriptor and must close it after launch. A
+    duplicate identity never overwrites an existing pending/completed receipt.
+    """
+    if not isinstance(instance_id, str) or _INSTANCE.fullmatch(instance_id) is None:
+        raise PrivateStateError("ownership_receipt_unavailable")
+    descriptor = None
+    path = None
+    try:
+        slot = ensure_private_directory(Path(slot_directory))
+        directory = ensure_private_directory(slot / "ownership-receipts")
+        path = directory / (instance_id + ".receipt")
+        descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        os.fchmod(descriptor, 0o600)
+        os.set_inheritable(descriptor, False)
+        metadata = {"schema_version": 1, "instance_id": instance_id, "nonce": secrets.token_hex(32)}
+        pending = _frame(instance_id, metadata["nonce"], b"P")
+        offset = 0
+        while offset < len(pending):
+            count = os.write(descriptor, pending[offset:])
+            if count <= 0:
+                raise OSError()
+            offset += count
+        os.fsync(descriptor)
+        _fsync_directory(directory)
+        return descriptor, metadata
+    except (OSError, PrivateStateError, ValueError, TypeError):
+        if descriptor is not None:
+            # Only reclaim the leaf created by this capability, never a replaced
+            # path or an existing receipt rejected by O_EXCL.
+            try:
+                opened, current = os.fstat(descriptor), path.lstat()
+                if (opened.st_dev, opened.st_ino) == (current.st_dev, current.st_ino):
+                    path.unlink()
+            except OSError:
+                pass
+            os.close(descriptor)
+        raise PrivateStateError("ownership_receipt_unavailable") from None
+
+
+def validate_receipt_descriptor(descriptor: int, instance_id: str, nonce: str) -> bool:
+    """Check the pending capability before giving it to the native reaper."""
+    if (type(descriptor) is not int or descriptor < 3 or not isinstance(instance_id, str)
+            or _INSTANCE.fullmatch(instance_id) is None or not isinstance(nonce, str) or _NONCE.fullmatch(nonce) is None):
+        return False
+    try:
+        details = os.fstat(descriptor)
+        return (stat.S_ISREG(details.st_mode) and details.st_uid == os.getuid()
+                and stat.S_IMODE(details.st_mode) == 0o600 and details.st_nlink == 1
+                and fcntl.fcntl(descriptor, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDWR
+                and details.st_size == RECEIPT_BYTES
+                and os.pread(descriptor, RECEIPT_BYTES + 1, 0) == _frame(instance_id, nonce, b"P"))
+    except OSError:
+        return False
+
+
+def verify_receipt(slot_directory: Path, metadata: dict[str, Any]) -> bool:
+    """Return true only for a complete stable frame bound to this journal entry.
+
+    This read never creates directories, follows receipt links, signals a PID,
+    or mutates the ownership ledger. Every absent/unsafe/invalid input fails shut.
+    """
+    if not _metadata(metadata):
+        return False
+    try:
+        slot = Path(slot_directory).absolute()
+        directory = slot / "ownership-receipts"
+        _private_directory(slot)
+        _private_directory(directory)
+        path = directory / (metadata["instance_id"] + ".receipt")
+        check_private_file(path)
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as source:
+            before = os.fstat(source.fileno())
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
+                    or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1
+                    or before.st_size != RECEIPT_BYTES):
+                return False
+            frame = source.read(RECEIPT_BYTES + 1)
+            after, current = os.fstat(source.fileno()), path.lstat()
+            if any(getattr(before, key) != getattr(after, key) or getattr(after, key) != getattr(current, key)
+                   for key in _ATTRIBUTES):
+                return False
+        _private_directory(slot)
+        _private_directory(directory)
+        check_private_file(path)
+        return frame == _frame(metadata["instance_id"], metadata["nonce"], b"C")
+    except (OSError, ValueError, TypeError, PrivateStateError):
+        return False

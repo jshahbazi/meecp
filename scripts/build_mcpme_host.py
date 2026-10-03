@@ -146,6 +146,21 @@ def write_launcher(launcher: Path):
     launcher.chmod(0o755)
 
 
+def bundle_model_template_assets(destination: Path) -> None:
+    """Ship the versioned generator's source closure without a checkout dependency."""
+    assets = destination / "templates/jevk5-llamacpp-v1/assets"
+    assets.mkdir(parents=True)
+    ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
+    for name in ("jevk5_app", "mcpme_jevk5"):
+        shutil.copytree(ROOT / "backend" / name, assets / "backend" / name, ignore=ignore)
+    shutil.copyfile(ROOT / "backend/mcpme_local_transport.py", assets / "backend/mcpme_local_transport.py")
+    shutil.copytree(ROOT / "vendor", assets / "vendor", ignore=ignore)
+    for name in ("model-manifest.json", "THIRD_PARTY_NOTICES.md", "uv.lock"):
+        shutil.copyfile(ROOT / name, assets / name)
+    (assets / "scripts").mkdir()
+    shutil.copyfile(ROOT / "scripts/jevk5-package-launcher.c", assets / "scripts/jevk5-package-launcher.c")
+
+
 def build(destination: Path, version: str | None = None):
     version = project_version(version)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
@@ -173,6 +188,7 @@ def build(destination: Path, version: str | None = None):
     shutil.copyfile(ROOT / "pyproject.toml", destination / "pyproject.toml")
     shutil.copytree(ROOT / "templates", destination / "templates",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    bundle_model_template_assets(destination)
     shutil.copyfile(ROOT / "README.md", destination / "README.md")
     shutil.copytree(ROOT / "assets/brand", destination / "assets/brand")
     (destination / "docs").mkdir()

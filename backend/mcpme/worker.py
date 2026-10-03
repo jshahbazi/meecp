@@ -162,7 +162,7 @@ async def run(config_fd: int, listener_fd: int, channel_fd: int, activity_fd: in
     channel = socket.socket(fileno=channel_fd)
     launcher = RemoteLauncher(channel, timeout=config["control_timeout"])
     activity = ActivityReporter(socket.socket(fileno=activity_fd))
-    if config.get("profile", "mcp-stdio") == "model-service":
+    if config.get("profile", "mcp-stdio") in {"model-service", "mcp-http"}:
         from .http_gateway import make_http_app
         legacy_routes = config.get("legacy_routes", [])
         if legacy_routes and set(legacy_routes) != {"/api/status", "/api/decide", "/api/control"}:
@@ -190,6 +190,7 @@ async def run(config_fd: int, listener_fd: int, channel_fd: int, activity_fd: in
             # replacement then permits at most two seconds for private DELETE.
             control_timeout=config["control_timeout"] + 3,
             activity_report=activity.report,
+            inactive_code=config.get("inactive_code", "slot_stopped"),
         )
     else:
         app, gateway = make_app(
@@ -199,6 +200,7 @@ async def run(config_fd: int, listener_fd: int, channel_fd: int, activity_fd: in
             request_timeout=config["request_timeout"], active=lambda: config["active"],
             max_request_bytes=config.get("max_request_bytes", DEFAULT_REQUEST_BYTES),
             activity_report=activity.report,
+            inactive_code=config.get("inactive_code", "slot_stopped"),
         )
     server = WorkerServer(uvicorn.Config(
         app, access_log=False, log_config=None, log_level="critical",

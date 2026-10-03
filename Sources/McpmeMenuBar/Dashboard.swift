@@ -22,9 +22,9 @@ struct DashboardApp {
     let busy: Bool
 
     var needsAttention: Bool { state == "failed" || state == "ownership_lost" || error != nil }
-    var blocked: Bool { state == "ownership_lost" || ["installation_recovery_required", "removal_recovery_required"].contains(error ?? "") }
-    var transitioning: Bool { ["starting", "loading", "warming_up", "stopping", "draining"].contains(state) }
-    var running: Bool { ["starting", "loading", "warming_up", "ready", "stopping", "draining"].contains(state) }
+    var blocked: Bool { state == "ownership_lost" || ["installation_recovery_required", "removal_recovery_required", "upgrade_recovery_required"].contains(error ?? "") }
+    var transitioning: Bool { ["starting", "loading", "warming_up", "stopping", "draining", "updating"].contains(state) }
+    var running: Bool { ["starting", "loading", "warming_up", "ready", "stopping", "draining", "updating"].contains(state) }
 }
 
 struct DashboardSection: Equatable {

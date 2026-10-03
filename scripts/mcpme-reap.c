@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -20,6 +21,8 @@
 static volatile sig_atomic_t stopping = 0;
 static pid_t owner;
 static int control;
+static int completion = -1;
+static char receipt[105];
 static void stop_signal(int signum) { (void)signum; stopping = 1; }
 static double now(void) {
     struct timespec t;
@@ -74,22 +77,66 @@ static int declared(int fd, uint32_t *fds, uint32_t count) {
     for (uint32_t i = 0; i < count; ++i) if (fds[i] == (uint32_t)fd) return 1;
     return 0;
 }
+static int lower_hex(const char *value, size_t size) {
+    for (size_t i = 0; i < size; ++i)
+        if (!((value[i] >= '0' && value[i] <= '9') || (value[i] >= 'a' && value[i] <= 'f'))) return 0;
+    return 1;
+}
+static int receipt_capability(int fd) {
+    struct stat info;
+    if (fstat(fd, &info) || !S_ISREG(info.st_mode) || info.st_uid != getuid() ||
+        (info.st_mode & 07777) != 0600 || info.st_nlink != 1 || info.st_size != (off_t)sizeof(receipt) ||
+        (fcntl(fd, F_GETFL) & O_ACCMODE) != O_RDWR) return -1;
+    ssize_t count;
+    do { count = pread(fd, receipt, sizeof(receipt), 0); } while (count < 0 && errno == EINTR);
+    if (count != (ssize_t)sizeof(receipt) || memcmp(receipt, "MCPMEOR1", 8) ||
+        !lower_hex(receipt + 8, 32) || !lower_hex(receipt + 40, 64) || receipt[104] != 'P') return -1;
+    return 0;
+}
+static int completed_receipt(void) {
+    if (completion < 0) return 0;
+    /* The pre-fork seed is already complete and durable. Only the completion
+     * marker changes, after held-child waitpid proof or confirmed no fork. */
+    ssize_t count;
+    do { count = pwrite(completion, "C", 1, 104); } while (count < 0 && errno == EINTR);
+    if (count != 1) return -1;
+    int result;
+    do { result = fsync(completion); } while (result < 0 && errno == EINTR);
+    return result;
+}
 int main(int argc, char **argv) {
-    if (argc != 4) return 64;
+    if (argc != 4 && argc != 5) return 64;
     int spec = atoi(argv[1]);
     control = atoi(argv[2]); owner = (pid_t)atoi(argv[3]);
     if (spec < 3 || control < 3 || spec == control || owner <= 1) return 64;
+    if (argc == 5) {
+        int supplied = atoi(argv[4]);
+        if (supplied < 3 || supplied == spec || supplied == control || receipt_capability(supplied)) return 64;
+        completion = supplied;
+    }
     signal(SIGPIPE, SIG_IGN);
     signal(SIGTERM, stop_signal); signal(SIGINT, stop_signal);
     char magic[8];
     uint32_t grace, input, output, extra_count, arg_count, env_count;
-    if (read_exact(spec, magic, 8) || memcmp(magic, "MCPME001", 8) ||
-        number(spec, &grace) || grace > 30000 || number(spec, &input) ||
+    if (read_exact(spec, magic, 8)) goto invalid;
+    if (completion >= 0) {
+        char *instance = NULL, *nonce = NULL;
+        if (memcmp(magic, "MCPME002", 8) || !(instance = string(spec)) || !(nonce = string(spec)) ||
+            strlen(instance) != 32 || strlen(nonce) != 64 ||
+            memcmp(instance, receipt + 8, 32) || memcmp(nonce, receipt + 40, 64)) {
+            free(instance); free(nonce); goto invalid;
+        }
+        free(instance); free(nonce);
+    } else if (memcmp(magic, "MCPME001", 8)) goto invalid;
+    if (number(spec, &grace) || grace > 30000 || number(spec, &input) ||
         number(spec, &output) || number(spec, &extra_count) || extra_count > 64) goto invalid;
+    if (input < 3 || output < 3 || input == output || input == (uint32_t)spec || output == (uint32_t)spec ||
+        input == (uint32_t)control || output == (uint32_t)control ||
+        (completion >= 0 && (input == (uint32_t)completion || output == (uint32_t)completion))) goto invalid;
     uint32_t extras[64];
     for (uint32_t i = 0; i < extra_count; ++i) {
         if (number(spec, &extras[i]) || extras[i] < 3 || extras[i] == (uint32_t)spec ||
-            extras[i] == (uint32_t)control) goto invalid;
+            extras[i] == (uint32_t)control || (completion >= 0 && extras[i] == (uint32_t)completion)) goto invalid;
     }
     char *executable = string(spec), *cwd = string(spec);
     if (!executable || !cwd || number(spec, &arg_count) || arg_count > 4096) goto invalid;
@@ -113,6 +160,7 @@ int main(int argc, char **argv) {
     if (!child) {
         close(exec_status[0]);
         signal(SIGTERM, SIG_DFL); signal(SIGINT, SIG_DFL); signal(SIGPIPE, SIG_DFL);
+        umask(0077);
         int nullfd = open("/dev/null", O_WRONLY);
         if (nullfd < 0 || dup2((int)input, STDIN_FILENO) < 0 ||
             dup2((int)output, STDOUT_FILENO) < 0 || dup2(nullfd, STDERR_FILENO) < 0 || chdir(cwd)) goto exec_failed;
@@ -133,6 +181,7 @@ exec_failed:
         int status;
         pid_t result = waitpid(child, &status, WNOHANG);
         if (result == child) {
+            if (completed_receipt()) { close(exec_status[0]); close(control); if (completion >= 0) close(completion); return 74; }
             /* A very short successful target may exit before spawn reporting. */
             if (!acknowledged && !exec_failed_flag) {
                 int failure;
@@ -142,7 +191,7 @@ exec_failed:
             }
             int code = WIFEXITED(status) ? WEXITSTATUS(status) : -WTERMSIG(status);
             (void)report(exec_failed_flag ? "launch_failed" : "exit", code);
-            close(exec_status[0]); close(control);
+            close(exec_status[0]); close(control); if (completion >= 0) close(completion);
             return 0;
         }
         if (result < 0 && errno != EINTR) return 70;
@@ -170,6 +219,8 @@ exec_failed:
         }
     }
 invalid:
+    if (completed_receipt()) return 74;
     (void)report("launch_failed", 64);
+    if (completion >= 0) close(completion);
     return 64;
 }

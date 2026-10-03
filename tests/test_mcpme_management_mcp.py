@@ -275,7 +275,7 @@ async def test_stdio_disconnect_and_late_cancellation_preserve_durable_install_o
     package = make_package(tmp_path / "package")
     async with private_manager(tmp_path) as host:
         entered, release = asyncio.Event(), asyncio.Event()
-        async def candidate(slot):
+        async def candidate(slot, **kwargs):
             entered.set()
             await release.wait()
         host.check_candidate = candidate

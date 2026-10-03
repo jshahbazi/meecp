@@ -20,6 +20,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Iterator
 
 from .contracts import LOCK_NAME, MANIFEST_NAME, PackageError, package_relative_path, validate_package
@@ -143,17 +144,28 @@ def _choices(data: dict[str, Any]) -> None:
         raise ImportError("invalid_start_policy")
     requirements = data["requirements"]
     if (not isinstance(requirements, dict)
-            or set(requirements) - {"tools", "profile", "memory_mb", "secret_references"}):
+            or set(requirements) - {"tools", "profile", "memory_mb", "secret_references", "configuration", "engine_profile"}):
         raise ImportError("invalid_import_requirements")
     for field in ("tools", "secret_references"):
         values = requirements.get(field, [])
+        if field == "secret_references" and isinstance(values, dict):
+            continue
         if not isinstance(values, list) or len(values) > 128 or len(set(map(str, values))) != len(values):
             raise ImportError("invalid_import_requirements")
         for value in values:
             if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", value):
                 raise ImportError("invalid_import_requirements")
-    if requirements.get("profile") not in (None, "mcp-stdio", "model-service"):
+    from .settings import SettingsError, validate_settings_choices
+    try:
+        references = requirements.get("secret_references", {})
+        validate_settings_choices({"configuration": requirements.get("configuration", {}),
+                                   "secret_references": references if isinstance(references, dict) else {}})
+    except SettingsError:
+        raise ImportError("invalid_import_requirements") from None
+    if requirements.get("profile") not in (None, "mcp-stdio", "mcp-http", "model-service"):
         raise ImportError("invalid_import_requirements")
+    if requirements.get("engine_profile") not in (None, "jevk5-llamacpp-v1"):
+        raise ImportError("unsupported_model_profile")
     memory = requirements.get("memory_mb")
     if memory is not None and (type(memory) is not int or not 1 <= memory <= 262144):
         raise ImportError("invalid_import_requirements")
@@ -326,7 +338,50 @@ def _attachment(package) -> dict[str, Any]:
             "source_revision": package.manifest.source_revision,
             "tools": [tool.mcp_schema() for tool in package.manifest.tools],
             "profile": package.manifest.profile, "access": package.manifest.access.model_dump(),
-            "resources": package.manifest.resources.model_dump()}
+            "resources": package.manifest.resources.model_dump(),
+            "configuration": package.manifest.configuration.model_dump()}
+
+
+def _model_return(draft: dict[str, Any], package) -> None:
+    """A returned model package must contain the exact selected binary artifacts."""
+    if draft["source"]["kind"] != "artifact_collection":
+        return
+    from .model_intake import ENGINE_BUILD, MODEL, PROFILE
+    model = package.manifest.model
+    if (model is None or model.model_id != MODEL["model_id"] or model.sha256 != MODEL["sha256"]
+            or model.profile != "m5-benchmark-v1" or model.context_tokens != 8192
+            or model.engine_identity != {"runtime": "llama.cpp", "build": ENGINE_BUILD}
+            or model.parameters != {"temperature": 1.22, "knockout_temperature": 0.93}
+            or model.artifact != "models/" + MODEL["file"]):
+        raise ImportError("model_artifact_mismatch")
+    artifacts = {item.path: item for item in package.lock.artifacts}
+    for item in draft["source"]["files"]:
+        if item["role"] == "model-weights":
+            relative = model.artifact
+        elif item["path"] == "engine/llama/llama-server":
+            continue  # Legacy reaper ownership is deliberately replaced by the host.
+        elif item["role"] in {"runtime-file", "license", "receipt"}:
+            relative = item["path"].removeprefix("engine/")
+        else:
+            raise ImportError("invalid_model_source_contract")
+        artifact = artifacts.get(relative)
+        if artifact is None or (artifact.sha256, artifact.size, artifact.executable) != (item["sha256"], item["size"], item["executable"]):
+            raise ImportError("model_artifact_mismatch")
+    receipt_path = package.root / "preparation-receipt.json"
+    try:
+        descriptor = os.open(receipt_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as stream:
+            raw = stream.read(MAX_DRAFT_METADATA_BYTES + 1)
+        receipt = json.loads(raw)
+        if (len(raw) > MAX_DRAFT_METADATA_BYTES or receipt.get("schema_version") != 1
+                or receipt.get("template_id") != PROFILE or receipt.get("template_version") != 1
+                or receipt.get("draft_id") != draft["draft_id"] or receipt.get("draft_revision") != draft["revision"]
+                or receipt.get("source_revision") != draft["source"]["revision"]
+                or receipt.get("source_files") != draft["source"]["files"]
+                or receipt.get("engine_build") != ENGINE_BUILD):
+            raise ValueError()
+    except (OSError, ValueError, TypeError, AttributeError):
+        raise ImportError("model_preparation_receipt_required") from None
 
 
 def _blockers(draft: dict[str, Any]) -> list[dict[str, str]]:
@@ -340,13 +395,32 @@ def _blockers(draft: dict[str, Any]) -> list[dict[str, str]]:
             add("document_role_required", "document_role")
         elif draft["document_role"] == "reference":
             add("document_template_required", "document_role")
+    if draft["source"]["kind"] == "artifact_collection":
+        if draft["source"].get("engine") is None:
+            add("engine_artifacts_required", "source.engine")
+        if draft["requirements"].get("engine_profile") != "jevk5-llamacpp-v1":
+            add("model_profile_required", "requirements.engine_profile")
+        if draft["requirements"].get("profile") != "model-service":
+            add("model_service_required", "requirements.profile")
+        if set(draft["requirements"].get("tools", [])) != {"jevk5_decide", "jevk5_status"}:
+            add("model_tools_required", "requirements.tools")
     attachment = draft["attachment"]
     if attachment is None:
         add("prepared_package_required", "attachment")
     requirements = draft["requirements"]
-    if requirements.get("secret_references"):
+    if requirements.get("secret_references") and not isinstance(requirements["secret_references"], dict):
         add("secret_reference_unavailable", "requirements.secret_references")
     if attachment is not None:
+        from .contracts import Access, Configuration
+        from .settings import SettingsError, normalize_settings
+        references = requirements.get("secret_references", {})
+        try:
+            manifest = SimpleNamespace(configuration=Configuration.model_validate(attachment.get("configuration", {})),
+                                       access=Access.model_validate(attachment["access"]))
+            normalize_settings(manifest, {"configuration": requirements.get("configuration", {}),
+                                         "secret_references": references if isinstance(references, dict) else {}})
+        except SettingsError as error:
+            add(error.code, "requirements.configuration" if error.code == "configuration_required" else "requirements")
         expected_tools = requirements.get("tools", [])
         if expected_tools and set(expected_tools) != {tool["name"] for tool in attachment["tools"]}:
             add("tool_contract_mismatch", "requirements.tools")
@@ -560,7 +634,8 @@ class ImportStore:
             raise ImportError("draft_inactive")
 
     def create(self, source: Path, *, name: str, intent: str = "", document_role: str | None = None,
-               files: list[str] | None = None, start: bool = False, start_policy: str = "manual") -> dict[str, Any]:
+               files: list[str] | None = None, start: bool = False, start_policy: str = "manual",
+               model_engine: Path | None = None) -> dict[str, Any]:
         now = time.time()
         draft = {"schema_version": IMPORT_SCHEMA_VERSION, "draft_id": str(uuid.uuid4()), "revision": 1,
                  "name": name, "intent": intent, "document_role": document_role, "start": start,
@@ -571,12 +646,27 @@ class ImportStore:
         _choices(draft)
         directory = self.staging / draft["draft_id"]
         try:
+            source = Path(source).absolute()
+            model_source = source.suffix.lower() == ".gguf"
+            if model_engine is not None and not model_source:
+                raise ImportError("invalid_source_selection")
+            if model_source:
+                if files is not None or document_role is not None:
+                    raise ImportError("invalid_source_selection")
+                # A multi-GiB binary copy never holds the SQLite write lock.
+                from .model_intake import ModelIntakeError, snapshot_model
+                ensure_private_directory(directory)
+                try:
+                    draft["source"] = snapshot_model(source, directory / "source", Path(model_engine) if model_engine is not None else None)
+                except ModelIntakeError as error:
+                    raise ImportError(error.code) from None
             with self._transaction():
                 if self._connection.execute("SELECT count(*) FROM drafts").fetchone()[0] >= MAX_DRAFTS:
                     raise ImportError("import_limit_exceeded")
                 ensure_private_directory(directory)
-                source = Path(source).absolute()
-                if source.is_dir() and (source / MANIFEST_NAME).exists():
+                if model_source:
+                    pass
+                elif source.is_dir() and (source / MANIFEST_NAME).exists():
                     if files is not None:
                         raise ImportError("invalid_source_selection")
                     package = validate_package(source)
@@ -621,9 +711,29 @@ class ImportStore:
                 result.append(summary)
             return result
 
-    def revise(self, draft_id: str, revision: int, **changes: Any) -> dict[str, Any]:
+    def revise(self, draft_id: str, revision: int, *, carry_attachment: bool = False, **changes: Any) -> dict[str, Any]:
         if not changes or set(changes) - {"name", "intent", "document_role", "start", "start_policy", "requirements"}:
             raise ImportError("invalid_import_update")
+        if type(carry_attachment) is not bool:
+            raise ImportError("invalid_import_update")
+        if carry_attachment:
+            with self._lock:
+                previous = self._get(draft_id, revision)
+                self._mutable(previous)
+            if previous["attachment"] is None or set(changes) - {"name", "start", "start_policy", "requirements"}:
+                raise ImportError("invalid_import_update")
+            requirements = changes.get("requirements", previous["requirements"])
+            if (not isinstance(requirements, dict) or {key: value for key, value in requirements.items()
+                    if key not in {"configuration", "secret_references"}} != {key: value for key, value in previous["requirements"].items()
+                    if key not in {"configuration", "secret_references"}}):
+                raise ImportError("invalid_import_update")
+            try:
+                sealed = validate_package(Path(previous["attachment"]["path"]))
+            except PackageError as error:
+                raise ImportError(error.code) from None
+            if (sealed.digest != previous["attachment"]["digest"]
+                    or sealed.manifest.source_revision != previous["attachment"]["source_revision"]):
+                raise ImportError("package_digest_mismatch")
         with self._transaction():
             draft = self._get(draft_id, revision)
             self._mutable(draft)
@@ -632,13 +742,53 @@ class ImportStore:
             _choices(draft)
             draft["revision"] += 1
             # An explicit edit is required before a different returned package.
-            draft["attachment"] = None
+            if not carry_attachment:
+                draft["attachment"] = None
+            else:
+                # The explicit settings-only path binds a new revision to the
+                # same static artifact; all installation plans are invalidated.
+                _refresh(draft)
+                if draft["blockers"]:
+                    raise ImportError(draft["blockers"][0]["code"])
             draft["expires_at"] = time.time() + RETENTION_SECONDS
             self._save(draft)
-        if previous_attachment is not None and previous_attachment["path"] != draft["source"]["snapshot_path"]:
+        if not carry_attachment and previous_attachment is not None and previous_attachment["path"] != draft["source"]["snapshot_path"]:
             previous_path = Path(previous_attachment["path"])
             _remove_attachment_tree(previous_path)
         return draft
+
+    def add_engine(self, draft_id: str, revision: int, engine: Path) -> dict[str, Any]:
+        """Add an explicit engine build to a saved model draft without execution."""
+        from .model_intake import MODEL, ModelIntakeError, snapshot_model
+        with self._lock:
+            previous = self._get(draft_id, revision)
+            self._mutable(previous)
+            if previous["source"]["kind"] != "artifact_collection":
+                raise ImportError("model_draft_required")
+        directory = self.staging / draft_id
+        target = directory / ("source-" + uuid.uuid4().hex)
+        try:
+            try:
+                selected = snapshot_model(Path(previous["source"]["snapshot_path"]) / "weights" / MODEL["file"], target, Path(engine))
+            except ModelIntakeError as error:
+                raise ImportError(error.code) from None
+            selected["locator"] = previous["source"]["locator"]
+            with self._transaction():
+                draft = self._get(draft_id, revision)
+                self._mutable(draft)
+                attachment = draft["attachment"]
+                draft["source"] = selected
+                draft["attachment"] = None
+                draft["revision"] += 1
+                draft["expires_at"] = time.time() + RETENTION_SECONDS
+                _sync_directory(directory)
+                self._save(draft)
+            if attachment is not None:
+                _remove_attachment_tree(Path(attachment["path"]))
+            return draft
+        except BaseException:
+            _remove_attachment_tree(target)
+            raise
 
     def export(self, draft_id: str, revision: int) -> dict[str, Any]:
         with self._lock:
@@ -652,8 +802,11 @@ class ImportStore:
                 f"{draft['source']['revision']}. Read the structured intent and requirements in this specification. "
                 "Use a separate workspace, locked dependencies, license/provenance records, and nonsecret synthetic "
                 "validation fixtures. Supported preparation templates: " + ", ".join(TEMPLATE_IDS) + ". "
-                "The host supports macOS arm64, package schema 1, MCP 2025-11-25 tools, mcp-stdio and model-service "
+                "The host supports macOS arm64, package schema 1, MCP 2025-11-25 tools, mcp-stdio, mcp-http and model-service "
                 "profiles. Do not include credentials or production inputs. Bind manifest.source_revision to the "
+                "resolved source identity. Declare typed nonsecret configuration in manifest.configuration and "
+                "logical secret names in access.secrets. Read selected values only from MCPME_SETTINGS_FD at runtime; "
+                "never put secret material in the package, source snapshot, fixtures, or agent instructions. Bind to the "
                 "resolved source identity. Return with "
                 f"mcpme imports attach {draft_id} --revision {revision} --package /absolute/path/to/package --json. "
                 "Attachment validates the package statically; installation requires a separate authorized plan."
@@ -665,6 +818,16 @@ class ImportStore:
                     "resources, and start settings, then request the exact installation plan with "
                     f"mcpme install plan --import {draft_id} --revision {revision} --json. "
                     "Apply only within the user's authority for that plan. No additional preparation is required."
+                )
+            elif draft["source"]["kind"] == "artifact_collection":
+                specification["agent_instructions"] += (
+                    " This source uses artifact_collection contract version 1. Do not decode binary weights as text. "
+                    "Use templates/jevk5-llamacpp-v1/prepare.py --setup-export SPEC.json --host HOST --output PACKAGE "
+                    "in your separate workspace. The generator consumes only this revision's private weight/engine "
+                    "snapshot, verifies pinned JevK5 compatibility and exact relocation receipts, and derives the "
+                    "package manifest and lock automatically. Engine artifacts and the explicit engine profile, "
+                    "model-service profile, and exact JevK5 tools must be selected first. Intake, attachment and "
+                    "planning never execute the source or engine."
                 )
             return specification
 
@@ -684,6 +847,7 @@ class ImportStore:
         if (draft["source"]["kind"] != "prepared_package"
                 and source.manifest.source_revision != draft["source"]["revision"]):
             raise ImportError("source_identity_mismatch")
+        _model_return(draft, source)
         digest = source.digest
         stage = self.attachment_staging / f"{draft_id}-{revision}-{digest}-{uuid.uuid4().hex}"
         metadata = {"draft_id": draft_id, "revision": revision,

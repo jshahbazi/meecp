@@ -6,7 +6,7 @@ Implemented against [MCPME_DESIGN.md](MCPME_DESIGN.md). The host has a native Ap
 
 Phase 1's **two working slots** acceptance is complete for prepared local packages: JevK5 and JSON Utilities have independent controls, stable endpoints, real MCP clients, and verified supervision and cleanup. The native prepared-package setup and deliberate legacy transfer are included in the [recorded verification](MCPME_VERIFICATION.md).
 
-Phase 2 includes drag-and-drop, source-folder and Markdown/text intake, resumable versioned drafts, external-agent handoff, static package return, and import-bound installation plans. The prepared-package path uses the same review and installation operation. Installed apps support changing startup policy and removal with retained data. The [management milestone](MANAGEMENT_MCP.md) implements scoped grants and a management MCP facade, with owner CLI bootstrap, expiring/revocable credentials, and exact-plan one-operation binding. The [pinned-download milestone](PINNED_DOWNLOADS.md) adds owner-only HTTPS acquisition of exact byte/hash-pinned prepared ZIP packages, durable progress, cancellation, and retry. Reference-document services, raw model intake, broader configuration/secret-reference support, upgrade/rollback, and integrated provider preparation remain pending. Phase 2 as a whole is incomplete.
+Phase 2 includes native setup, folder and Markdown/text intake, resumable drafts, external-agent handoff, static package return, exact import-bound plans, scoped management MCP, pinned downloads, typed configuration and immutable secret references. Raw pinned JevK5 weights and a verified engine use an export-driven generator; authenticated MCP HTTP factories have a resident service profile. [Reviewed upgrades and recovery](UPGRADES_RECOVERY.md) retain private generation data and reconcile native completion receipts after supervisor death. Native configuration/download/secret controls are implemented. Phase 2's normative acceptance checks passed; the [completion audit](PHASE2_COMPLETION.md) records the exact implementation commit, clean artifacts and verification results. Reference-document services and integrated provider preparation remain later work.
 
 Automatic Start at Login registration and next-login launch remain unverified for the development bundle. The tested legacy transfer preserved an explicitly owner-confirmed disabled preference; it did not validate enabled login-item transfer.
 
@@ -22,6 +22,7 @@ Automatic Start at Login registration and next-login launch remain unverified fo
 - Manual or start-with-host policy, editable for installed apps. New slots default to manual. Explicit Stop persists suppression across host restarts.
 - Durable installed-app removal that closes its endpoint, stops owned processes, and revokes its connection while retaining package and data for recovery.
 - Static package planning, snapshotted artifacts, idempotent apply, candidate initialization/schema checks, and asynchronous operation records.
+- Typed configuration and selected owner-managed secret references, bound into installation plans and persisted generation settings. Secret values remain in private store records and selected child descriptors; inspection exports metadata only.
 - Native reapers for gateways and package processes, session deadlines and leases, and durable ownership-loss blocking.
 
 The supplied JSON Utilities package exposes `validate_json(document)` and returns a validity flag and top-level type. JevK5 exposes its original `jevk5_decide` and `jevk5_status` tools. Every connected JevK5 client shares one adapter, inference lock, and engine for that slot generation. The adapter never launches or kills the engine. The supervisor starts dependencies, checks authenticated readiness, and stops them in reverse order.
@@ -36,7 +37,7 @@ For native layout review without starting services or reading installation state
 
 Closing the window leaves the host running. Quit waits for owned processes to drain and exit. The UI starts one supervisor and checks that private discovery identifies that exact process. An already running external supervisor produces a visible ownership conflict. **Start at Login** uses ServiceManagement for mcpme; each installed app's manual or start-with-host policy remains separate.
 
-The supported draft and handoff commands are documented in [Phase 2 onboarding](PHASE2_ONBOARDING.md). Model selection and download wizards remain pending.
+The supported draft and handoff commands are documented in [Phase 2 onboarding](PHASE2_ONBOARDING.md). Native Add App supports pinned prepared-package downloads and local pinned GGUF/engine selection. Downloading an arbitrary raw model by URL remains unsupported.
 
 ### Manage installed apps
 
@@ -90,10 +91,10 @@ uv run --locked python scripts/build_mcpme_app.py
 To prepare JevK5, first build or retain the verified original `dist/JevK5.app` using the [legacy build instructions](../README.md). The preparer verifies its recorded relocated engine hashes and the pinned model before copying them:
 
 ```sh
-uv run --locked python scripts/prepare_jevk5_package.py
+uv run --locked python scripts/prepare_jevk5_package.py --legacy-app dist/JevK5.app --output dist/jevk5-package --host dist/mcpme-host
 ```
 
-The package contains its own interpreter, locked dependencies, adapter, engine and licenses. Installation never follows the editable preparation directory. The generated app and packages are development artifacts with ad hoc signatures. Developer ID signing and notarization are pending.
+The package contains its own interpreter, locked dependencies, adapter, engine and licenses. Installation never follows the editable preparation directory. Locally generated apps and packages use ad hoc development signatures. Public release apps use Developer ID signing and notarization through the protected-main release workflow.
 
 ## Install and connect
 
@@ -149,11 +150,11 @@ DELETE, expiration, stop, restart, and gateway death reclaim session children. S
 
 A surviving native reaper terminates and reaps its target if the supervisor dies, including SIGKILL. Losing the reaper itself records `ownership_lost`, closes the affected slot, stops its remaining owned processes, and retains the missing instance's record. Other slots continue. The host never guesses that an old PID is safe to signal. Restart cannot bypass this block.
 
-Any unfinished ownership record after host restart conservatively requires reconciliation, even if its surviving reaper probably cleaned up successfully. This milestone provides no automated reconciliation command. A user must establish that the previous owned targets exited before an operator repairs the retained state; ordinary Start/Restart cannot clear it.
+Startup reconciles an ownership entry only when the native reaper's private instance/nonce completion receipt proves that its held child exited, or no child was forked. Missing, pending, corrupt or mismatched receipts retain the block. Reaper loss without completion proof still prevents replacement. Recovery does not discover or signal a recorded PID.
 
-Interrupted installations become `recovery_required` and cannot be controlled into exposure. Controls are also rejected while an install is active. Once the durable exposure marker permits calls, later failures preserve the selected slot and its data. They cannot trigger automatic discard or rollback to older data. Automated recovery, upgrades, data deletion, and retention cleanup are pending; preserve the private state directory when investigating a blocked operation.
+Interrupted installations become `recovery_required`; owner-authorized `operations recover` verifies their recorded selected candidate before reopening admission. Cancel is available before durable exposure permission. Upgrades use a private old-data clone and permit old-generation rollback only before exposure; afterward they retain selected data and offer candidate recovery. See [upgrade and recovery](UPGRADES_RECOVERY.md). Retained-data deletion and automatic retention cleanup remain unsupported.
 
-Management accepts the local owner's credential or an owner-issued scoped grant. The separate stdio management MCP facade requires a grant file and checks authority through the manager for each call. Changing startup policy, removing an app, and [pinned package downloads](PINNED_DOWNLOADS.md) require owner authority. First-call start, standalone `mcp-http` packages, and upgrades remain unsupported and are reported by `capabilities`.
+Management accepts the local owner's credential or an owner-issued scoped grant. The separate stdio management MCP facade requires a grant file and checks authority through the manager for each call. Changing startup policy, removing an app, and [pinned package downloads](PINNED_DOWNLOADS.md) require owner authority. Reviewed upgrades and operation cancellation/recovery also require owner authority. Authenticated descriptor-configured `mcp-http` factories are supported; first-call wake loading remains unsupported.
 
 ## Import the existing JevK5 installation
 

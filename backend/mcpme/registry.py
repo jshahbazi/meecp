@@ -16,8 +16,8 @@ from .private import check_private_file, ensure_private_directory
 
 START_POLICIES = {"manual", "host", "first_call"}
 DESIRED_STATES = {"running", "stopped"}
-OBSERVED_STATES = {"stopped", "starting", "ready", "stopping", "draining", "failed", "ownership_lost"}
-OPERATION_ACTIONS = {"install", "start", "stop", "restart", "remove", "recover"}
+OBSERVED_STATES = {"stopped", "starting", "ready", "stopping", "draining", "failed", "ownership_lost", "updating"}
+OPERATION_ACTIONS = {"install", "upgrade", "start", "stop", "restart", "remove", "recover"}
 OPERATION_STATES = {"pending", "running", "completed", "failed", "canceled", "recovery_required"}
 TERMINAL_OPERATIONS = {"completed", "failed", "canceled"}
 
@@ -42,6 +42,9 @@ class Slot:
     wake_suppressed: bool
     error_code: str | None
     credential_ref: str | None
+    settings_digest: str | None = None
+    data_path: str | None = None
+    settings_path: str | None = None
 
     @property
     def id(self) -> str:
@@ -103,10 +106,12 @@ def _slot_values(values: dict[str, Any]) -> None:
         raise RegistryError("invalid_slot_state")
     if "error_code" in values:
         _error_code(values["error_code"])
-    if "package_digest" in values and (not isinstance(values["package_digest"], str)
-            or not re.fullmatch(r"[0-9a-f]{64}", values["package_digest"])):
-        raise RegistryError("invalid_package_digest")
-    for key in ("package_path", "credential_ref"):
+    for key in ("package_digest", "settings_digest"):
+        if key == "settings_digest" and values.get(key) is None:
+            continue
+        if key in values and (not isinstance(values[key], str) or not re.fullmatch(r"[0-9a-f]{64}", values[key])):
+            raise RegistryError("invalid_package_digest" if key == "package_digest" else "invalid_settings_digest")
+    for key in ("package_path", "credential_ref", "data_path", "settings_path"):
         if key in values and values[key] is not None:
             value = values[key]
             if (not isinstance(value, str) or not 1 <= len(value) <= 4096 or not Path(value).is_absolute() or "\x00" in value
@@ -117,12 +122,21 @@ def _slot_values(values: dict[str, Any]) -> None:
 def _operation_details(details: dict[str, Any]) -> None:
     # Explicit metadata allowlist: never persist arbitrary package/client inputs.
     if not isinstance(details, dict) or set(details) - {"plan_id", "package_digest", "package_path", "result_slot_id",
-                                                    "import_id", "import_revision", "import_digest"}:
+                                                    "import_id", "import_revision", "import_digest", "settings_digest",
+                                                    "selected", "exposed", "cancel_requested", "stage"}:
+        raise RegistryError("invalid_operation_details")
+    for key in ("selected", "exposed", "cancel_requested"):
+        if key in details and type(details[key]) is not bool:
+            raise RegistryError("invalid_operation_details")
+    if details.get("exposed") and not details.get("selected"):
+        raise RegistryError("invalid_operation_details")
+    if "stage" in details and details["stage"] not in {"staging", "files_ready", "registered", "candidate_verified",
+                                                        "exposed", "completed", "recovery_required"}:
         raise RegistryError("invalid_operation_details")
     for key in ("plan_id", "result_slot_id", "import_id"):
         if key in details:
             _uuid(details[key])
-    _slot_values({key: value for key, value in details.items() if key in ("package_digest", "package_path")})
+    _slot_values({key: value for key, value in details.items() if key in ("package_digest", "package_path", "settings_digest")})
     import_fields = {"import_id", "import_revision", "import_digest"}
     if import_fields & details.keys():
         if not import_fields <= details.keys() or type(details["import_revision"]) is not int or details["import_revision"] < 1:
@@ -148,7 +162,7 @@ class Registry:
             self._connection.execute("PRAGMA journal_mode = DELETE")
             self._connection.execute("PRAGMA synchronous = FULL")
             version = self._connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2):
+            if version not in (0, 1, 2, 3, 4):
                 self._connection.close()
                 raise RegistryError("unsupported_registry_schema")
             self._connection.executescript("""
@@ -188,8 +202,21 @@ class Registry:
                     scope TEXT NOT NULL,
                     operation_id TEXT
                 );
-                PRAGMA user_version = 2;
             """)
+            # Old rows have no user settings. Preserve that boundary explicitly;
+            # new installations bind their immutable settings to the generation.
+            with self.transaction():
+                columns = {row[1] for row in self._connection.execute("PRAGMA table_info(slots)")}
+                if "settings_digest" not in columns:
+                    self._connection.execute("ALTER TABLE slots ADD COLUMN settings_digest TEXT")
+                if "data_path" not in columns:
+                    self._connection.execute("ALTER TABLE slots ADD COLUMN data_path TEXT")
+                if "settings_path" not in columns:
+                    self._connection.execute("ALTER TABLE slots ADD COLUMN settings_path TEXT")
+                    for row in self._connection.execute("SELECT slot_id FROM slots WHERE settings_digest IS NOT NULL").fetchall():
+                        self._connection.execute("UPDATE slots SET settings_path=? WHERE slot_id=?",
+                            (str(self.state_root / "slots" / row[0] / "settings.json"), row[0]))
+                self._connection.execute("PRAGMA user_version = 4")
         except sqlite3.Error:
             if hasattr(self, "_connection"):
                 self._connection.close()
@@ -236,18 +263,22 @@ class Registry:
 
     def add_slot(self, *, package_digest: str, package_path: Path | str, name: str,
                  public_port: int, start_policy: str = "manual", credential_ref: Path | str | None = None,
-                 slot_id: str | None = None) -> Slot:
+                 slot_id: str | None = None, settings_digest: str | None = None,
+                 data_path: Path | str | None = None, settings_path: Path | str | None = None) -> Slot:
         slot_id = slot_id or str(uuid.uuid4())
         _uuid(slot_id)
         if type(public_port) is not int or not 1024 <= public_port <= 65535:
             raise RegistryError("invalid_public_port")
         values = dict(package_digest=package_digest, package_path=str(package_path), name=name,
-                      start_policy=start_policy, credential_ref=str(credential_ref) if credential_ref else None)
+                      start_policy=start_policy, credential_ref=str(credential_ref) if credential_ref else None,
+                      settings_digest=settings_digest, data_path=str(data_path) if data_path else None,
+                      settings_path=str(settings_path) if settings_path else
+                      (str(self.state_root / "slots" / slot_id / "settings.json") if settings_digest else None))
         _slot_values(values)
         slot = Slot(slot_id=slot_id, public_port=public_port, desired_state="stopped", observed_state="stopped",
                     generation=1, wake_suppressed=False, error_code=None, **values)
         try:
-            self._connection.execute("INSERT INTO slots VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", tuple(asdict(slot).values()))
+            self._connection.execute("INSERT INTO slots VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", tuple(asdict(slot).values()))
         except sqlite3.IntegrityError:
             raise RegistryError("slot_conflict") from None
         except sqlite3.Error:
@@ -259,10 +290,10 @@ class Registry:
         if expected_generation is not None and (type(expected_generation) is not int or expected_generation < 1):
             raise RegistryError("invalid_generation")
         allowed = {"name", "start_policy", "desired_state", "observed_state", "generation", "wake_suppressed",
-                   "error_code", "package_digest", "package_path", "credential_ref"}
+                   "error_code", "package_digest", "package_path", "credential_ref", "settings_digest", "data_path", "settings_path"}
         if not changes or set(changes) - allowed:
             raise RegistryError("invalid_slot_update")
-        for key in ("package_path", "credential_ref"):
+        for key in ("package_path", "credential_ref", "data_path", "settings_path"):
             if key in changes and isinstance(changes[key], Path):
                 changes[key] = str(changes[key])
         _slot_values(changes)
@@ -273,7 +304,7 @@ class Registry:
                 raise RegistryError("stale_generation")
             if "generation" in changes and changes["generation"] != current.generation + 1:
                 raise RegistryError("invalid_generation")
-            if ({"package_digest", "package_path"} & changes.keys()) and changes.get("generation") != current.generation + 1:
+            if ({"package_digest", "package_path", "settings_digest", "data_path", "settings_path"} & changes.keys()) and changes.get("generation") != current.generation + 1:
                 raise RegistryError("generation_required")
             if current.observed_state == "ownership_lost" and changes.get("observed_state", "ownership_lost") != "ownership_lost":
                 raise RegistryError("ownership_reconciliation_required")
@@ -406,6 +437,75 @@ class Registry:
             raise RegistryError("operation_not_found")
         return self._operation(row)
 
+    def select_upgrade(self, operation_id: str, candidate: Slot, *, expected_generation: int,
+                       selected: bool = True) -> Slot:
+        """Commit the generation pointer and upgrade selection in one transaction."""
+        _slot_values(candidate.to_dict())
+        with self.transaction():
+            operation = self.get_operation(operation_id)
+            current = self.get_slot(candidate.id)
+            if (operation.action != "upgrade" or operation.slot_id != candidate.id
+                    or operation.status not in {"running", "recovery_required"}
+                    or operation.details.get("exposed")):
+                raise RegistryError("operation_conflict")
+            if current.generation != expected_generation or candidate.generation != expected_generation + 1:
+                raise RegistryError("stale_generation")
+            if current.observed_state == "ownership_lost":
+                raise RegistryError("ownership_reconciliation_required")
+            for key in ("public_port", "credential_ref", "name", "start_policy"):
+                if getattr(current, key) != getattr(candidate, key):
+                    raise RegistryError("invalid_slot_update")
+            changes = candidate.to_dict()
+            changes.pop("slot_id")
+            assignments = ",".join(f"{key}=?" for key in changes)
+            self._connection.execute(f"UPDATE slots SET {assignments} WHERE slot_id=?",
+                                     (*changes.values(), candidate.id))
+            details = {**operation.details, "selected": selected}
+            self._connection.execute("UPDATE operations SET details=?,updated_at=? WHERE operation_id=?",
+                                     (json.dumps(details, sort_keys=True), time.time(), operation_id))
+            return self.get_slot(candidate.id)
+
+    def reconcile_owned_exit(self, slot_id: str, *, expected_generation: int) -> Slot:
+        """Owner-only reconciliation after every ledger identity has exit proof."""
+        with self.transaction():
+            slot = self.get_slot(slot_id)
+            if slot.generation != expected_generation:
+                raise RegistryError("stale_generation")
+            if slot.observed_state == "ownership_lost":
+                self._connection.execute("UPDATE slots SET observed_state='failed',error_code='operation_interrupted' WHERE slot_id=?",
+                                         (slot_id,))
+            return self.get_slot(slot_id)
+
+    def expose_upgrade(self, operation_id: str, *, expected_generation: int) -> Operation:
+        """Persist permission to admit ordinary traffic before opening the gateway."""
+        with self.transaction():
+            operation = self.get_operation(operation_id)
+            slot = self.get_slot(operation.slot_id)
+            if (operation.action not in {"install", "upgrade"} or operation.status not in {"running", "recovery_required"}
+                    or not operation.details.get("selected") or slot.generation != expected_generation):
+                raise RegistryError("operation_conflict")
+            if operation.details.get("cancel_requested") and not operation.details.get("exposed"):
+                raise RegistryError("upgrade_canceled")
+            details = {**operation.details, "exposed": True}
+            self._connection.execute("UPDATE operations SET details=?,updated_at=? WHERE operation_id=?",
+                                     (json.dumps(details, sort_keys=True), time.time(), operation_id))
+            return self.get_operation(operation_id)
+
+    def register_install(self, operation_id: str, *, desired_state: str = "stopped", **values) -> Slot:
+        """Register a first candidate and its selected pointer atomically."""
+        _slot_values({"desired_state": desired_state})
+        with self.transaction():
+            operation = self.get_operation(operation_id)
+            if (operation.action != "install" or operation.status not in {"running", "recovery_required"}
+                    or operation.slot_id != values.get("slot_id") or operation.details.get("selected")):
+                raise RegistryError("operation_conflict")
+            slot = self.add_slot(**values)
+            self._connection.execute("UPDATE slots SET desired_state=? WHERE slot_id=?", (desired_state, slot.id))
+            details = {**operation.details, "selected": True, "stage": "registered"}
+            self._connection.execute("UPDATE operations SET details=?,updated_at=? WHERE operation_id=?",
+                                     (json.dumps(details, sort_keys=True), time.time(), operation_id))
+            return self.get_slot(slot.id)
+
     @staticmethod
     def _operation(row: sqlite3.Row) -> Operation:
         data = dict(row)
@@ -452,6 +552,10 @@ class Registry:
             if current.status == "running" and status == "pending":
                 raise RegistryError("invalid_operation_transition")
             updated_details = details if details is not None else current.details
+            if current.details.get("exposed") and not updated_details.get("exposed"):
+                raise RegistryError("upgrade_already_exposed")
+            if current.details.get("cancel_requested") and not updated_details.get("cancel_requested"):
+                raise RegistryError("invalid_operation_details")
             self._connection.execute("UPDATE operations SET status=?,error_code=?,updated_at=?,details=? WHERE operation_id=?",
                                      (status, error_code, time.time(), json.dumps(updated_details, sort_keys=True), operation_id))
             result = self.get_operation(operation_id)

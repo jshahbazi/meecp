@@ -425,6 +425,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private var cancelDraftButton: NSButton?
     private var detailsWindow: NSWindow?
     private let configurationView = SetupConfigurationView()
+    private let artifactCaptureView = ArtifactCaptureView()
     private var setupSettings: [String: Any] = ["schema_version": 1, "configuration": [String: Any](), "secret_references": [String: String]()]
     private var secrets: [SetupSecret] = []
     private var upgradeTarget: String?
@@ -673,7 +674,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             self.hostAvailable = true
             self.projects = parsed.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }; self.operations = operations.compactMap(Operation.init)
             self.hostMessage = "\(parsed.filter { $0.state == "ready" }.count) ready / \(parsed.count) installed"
-            self.rebuildMenu(); self.refreshWindow(); self.pollTrackedOperations(); self.pollImports(); self.pollDownloads(); self.preparationView.poll()
+            self.rebuildMenu(); self.refreshWindow(); self.pollTrackedOperations(); self.pollImports(); self.pollDownloads(); self.preparationView.poll(); self.artifactCaptureView.poll()
             if Date().timeIntervalSince(self.lastDetailRefresh) >= 6 {
                 var selected: Set<String> = []
                 if self.dashboard.isVisible, let id = self.dashboard.selectedID { selected.insert(id) }
@@ -937,6 +938,39 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let sourceCard = workspaceCard("1. Choose your source", subtitle: "Choose your app's directory, a setup brief, or an already prepared app. Source apps currently use your coding agent for preparation.",
             views: [drop, settings, workspaceLabel("What should your assistant be able to do?", size: 12, weight: .medium), intentScroll, role])
 
+        artifactCaptureView.available = { [weak self] in
+            guard let self else { return false }
+            return !uiPreviewMode && self.connection() != nil && self.hostAvailable && !self.setupRequest && !self.stopping && !self.quitting
+        }
+        artifactCaptureView.request = { [weak self] path, method, body, completion in self?.request(path, method: method, body: body, completion: completion) }
+        artifactCaptureView.beforeCapture = { [weak self] completion in self?.saveDraftBeforeNavigation(completion: completion) }
+        artifactCaptureView.choices = { [weak self] in
+            guard let self else { return [:] }
+            var choices: [String: Any] = ["intent": self.intentField?.string ?? "", "start": self.startCheck?.state == .on, "start_policy": self.selectedPolicy]
+            if let name = self.nameField?.stringValue, !name.isEmpty { choices["name"] = name }
+            return choices
+        }
+        artifactCaptureView.onAdopt = { [weak self] object, target in
+            guard let self, !self.draftDirty, !self.setupRequest, let draft = ImportDraft(object), draft.editable,
+                  draft.packagePath == nil else { return false }
+            if let target {
+                guard draft.id == target.importID, draft.revision == target.revision + 1 else { return false }
+                if let current = self.currentDraft {
+                    guard current.id == target.importID,
+                          (current.revision == target.revision && (target.sourceRevision.isEmpty || current.sourceRevision == target.sourceRevision) ||
+                           current.revision == draft.revision && current.sourceRevision == draft.sourceRevision) else { return false }
+                }
+            }
+            if !self.drafts.contains(where: { $0.id == draft.id }) { self.drafts.insert(draft, at: 0) }
+            self.displayDraft(draft); self.preparationView.refreshForm(); return true
+        }
+        artifactCaptureView.onStateChange = { [weak self] in self?.refreshWindow() }
+        artifactCaptureView.onJobChanged = { [weak self] id in
+            if let id { self?.savedSetup["capture_id"] = id } else { self?.savedSetup.removeValue(forKey: "capture_id") }
+            self?.persistSetup()
+        }
+        let captureCard = workspaceCard("Choose a local model", subtitle: "Capture model weights with their license, then continue with the detected app setup. Selecting files does not run the model.", views: [artifactCaptureView])
+
         let download = button("Enter Package Link…", action: #selector(beginDownload)); self.downloadStartButton = download
         let downloads = NSPopUpButton(); downloads.addItem(withTitle: "No saved downloads")
         downloads.target = self; downloads.action = #selector(selectDownload); downloads.setAccessibilityLabel("Saved package downloads"); self.downloadPicker = downloads
@@ -1003,7 +1037,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         stopOperation.toolTip = "Stop the exposed candidate and preserve its saved data while recovery remains required"
         let reviewCard = workspaceCard("3. Review and install", subtitle: "Check the tools, declared access, and startup choices before adding this app.",
                                        views: [label, reviewScroll, actions, workspaceStack([cancelOperation, stopOperation, recoverOperation], horizontal: true), showInstalled])
-        for card in [sourceCard, publisherToggle, downloadCard, prepareCard, configureCard, reviewCard] {
+        for card in [sourceCard, captureCard, publisherToggle, downloadCard, prepareCard, configureCard, reviewCard] {
             content.addArrangedSubview(card); workspaceFill(card, in: content, inset: 28)
         }
         return page
@@ -1019,6 +1053,13 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private func refreshWindow() {
+        let captureContext = currentDraft.flatMap { draft -> ArtifactCaptureContext? in
+            guard draft.editable, draft.packagePath == nil, !draftDirty,
+                  ["local_folder", "document", "captured_artifact_collection"].contains(draft.sourceKind),
+                  let source = draft.sourceRevision else { return nil }
+            return ArtifactCaptureContext(importID: draft.id, revision: draft.revision, sourceRevision: source)
+        }
+        artifactCaptureView.bind(captureContext); artifactCaptureView.refreshAvailability()
         recipesView.refreshAvailability()
         let preparationContext = currentDraft.flatMap { draft in
             draft.sourceRevision.flatMap { PreparationContext(importID: draft.id, revision: draft.revision, sourceRevision: $0) }
@@ -1034,13 +1075,13 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let operation = setupOperation.flatMap { id in operations.first { $0.id == id } }
         let active = operation.map { $0.active || $0.status == "recovery_required" } ?? (setupOperation != nil)
         let enabled = process?.isRunning == true && connection() != nil && !stopping && !quitting && !setupRequest && !active
-        let editable = enabled && (currentDraft?.editable ?? true) && !preparationView.busy && !preparationView.hasActiveJob
-        chooseButton?.isEnabled = intakeEnabled; newDraftButton?.isEnabled = !setupRequest && connection() != nil
+        let editable = enabled && (currentDraft?.editable ?? true) && !preparationView.busy && !preparationView.hasActiveJob && !artifactCaptureView.blocksNavigation
+        chooseButton?.isEnabled = intakeEnabled; newDraftButton?.isEnabled = intakeEnabled
         starterButton?.isEnabled = intakeEnabled && bundledStarterPackage != nil
         starterLabel?.stringValue = bundledStarterPackage == nil ? "The included app is unavailable in this copy of mcpme." :
             "Included with mcpme. Review its tool and access before adding it."
         publisherDownloadCard?.isHidden = publisherDownloadToggle?.state != .on && downloadRows.isEmpty
-        draftField?.isEnabled = !setupRequest && connection() != nil
+        draftField?.isEnabled = intakeEnabled
         nameField?.isEnabled = editable; policyField?.isEnabled = editable; startCheck?.isEnabled = editable
         if upgradeTarget != nil { nameField?.isEnabled = false; policyField?.isEnabled = false; startCheck?.isEnabled = false }
         configurationView.setEditable(editable)
@@ -1050,7 +1091,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         copyInstructionsButton?.isEnabled = editable && currentDraft != nil
         exportDraftButton?.isEnabled = editable && currentDraft != nil
         attachButton?.isEnabled = editable && currentDraft != nil
-        cancelDraftButton?.isEnabled = enabled && currentDraft?.editable == true && !preparationView.busy
+        cancelDraftButton?.isEnabled = enabled && currentDraft?.editable == true && !preparationView.busy && !artifactCaptureView.blocksNavigation
         reviewButton?.isEnabled = editable && (currentDraft?.packagePath != nil || currentDraft == nil && !(pathField?.stringValue.isEmpty ?? true))
         installButton?.isEnabled = enabled && setupPlan != nil && setupOperation == nil && !draftDirty
         planDetailsButton?.isEnabled = setupPlan != nil
@@ -1093,7 +1134,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private var intakeEnabled: Bool {
-        !uiPreviewMode && !setupRequest && !stopping && !quitting && connection() != nil
+        !uiPreviewMode && !setupRequest && !stopping && !quitting && !artifactCaptureView.blocksNavigation && connection() != nil
     }
 
     private var bundledStarterPackage: URL? {
@@ -2090,6 +2131,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         if let operation = setupOperation { object["operation_id"] = operation }
         if let target = upgradeTarget { object["upgrade_slot_id"] = target }
         if let id = selectedDownload?["download_id"] as? String ?? savedSetup["download_id"] as? String, validUUID(id) { object["download_id"] = id }
+        if let id = artifactCaptureView.job?.id ?? savedSetup["capture_id"] as? String, validUUID(id) { object["capture_id"] = id }
         if let choices = try? configurationView.settings() { object["settings"] = choices }
         PrivateFile.write(object, to: setupFile)
         savedSetup = object
@@ -2099,6 +2141,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         guard !uiPreviewMode else { return }
         guard let object = PrivateFile.read(setupFile), integer(object["schema_version"]) == 1 else { return }
         savedSetup = object
+        if let id = preparationUUID(object["capture_id"]) { artifactCaptureView.restore(id) }
         if let id = object["upgrade_slot_id"] as? String, validUUID(id) { upgradeTarget = id }
         setupSettings = object["settings"] as? [String: Any] ?? setupSettings
         pathField?.stringValue = object["package"] as? String ?? ""; nameField?.stringValue = object["name"] as? String ?? ""
@@ -2231,24 +2274,31 @@ extension McpmeApp {
     fileprivate static func preparationNativeAcceptance(fixture: URL) -> Bool {
         guard fixture.isFileURL, let data = try? Data(contentsOf: fixture), data.count <= 262144,
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              Set(object.keys).isSubset(of: ["state_dir", "draft_id", "output_path", "answers_by_label", "candidate_id", "recipe_id"]),
+              Set(object.keys).isSubset(of: ["state_dir", "draft_id", "output_path", "answers_by_label", "candidate_id", "recipe_id", "capture_model_path", "capture_license_path", "capture_format"]),
               let state = preparationText(object["state_dir"], maximum: 4096), state.hasPrefix("/"),
-              let draftID = preparationUUID(object["draft_id"]),
+              object["draft_id"] == nil || preparationUUID(object["draft_id"]) != nil,
               let output = preparationText(object["output_path"], maximum: 4096), output.hasPrefix("/"),
               !FileManager.default.fileExists(atPath: output),
               let answers = object["answers_by_label"] as? [String: Any], answers.count <= 256,
               preparationJSON(answers, maximum: 262144) != nil,
               object["candidate_id"] == nil || preparationDigest(object["candidate_id"]) != nil,
               object["recipe_id"] == nil || preparationText(object["recipe_id"], maximum: 128) != nil else { return false }
+        let captured = object["capture_model_path"] != nil || object["capture_license_path"] != nil
+        let modelPath = preparationText(object["capture_model_path"], maximum: 4096)
+        let licensePath = preparationText(object["capture_license_path"], maximum: 4096)
+        let modelFormat = object["capture_format"] as? String ?? "onnx"
+        guard captured ? modelPath?.hasPrefix("/") == true && licensePath?.hasPrefix("/") == true && ["onnx", "gguf"].contains(modelFormat) : object["draft_id"] != nil && object["capture_format"] == nil else { return false }
+        var draftID = preparationUUID(object["draft_id"])
         let prior = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"]
         setenv("MCPME_STATE_DIR", state, 1)
         defer { if let prior { setenv("MCPME_STATE_DIR", prior, 1) } else { unsetenv("MCPME_STATE_DIR") } }
         let app = McpmeApp(); _ = app.makeSetupWorkspace()
         var stage = "connection", routes: [String] = [], pending = 0
-        var receipt: [String: Any] = ["schema_version": 1, "draft_id": draftID]
+        var receipt: [String: Any] = ["schema_version": 1]
+        if let draftID { receipt["draft_id"] = draftID }
         func report(_ passed: Bool) -> Bool {
             receipt["passed"] = passed; receipt["stage"] = stage; receipt["routes"] = routes
-            if let code = app.preparationView.job?.error ?? app.preparationView.resolutionJob?.error { receipt["error_code"] = code }
+            if let code = app.artifactCaptureView.errorCode ?? app.artifactCaptureView.job?.error ?? app.preparationView.job?.error ?? app.preparationView.resolutionJob?.error { receipt["error_code"] = code }
             guard let result = try? JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]),
                   result.count <= 262144,
                   (try? result.write(to: URL(fileURLWithPath: output), options: .atomic)) != nil,
@@ -2264,17 +2314,49 @@ extension McpmeApp {
               let connection = ManagerConnection(connectionObject) else { return report(false) }
         app.nativeAcceptanceConnection = connection; app.hostAvailable = true
         let view = app.preparationView
-        view.request = { path, method, body, complete in
+        let acceptedRequest: PreparationRequest = { path, method, body, complete in
             let route = method + " " + path
             guard routes.contains(route) || routes.count < 512 else { complete(nil, "native_acceptance_route_limit"); return }
             if !routes.contains(route) { routes.append(route) }
             pending += 1
             app.request(path, method: method, body: body) { object, code in pending -= 1; complete(object, code) }
         }
+        view.request = acceptedRequest; app.artifactCaptureView.request = acceptedRequest
         func fetchDraft() -> ImportDraft? {
+            guard let draftID else { return nil }
             var completed = false, received: ImportDraft?
             app.request("v1/imports/" + draftID) { object, _ in received = object.flatMap(ImportDraft.init); completed = true }
             guard awaitCondition(330, { completed }) else { return nil }; return received
+        }
+        if captured {
+            stage = "capture_selection"
+            if draftID != nil {
+                guard let draft = fetchDraft(), draft.editable, draft.packagePath == nil else { return report(false) }
+                app.displayDraft(draft)
+            } else {
+                app.nameField?.stringValue = "Native captured model"
+                app.intentField?.string = "Expose the selected model through its detected tool."
+                app.startCheck?.state = .on; app.policyField?.selectItem(at: 1)
+            }
+            guard app.artifactCaptureView.select(model: URL(fileURLWithPath: modelPath!), license: URL(fileURLWithPath: licensePath!),
+                                                format: modelFormat, supplement: draftID != nil) else { return report(false) }
+            stage = "capture_start"; app.artifactCaptureView.startCapture()
+            stage = "capture_poll"
+            let deadline = Date().addingTimeInterval(360)
+            while !app.artifactCaptureView.adopted, Date() < deadline {
+                app.artifactCaptureView.poll()
+                guard awaitCondition(330, { pending == 0 && !app.artifactCaptureView.busy }) else { return report(false) }
+                if let job = app.artifactCaptureView.job, !job.active, job.state != "succeeded" { return report(false) }
+                if app.artifactCaptureView.errorCode != nil { return report(false) }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            }
+            guard app.artifactCaptureView.adopted, let capture = app.artifactCaptureView.job,
+                  capture.state == "succeeded", capture.settled, !capture.retained,
+                  let identity = capture.importID, let revision = capture.revision, let digest = capture.digest,
+                  app.currentDraft?.id == identity, app.currentDraft?.revision == revision else { return report(false) }
+            draftID = identity; receipt["draft_id"] = identity
+            receipt["capture_job_id"] = capture.id; receipt["capture_collection_digest"] = digest
+            receipt["captured_revision"] = revision; receipt["capture_target"] = capture.target == nil ? "create-import" : "attach-to-import"
         }
         stage = "initial_draft"
         guard let draft = fetchDraft(), draft.editable, draft.packagePath == nil else { return report(false) }
@@ -2334,6 +2416,35 @@ extension McpmeApp {
         receipt["attached_revision"] = final.revision; receipt["source_revision"] = final.sourceRevision
         receipt["attached_package_digest"] = expectedPackageDigest
         stage = "attached"; return report(true)
+    }
+
+    fileprivate static func captureAdoptionSelfTest() -> Bool {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("mcpme-capture-adoption-" + UUID().uuidString)
+        guard (try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])) != nil else { return false }
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let prior = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"]
+        setenv("MCPME_STATE_DIR", directory.path, 1)
+        defer { if let prior { setenv("MCPME_STATE_DIR", prior, 1) } else { unsetenv("MCPME_STATE_DIR") } }
+        let id = UUID().uuidString.lowercased(), other = UUID().uuidString.lowercased()
+        let original = "sha256:" + String(repeating: "b", count: 64), captured = "sha256:" + String(repeating: "a", count: 64)
+        func draft(_ identity: String, _ revision: Int, _ source: String) -> [String: Any] {
+            ["draft_id": identity, "revision": revision, "state": "waiting_for_agent", "name": "Synthetic captured model",
+             "source": ["kind": "captured_artifact_collection", "revision": source], "intent": "Synthetic model tool",
+             "start": false, "start_policy": "manual"]
+        }
+        let app = McpmeApp(); _ = app.makeSetupWorkspace()
+        let target = ArtifactCaptureContext(importID: id, revision: 3, sourceRevision: original)
+        let result = draft(id, 4, captured)
+        app.currentDraft = ImportDraft(draft(other, 4, captured))
+        guard app.artifactCaptureView.onAdopt?(result, target) == false, app.currentDraft?.id == other else { return false }
+        app.currentDraft = ImportDraft(draft(id, 5, captured))
+        guard app.artifactCaptureView.onAdopt?(result, target) == false else { return false }
+        app.currentDraft = ImportDraft(draft(id, 3, captured))
+        guard app.artifactCaptureView.onAdopt?(result, target) == false else { return false }
+        app.currentDraft = ImportDraft(draft(id, 3, original))
+        guard app.artifactCaptureView.onAdopt?(result, target) == true, app.currentDraft?.id == id,
+              app.currentDraft?.revision == 4, app.currentDraft?.sourceRevision == captured else { return false }
+        return app.artifactCaptureView.onAdopt?(result, target) == true
     }
 
     /// Exercises actual host form/review responses through the parent's draft callback.
@@ -2507,8 +2618,15 @@ if CommandLine.arguments.dropFirst().first == "--dashboard-ui-self-test" {
 
 if CommandLine.arguments.dropFirst().first == "--management-ui-self-test" {
     _ = NSApplication.shared
-    let passed = managementViewSelfTest() && setupControlsSelfTest() && McpmeApp.recoveryControlsSelfTest() && McpmeApp.onboardingControlsSelfTest() && preparationFormsSelfTest()
+    let passed = managementViewSelfTest() && setupControlsSelfTest() && McpmeApp.recoveryControlsSelfTest() && McpmeApp.onboardingControlsSelfTest() && preparationFormsSelfTest() && ArtifactCaptureView.selfTest() && McpmeApp.captureAdoptionSelfTest()
     print(passed ? "management_ui_contracts_passed" : "management_ui_contracts_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--artifact-capture-ui-self-test" {
+    _ = NSApplication.shared
+    let passed = ArtifactCaptureView.selfTest() && McpmeApp.captureAdoptionSelfTest()
+    print(passed ? "artifact_capture_ui_contracts_passed" : "artifact_capture_ui_contracts_failed")
     exit(passed ? 0 : 1)
 }
 

@@ -1,0 +1,11 @@
+{
+  "recipes": [
+    {
+      "digest": "e8c9b371f0fa8db3ff858aeb6e1d4cf1d2e2286b380e9029ba41aeede651da2a",
+      "directory": "python-callable-v1",
+      "recipe_id": "mcpme.python-callable",
+      "version": "1.0.0"
+    }
+  ],
+  "schema_version": 1
+}

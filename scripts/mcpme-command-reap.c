@@ -1,5 +1,5 @@
-/* Receipt-v2 owner for the separately admitted macOS 26 arm64 fork/exec
- * topology. Never discover/adopt signal targets. Never log payload values. */
+/* Publication-format-3 owner for the macOS 26 arm64 fork/exec v2 API.
+ * Never discover/adopt signal targets. Never log payload values. */
 #define _DARWIN_C_SOURCE 1
 #include <arpa/inet.h>
 #include <errno.h>
@@ -26,8 +26,9 @@
 #define RECEIPT_SIZE 301
 #define POLICY "macos26-arm64-confined-fork-exec-v2"
 static volatile sig_atomic_t stopping;
-static int control, receipt_fd;
-static int receipt_valid, forked;
+static int control, receipt_fd, directory_fd;
+static int receipt_valid, forked, transferred;
+static char receipt_seed[SEED_SIZE], staged_name[64], complete_name[64];
 static pid_t owner;
 static size_t remaining = 65536;
 static void stop_signal(int number) { (void)number; stopping = 1; }
@@ -80,24 +81,58 @@ static int capability(int fd, const char *seed) {
         (info.st_mode & 07777) != 0600 || info.st_nlink != 1 || info.st_size != RECEIPT_SIZE ||
         (fcntl(fd, F_GETFL) & O_ACCMODE) != O_RDWR ||
         pread(fd, frame, sizeof(frame), 0) != sizeof(frame) || memcmp(frame, seed, SEED_SIZE) ||
-        memcmp(frame, "MCPMECR2", 8) || frame[SEED_SIZE] != 'P') return -1;
+        memcmp(frame, "MCPMECR3", 8) || frame[SEED_SIZE] != 'P') return -1;
     for (int i = 8; i < SEED_SIZE; ++i)
         if (!((frame[i] >= '0' && frame[i] <= '9') || (frame[i] >= 'a' && frame[i] <= 'f'))) return -1;
     return 0;
 }
+static int publication_capability(mode_t mode) {
+    struct stat directory, descriptor, staged;
+    snprintf(staged_name, sizeof(staged_name), "%.32s.command-v3.pending", receipt_seed + 8);
+    snprintf(complete_name, sizeof(complete_name), "%.32s.command-v3.complete", receipt_seed + 8);
+    return fstat(directory_fd, &directory) || !S_ISDIR(directory.st_mode) || directory.st_uid != getuid() ||
+        (directory.st_mode & 07777) != 0700 || fstat(receipt_fd, &descriptor) ||
+        fstatat(directory_fd, staged_name, &staged, AT_SYMLINK_NOFOLLOW) || !S_ISREG(staged.st_mode) ||
+        staged.st_dev != descriptor.st_dev || staged.st_ino != descriptor.st_ino ||
+        staged.st_uid != getuid() || (staged.st_mode & 07777) != mode || staged.st_nlink != 1;
+}
+static int publish_completion(char marker, int code) {
+    /* The final path is the publication barrier. Its complete payload and
+     * private read-only mode are synced before any recovery reader can see it.
+     * No fallible payload operation follows the no-replace rename. */
+    char frame[RECEIPT_SIZE];
+    memcpy(frame, receipt_seed, SEED_SIZE);
+    frame[SEED_SIZE] = marker;
+    uint32_t encoded = htonl((uint32_t)(int32_t)code);
+    memcpy(frame + SEED_SIZE + 1, &encoded, sizeof(encoded));
+    if (publication_capability(0600) || pwrite(receipt_fd, frame, sizeof(frame), 0) != sizeof(frame) ||
+        fchmod(receipt_fd, 0400)) return -1;
+    if (fsync(receipt_fd)) return -1;
+    if (publication_capability(0400)) return -1;
+    /* Close all writable copies before publication. The host transfers its
+     * copy before sending the start byte; selected children close theirs. */
+    if (close(receipt_fd)) { receipt_fd = -1; return -1; }
+    receipt_fd = -1;
+    return renameatx_np(directory_fd, staged_name, directory_fd, complete_name, RENAME_EXCL);
+}
 static int completed(int status) {
     int code = WIFEXITED(status) ? WEXITSTATUS(status) : -WTERMSIG(status);
-    uint32_t encoded = htonl((uint32_t)(int32_t)code);
-    if (pwrite(receipt_fd, &encoded, sizeof(encoded), SEED_SIZE + 1) != sizeof(encoded) || fsync(receipt_fd)) return -1;
-    if (pwrite(receipt_fd, "C", 1, SEED_SIZE) != 1) return -1;
-    if (fsync(receipt_fd)) {
-        /* Never intentionally leave a positive visible marker on sync error.
-         * The host also durably retains an observed receipt-error exit. */
-        (void)pwrite(receipt_fd, "F", 1, SEED_SIZE);
-        (void)fsync(receipt_fd);
-        return -1;
+    return publish_completion('C', code);
+}
+static int await_transfer(void) {
+    double deadline = now() + 5;
+    while (!stopping && getppid() == owner && now() < deadline) {
+        struct pollfd item = {control, POLLIN, 0};
+        int result = poll(&item, 1, 10);
+        if (result < 0 && errno == EINTR) continue;
+        if (result < 0) return -1;
+        if (item.revents & POLLIN) {
+            char marker;
+            return read(control, &marker, 1) == 1 && marker == 'G' ? 0 : -1;
+        }
+        if (item.revents) return -1;
     }
-    return 0;
+    return -1;
 }
 static char *quoted(const char *value) {
     size_t size = strlen(value);
@@ -159,16 +194,19 @@ static int singleton(pid_t child) {
     return count == 2 ? 0 : -1;
 }
 static int run(int argc, char **argv) {
-    if (argc != 5 || !platform_supported()) return 64;
-    int spec = atoi(argv[1]); control = atoi(argv[2]); receipt_fd = atoi(argv[3]); owner = (pid_t)atoi(argv[4]);
-    if (spec < 3 || control < 3 || receipt_fd < 3 || spec == control || spec == receipt_fd || control == receipt_fd || owner <= 1) return 64;
-    char initial_seed[SEED_SIZE];
-    if (pread(receipt_fd, initial_seed, sizeof(initial_seed), 0) != sizeof(initial_seed) || capability(receipt_fd, initial_seed)) return 64;
+    if (argc != 6 || !platform_supported()) return 64;
+    int spec = atoi(argv[1]); control = atoi(argv[2]); receipt_fd = atoi(argv[3]); directory_fd = atoi(argv[4]); owner = (pid_t)atoi(argv[5]);
+    if (spec < 3 || control < 3 || receipt_fd < 3 || directory_fd < 3 || spec == control || spec == receipt_fd ||
+        control == receipt_fd || directory_fd == spec || directory_fd == control || directory_fd == receipt_fd || owner <= 1) return 64;
+    if (pread(receipt_fd, receipt_seed, sizeof(receipt_seed), 0) != sizeof(receipt_seed) ||
+        capability(receipt_fd, receipt_seed) || publication_capability(0600)) return 64;
     receipt_valid = 1;
     signal(SIGPIPE, SIG_IGN); signal(SIGTERM, stop_signal); signal(SIGINT, stop_signal);
+    if (await_transfer()) return 64;
+    transferred = 1;
     char magic[8], seed[SEED_SIZE];
     uint32_t deadline_ms, grace_ms, settlement_ms, count;
-    if (read_exact(spec, magic, 8) || memcmp(magic, "MCPMEC02", 8) || read_exact(spec, seed, sizeof(seed)) ||
+    if (read_exact(spec, magic, 8) || memcmp(magic, "MCPMEC03", 8) || read_exact(spec, seed, sizeof(seed)) ||
         capability(receipt_fd, seed) || number(spec, &deadline_ms) || deadline_ms < 1 || deadline_ms > 3600000 ||
         number(spec, &grace_ms) || grace_ms > 1000 || number(spec, &settlement_ms) || settlement_ms < 50 || settlement_ms > 10000) return 64;
     char *policy = string(spec), *root = string(spec), *executable = string(spec), *cwd = string(spec);
@@ -247,12 +285,8 @@ int main(int argc, char **argv) {
     int result = run(argc, argv);
     /* A canceled/incomplete pre-fork exchange has a positive no-child proof.
      * Only this native owner knows whether fork occurred. */
-    if (receipt_valid && !forked) {
-        if (pwrite(receipt_fd, "N", 1, SEED_SIZE) != 1 || fsync(receipt_fd)) {
-            (void)pwrite(receipt_fd, "F", 1, SEED_SIZE);
-            (void)fsync(receipt_fd);
-            return 74;
-        }
+    if (receipt_valid && !forked && (transferred || getppid() != owner)) {
+        if (publish_completion('N', 0)) return 74;
     }
     return result;
 }

@@ -61,7 +61,9 @@ async def test_real_native_confined_execution_and_settlement(binaries, tmp_path,
         assert b"synthetic" not in runtime.journal_path.read_bytes()
         assert b"ready" not in runtime.journal_path.read_bytes()
         frame = runtime._receipt_path(runtime.journal["entries"][0]).read_bytes()
-        assert frame.startswith(b"MCPMECR2") and frame[SEED_SIZE:SEED_SIZE + 1] == b"C"
+        receipt_current = frame.startswith(b"MCPMECR3") and frame[SEED_SIZE:SEED_SIZE + 1] == b"C"
+        assert receipt_current
+        assert runtime._receipt_path(runtime.journal["entries"][0]).stat().st_mode & 0o777 == 0o400
     finally:
         await runtime.close()
 
@@ -149,13 +151,18 @@ async def test_restart_rejects_legacy_and_foreign_receipts(binaries, tmp_path):
     receipt = runtime._receipt_path(runtime.journal["entries"][0])
     original = receipt.read_bytes()
     await runtime.close()
-    for bad in (b"MCPMEOR1" + b"0" * 96 + b"C", original[:8] + b"0" * 32 + original[40:],
+    for bad in (b"MCPMEOR1" + b"0" * 96 + b"C", b"MCPMECR2" + original[8:],
+                b"MCPMECR2" + original[8:SEED_SIZE] + b"N" + original[-4:], original[:8] + b"0" * 32 + original[40:],
                 original[:168] + b"0" * 64 + original[232:], original + b"x"):
+        receipt.chmod(0o600)
         receipt.write_bytes(bad)
+        receipt.chmod(0o400)
         restarted = executor(binaries, state)
         assert restarted.reconcile()["pending"] == 1
         await restarted.close()
+    receipt.chmod(0o600)
     receipt.write_bytes(original)
+    receipt.chmod(0o400)
     restarted = executor(binaries, state)
     assert restarted.reconcile()["pending"] == 0
     await restarted.close()
@@ -316,16 +323,13 @@ async def test_readiness_marker_arriving_between_initial_read_and_exit_proof(bin
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("visible_positive", [False, True])
-async def test_completion_sync_error_never_releases_reservation(binaries, tmp_path, visible_positive):
+@pytest.mark.parametrize("failure", ["sync", "publish"])
+async def test_completion_sync_error_never_releases_reservation(binaries, tmp_path, failure):
     source = (ROOT / "scripts/mcpme-command-reap.c").read_text()
-    if visible_positive:
-        # Simulate an observed sync failure whose rollback also failed, leaving
-        # C visible. Journal failure state must override that positive frame.
-        source = source.replace("if (result != child || completed(status)) return 74;",
-                                "if (result != child || completed(status)) return 74; return 74;")
+    if failure == "publish":
+        source = source.replace("return renameatx_np(directory_fd, staged_name, directory_fd, complete_name, RENAME_EXCL);", "return -1;")
     else:
-        source = source.replace("if (fsync(receipt_fd)) {", "if (1) {")
+        source = source.replace("if (fsync(receipt_fd)) return -1;", "if (1) return -1;")
     fixture = tmp_path / "sync-failure.c"
     fixture.write_text(source)
     helper = compile_c(fixture, tmp_path / "sync-failure")
@@ -334,6 +338,7 @@ async def test_completion_sync_error_never_releases_reservation(binaries, tmp_pa
     with pytest.raises(CommandExecutionError, match="command_ownership_unsettled"):
         await runtime.execute(spec(binaries, "tree"))
     assert runtime.reconcile()["pending"] == 1
+    assert not runtime._receipt_path(runtime.journal["entries"][0]).exists()
     assert runtime.journal["entries"][0]["receipt_failed"]
     await runtime.close()
     restarted = executor((helper, *binaries[1:]), state)
@@ -342,9 +347,9 @@ async def test_completion_sync_error_never_releases_reservation(binaries, tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_live_reconcile_cannot_race_visible_marker_before_native_sync(binaries, tmp_path):
+async def test_live_reconcile_ignores_unpublished_payload_before_native_sync(binaries, tmp_path):
     source = (ROOT / "scripts/mcpme-command-reap.c").read_text().replace(
-        "if (fsync(receipt_fd)) {", "usleep(200000); if (fsync(receipt_fd)) {")
+        "if (fsync(receipt_fd)) return -1;", "usleep(200000); if (fsync(receipt_fd)) return -1;")
     fixture = tmp_path / "slow-sync.c"
     fixture.write_text(source)
     helper = compile_c(fixture, tmp_path / "slow-sync")
@@ -354,12 +359,14 @@ async def test_live_reconcile_cannot_race_visible_marker_before_native_sync(bina
         for _ in range(2500):
             if runtime.journal["entries"]:
                 item = runtime.journal["entries"][0]
-                if runtime._receipt_path(item).read_bytes()[SEED_SIZE:SEED_SIZE + 1] == b"C":
+                staged = runtime._staged_path(item)
+                if staged.exists() and staged.read_bytes()[SEED_SIZE:SEED_SIZE + 1] == b"C":
                     break
             await asyncio.sleep(0.001)
         else:
             pytest.fail("synthetic completion was not observed")
         assert runtime._active.poll() is None
+        assert not runtime._receipt_path(item).exists()
         assert runtime.reconcile()["pending"] == 1
         await task
         assert runtime.reconcile()["pending"] == 0
@@ -368,3 +375,104 @@ async def test_live_reconcile_cannot_race_visible_marker_before_native_sync(bina
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         await runtime.close()
+
+
+@pytest.mark.parametrize("sync_fails", [False, True])
+def test_host_sigkill_during_prepublication_sync_never_releases_early(binaries, tmp_path, sync_fails):
+    import time
+    source = (ROOT / "scripts/mcpme-command-reap.c").read_text()
+    needle = "if (fsync(receipt_fd)) return -1;"
+    assert source.count(needle) == 1
+    replacement = "usleep(1200000); if (1) return -1;" if sync_fails else "usleep(1200000); " + needle
+    fixture = tmp_path / "delayed-sync.c"
+    fixture.write_text(source.replace(needle, replacement))
+    delayed = compile_c(fixture, tmp_path / "delayed-sync")
+    _, package, target = binaries
+    state = tmp_path / "state"
+    program = "\n".join([
+        "import asyncio", "from pathlib import Path",
+        "from mcpme.command_execution_v2 import CommandExecutorV2, CommandSpecV2",
+        "async def main():",
+        f" r = CommandExecutorV2(Path({str(delayed)!r}), {hashlib.sha256(delayed.read_bytes()).hexdigest()!r}, Path({str(state)!r}), admit=lambda s: True)",
+        f" s = CommandSpecV2(Path({str(package)!r}), Path({str(target)!r}), Path({str(package)!r}), {'a' * 64!r}, ('tree',), deadline_ms=5000)",
+        " await r.execute(s)", " await r.close()", "asyncio.run(main())",
+    ])
+    host = subprocess.Popen([sys.executable, "-c", program], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            env={**os.environ, "PYTHONPATH": str(ROOT / "backend")})
+    try:
+        staged = None
+        deadline = time.monotonic() + 4
+        while host.poll() is None and time.monotonic() < deadline:
+            for candidate in state.glob("*.command-v3.pending"):
+                if candidate.read_bytes()[SEED_SIZE:SEED_SIZE + 1] == b"C":
+                    staged = candidate
+                    break
+            if staged is not None:
+                break
+            time.sleep(0.002)
+        assert staged is not None, "synthetic prepublication sync window not reached"
+        assert not list(state.glob("*.command-v3.complete"))
+        host.kill()
+        host.wait(timeout=3)
+        async def recover():
+            runtime = executor(binaries, state)
+            try:
+                assert runtime.reconcile() == {"pending": 1, "reserved_units": 1}
+                with pytest.raises(CommandExecutionError, match="command_ownership_unsettled"):
+                    await runtime.execute(spec(binaries))
+                await asyncio.sleep(1.4)
+                expected = 1 if sync_fails else 0
+                assert runtime.reconcile()["pending"] == expected
+                if sync_fails:
+                    assert not runtime._receipt_path(runtime.journal["entries"][0]).exists()
+                    with pytest.raises(CommandExecutionError, match="command_ownership_unsettled"):
+                        await runtime.execute(spec(binaries))
+                else:
+                    assert (await runtime.execute(spec(binaries), b"after barrier")).stdout == b"after barrier"
+            finally:
+                await runtime.close()
+        asyncio.run(recover())
+    finally:
+        if host.poll() is None:
+            host.kill()
+            host.wait(timeout=3)
+
+
+@pytest.mark.asyncio
+async def test_publication_never_replaces_existing_completion(binaries, tmp_path):
+    source = (ROOT / "scripts/mcpme-command-reap.c").read_text().replace(
+        "if (fsync(receipt_fd)) return -1;", "usleep(250000); if (fsync(receipt_fd)) return -1;")
+    fixture = tmp_path / "exclusive-publication.c"
+    fixture.write_text(source)
+    helper = compile_c(fixture, tmp_path / "exclusive-publication")
+    runtime = executor((helper, *binaries[1:]), tmp_path / "state")
+    task = asyncio.create_task(runtime.execute(spec(binaries, "tree", deadline_ms=3000)))
+    try:
+        while not runtime.journal["entries"]:
+            await asyncio.sleep(0.001)
+        item = runtime.journal["entries"][0]
+        final = runtime._receipt_path(item)
+        final.write_bytes(b"existing synthetic entry")
+        final.chmod(0o400)
+        with pytest.raises(CommandExecutionError, match="command_ownership_unsettled"):
+            await task
+        assert final.read_bytes() == b"existing synthetic entry"
+        assert runtime.reconcile()["pending"] == 1
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_missing_published_name_retains_reservation(binaries, tmp_path):
+    state = tmp_path / "state"
+    runtime = executor(binaries, state)
+    await runtime.execute(spec(binaries))
+    final = runtime._receipt_path(runtime.journal["entries"][0])
+    await runtime.close()
+    final.unlink()  # Model a lost directory entry, not successful durability.
+    restarted = executor(binaries, state)
+    assert restarted.reconcile() == {"pending": 1, "reserved_units": 1}
+    await restarted.close()

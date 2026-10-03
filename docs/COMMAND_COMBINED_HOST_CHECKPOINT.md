@@ -22,4 +22,21 @@ This family remains blocked for public enablement until the original A3 aggregat
 
 ## Evidence
 
-Source and relocated artifact receipts will be recorded after the complete combined regression and installed bundled-runtime verification. This file records implementation scope, not an A3 completion claim.
+The clean full-closure build is source commit `308f6d56d20f2243be0f003b24e2558cd7b723fa`. It was built to a new path, then moved to `/private/tmp/mcpme-combined-cli-308f6d5-relocated` before execution. Its receipt binds 4,701 files; the complete file set and every hash still matched after verification. These are development CLI receipts, not signed native-app acceptance.
+
+| Identity | SHA-256 |
+| --- | --- |
+| Host `build.json` | `0858a7a2215db6bd56eb6c3f8164b56597b142acc58ba3ce1ecacec970603f3f` |
+| Ad-hoc signed command helper | `d5fca15cf1469965a8411229add585477aaf70289a7f669f0fc9a3f725974496` |
+| Reviewed helper source | `b99f87541598427df51a39486d384a5855813ea3decac55a1d091cafb5e17933` |
+| Private Python executable | `36984af9f922aec72ba5b03e811ee92512268785007192e20f826cbd07cf8d04` |
+| Private MCP SDK entry module | `f66ae17959a1420edb67624dcd79da20860543e1d513b7d5c86ec0250cf8af72` |
+| Textgen 1.0.4 recipe bundle | `cff04c91645f213b65ae6071c44dca2005bf546e8b2b10e6e4d466aeb34bc257` |
+
+The frozen installed harness ran with the relocated `python/bin/python3.12 -B -I`, explicit synthetic fixture and new private workspace. HTTP and stdio preserved complete schemas and functional output; fork/exec descendants settled; `setsid`, `setpgid` and spawning a new group were denied; descriptor closure and cancellation joined; backend SIGKILL and held ancestor-group SIGKILL recovered through durable command receipts. The normal constructor rejected the same package before installation. No development environment, source package or external Python was used for target execution or SDK imports.
+
+Before that execution, a separate copied payload was verified with the trusted source-side inventory checker. Appending synthetic bytes to `python/lib/python3.12/json/decoder.py` and, separately, `python/site-packages/httpx/__init__.py` caused rejection before importing or executing any target implementation. Restoring those bytes restored complete verification. This negative control did not execute the modified runtime or dependency.
+
+The complete combined regression passed **2,239 tests with 69 skips** in 285.98 seconds. The subsequent build-only closure change passed **235 distribution/preparation tests with two skips**, including bounded copying and complete receipt membership. The pinned scanner integration passed **71 tests**; the full tracked-source and fetched-history credential scan passed after each packaging freeze. The 116-case initial native/installed/build packet passed, including existing failure/receipt races. No old textgen component-identity failure remains in this combined full-suite result. `git range-diff` confirms the four imported commits are patch-identical to `66921d1`, `0e3fae2`, `5f46784` and `7c85ef0`.
+
+Local sanitized evidence files are `/tmp/mcpme-combined-full-tests.txt`, `/tmp/mcpme-combined-distribution-tests.txt`, `/tmp/mcpme-combined-scanner-tests.txt`, `/tmp/mcpme-combined-closure-scan.txt`, `/tmp/mcpme-combined-cli-negative.json`, and `/tmp/mcpme-combined-cli-full-proof.json`. They contain test summaries or bounded outcome/identity metadata. The harness returns `production_admission: disabled`, `aggregate_os_limits_proven: false`, and `signed_native_app_proven: false`.

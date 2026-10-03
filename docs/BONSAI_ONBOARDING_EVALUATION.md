@@ -111,4 +111,6 @@ Fine-tuning was not tested. These 18 synthetic decision cases and one app are to
 
 The [experiment README](../experiments/bonsai_onboarding/README.md) gives commands and boundaries. [`results_summary.json`](../experiments/bonsai_onboarding/results_summary.json) preserves 95 selected requests across ten cohorts, with per-case grades, numeric metrics, and model/fixture/grader/harness hashes. Harness versions differ as stages were added; the individual hashes are retained.
 
+The standalone native [Bonsai Playground](../experiments/bonsai_playground/README.md) lets you try prompts yourself with streaming responses, sampling controls, and Stop. It reuses the downloaded model and runtime, with 2K context by default.
+
 Fixture SHA256: `61dd72026265db7175a30373c88946684864f21969d7b482c7f0974c4498689d`. Original-source loader SHA256: `d4f255cfe7b2f59979cf950d7bd3cca3f975c96fb3e0f2a26cfa33f65e8414f6`. Local full numeric artifacts are ignored under `.build/bonsai-onboarding/`. No generated adapter is installed, committed, or retained.

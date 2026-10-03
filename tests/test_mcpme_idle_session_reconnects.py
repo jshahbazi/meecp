@@ -81,6 +81,11 @@ async def test_terminal_result_last_event_id_replays_do_not_renew_idle_lease():
             assert status == 404
             assert sid not in gateway.sessions
             await asyncio.wait_for(child.wait(), 1)
+            # Process exit can precede the owner's callback resuming and the
+            # gateway releasing its reservation. Wait for complete cleanup.
+            async with asyncio.timeout(1):
+                while sid not in owner.closed or sid in gateway.reservations:
+                    await asyncio.sleep(0.01)
             assert sid in owner.closed
             assert sid not in owner.processes
             replacement, _ = await initialize_raw(http, endpoint)

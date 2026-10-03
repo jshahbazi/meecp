@@ -35,13 +35,14 @@ from .activity import ACTIVITY_EVENTS, ACTIVITY_FRAME, Activity, timestamp
 from .imports import ImportError as ImportDraftError, ImportStore
 from .private import PrivateStateError, check_private_file, ensure_private_directory, read_private_json, snapshot_package, write_private_json
 from .ownership_receipts import prepare_receipt, verify_receipt
-from .processes import OwnedProcess, ProcessOwner
+from .processes import OwnedProcess, OwnershipLost, ProcessOwner, _await_ownership
 from .registry import Registry, RegistryError
 from .upgrade_host import UpgradeHost
 from .upgrades import UpgradeError, UpgradeStore
 from .grants import GrantError, GrantStore, plan_digest
-from .preparation_contracts import PreparationError
-from .preparations import PreparationStore
+from .preparation_contracts import ExecutionPolicy, PreparationError
+from .preparation_inspection import inspect_source
+from .preparations import MAX_JOBS, PreparationStore
 from .recipes import RecipeStore
 from .settings import SecretStore, SettingsError, normalize_settings, settings_digest, validate_settings_choices
 
@@ -142,7 +143,7 @@ class Resident:
 
 
 class Supervisor(UpgradeHost):
-    def __init__(self, state_dir: Path, reaper: Path):
+    def __init__(self, state_dir: Path, reaper: Path, *, preparation_runner_factory=None):
         self.root = ensure_private_directory(state_dir.absolute())
         self.lock_fd = os.open(self.root / "supervisor.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         try:
@@ -171,7 +172,10 @@ class Supervisor(UpgradeHost):
         self.residents: dict[str, dict[str, Resident]] = {}
         self.stopping_residents: set[str] = set()
         self.reservations: dict[str, dict] = {}
+        self.preparation_reservations: dict[str, dict] = {}
         self.resource_lock = asyncio.Lock()
+        self._preparation_recovery_task: asyncio.Task | None = None
+        self._preparation_close_task: asyncio.Task | None = None
         self.legacy_locks: dict[str, int] = {}
         self.migration_blocked: set[str] = set()
         self.package_cache: dict[str, tuple[object, tuple]] = {}
@@ -185,6 +189,14 @@ class Supervisor(UpgradeHost):
             self.preparations.recover()
             self.grants = GrantStore(self.registry)
             self.resource_policy = self.load_resource_policy()
+            self.preparation_reservation_root = ensure_private_directory(self.root / "preparation-reservations")
+            self.load_preparation_reservations()
+            if preparation_runner_factory is None:
+                from .preparation_runner import PreparationRunner
+                preparation_runner_factory = PreparationRunner
+            self.preparation_runner = preparation_runner_factory(
+                self.preparations, self.reaper.parent.parent, self.reaper,
+                reserve_resources=self.reserve_preparation, release_resources=self.release_preparation, enabled=False)
             self.secrets = SecretStore(self.root)
             self.downloads = DownloadManager(self.root)
             self.upgrades = UpgradeStore(self.root)
@@ -217,6 +229,75 @@ class Supervisor(UpgradeHost):
                 or policy["memory_budget_mb"] < 1 or policy["gpu_policy"] != "exclusive-residency"):
             raise HostError("invalid_resource_policy")
         return policy
+
+    def preparation_reservation(self, policy: ExecutionPolicy) -> dict:
+        return {"memory_mb": policy.memory_mb + self.resource_policy["headroom_mb"],
+                "disk_bytes": policy.disk_bytes, "policy_digest": policy.digest}
+
+    def load_preparation_reservations(self):
+        """Restore admission costs without adopting any recorded process identity."""
+        retained = {job["job_id"]: job for job in self.preparations.list() if job["reservation_retained"]}
+        for index, path in enumerate(self.preparation_reservation_root.iterdir()):
+            if index >= MAX_JOBS:
+                raise HostError("invalid_resource_reservation")
+            try:
+                job_id = path.stem
+                if path.name != job_id + ".json" or str(uuid.UUID(job_id)) != job_id:
+                    raise ValueError()
+                value = read_private_json(path)
+                if (set(value) != {"schema_version", "job_id", "execution_policy"}
+                        or type(value["schema_version"]) is not int or value["schema_version"] != 1 or value["job_id"] != job_id):
+                    raise ValueError()
+                policy = ExecutionPolicy.model_validate(value["execution_policy"])
+                job = self.preparations.get(job_id)
+                if policy.digest != job["binding"]["policy_digest"]:
+                    raise ValueError()
+                if job_id in retained:
+                    self.preparation_reservations[job_id] = self.preparation_reservation(policy)
+                elif job["ownership_settled"]:
+                    path.unlink()
+                else:
+                    raise ValueError()
+            except (OSError, ValueError, TypeError, KeyError, PreparationError, PrivateStateError):
+                raise HostError("invalid_resource_reservation") from None
+        # The durable authority also covers a crash before the reservation file
+        # was published. Recovery can release these costs only after settling.
+        for job_id in retained.keys() - self.preparation_reservations.keys():
+            if not retained[job_id].get("managed"):
+                continue
+            policy = self.preparations.recovery_policy(job_id)
+            if policy is not None:
+                self.preparation_reservations[job_id] = self.preparation_reservation(policy)
+
+    async def recover_preparations(self):
+        if self.closing:
+            raise HostError("host_closing", 409)
+        if self._preparation_recovery_task is None or self._preparation_recovery_task.done():
+            # Coalesce concurrent readers, then poll again after reconciliation
+            # finishes so a late native completion can release held admission.
+            self._preparation_recovery_task = asyncio.create_task(self.preparation_runner.recover())
+        return await asyncio.shield(self._preparation_recovery_task)
+
+    def inspect_preparation_source(self, import_id, revision):
+        if type(revision) is not int or revision < 1:
+            raise PreparationError("invalid_import_revision")
+        with self.imports._lock:
+            draft = self.imports._get(import_id, revision)
+            self.imports._mutable(draft)
+        result = inspect_source(draft)
+        with self.imports._lock:
+            current = self.imports._get(import_id, revision)
+            self.imports._mutable(current)
+            if current["source"] != draft["source"]:
+                raise PreparationError("source_binding_changed")
+        return {"import_id": import_id, "revision": revision, **result}
+
+    def import_preparation_views(self, drafts):
+        """Project job status without changing the draft's persisted identity."""
+        latest = {job["import_id"]: job for job in self.preparations.list_summaries()}
+        return [{**draft, "preparation": ({key: value for key, value in latest[draft["draft_id"]].items()
+                                          if key != "import_id"} if draft["draft_id"] in latest else None)}
+                for draft in drafts]
 
     async def static_work(self, function, *args):
         """Keep bounded file work owned until its thread has actually settled."""
@@ -504,12 +585,44 @@ class Supervisor(UpgradeHost):
                 return
             memory = package.manifest.resources.memory_mb + self.resource_policy["headroom_mb"]
             gpu = package.manifest.resources.gpu
-            if (sum(value["memory_mb"] for value in self.reservations.values()) + memory > self.resource_policy["memory_budget_mb"]
+            if (sum(value["memory_mb"] for value in [*self.reservations.values(), *self.preparation_reservations.values()])
+                    + memory > self.resource_policy["memory_budget_mb"]
                     or gpu and any(value["gpu"] for value in self.reservations.values())):
                 raise HostError("resource_blocked", 409)
             reservation = {"memory_mb": memory, "gpu": gpu}
             write_private_json(self.slot_directory(slot.id) / "reservation.json", reservation)
             self.reservations[slot.id] = reservation
+
+    async def reserve_preparation(self, job_id: str, policy: ExecutionPolicy):
+        if not isinstance(policy, ExecutionPolicy):
+            raise PreparationError("invalid_preparation_policy")
+        async with self.resource_lock:
+            job = self.preparations.get(job_id)
+            if not job.get("managed") or policy.digest != job["binding"]["policy_digest"] or not job["reservation_retained"]:
+                raise PreparationError("preparation_authority_mismatch")
+            reservation = self.preparation_reservation(policy)
+            if job_id in self.preparation_reservations:
+                if self.preparation_reservations[job_id] != reservation:
+                    raise PreparationError("preparation_policy_mismatch")
+                return
+            if self.closing:
+                raise HostError("host_closing", 409)
+            memory = sum(value["memory_mb"] for value in [*self.reservations.values(), *self.preparation_reservations.values()])
+            disk = sum(value["disk_bytes"] for value in self.preparation_reservations.values())
+            if (memory + reservation["memory_mb"] > self.resource_policy["memory_budget_mb"]
+                    or disk + reservation["disk_bytes"] + 256 * 1024**2 > shutil.disk_usage(self.root).free):
+                raise HostError("resource_blocked", 409)
+            write_private_json(self.preparation_reservation_root / (job_id + ".json"),
+                               {"schema_version": 1, "job_id": job_id, "execution_policy": policy.model_dump()})
+            self.preparation_reservations[job_id] = reservation
+
+    async def release_preparation(self, job_id: str, *, ownership_settled=True):
+        async with self.resource_lock:
+            job = self.preparations.get(job_id)
+            if not ownership_settled or not job["ownership_settled"] or job["reservation_retained"]:
+                return
+            (self.preparation_reservation_root / (job_id + ".json")).unlink(missing_ok=True)
+            self.preparation_reservations.pop(job_id, None)
 
     async def release_model(self, slot_id: str):
         async with self.resource_lock:
@@ -1187,6 +1300,7 @@ class Supervisor(UpgradeHost):
             return {"status": await self.legacy_status(slot_id), "runtime": self.model_runtime(slot_id)}
 
     async def initialize(self):
+        await self.recover_preparations()
         self.reconcile_imports()
         await self.reconcile_owned_receipts()
         try:
@@ -1537,6 +1651,23 @@ class Supervisor(UpgradeHost):
 
     async def close(self):
         self.closing = True
+        preparation_error = None
+        if (self._preparation_close_task is None or self._preparation_close_task.done()
+                and (self._preparation_close_task.cancelled() or self._preparation_close_task.exception() is not None)):
+            async def close_preparations():
+                if self._preparation_recovery_task is not None:
+                    await _await_ownership(self._preparation_recovery_task)
+                await self.preparation_runner.close()
+            self._preparation_close_task = asyncio.create_task(close_preparations())
+        try:
+            await asyncio.shield(self._preparation_close_task)
+        except asyncio.CancelledError:
+            # Finish native ownership cleanup even under repeated cancellation;
+            # retain the database/lock for a later full shutdown retry.
+            await _await_ownership(self._preparation_close_task)
+            raise
+        except OwnershipLost as error:
+            preparation_error = error
         # Downloads own network and extraction work independently of callers.
         # Keep the state lock until every owned writer has settled.
         download_error = None
@@ -1575,6 +1706,10 @@ class Supervisor(UpgradeHost):
         for descriptor in self.legacy_locks.values():
             os.close(descriptor)
         self.legacy_locks.clear()
+        if preparation_error is not None:
+            # An uncertain native receipt still owns admission costs and the
+            # host lock. A second supervisor must not overlap that ownership.
+            raise preparation_error
         self.imports.close()
         self.registry.close()
         os.close(self.lock_fd)
@@ -1625,14 +1760,17 @@ def management_app(host: Supervisor, token: str, port: int):
                 elif route.startswith("/v1/downloads/"):
                     result = host.downloads.get(request.path_params["download_id"])
                 elif route == "/v1/preparations":
+                    await host.recover_preparations()
                     result = {"preparations": host.preparations.list_summaries()}
                 elif route.startswith("/v1/preparations/"):
+                    await host.recover_preparations()
                     result = host.preparations.get(request.path_params["job_id"])
                 elif route == "/v1/status":
                     result = {"supervisor_pid": os.getpid(), "slots": [host.slot_snapshot(slot) for slot in host.registry.list_slots()],
                               "operations": [host.operation_snapshot(operation) for operation in host.registry.list_operations()],
                               "resource_policy": host.resource_policy,
-                              "reservations": {slot_id: dict(value) for slot_id, value in host.reservations.items()}}
+                              "reservations": {slot_id: dict(value) for slot_id, value in host.reservations.items()},
+                              "preparation_reservations": {job_id: dict(value) for job_id, value in host.preparation_reservations.items()}}
                 elif route == "/v1/slots":
                     result = {"slots": [host.slot_snapshot(slot) for slot in host.registry.list_slots()]}
                     if grant_id is not None:
@@ -1647,10 +1785,10 @@ def management_app(host: Supervisor, token: str, port: int):
                     result = await host.static_work(host.inspect_upgrade_plan, request.path_params["plan_id"])
                 elif route == "/v1/imports":
                     host.reconcile_imports()
-                    result = {"imports": host.imports.list_summaries()}
+                    result = {"imports": host.import_preparation_views(host.imports.list_summaries())}
                 elif route.startswith("/v1/imports/"):
                     host.reconcile_imports()
-                    result = host.imports.inspect(request.path_params["draft_id"])
+                    result = host.import_preparation_views([host.imports.inspect(request.path_params["draft_id"])])[0]
                 elif route.endswith("/details"):
                     slot = host.registry.get_slot(request.path_params["slot_id"])
                     package = await asyncio.to_thread(host.package, slot)
@@ -1703,13 +1841,36 @@ def management_app(host: Supervisor, token: str, port: int):
                         raise HostError("invalid_recipe_request")
                     result = await host.static_work(getattr(host.recipes, action), payload["recipe_id"], payload["version"])
                 elif route == "/v1/preparations/plan":
-                    if set(payload) != {"import_id", "revision", "descriptor"}:
+                    if set(payload) not in ({"import_id", "revision", "descriptor"},
+                                            {"import_id", "revision", "descriptor", "execution_policy"}):
                         raise HostError("invalid_preparation_request")
-                    result = await host.static_work(host.preparations.plan, payload["import_id"], payload["revision"], payload["descriptor"])
+                    await host.recover_preparations()
+                    if "execution_policy" in payload:
+                        result = await host.preparation_runner.plan(payload["import_id"], payload["revision"],
+                                                                     payload["descriptor"], payload["execution_policy"])
+                    else:
+                        result = await host.static_work(host.preparations.plan, payload["import_id"], payload["revision"], payload["descriptor"])
+                elif route == "/v1/preparations/inspect-source":
+                    if set(payload) != {"import_id", "revision"}:
+                        raise HostError("invalid_preparation_request")
+                    await host.recover_preparations()
+                    result = await host.static_work(host.inspect_preparation_source, payload["import_id"], payload["revision"])
+                elif route == "/v1/preparations/start":
+                    if set(payload) != {"plan_id", "plan_digest", "idempotency_key"}:
+                        raise HostError("invalid_preparation_request")
+                    await host.recover_preparations()
+                    result = await host.preparation_runner.start(payload["plan_id"], payload["plan_digest"], payload["idempotency_key"])
                 elif route.endswith("/cancel") and "job_id" in request.path_params:
                     if payload:
                         raise HostError("invalid_preparation_request")
-                    result = host.preparations.cancel(request.path_params["job_id"])
+                    await host.recover_preparations()
+                    result = await host.preparation_runner.cancel(request.path_params["job_id"])
+                elif route.endswith("/recover") and "job_id" in request.path_params:
+                    if payload:
+                        raise HostError("invalid_preparation_request")
+                    host.preparations.get(request.path_params["job_id"])
+                    await host.recover_preparations()
+                    result = host.preparations.get(request.path_params["job_id"])
                 elif route == "/v1/grants":
                     plan = None
                     if payload.get("mode") == "install":
@@ -1786,7 +1947,8 @@ def management_app(host: Supervisor, token: str, port: int):
                     raise HostError("invalid_request")
             return JSONResponse({"api_version": 1, **result})
         except (HostError, PackageError, RegistryError, ImportDraftError, GrantError, PreparationError, DownloadError, SettingsError, UpgradeError) as error:
-            return JSONResponse({"api_version": 1, "error": {"code": error.code}}, status_code=getattr(error, "status", 400))
+            status = 409 if error.code == "preparation_runner_unavailable" else getattr(error, "status", 400)
+            return JSONResponse({"api_version": 1, "error": {"code": error.code}}, status_code=status)
         except Exception:
             return JSONResponse({"api_version": 1, "error": {"code": "invalid_request"}}, status_code=400)
 
@@ -1801,8 +1963,11 @@ def management_app(host: Supervisor, token: str, port: int):
         Route("/v1/recipes/{action}", dispatch, methods=["POST"]),
         Route("/v1/preparations", dispatch),
         Route("/v1/preparations/plan", dispatch, methods=["POST"]),
+        Route("/v1/preparations/inspect-source", dispatch, methods=["POST"]),
+        Route("/v1/preparations/start", dispatch, methods=["POST"]),
         Route("/v1/preparations/{job_id}", dispatch),
         Route("/v1/preparations/{job_id}/cancel", dispatch, methods=["POST"]),
+        Route("/v1/preparations/{job_id}/recover", dispatch, methods=["POST"]),
         Route("/v1/grants", dispatch, methods=["GET", "POST"]),
         Route("/v1/grants/{grant_id}", dispatch), Route("/v1/grants/{grant_id}/revoke", dispatch, methods=["POST"]),
         Route("/v1/plans/{plan_id}", dispatch),

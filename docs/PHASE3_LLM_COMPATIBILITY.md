@@ -91,3 +91,39 @@ uv run --frozen python scripts/measure_phase3_llm_package.py --package /absolute
 ```
 
 The new adapter/service tests plus unchanged scorer/runtime/model-import/model-service regressions passed **107 tests**. Final A4 still requires trusted assets and exact recipe registration through managed preparation, native forms/build/probe/attachment, matching captured source/recipe receipts, restricted relocated execution, and independent integrated acceptance. Installed lifecycle and workload measurements narrow those remaining gates; they do not enable generic LLM preparation.
+## Managed preparation integration slice
+
+The new `mcpme.preparation_textgen` family declares two closed component
+identities: `llamacpp-cpu-v1` and `text-generate-v1`. Its source bindings preserve
+the original folder/document snapshot and independently bind the captured
+model collection. The builder uses the durable runner's command and wheel
+acquisition callbacks, pins captured inputs by job ID, and copies only the
+distribution's hashed private toolchain closure. It does not launch processes
+or release its own job references.
+
+The distribution integration entry point is the new
+`scripts/bundle_textgen_assets.py:bundle(host_root, engine_resources_root)`.
+The caller explicitly selects the engine resources matching the committed
+closure, invokes this after preparation-toolchain creation, and computes final
+host hashes afterwards. Re-signing engine files changes their compatibility
+identity and requires fresh verification. No checkout or global engine fallback
+exists in the managed builder.
+
+The trusted verification hook is
+`family.verify(package_root, descriptor, reaper, workspace, *, timeout_seconds,
+owner)`. It uses the caller's exact journaled owner for both engine and adapter,
+checks their full graph/model/closure contract, probes real MCP schemas and
+synthetic generation, checks the 440-input/64-output-token boundary and four
+concurrent calls, and joins both processes before rehashing the package. Its
+report uses the existing `VerificationReport` contract and reports the sum of
+two native per-process peak measurements.
+
+Early hook verification against the previously sealed CPU package passed two
+tool schemas and nine functional/status/boundary cases with 920,322,048 bytes
+as the sum of individual native peaks. That run tested the process/probe
+mechanism before adding mandatory managed capture-package binding. It is not a
+composed durable preparation acceptance result. The new managed harness
+`scripts/verify_phase3_textgen_managed.py` will require a clean built host and
+exercise capture, immutable recipe selection, forms, planning, controlled
+building, joined verification, same-revision attachment, and relocation after
+removal of captured state. The full A4 managed/native gate remains open.

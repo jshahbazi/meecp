@@ -43,7 +43,11 @@ probe verification.
 
 The actual clean-host native run passed in 63.312 seconds against source
 `341de900be285addfd8934b066c5fd90f7bae25f`. All 4,759 payload files matched the
-exact manifest before and after execution. The build receipt SHA-256 is
+exact manifest in the source host and relocated copy before target imports.
+The source host was independently rechecked after execution; the relocated
+copy was cleaned up after owned shutdown without a final whole-host hash pass.
+The retained prepared package was validated again after SDK calls and restarts.
+The build receipt SHA-256 is
 `80914e12fefee9f22750c1423673203019f5dbc149bbe61f79272055f370dd2f` and the
 reviewed native binary stayed at
 `73d24f21cdaefdd9a05dd2436305027ed6de1d32396b887595d399b852c24c72`.

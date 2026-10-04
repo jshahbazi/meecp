@@ -756,10 +756,7 @@ class LifecycleHarness(onboarding.Harness):
 async def verify(host_path, native_path, report, cases=CASES):
     verify_sealed_host_payload(host_path)
     with onboarding.isolated_workspace(report) as (root, lease):
-        host, native = root / "relocated-host", root / "McpmeMenuBar"
-        shutil.copytree(host_path, host, symlinks=True)
-        shutil.copyfile(native_path, native)
-        native.chmod(0o700)
+        host, native = onboarding.relocate_host_and_native(root, host_path, native_path, report)
         build = verify_sealed_host_payload(host)
         artifacts = build["artifact_sha256"]
         _host_paths(host)
@@ -795,6 +792,8 @@ async def verify(host_path, native_path, report, cases=CASES):
             finally:
                 report["owned_children_joined"] = not harness.children
         report.pop("active_case", None)
+        if report.get("native_bundle_preserved"):
+            onboarding.verify_native_app_signature(native)
         report["verified"] = report["owned_children_joined"] and all(item["passed"] for item in report["cases"].values())
 
 

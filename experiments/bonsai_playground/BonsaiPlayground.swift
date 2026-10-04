@@ -26,7 +26,7 @@ private struct GenerationResult {
     let stopped: Bool
 
     var message: String {
-        if stopped { return "Stopped." }
+        if stopped && failure != "incomplete_result" { return "Stopped." }
         switch failure {
         case "model_missing": return "Choose an existing model file in Settings."
         case "runtime_missing": return "Choose an executable llama-completion runtime in Settings."
@@ -37,6 +37,7 @@ private struct GenerationResult {
         case "busy": return "Wait for the current response or press Stop."
         case "context_full": return "Conversation reached the context limit. Increase Context in Settings or start a New Chat."
         case "empty_result": return "The model finished without an answer. Try another prompt or change the settings."
+        case "incomplete_result": return "The model stopped before finishing its answer. Increase Max response in Settings or try again."
         case .some: return "The model could not complete this prompt."
         case .none:
             if let speed = tokensPerSecond {
@@ -94,6 +95,7 @@ private final class ModelRunner {
         var outputPrefix = ""
         var profile = ModelProfile.bonsai
         var hasVisibleText = false
+        var completionText = ""
 
         init(onText: @escaping (String) -> Void,
              onComplete: @escaping (GenerationResult) -> Void) {
@@ -259,6 +261,7 @@ private final class ModelRunner {
             }
             let chunk = job.outputPrefix + visible
             job.outputPrefix = ""
+            job.completionText += chunk
             DispatchQueue.main.async { job.onText(chunk) }
         }
     }
@@ -282,11 +285,15 @@ private final class ModelRunner {
         else { speed = nil }
         let contextFull = diagnostics.range(of: "prompt is too long", options: .caseInsensitive) != nil
             || diagnostics.range(of: "context full", options: .caseInsensitive) != nil
+        let incomplete = job.hasVisibleText && job.profile != .bonsai
+            && job.profile.finalAnswer(job.completionText).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let failure = job.failure ?? (contextFull ? "context_full"
-            : (job.status != 0 ? "process_failed" : (job.hasVisibleText ? nil : "empty_result")))
+            : (incomplete ? "incomplete_result"
+                : (job.status != 0 ? "process_failed" : (job.hasVisibleText ? nil : "empty_result"))))
         let result = GenerationResult(elapsed: Date().timeIntervalSince(job.started),
                                       tokensPerSecond: speed, failure: failure, stopped: job.stopped)
         job.stderr.removeAll(keepingCapacity: false)
+        job.completionText.removeAll(keepingCapacity: false)
         DispatchQueue.main.async { job.onComplete(result) }
     }
 }
@@ -590,24 +597,29 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
                 self.responseView.scrollRangeToVisible(NSRange(location: self.responseView.string.utf16.count, length: 0))
             }
         }, onComplete: { [weak self] result in
-            guard let self = self else { return }
-            self.timer?.invalidate(); self.timer = nil
-            self.setGenerating(false)
-            self.status.stringValue = result.message
-            if (result.failure == nil || result.stopped) && !self.pendingResponse.isEmpty {
-                self.conversation.append(user: self.pendingPrompt, assistant: self.pendingResponse)
-            } else {
-                self.replaceDraft(self.pendingPrompt)
-            }
-            if result.failure != nil && !result.stopped {
-                self.responseView.textStorage?.append(NSAttributedString(string: "\n\n" + result.message))
-            }
-            self.responseView.textStorage?.append(NSAttributedString(string: "\n\n", attributes: self.bodyAttributes))
-            self.pendingPrompt = ""
-            self.pendingResponse = ""
-            self.window.makeFirstResponder(self.promptView)
-            if self.quitting { NSApplication.shared.reply(toApplicationShouldTerminate: true) }
+            self?.completeGeneration(result)
         })
+    }
+
+    private func completeGeneration(_ result: GenerationResult) {
+        timer?.invalidate(); timer = nil
+        setGenerating(false)
+        status.stringValue = result.message
+        let hasAnswer = selectedProfile == .bonsai
+            || !selectedProfile.finalAnswer(pendingResponse).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if (result.failure == nil || result.stopped) && hasAnswer && !pendingResponse.isEmpty {
+            conversation.append(user: pendingPrompt, assistant: pendingResponse)
+        } else {
+            replaceDraft(pendingPrompt)
+        }
+        if result.failure != nil && (!result.stopped || result.failure == "incomplete_result") {
+            responseView.textStorage?.append(NSAttributedString(string: "\n\n" + result.message))
+        }
+        responseView.textStorage?.append(NSAttributedString(string: "\n\n", attributes: bodyAttributes))
+        pendingPrompt = ""
+        pendingResponse = ""
+        window.makeFirstResponder(promptView)
+        if quitting { NSApplication.shared.reply(toApplicationShouldTerminate: true) }
     }
 
     private func setGenerating(_ value: Bool) {
@@ -790,6 +802,39 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         modelSelector.selectItem(at: ModelProfile.selectableProfiles.firstIndex(of: .qwen35)!)
         selectModel()
         checks["full_qwen_keeps_q4_history_separate"] = conversation.turns.first?.assistant == "synthetic qwen answer"
+        func simulateCompletion(_ response: String, failure: String?, stopped: Bool) {
+            pendingPrompt = "synthetic retry request"
+            pendingResponse = response
+            responseView.string = response
+            replaceDraft("")
+            setGenerating(true)
+            completeGeneration(GenerationResult(elapsed: 0, tokensPerSecond: nil, failure: failure, stopped: stopped))
+        }
+        let priorCount = conversation.turns.count
+        let unfinished = "<think>\nSynthetic unfinished reasoning"
+        simulateCompletion(unfinished, failure: "incomplete_result", stopped: false)
+        checks["incomplete_reasoning_preserves_chat_and_draft"] = conversation.turns.count == priorCount
+            && promptView.string == "synthetic retry request" && responseView.string.hasPrefix(unfinished)
+            && status.stringValue.contains("before finishing its answer")
+        simulateCompletion(unfinished, failure: "incomplete_result", stopped: true)
+        checks["stopped_reasoning_preserves_chat_and_draft"] = conversation.turns.count == priorCount
+            && promptView.string == "synthetic retry request" && responseView.string.hasPrefix(unfinished)
+            && status.stringValue.contains("before finishing its answer")
+        simulateCompletion("<think>\nSynthetic reasoning</think>\n \t", failure: "incomplete_result", stopped: false)
+        checks["empty_final_answer_is_excluded_from_history"] = conversation.turns.count == priorCount
+            && promptView.string == "synthetic retry request"
+        let partialAnswer = "<think>\nSynthetic reasoning</think>\nSynthetic partial answer"
+        simulateCompletion(partialAnswer, failure: "process_failed", stopped: true)
+        checks["stopped_final_answer_still_enters_history"] = conversation.turns.count == priorCount + 1
+            && conversation.turns.last?.assistant == partialAnswer && promptView.string.isEmpty
+            && status.stringValue == "Stopped."
+        modelSelector.selectItem(at: ModelProfile.selectableProfiles.firstIndex(of: .bonsai)!)
+        selectModel()
+        let bonsaiCount = conversation.turns.count
+        simulateCompletion("Synthetic partial Bonsai answer", failure: "process_failed", stopped: true)
+        checks["bonsai_stopped_answer_behavior_unchanged"] = conversation.turns.count == bonsaiCount + 1
+            && conversation.turns.last?.assistant == "Synthetic partial Bonsai answer" && promptView.string.isEmpty
+            && status.stringValue == "Stopped."
         return checks
     }
 

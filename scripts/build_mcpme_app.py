@@ -21,6 +21,7 @@ DEVELOPER_ID_REQUIREMENT = (
     "anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
 )
 STARTER_PACKAGE_PATH = Path("starter-packages/json-utilities")
+PREPARED_PYTHON_ENTITLEMENTS = ROOT / "scripts/prepared-python-entitlements.plist"
 
 
 def prepare_starter_package(resources: Path) -> Path:
@@ -88,13 +89,21 @@ def developer_identity(identity: str, keychain: Path | None = None) -> str:
     raise SystemExit("developer_id_identity_unavailable")
 
 
-def signing_arguments(identity: str, release: bool, keychain: Path | None = None) -> list[str]:
+def signing_arguments(identity: str, release: bool, keychain: Path | None = None,
+                      *, entitlements: Path | None = None) -> list[str]:
     arguments = ["/usr/bin/codesign", "--force", "--sign", identity]
     if release:
         arguments.extend(["--timestamp", "--options", "runtime"])
+        if entitlements is not None:
+            arguments.extend(["--entitlements", str(entitlements)])
     if keychain is not None:
         arguments.extend(["--keychain", str(keychain)])
     return arguments
+
+
+def prepared_python_entitlements(root: Path, path: Path, *, release: bool) -> Path | None:
+    expected = root / "Contents/Resources/host/preparation-toolchain/python/bin/python3.12"
+    return PREPARED_PYTHON_ENTITLEMENTS if release and path == expected else None
 
 
 def verify_signature(path: Path, certificate_hash: str | None = None, deep: bool = False):
@@ -136,7 +145,8 @@ def sign_runtime(root: Path, identity: str = "-", release: bool = False,
             if dependency.startswith("/") and not dependency.startswith(("/usr/lib/", "/System/Library/")):
                 raise SystemExit("Bundled runtime contains an external native dependency")
         if not preserved:
-            run(*signing_arguments(identity, release, keychain), str(path))
+            run(*signing_arguments(identity, release, keychain,
+                entitlements=prepared_python_entitlements(root, path, release=release)), str(path))
         verify_signature(path, identity if release else None)
         count += not preserved
     return count

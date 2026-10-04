@@ -194,14 +194,14 @@ def test_historical_policy_literal_and_current_agent_delta():
     assert hashlib.sha256(ROOT_POLICY_JSON.encode()).hexdigest() == (
         "c8fa615def941e66e85a68ac0e7cc46dd7caf1797918fc03fdd5277ac2326522")
     from mcpme.preparation_release_policy import POLICY_PATH
-    current = json.loads((Path(__file__).resolve().parents[1] / POLICY_PATH).read_bytes())
     historical = json.loads(ROOT_POLICY_JSON)
-    assert current != historical
-    assert current["preparation"]["families"][:-1] == historical["preparation"]["families"]
-    assert current["preparation"]["recipe_component_sets"][:-1] == historical["preparation"]["recipe_component_sets"]
-    assert current["preparation"]["resolution_candidate_kinds"] == historical["preparation"]["resolution_candidate_kinds"]
-    assert current["policy_id"] == "phase3-live-agent-acceptance-candidate-v1"
-    assert current["agent"] == {
+    expected = copy.deepcopy(historical)
+    expected["policy_id"] = "phase3-live-agent-acceptance-candidate-v1"
+    unlocked = {"id": "agent-unlocked-python-adapter-v1", "version": "1.0.0",
+                "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"}
+    expected["preparation"]["families"].append(unlocked)
+    expected["preparation"]["recipe_component_sets"].append([unlocked])
+    expected["agent"] = {
         "components": [{"id": "agent-unlocked-python-adapter-v1", "version": "1.0.0",
                          "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"}],
         "providers": [{"adapter_id": "openai-responses-v1",
@@ -209,6 +209,10 @@ def test_historical_policy_literal_and_current_agent_delta():
                         "models": ["gpt-6.1-sol"]}],
         "unlocked_resolution": True,
     }
+    policy_path = Path(__file__).resolve().parents[1] / POLICY_PATH
+    assert json.loads(policy_path.read_bytes()) == expected
+    assert hashlib.sha256(policy_path.read_bytes()).hexdigest() == (
+        "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375")
 
 
 def capabilities(driver):

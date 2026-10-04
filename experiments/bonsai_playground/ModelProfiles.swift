@@ -3,18 +3,26 @@ import Foundation
 enum ModelProfile: String, CaseIterable {
     case bonsai
     case minicpm
+    case minicpmQ4 = "minicpm-q4"
+    case qwen35 = "qwen35"
+
+    // Keep the failed IQ2 profile available only for reproducible CLI checks.
+    static let selectableProfiles: [ModelProfile] = [.bonsai, .minicpmQ4, .qwen35]
 
     var displayName: String {
         switch self {
         case .bonsai: return "Bonsai 1.7B"
         case .minicpm: return "MiniCPM5 2B Fable Agentic · IQ2_XXS"
+        case .minicpmQ4: return "MiniCPM5 2B Fable Agentic · Q4_K_M"
+        case .qwen35: return "Qwen3.5 2B Reasoning · Q4_K_M"
         }
     }
 
     var speakerName: String {
         switch self {
         case .bonsai: return "Bonsai"
-        case .minicpm: return "MiniCPM5"
+        case .minicpm, .minicpmQ4: return "MiniCPM5"
+        case .qwen35: return "Qwen3.5"
         }
     }
 
@@ -24,6 +32,10 @@ enum ModelProfile: String, CaseIterable {
             return "/Users/johnshahbazian/development/mcpme/models/bonsai-1.7b/Ternary-Bonsai-1.7B-Q2_0_g64.gguf"
         case .minicpm:
             return "/Users/johnshahbazian/development/mcpme/models/minicpm5-2b-agentic/MiniCPM5-2B-Claude-Fable5-1-Thinking-Agentic.i1-IQ2_XXS.gguf"
+        case .minicpmQ4:
+            return "/Users/johnshahbazian/development/mcpme/models/minicpm5-2b-agentic/MiniCPM5-2B-Claude-Fable5-1-Thinking-Agentic.i1-Q4_K_M.gguf"
+        case .qwen35:
+            return "/Users/johnshahbazian/development/mcpme/models/qwen3.5-2b/Qwen3.5-2B-Q4_K_M.gguf"
         }
     }
 
@@ -32,14 +44,14 @@ enum ModelProfile: String, CaseIterable {
     /// MiniCPM's generated output continues a thinking block opened in its prompt.
     var assistantOutputPrefix: String { self == .bonsai ? "" : "<think>\n" }
 
-    var runtimeArguments: [String] { self == .minicpm ? ["--special"] : [] }
+    var runtimeArguments: [String] { self == .bonsai ? [] : ["--special"] }
 
     /// With special output enabled, the CLI includes its terminal control token.
     func cleanCompletionTail(_ text: String) -> String {
-        guard self == .minicpm else { return text }
+        guard self != .bonsai else { return text }
         var result = text
         while true {
-            let cleaned = result.replacingOccurrences(of: "(?:<\\|im_end\\|>|</s>)\\s*\\z",
+            let cleaned = result.replacingOccurrences(of: "(?:<\\|im_end\\|>|<\\|endoftext\\|>|</s>)\\s*\\z",
                 with: "", options: .regularExpression)
             if cleaned == result { return result }
             result = cleaned
@@ -48,6 +60,7 @@ enum ModelProfile: String, CaseIterable {
 
     func render(system: String, prompt: String, conversation: Conversation) -> String {
         if self == .bonsai { return conversation.render(system: system, prompt: prompt) }
+        if self == .qwen35 { return renderQwen(system: system, prompt: prompt, conversation: conversation) }
         var messages = "<s><|im_start|>system\n\(system)<|im_end|>\n"
         for turn in conversation.turns {
             messages += "<|im_start|>user\n\(turn.user)<|im_end|>\n"
@@ -56,6 +69,27 @@ enum ModelProfile: String, CaseIterable {
         messages += "<|im_start|>user\n\(prompt)<|im_end|>\n"
         messages += "<|im_start|>assistant\n<think>\n"
         return messages
+    }
+
+    /// Qwen's text-only thinking template removes reasoning from prior turns.
+    private func renderQwen(system: String, prompt: String, conversation: Conversation) -> String {
+        func trimmed(_ text: String) -> String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+        var messages = "<|im_start|>system\n\(trimmed(system))<|im_end|>\n"
+        for turn in conversation.turns {
+            messages += "<|im_start|>user\n\(trimmed(turn.user))<|im_end|>\n"
+            var answer = trimmed(turn.assistant)
+            if let close = answer.range(of: "</think>", options: .backwards) {
+                answer = trimNewlines(String(answer[close.upperBound...]), trailing: false)
+            }
+            messages += "<|im_start|>assistant\n\(answer)<|im_end|>\n"
+        }
+        return messages + "<|im_start|>user\n\(trimmed(prompt))<|im_end|>\n<|im_start|>assistant\n<think>\n"
+    }
+
+    func finalAnswer(_ text: String) -> String {
+        guard self != .bonsai else { return text }
+        guard let close = text.range(of: "</think>", options: .backwards) else { return "" }
+        return String(text[close.upperBound...])
     }
 
     private func normalizedAssistant(_ original: String) -> String {
@@ -142,6 +176,20 @@ enum ModelProfileChecks {
         checks["bonsai_output_controls_unchanged"] = ModelProfile.bonsai.cleanCompletionTail("Synthetic <|im_end|>\n")
             == "Synthetic <|im_end|>\n" && ModelProfile.bonsai.runtimeArguments.isEmpty
             && ModelProfile.minicpm.runtimeArguments == ["--special"]
+        checks["minicpm_q4_uses_verified_thinking_template"] = ModelProfile.minicpmQ4.render(
+            system: "Be concise.", prompt: "What value?", conversation: conversation) == rendered
+            && ModelProfile.minicpmQ4.defaultModelPath.hasSuffix("i1-Q4_K_M.gguf")
+        let qwen = ModelProfile.qwen35.render(system: "  Be concise.\n", prompt: " What value? ", conversation: conversation)
+        let qwenExpected = "<|im_start|>system\nBe concise.<|im_end|>\n"
+            + "<|im_start|>user\nRemember 17.<|im_end|>\n"
+            + "<|im_start|>assistant\nStored 17.<|im_end|>\n"
+            + "<|im_start|>user\nAdd 4.<|im_end|>\n"
+            + "<|im_start|>assistant\nThe value is 21.<|im_end|>\n"
+            + "<|im_start|>user\nWhat value?<|im_end|>\n<|im_start|>assistant\n<think>\n"
+        checks["qwen_thinking_template_uses_final_history"] = qwen == qwenExpected && !qwen.contains("<s>")
+        checks["qwen_final_answer_requires_closed_thinking"] = ModelProfile.qwen35.finalAnswer("<think>Reason</think>42") == "42"
+            && ModelProfile.qwen35.finalAnswer("<think>Unfinished").isEmpty
+        checks["broken_iq2_is_excluded_from_selector"] = ModelProfile.selectableProfiles == [.bonsai, .minicpmQ4, .qwen35]
         return checks
     }
 }

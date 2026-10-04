@@ -10,7 +10,7 @@ private struct GenerationSettings {
     var runtime = defaultRuntimePath
     var system = "Be helpful, concise, and accurate."
     var temperature = 0.2
-    var context = 2048
+    var context = 4096
     var maximumOutput = 512
     var seed = 42
 
@@ -348,17 +348,17 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 920, height: 760),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
-        window.title = "Bonsai Playground — Models"
+        window.title = "Bonsai Playground — Model Comparison"
         window.isReleasedWhenClosed = false
         window.isRestorable = false
         window.contentMinSize = NSSize(width: 760, height: 620)
         let content = window.contentView!
         let explanation = NSTextField(labelWithString: "Try compact models locally. Each model keeps its own chat in memory.")
         explanation.textColor = .secondaryLabelColor
-        modelSelector.addItems(withTitles: ModelProfile.allCases.map { $0.displayName })
+        modelSelector.addItems(withTitles: ModelProfile.selectableProfiles.map { $0.displayName })
         modelSelector.target = self
         modelSelector.action = #selector(selectModel)
-        modelSelector.toolTip = "MiniCPM5-2B-Claude-Fable5-1-Thinking-Agentic, IQ2_XXS"
+        modelSelector.toolTip = "Bonsai, MiniCPM5-2B-Claude-Fable5-1-Thinking-Agentic, and Qwen3.5-2B"
         let modelSelection = row([label("Model"), modelSelector])
         let conversationLabel = label("Conversation")
         let responseScroll = textArea(editable: false)
@@ -469,7 +469,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         temperature.widthAnchor.constraint(equalToConstant: 140).isActive = true
         temperatureValue.widthAnchor.constraint(equalToConstant: 35).isActive = true
         context.addItems(withTitles: ["2048", "4096", "8192"])
-        context.selectItem(withTitle: "2048")
+        context.selectItem(withTitle: "4096")
         maximumOutput.addItems(withTitles: ["128", "512", "1024", "2048"])
         maximumOutput.selectItem(withTitle: "512")
         seedField.widthAnchor.constraint(equalToConstant: 65).isActive = true
@@ -517,8 +517,8 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
     @objc private func chooseRuntime() { chooseFile(for: runtimeField) }
 
     @objc private func selectModel() {
-        guard !generating, ModelProfile.allCases.indices.contains(modelSelector.indexOfSelectedItem) else { return }
-        let profile = ModelProfile.allCases[modelSelector.indexOfSelectedItem]
+        guard !generating, ModelProfile.selectableProfiles.indices.contains(modelSelector.indexOfSelectedItem) else { return }
+        let profile = ModelProfile.selectableProfiles[modelSelector.indexOfSelectedItem]
         guard profile != selectedProfile else { return }
         sessions[selectedProfile] = ChatSession(conversation: conversation,
             transcript: NSAttributedString(attributedString: responseView.attributedString()),
@@ -751,8 +751,8 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         replaceDraft("synthetic bonsai draft")
         modelSelector.selectItem(at: 1)
         selectModel()
-        checks["selector_switches_model_path_and_budget"] = selectedProfile == .minicpm
-            && modelField.stringValue == ModelProfile.minicpm.defaultModelPath
+        checks["selector_switches_model_path_and_budget"] = selectedProfile == .minicpmQ4
+            && modelField.stringValue == ModelProfile.minicpmQ4.defaultModelPath
             && maximumOutput.titleOfSelectedItem == "2048"
         checks["models_start_with_separate_chats"] = conversation.isEmpty
             && responseView.string.isEmpty && promptView.string.isEmpty
@@ -777,6 +777,10 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         checks["generation_disables_model_switch"] = !modelSelector.isEnabled
         setGenerating(false)
         checks["generation_restores_model_switch"] = modelSelector.isEnabled
+        modelSelector.selectItem(at: 2)
+        selectModel()
+        checks["qwen_selector_uses_reasoning_model"] = selectedProfile == .qwen35
+            && modelField.stringValue == ModelProfile.qwen35.defaultModelPath && conversation.isEmpty
         return checks
     }
 
@@ -831,11 +835,13 @@ private enum SmokeTest {
         settings.context = 2048
         settings.maximumOutput = 64
         let arguments = CommandLine.arguments
+        let greetingOnly = arguments.contains("--greeting-test")
         if let index = arguments.firstIndex(of: "--profile"), index + 1 < arguments.count,
            let profile = ModelProfile(rawValue: arguments[index + 1]) {
             settings.profile = profile
             settings.model = profile.defaultModelPath
-            settings.maximumOutput = profile == .minicpm ? profile.defaultMaximumOutput : 64
+            settings.maximumOutput = profile == .bonsai ? 64 : profile.defaultMaximumOutput
+            settings.context = profile == .bonsai ? 2048 : 4096
         }
         for (flag, apply) in [
             ("--model", { (value: String) in settings.model = value }),
@@ -850,29 +856,34 @@ private enum SmokeTest {
         var conversation = Conversation()
         var turn = 0
         func runTurn() {
-            let prompt = turn == 0 ? "Compute 17 + 25. Reply with only the integer."
+            let prompt = greetingOnly ? "hi" : turn == 0 ? "Compute 17 + 25. Reply with only the integer."
                 : "Add one to your last answer. Reply with only the integer."
             answer = ""
             runner.start(prompt: prompt, settings: settings, conversation: conversation,
                          onText: { answer += $0 }, onComplete: { result in
-                let finalAnswer = settings.profile == .minicpm
-                    ? (answer.components(separatedBy: "</think>").last ?? "") : answer
-                let passed = result.failure == nil && !result.stopped
-                    && finalAnswer.trimmingCharacters(in: .whitespacesAndNewlines) == (turn == 0 ? "42" : "43")
-                if passed && turn == 0 {
+                let finalAnswer = settings.profile.finalAnswer(answer)
+                let trimmed = finalAnswer.trimmingCharacters(in: .whitespacesAndNewlines)
+                let expected = greetingOnly
+                    ? trimmed.count < 500 && trimmed.range(of: "\\b(?:hello|hi|hey)\\b", options: [.regularExpression, .caseInsensitive]) != nil
+                    : trimmed == (turn == 0 ? "42" : "43")
+                let passed = result.failure == nil && !result.stopped && expected
+                if passed && turn == 0 && !greetingOnly {
                     conversation.append(user: prompt, assistant: answer)
                     turn = 1
                     runTurn()
                     return
                 }
                 var metadata: [String: Any] = ["pass": passed, "turns_checked": turn + 1,
+                    "test": greetingOnly ? "greeting" : "multi_turn_arithmetic",
                     "elapsed_seconds": result.elapsed,
                     "failure": result.failure ?? (passed ? "none" : "answer_mismatch")]
-                if settings.profile == .minicpm {
+                if settings.profile != .bonsai {
                     metadata["thinking_closed"] = answer.contains("</think>")
                     metadata["response_characters"] = answer.count
-                    metadata["expected_integer_present"] = answer.contains(turn == 0 ? "42" : "43")
-                    metadata["final_is_integer"] = Int(finalAnswer.trimmingCharacters(in: .whitespacesAndNewlines)) != nil
+                    if !greetingOnly {
+                        metadata["expected_integer_present"] = answer.contains(turn == 0 ? "42" : "43")
+                        metadata["final_is_integer"] = Int(finalAnswer.trimmingCharacters(in: .whitespacesAndNewlines)) != nil
+                    }
                 }
                 if let speed = result.tokensPerSecond { metadata["tokens_per_second"] = speed }
                 if let data = try? JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]),
@@ -895,7 +906,7 @@ private enum BonsaiPlayground {
                let text = String(data: data, encoding: .utf8) { print(text) }
             exit(checks.values.allSatisfy { $0 } ? 0 : 1)
         }
-        if CommandLine.arguments.contains("--smoke-test") { SmokeTest.run() }
+        if CommandLine.arguments.contains("--smoke-test") || CommandLine.arguments.contains("--greeting-test") { SmokeTest.run() }
         let app = NSApplication.shared
         let delegate = ApplicationDelegate()
         app.delegate = delegate

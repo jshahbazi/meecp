@@ -41,6 +41,9 @@ class OpenAIResponsesBackend:
 
     def encode(self, request, role, selected, prior):
         material = {"intent": request.intent, "role": role, "selected_source": selected,
+                    "selected_files": [item.model_dump() for item in request.selected_files],
+                    "selected_metadata": [item.model_dump() for item in request.selected_metadata],
+                    "recipe": request.recipe.model_dump() if request.recipe else None,
                     "prior_proposals": [item.model_dump() for item in prior]}
         content = canonical_bytes(material).decode()
         payload = {
@@ -62,6 +65,15 @@ class OpenAIResponsesBackend:
             "text": {"format": {"type": "json_schema", "name": "preparation_proposal",
                                   "strict": True, "schema": TaskProposalV1.model_json_schema()}},
         }
+        if request.guide is not None:
+            guide = next(item for item in request.guide.roles if item.role == role)
+            payload["instructions"] += (
+                " Follow this host-owned component contract. All listed paths are exact; "
+                "JSON file contents must use only the specified fields. Missing reviewed "
+                "source facts must be reported in unresolved, never guessed. Metadata-only "
+                "records disclose path, original byte length and SHA-256, not file contents. "
+                + canonical_bytes({"guide_id": request.guide.id, "guide_digest": request.guide.digest,
+                    "component": request.guide.component.model_dump(), "role_contract": guide.model_dump()}).decode())
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
 
     async def complete(self, request, role, body):

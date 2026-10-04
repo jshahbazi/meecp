@@ -268,12 +268,19 @@ class AgentCoordinator:
 
         try:
             async with asyncio.timeout(request.limits.wall_seconds):
-                children = [asyncio.create_task(execute(role, []))
-                            for role in ("interface", "dependencies", "fixtures")]
+                roles = ("interface", "dependencies", "fixtures", "adapter")
+                dependencies = ({item.role: item.depends_on for item in request.guide.roles}
+                    if request.guide else {role: ([] if role != "adapter" else list(roles[:3])) for role in roles})
+                tasks = {}
+                async def ready(role):
+                    prior = [await tasks[name] for name in dependencies[role]]
+                    return await execute(role, prior)
+                for role in roles:
+                    tasks[role] = asyncio.create_task(ready(role))
+                    children.append(tasks[role])
                 proposals = await asyncio.gather(*children)
-                adapter = await execute("adapter", proposals)
                 result = AgentProposalV1(request_digest=request.digest, attempt_id=attempt_id,
-                                         generation=generation, tasks=[*proposals, adapter])
+                                         generation=generation, tasks=proposals)
                 self.store.publish(request, result, self.validate_current)
                 return result
         except asyncio.CancelledError:

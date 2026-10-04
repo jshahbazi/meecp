@@ -29,7 +29,7 @@ from mcpme.preparation_runner import PreparationRunner
 from mcpme.preparation_verifier import verify_prepared_package
 from mcpme.processes import ProcessOwner
 from mcpme.contracts import validate_package
-from test_preparation_agent_adapter import handler
+from test_preparation_agent_request_readiness import request_only_handler
 from test_preparation_agent_host import provider, completed
 
 
@@ -102,12 +102,15 @@ async def test_required_generated_adapter_real_confined_build_probe_attach_and_r
             preparations = PreparationStore(imports, recipes, families=(family,))
             builder = PreparationRunner(preparations, host_root, host_root / "bin/mcpme-reap", enabled=True,
                 enabled_families=frozenset({family.component.reference.key}))
-            agent = AgentPreparationHost(preparations, retained / "agent", providers=(provider(handler(
-                hashlib.sha256((source / "uv.lock").read_bytes()).hexdigest())),), simulated_enabled=True)
+            agent = AgentPreparationHost(preparations, retained / "agent", providers=(provider(request_only_handler),), simulated_enabled=True)
             phase = "agent"
             plan = await agent.plan({"import_id": draft["draft_id"], "revision": 1,
                 "recipe": {"id": record["recipe_id"], "version": record["version"], "digest": record["digest"]},
-                "provider_id": "configured-openai", "model": "explicit-test-model", "selected_paths": ["worker.py"], "limits": {}})
+                "provider_id": "configured-openai", "model": "explicit-test-model", "selected_paths": ["worker.py"],
+                "selected_metadata_paths": ["LICENSE", "pyproject.toml", "uv.lock"], "limits": {}})
+            evidence.update(request_only_provider_simulation=True,
+                guide_digest=plan["guide_digest"], metadata_only_files=len(plan["selected_metadata"]),
+                selected_content_files=len(plan["selected_files"]))
             job = await agent.start({"action": "analyze", "plan_id": plan["plan_id"], "plan_digest": plan["plan_digest"],
                 "idempotency_key": str(uuid.uuid4())})
             job = await completed(agent, job)

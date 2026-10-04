@@ -48,6 +48,9 @@ constructor parameter. The Python guide factory supports the separate unlocked
 requirements contract; it grants no resolution or network authority. Registration
 must accompany a reviewed component implementation. Changing published component
 bytes requires a new immutable version; adding a guide does not restamp a component.
+The default registry includes the separately reviewed locked and unlocked Python
+adapter components. The unlocked contract proposes requirements; the ordinary
+host resolver selects and records exact versions after its separate review.
 
 ## Continuity and verification
 

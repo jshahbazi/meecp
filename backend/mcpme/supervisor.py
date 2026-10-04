@@ -204,8 +204,11 @@ class Supervisor(UpgradeHost):
         self.upgrade_cancels = {}
         try:
             self.imports = ImportStore(self.root)
-            self.resolutions = ResolutionStore(self.imports)
             self.recipes = RecipeStore(self.imports)
+            from .preparation_agent_unlocked_store import AgentUnlockedInputStore
+            from .preparation_agent_unlocked_resolution import AgentUnlockedResolutionStore
+            self.agent_unlocked_inputs = AgentUnlockedInputStore(self.imports, self.recipes)
+            self.resolutions = AgentUnlockedResolutionStore(self.imports, self.agent_unlocked_inputs)
             from .preparation_builtin_recipes import seed_builtin_recipes
             self.builtin_recipe_metadata = seed_builtin_recipes(self.recipes)
             self.grants = GrantStore(self.registry)
@@ -222,6 +225,7 @@ class Supervisor(UpgradeHost):
                 raise HostError("invalid_artifact_storage_policy") from None
             self.captures = ArtifactCaptureStore(self.imports, self.artifacts, storage_policy=storage_policy)
             from .preparation_agent_adapter import AgentPythonAdapterFamily
+            from .preparation_agent_unlocked import AgentUnlockedPythonFamily
             from .preparation_agent_adapter_store import AgentAdapterDerivationStore
             self.agent_adapter_derivations = AgentAdapterDerivationStore(self.imports, self.recipes)
             from .preparation_onnx import OnnxPreparationFamily
@@ -231,6 +235,7 @@ class Supervisor(UpgradeHost):
             self.preparations = PreparationStore(self.imports, self.recipes, resolutions=self.resolutions,
                 families=(OnnxPreparationFamily(self.captures), TextGenerationFamily(self.captures),
                           AgentPythonAdapterFamily(self.agent_adapter_derivations),
+                          AgentUnlockedPythonFamily(self.agent_unlocked_inputs, self.resolutions),
                           *((command_family,) if command_family is not None else ())))
             from .preparation_forms import PreparationForms
             self.preparation_forms = PreparationForms(self.preparations, preferred_recipes=tuple(
@@ -259,8 +264,8 @@ class Supervisor(UpgradeHost):
                 reserve_resources=self.reserve_preparation, release_resources=self.release_preparation,
                 enabled=False, **runner_admissions)
             if resolution_runner_factory is None:
-                from .preparation_resolution_runner import OwnedResolutionRunner
-                resolution_runner_factory = OwnedResolutionRunner
+                from .preparation_agent_unlocked_resolution import OwnedAgentUnlockedResolutionRunner
+                resolution_runner_factory = OwnedAgentUnlockedResolutionRunner
             self.resolution_runner = resolution_runner_factory(
                 self.resolutions, self.reaper.parent.parent, self.reaper,
                 reserve_resources=self.reserve_resolution, release_resources=self.release_resolution, enabled=False)

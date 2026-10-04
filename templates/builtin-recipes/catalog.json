@@ -35,6 +35,12 @@
       "directory": "agent-python-adapter-v1-0-0",
       "recipe_id": "mcpme.agent-python-adapter",
       "version": "1.0.0"
+    },
+    {
+      "digest": "a7103a35adbf5d55a9ea369a48614517d34e0c0d69a9b9f2498dd079f9eddea3",
+      "directory": "agent-unlocked-python-adapter-v1-0-0",
+      "recipe_id": "mcpme.agent-unlocked-python-adapter",
+      "version": "1.0.0"
     }
   ],
   "schema_version": 1

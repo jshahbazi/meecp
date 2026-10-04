@@ -10,6 +10,7 @@ import shutil
 import sys
 import tempfile
 import time
+import tomllib
 import uuid
 
 import pytest
@@ -26,7 +27,7 @@ from mcpme.preparation_verifier import verify_prepared_package
 from mcpme.processes import ProcessOwner
 from mcpme.supervisor import Supervisor
 from mcpme.contracts import validate_package
-from test_preparation_agent_adapter import handler
+from test_preparation_agent_unlocked_request_readiness import request_only_unlocked_handler
 from test_preparation_agent_host import provider, completed
 
 
@@ -55,9 +56,7 @@ async def test_unlocked_adapter_explicit_resolution_confined_build_attach_and_re
     (source/"LICENSE").write_text("Synthetic original-code permission.\n")
     (source/"README.md").write_text("Unfamiliar scalar application using humanize.\n")
     (source/"unknown.payload").write_bytes(b"\x00\xffsynthetic\n")
-    def changes(proposals):
-        proposals["dependencies"][0]["content"] = json.dumps({"requirements": ["humanize==4.13.0"]})
-    configured = provider(handler("0"*64, changes=changes))
+    configured = provider(request_only_unlocked_handler)
     def preparation_factory(*args, **kwargs):
         selected = next(value for value in args[0].families.values() if value.component.reference.id == COMPONENT_ID)
         kwargs.update(enabled=True, enabled_families=frozenset({selected.component.reference.key}))
@@ -98,7 +97,10 @@ async def test_unlocked_adapter_explicit_resolution_confined_build_attach_and_re
         phase = "agent"
         plan = await host.agent_preparations.plan({"import_id": draft["draft_id"], "revision": 1,
             "recipe": {"id": record["recipe_id"], "version": record["version"], "digest": record["digest"]},
-            "provider_id": configured.provider_id, "model": "explicit-test-model", "selected_paths": ["worker.py"], "limits": {}})
+            "provider_id": configured.provider_id, "model": "explicit-test-model", "selected_paths": ["worker.py"],
+            "selected_metadata_paths": ["LICENSE"], "limits": {}})
+        evidence.update(request_only_provider_simulation=True, guide_digest=plan["guide_digest"],
+            metadata_only_files=len(plan["selected_metadata"]), selected_content_files=len(plan["selected_files"]))
         job = await host.agent_preparations.start({"action": "analyze", "plan_id": plan["plan_id"],
             "plan_digest": plan["plan_digest"], "idempotency_key": str(uuid.uuid4())})
         job = await completed(host.agent_preparations, job)
@@ -148,6 +150,14 @@ async def test_unlocked_adapter_explicit_resolution_confined_build_attach_and_re
         attachment = host.imports.inspect(draft["draft_id"])["attachment"]
         package_root = Path(attachment["path"]); package = validate_package(package_root)
         receipt = parse_preparation_receipt((package_root/"mcpme.preparation.json").read_bytes())
+        dependency_root = package_root/"source"/DEPENDENCY_NAMESPACE
+        dependency_project = tomllib.loads((dependency_root/"pyproject.toml").read_text())
+        assert "humanize" in dependency_project["project"]["dependencies"]
+        locked_packages = tomllib.loads((dependency_root/"uv.lock").read_text())["package"]
+        resolved_humanize = [item for item in locked_packages if item["name"] == "humanize"]
+        assert len(resolved_humanize) == 1 and isinstance(resolved_humanize[0]["version"], str)
+        evidence.update(dependency_requirement_from_request="humanize",
+            dependency_version_selected_by_ordinary_resolution=resolved_humanize[0]["version"])
         assert receipt.binding.revision == 2 and receipt.binding.descriptor_digest == descriptor.digest
         assert receipt.inputs.source.revision == original_source["revision"] and len(receipt.inputs.derived_inputs) == 5
         assert (package_root/"source/unknown.payload").read_bytes() == b"\x00\xffsynthetic\n"

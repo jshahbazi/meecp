@@ -52,8 +52,12 @@ def python_adapter_guide(component, *, unlocked=False):
 def builtin_analysis_guides():
     # Literal published identity: a changed component does not inherit guidance
     # silently. New implementations must register a fresh exact guide binding.
-    return (python_adapter_guide({"id": "agent-python-adapter-v1", "version": "1.0.0",
-        "digest": "28c1d862b947f294dcd0a7f038c32f3d9cf4e31ea20f81d91ab800b13d0b8274"}),)
+    return (
+        python_adapter_guide({"id": "agent-python-adapter-v1", "version": "1.0.0",
+            "digest": "28c1d862b947f294dcd0a7f038c32f3d9cf4e31ea20f81d91ab800b13d0b8274"}),
+        python_adapter_guide({"id": "agent-unlocked-python-adapter-v1", "version": "1.0.0",
+            "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"}, unlocked=True),
+    )
 
 
 class AnalysisGuideRegistry:

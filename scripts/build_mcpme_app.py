@@ -119,7 +119,7 @@ def verify_signature(path: Path, certificate_hash: str | None = None, deep: bool
 
 def sign_runtime(root: Path, identity: str = "-", release: bool = False,
                  keychain: Path | None = None, *, immutable_runtime: Path | None = None,
-                 signed_runtime: Path | None = None) -> int:
+                 signed_runtime: Path | None = None, signed_command_host: Path | None = None) -> int:
     if release and immutable_runtime is not None:
         raise SystemExit("signed_textgen_preparation_not_supported")
     if signed_runtime is not None:
@@ -129,6 +129,14 @@ def sign_runtime(root: Path, identity: str = "-", release: bool = False,
         from mcpme.preparation_textgen_signed_runtime import verify_runtime as verify_frozen_runtime
         frozen = verify_frozen_runtime(signed_runtime, exact=True)
         verify_signatures(signed_runtime, frozen, certificate=identity if release else None)
+    command_paths = set()
+    if signed_command_host is not None:
+        if signed_command_host != root / "Contents/Resources/host":
+            raise ValueError("signed_command_host_invalid")
+        from signed_command_helpers import verify_host as verify_signed_commands
+        command_profile = verify_signed_commands(signed_command_host, certificate=identity if release else None)
+        command_paths = {signed_command_host / "bin" / name for name in
+            ("mcpme-command-reap", "mcpme-command-resource-reap")}
     count = 0
     # Sign individual native files before the outer bundle seals their resources.
     for path in sorted(root.rglob("*"), key=lambda path: (-len(path.parts), str(path))):
@@ -143,7 +151,8 @@ def sign_runtime(root: Path, identity: str = "-", release: bool = False,
         if magic not in MACHO_MAGIC:
             continue
         preserved = ((immutable_runtime is not None and path.is_relative_to(immutable_runtime))
-                     or (signed_runtime is not None and path.is_relative_to(signed_runtime)))
+                     or (signed_runtime is not None and path.is_relative_to(signed_runtime))
+                     or path in command_paths)
         if path.suffix == ".dylib" and not preserved:
             # python-build-standalone gives libpython an absolute install ID;
             # rewrite that self identity before inspecting actual imports.
@@ -160,6 +169,9 @@ def sign_runtime(root: Path, identity: str = "-", release: bool = False,
         count += not preserved
     if signed_runtime is not None:
         verify_frozen_runtime(signed_runtime, frozen, exact=True)
+    if signed_command_host is not None and verify_signed_commands(
+            signed_command_host, certificate=identity if release else None) != command_profile:
+        raise ValueError("signed_command_helpers_changed")
     return count
 
 
@@ -178,10 +190,24 @@ def refresh_postbuild_host_artifacts(host: Path, host_receipt: dict, *, expected
         host_receipt["artifact_sha256"][relative] = sha256(path)
 
 
+def require_command_asset(source: Path, *, signed: bool, asset: Path | None):
+    """Reject active command builds without their immutable pair before tools."""
+    policy = source / "templates/release-policies/phase3-v1.json"
+    if not signed or asset is not None or not policy.is_file():
+        return
+    if policy.stat().st_size > 64 * 1024:
+        raise ValueError("release_policy_invalid")
+    value = json.loads(policy.read_bytes())
+    if type(value) is not dict:
+        raise ValueError("release_policy_invalid")
+    if value.get("command") is not None:
+        raise SystemExit("signed_command_asset_required")
+
+
 def build(destination: Path, legacy_recovery_app: Path | None = None,
           sign_identity: str | None = None, keychain: Path | None = None,
           version: str | None = None, textgen_engine: Path | None = None,
-          textgen_signed_asset: Path | None = None) -> Path:
+          textgen_signed_asset: Path | None = None, command_signed_asset: Path | None = None) -> Path:
     # Validate before invoking any tool or signing operation.
     effective_version = project_version(version)
     if textgen_engine is not None and sign_identity is not None:
@@ -191,6 +217,10 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
             raise ValueError("textgen_runtime_selection_conflict")
         from signed_textgen_asset import admit_archive
         admit_archive(textgen_signed_asset)
+    if command_signed_asset is not None:
+        from signed_command_helpers import admit_archive as admit_commands
+        admit_commands(command_signed_asset)
+    require_command_asset(ROOT, signed=sign_identity is not None, asset=command_signed_asset)
     if keychain is not None and sign_identity is None:
         raise SystemExit("keychain_requires_signing_identity")
     identity = developer_identity(sign_identity, keychain) if sign_identity is not None else "-"
@@ -224,6 +254,24 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
     if textgen_signed_asset is not None:
         host_options["textgen_signed_asset"] = textgen_signed_asset
     host = build_host(resources / "host", **host_options)
+    if not release:
+        # Development apps carry closed authority before inventory/signing.
+        # Runtime verification never downgrades a malformed signed release.
+        policy = host / "templates/release-policies/phase3-v1.json"
+        policy.write_text(json.dumps({"schema_version": 1, "policy_id": "phase3-development-closed-v1",
+            "preparation": {"families": [], "recipe_component_sets": [], "resolution_candidate_kinds": []},
+            "agent": {"components": [], "providers": [], "unlocked_resolution": False},
+            "command": None}, sort_keys=True) + "\n")
+    command_signing = {}
+    if command_signed_asset is not None:
+        from signed_command_helpers import bundle as bundle_commands, verify_host as verify_signed_commands
+        # These are only the freshly produced staging helpers. Asset validation
+        # precedes removal; historical signed apps are never modified.
+        for name in ("mcpme-command-reap", "mcpme-command-resource-reap"):
+            (host / "bin" / name).unlink()
+        bundle_commands(host, command_signed_asset)
+        command_profile = verify_signed_commands(host, certificate=identity if release else None)
+        command_signing["signed_command_host"] = host
     starter = prepare_starter_package(resources)
     shutil.copy2(native, host / "bin/mcpme-handoff")
     (host / "native-app.json").write_text(json.dumps({"schema_version": 1, "bundle_identifier": "com.jshahbazi.mcpme",
@@ -252,16 +300,16 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
         from signed_textgen_asset import verify_host as verify_signed_textgen
         frozen_profile = verify_signed_textgen(host, certificate=identity if release else None)
         signed_files = sign_runtime(staged, identity, release, keychain,
-                                    signed_runtime=host / "preparation-toolchain/textgen-runtime")
+                                    signed_runtime=host / "preparation-toolchain/textgen-runtime", **command_signing)
         verify_signed_textgen(host, certificate=identity if release else None)
     elif textgen_engine is not None:
         from bundle_textgen_assets import verify_runtime as verify_textgen_runtime
         verify_textgen_runtime(host)
         signed_files = sign_runtime(staged, identity, release, keychain,
-                                    immutable_runtime=host / "preparation-toolchain/textgen-runtime")
+                                    immutable_runtime=host / "preparation-toolchain/textgen-runtime", **command_signing)
         verify_textgen_runtime(host)
     else:
-        signed_files = sign_runtime(staged, identity, release, keychain)
+        signed_files = sign_runtime(staged, identity, release, keychain, **command_signing)
     if (host / "preparation-toolchain/toolchain.json").is_file():
         refresh_toolchain_manifest(host / "preparation-toolchain")
     starter_receipt = finalize_starter_package(starter, host, release=release)
@@ -303,6 +351,9 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
         verify_textgen_runtime(host)
     if textgen_signed_asset is not None:
         verify_signed_textgen(host, certificate=identity if release else None)
+    if command_signed_asset is not None and verify_signed_commands(
+            host, certificate=identity if release else None) != command_profile:
+        raise ValueError("signed_command_helpers_changed")
     staged.rename(destination)
     # An executable signature seals Resources; keep its final digest outside that
     # seal to avoid a self-referential receipt changing the executable digest.
@@ -321,11 +372,12 @@ if __name__ == "__main__":
     parser.add_argument("--version", help="Override the application version (major.minor.patch)")
     parser.add_argument("--textgen-engine", type=Path, help="Exact reviewed engine Resources directory for private CPU text preparation")
     parser.add_argument("--textgen-signed-asset", type=Path, help="Exact immutable signed TextGen runtime archive")
+    parser.add_argument("--command-signed-asset", type=Path, help="Exact immutable signed command helper archive")
     arguments = parser.parse_args()
     try:
         print(build(arguments.output.absolute(), arguments.legacy_recovery_app,
                     arguments.sign_identity, arguments.keychain, arguments.version, arguments.textgen_engine,
-                    arguments.textgen_signed_asset))
+                    arguments.textgen_signed_asset, arguments.command_signed_asset))
     except KeyboardInterrupt:
         raise SystemExit("app_build_interrupted") from None
     except BuildCommandError as error:

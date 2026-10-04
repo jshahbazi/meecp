@@ -172,6 +172,9 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
     def build_host(destination, *, version):
         host_versions.append(version)
         (destination / "bin").mkdir(parents=True)
+        policy = destination / "templates/release-policies/phase3-v1.json"
+        policy.parent.mkdir(parents=True)
+        policy.write_text(json.dumps({"synthetic_active_release_policy": True}))
         resource = host_builder._resource_inventory_contract()
         helper = destination / resource["helper"]
         helper.write_bytes(b"synthetic resource helper")
@@ -181,7 +184,8 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
         inventory.write_text(json.dumps(resource))
         (destination / "build.json").write_text(json.dumps({
             "host_version": version, "artifact_sha256": {
-                resource["helper"]: app_builder.sha256(helper), "command-resource-execution.json": app_builder.sha256(inventory)},
+                resource["helper"]: app_builder.sha256(helper), "command-resource-execution.json": app_builder.sha256(inventory),
+                "templates/release-policies/phase3-v1.json": app_builder.sha256(policy)},
         }))
         return destination
 
@@ -216,6 +220,14 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
     assert receipt["source_commit"] == "a" * 40
     assert receipt["source_tree_dirty"] is False
     assert receipt["signing"] == host_receipt["signing"] == ("developer_id" if release else "ad_hoc")
+    policy = json.loads((resources / "host/templates/release-policies/phase3-v1.json").read_bytes())
+    if release:
+        assert policy == {"synthetic_active_release_policy": True}
+    else:
+        from mcpme.preparation_release_policy import ReleasePolicy
+        closed = ReleasePolicy.model_validate(policy)
+        assert closed.admissions() == (None, None, None)
+        assert closed.policy_id == "phase3-development-closed-v1"
     resource = json.loads((resources / "host/command-resource-execution.json").read_bytes())
     assert resource["helper_source_sha256"] == "a" * 64 and resource["helper_header_sha256"] == "b" * 64
     assert resource["helper_sha256"] == app_builder.sha256(resources / "host" / resource["helper"])
@@ -311,6 +323,103 @@ def test_all_native_helpers_and_extensions_get_hardened_signatures(monkeypatch, 
     validations = [call for call in calls if "--verify" in call]
     assert len(validations) == 4
     assert all(CERTIFICATE in call[call.index("-R") + 1] for call in validations)
+
+
+def test_reviewed_command_pair_survives_runtime_signing(monkeypatch, tmp_path):
+    import signed_command_helpers
+    host = tmp_path / "Contents/Resources/host"
+    paths = [host / "bin" / name for name in
+             ("mcpme-command-reap", "mcpme-command-resource-reap", "mcpme-reap")]
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\xcf\xfa\xed\xfe" + b"synthetic native file")
+    before = {path: path.read_bytes() for path in paths[:2]}
+    checks, calls = [], []
+
+    def verify(selected, *, certificate=None):
+        assert selected == host and certificate == CERTIFICATE
+        assert {path: path.read_bytes() for path in paths[:2]} == before
+        checks.append(selected)
+        return {"immutable_pair": True}
+
+    def run(*arguments):
+        calls.append(arguments)
+        if arguments[0] == "/usr/bin/otool":
+            return "synthetic:\n /usr/lib/libSystem.B.dylib (compatibility version 1.0.0)"
+        if "--force" in arguments:
+            Path(arguments[-1]).write_bytes(b"changed by signing")
+        return ""
+
+    monkeypatch.setattr(signed_command_helpers, "verify_host", verify)
+    monkeypatch.setattr(app_builder, "run", run)
+    assert app_builder.sign_runtime(tmp_path, CERTIFICATE, True, signed_command_host=host) == 1
+    assert checks == [host, host]
+    assert {Path(call[-1]) for call in calls if "--force" in call} == {paths[2]}
+    assert {Path(call[-1]) for call in calls if "--verify" in call} == set(paths)
+
+
+def test_command_preservation_rejects_wrong_host_before_tools(monkeypatch, tmp_path):
+    monkeypatch.setattr(app_builder, "run", lambda *args: pytest.fail("wrong host reached a tool"))
+    with pytest.raises(ValueError, match="^signed_command_host_invalid$"):
+        app_builder.sign_runtime(tmp_path, signed_command_host=tmp_path / "other")
+
+
+def test_command_asset_rejected_before_credentials_or_tools(monkeypatch, tmp_path):
+    import signed_command_helpers
+
+    def reject(*args, **kwargs):
+        raise ValueError("signed_command_helpers_invalid")
+
+    monkeypatch.setattr(signed_command_helpers, "admit_archive", reject)
+    for builder in (app_builder, dmg_builder):
+        monkeypatch.setattr(builder, "developer_identity", lambda *args: pytest.fail("invalid asset reached credentials"))
+        monkeypatch.setattr(builder, "run", lambda *args: pytest.fail("invalid asset reached tools"))
+        with pytest.raises(ValueError, match="^signed_command_helpers_invalid$"):
+            builder.build(tmp_path / "output", sign_identity=CERTIFICATE,
+                          command_signed_asset=tmp_path / "invalid.tar.gz")
+
+
+def test_active_command_source_requires_immutable_asset_before_credentials(monkeypatch, tmp_path):
+    policy = tmp_path / "templates/release-policies/phase3-v1.json"
+    policy.parent.mkdir(parents=True)
+    policy.write_text(json.dumps({"command": {"reviewed": True}}))
+    monkeypatch.setattr(app_builder, "ROOT", tmp_path)
+    monkeypatch.setattr(app_builder, "developer_identity", lambda *args: pytest.fail("missing asset reached credentials"))
+    monkeypatch.setattr(app_builder, "run", lambda *args: pytest.fail("missing asset reached tools"))
+    with pytest.raises(SystemExit, match="^signed_command_asset_required$"):
+        app_builder.build(tmp_path / "mcpme.app", sign_identity=CERTIFICATE, version="1.2.3")
+    monkeypatch.setattr(dmg_builder, "ROOT", tmp_path)
+    monkeypatch.setattr(dmg_builder, "developer_identity", lambda *args: pytest.fail("missing asset reached DMG credentials"))
+    monkeypatch.setattr(dmg_builder, "run", lambda *args: pytest.fail("missing asset reached DMG tools"))
+    with pytest.raises(SystemExit, match="^signed_command_asset_required$"):
+        dmg_builder.build(tmp_path / "mcpme.dmg", sign_identity=CERTIFICATE, version="1.2.3")
+
+
+def test_supplied_active_command_app_is_checked_before_credentials(monkeypatch, tmp_path):
+    import signed_command_helpers
+    app = tmp_path / "mcpme.app"
+    policy = app / "Contents/Resources/host/templates/release-policies/phase3-v1.json"
+    policy.parent.mkdir(parents=True)
+    policy.write_text(json.dumps({"command": {"reviewed": True}}))
+    checked = []
+
+    def reject(host, *, certificate=None):
+        checked.append((host, certificate))
+        raise ValueError("signed_command_helpers_invalid")
+
+    monkeypatch.setattr(signed_command_helpers, "verify_host", reject)
+    monkeypatch.setattr(dmg_builder, "developer_identity", lambda *args: pytest.fail("invalid pair reached credentials"))
+    monkeypatch.setattr(dmg_builder, "run", lambda *args: pytest.fail("invalid pair reached tools"))
+    with pytest.raises(SystemExit, match="^signed_command_helpers_invalid$"):
+        dmg_builder.build(tmp_path / "mcpme.dmg", app=app, sign_identity=CERTIFICATE)
+    assert checked == [(app / "Contents/Resources/host", None)]
+
+
+def test_prebuilt_command_app_cannot_replace_helpers_during_dmg_build(monkeypatch, tmp_path):
+    monkeypatch.setattr(dmg_builder, "developer_identity", lambda *args: pytest.fail("replacement reached credentials"))
+    with pytest.raises(SystemExit, match="^command_asset_requires_source_build$"):
+        dmg_builder.build(tmp_path / "mcpme.dmg", app=tmp_path / "mcpme.app",
+                          command_signed_asset=tmp_path / "asset.tar.gz", sign_identity=CERTIFICATE)
 
 
 @pytest.mark.skipif(platform.system() != "Darwin", reason="Requires macOS codesign")
@@ -414,6 +523,38 @@ def fake_packaging(monkeypatch, tmp_path):
     monkeypatch.setattr(dmg_builder, "run", run)
     monkeypatch.setattr(dmg_builder, "verify_image", verify)
     return calls
+
+
+def test_dmg_source_build_forwards_immutable_command_asset(fake_packaging, monkeypatch, tmp_path):
+    import signed_command_helpers
+    archive = tmp_path / "approved.tar.gz"
+    admitted, forwarded = [], []
+    original = dmg_builder.build_app
+
+    def build_app(destination, **kwargs):
+        forwarded.append(kwargs.pop("command_signed_asset"))
+        return original(destination, **kwargs)
+
+    monkeypatch.setattr(signed_command_helpers, "admit_archive", lambda path: admitted.append(path))
+    monkeypatch.setattr(dmg_builder, "build_app", build_app)
+    assert dmg_builder.build(tmp_path / "installer.dmg", sign_identity=IDENTITY,
+                             command_signed_asset=archive).is_file()
+    assert admitted == forwarded == [archive]
+
+
+def test_dmg_detects_command_pair_change_in_private_copy(fake_packaging, monkeypatch, tmp_path):
+    app = tmp_path / "supplied.app"
+    dmg_builder.build_app(app, sign_identity=CERTIFICATE)
+    policy = app / "Contents/Resources/host/templates/release-policies/phase3-v1.json"
+    policy.parent.mkdir(parents=True)
+    policy.write_text(json.dumps({"command": {"reviewed": True}}))
+    def profile(selected, certificate_hash=None):
+        return {"unchanged": selected == app}
+
+    monkeypatch.setattr(dmg_builder, "command_profile", profile)
+    with pytest.raises(SystemExit, match="^signed_command_helpers_changed$"):
+        dmg_builder.build(tmp_path / "installer.dmg", app=app, sign_identity=IDENTITY)
+    assert not any(call[:2] == ("/usr/bin/hdiutil", "create") for call in fake_packaging)
 
 
 @pytest.mark.parametrize("signed,notarized,distribution", [

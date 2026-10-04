@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import asynccontextmanager
 import hashlib
 import json
 import logging
 import os
 from pathlib import Path
+import secrets
 import shutil
 import signal
 import subprocess
@@ -131,18 +133,62 @@ async def http_call(host, slot):
                 require(result.structuredContent == {"ok": True})
 
 
+@asynccontextmanager
+async def fixture_owner_manager(host):
+    """Expose the real owner API required by the bundled stdio launcher."""
+    import uvicorn
+    from mcpme.private import write_private_json
+    from mcpme.supervisor import HostServer, bind_listener, management_app
+    from mcpme_local_transport import bind_private_listener, socket_path
+
+    connection = host.root / "manager-connection.json"
+    require(not connection.exists() and not connection.is_symlink())
+    tcp = bind_listener()
+    private = None
+    task = None
+    server = None
+    try:
+        private = bind_private_listener(host.root, "manager")
+        port = tcp.getsockname()[1]
+        token = secrets.token_urlsafe(32)
+        server = HostServer(uvicorn.Config(management_app(host, token, port),
+            log_config=None, access_log=False, log_level="critical", timeout_graceful_shutdown=3))
+        task = asyncio.create_task(server.serve(sockets=[tcp, private]))
+        async with asyncio.timeout(5):
+            while not server.started:
+                if task.done():
+                    await task
+                    require(False)
+                await asyncio.sleep(.01)
+        write_private_json(connection, {"api_version": 1,
+            "endpoint": f"http://127.0.0.1:{port}", "token": token, "supervisor_pid": os.getpid()})
+        yield
+    finally:
+        connection.unlink(missing_ok=True)
+        try:
+            if task is not None:
+                server.should_exit = True
+                await asyncio.wait_for(task, 5)
+        finally:
+            tcp.close()
+            if private is not None:
+                private.close()
+                socket_path(host.root, "manager").unlink(missing_ok=True)
+
+
 async def stdio_call(host_path, host, slot):
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
     params = StdioServerParameters(command=str(host_path / "bin/mcpme"), args=["--state-dir", str(host.root), "connect", "--slot", slot.id])
-    with open(os.devnull, "w") as errors:
-        async with stdio_client(params, errlog=errors) as (read, write):
-            async with ClientSession(read, write) as client:
-                await client.initialize()
-                tools = await client.list_tools()
-                require([t.model_dump(by_alias=True, exclude_none=True) for t in tools.tools] ==
-                        [t.mcp_schema() for t in host.package(slot).manifest.tools])
-                require((await client.call_tool("probe", {"ok": True})).structuredContent == {"ok": True})
+    async with fixture_owner_manager(host):
+        with open(os.devnull, "w") as errors:
+            async with stdio_client(params, errlog=errors) as (read, write):
+                async with ClientSession(read, write) as client:
+                    await client.initialize()
+                    tools = await client.list_tools()
+                    require([t.model_dump(by_alias=True, exclude_none=True) for t in tools.tools] ==
+                            [t.mcp_schema() for t in host.package(slot).manifest.tools])
+                    require((await client.call_tool("probe", {"ok": True})).structuredContent == {"ok": True})
 
 
 async def held_call(host, slot):

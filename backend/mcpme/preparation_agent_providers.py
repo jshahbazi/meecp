@@ -17,7 +17,7 @@ from pydantic import Field, SecretStr, model_validator
 
 from .contracts import StrictModel
 from .preparation_agent_backend import ENDPOINT, OpenAIResponsesBackend
-from .preparation_contracts import canonical_bytes, contract_digest
+from .preparation_contracts import PreparationError, canonical_bytes, contract_digest
 from .private import ensure_private_directory, read_private_json, write_private_json
 from .settings import SecretStore
 
@@ -145,7 +145,11 @@ class OpenAIResponsesAdapter:
 
 
 class AgentProviderRegistry:
-    def __init__(self, root: Path, *, adapters=None):
+    def __init__(self, root: Path, *, adapters=None, execution_admission=None):
+        from .preparation_release_policy import AgentExecutionAdmission
+        if execution_admission is not None and type(execution_admission) is not AgentExecutionAdmission:
+            raise AgentProviderError("agent_provider_unavailable")
+        self.execution_admission = execution_admission
         try:
             registered = (OpenAIResponsesAdapter(),) if adapters is None else tuple(adapters)
             self.adapters = {item.adapter_id: item for item in registered}
@@ -213,15 +217,28 @@ class AgentProviderRegistry:
 
     def _metadata(self, record):
         adapter = self.adapters.get(record.adapter_id)
+        credential_status = self._credential_status(record)
+        available = (self._execution_current() and adapter is not None and credential_status == "configured"
+            and any(self.execution_admission.permits(adapter.adapter_id, adapter.digest, model) for model in record.models))
         return record.model_dump(exclude={"credential_references"}) | {
-            "credential_status": self._credential_status(record),
-            "destination": adapter.destination if adapter else None, "execution_available": False}
+            "credential_status": credential_status,
+            "destination": adapter.destination if adapter else None, "execution_available": available}
 
     def list(self):
         with self._lock:
             journal = self._read()
             return {"schema_version": 1, "adapters": [self._adapter_metadata(item) for item in self.adapters.values()],
-                "providers": [self._metadata(item) for item in journal.providers], "live_execution_enabled": False}
+                "providers": [self._metadata(item) for item in journal.providers],
+                "live_execution_enabled": self._execution_current() and bool(self.execution_admission.providers)}
+
+    def _execution_current(self):
+        if self.execution_admission is None:
+            return False
+        try:
+            self.execution_admission.check_current()
+            return True
+        except PreparationError:
+            return False
 
     def _new_credentials(self, adapter, credentials):
         values = {key: value.get_secret_value() for key, value in credentials.items()}

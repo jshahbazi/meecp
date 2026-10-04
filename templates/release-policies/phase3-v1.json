@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "policy_id": "phase3-closed-v1",
+  "preparation": {
+    "families": [],
+    "recipe_component_sets": [],
+    "resolution_candidate_kinds": []
+  },
+  "command": null,
+  "agent": {
+    "components": [],
+    "providers": [],
+    "unlocked_resolution": false
+  }
+}

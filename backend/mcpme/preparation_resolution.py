@@ -259,9 +259,19 @@ class ResolutionStore:
     def require_public_producer(self, request):
         if self.public_admission is None:
             return
-        self.public_admission.require_request(request)
-        if self._current_producer() != request.producer:
+        self.public_admission.check_current(full=True)
+        self.require_public_kind(request)
+        if self.current_producer_for(request) != request.producer:
             raise PreparationError("resolution_implementation_changed")
+
+    def require_public_kind(self, request):
+        """Metadata-only domain guard; trusted dispatchers may narrow further."""
+        if self.public_admission is not None:
+            self.public_admission.check_current()
+            self.public_admission.require_request(request)
+
+    def current_producer_for(self, request):
+        return self._current_producer()
 
     def plan(self, request, candidate, *, expires_in):
         if type(expires_in) is not int or not 1 <= expires_in <= 300:
@@ -279,8 +289,7 @@ class ResolutionStore:
         return value
 
     def _current(self, request):
-        if self.public_admission is not None:
-            self.public_admission.require_request(request)
+        self.require_public_kind(request)
         draft = self.imports._get(request.import_id, request.revision)
         self.imports._mutable(draft)
         if draft["expires_at"] <= time.time():
@@ -494,8 +503,7 @@ class ResolutionStore:
         if canonical_bytes(self._get(proof.job_id)) != proof.job:
             raise PreparationError("resolution_result_mismatch")
         result = ResolutionResultV1.model_validate(json.loads(proof.result))
-        if self.public_admission is not None:
-            self.public_admission.require_request(result.request)
+        self.require_public_kind(result.request)
         self._accepted(proof.import_id, proof.prior_revision, proof.candidate_id, result)
         import_id, prior_revision, candidate_id = proof.import_id, proof.prior_revision, proof.candidate_id
         binding = AcceptedResolutionReferenceV1(schema_version=1, import_id=import_id, prior_revision=prior_revision,

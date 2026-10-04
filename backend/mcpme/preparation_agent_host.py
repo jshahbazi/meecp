@@ -115,9 +115,36 @@ async def _join(task):
     return task.result()
 
 
+class _AdmittedBackend:
+    """Recheck held artifact authority immediately before each transport call."""
+    def __init__(self, backend, admission, authority):
+        self.backend, self.admission, self.authority = backend, admission, authority
+        self.backend_id = backend.backend_id
+
+    def encode(self, *args):
+        return self.backend.encode(*args)
+
+    async def complete(self, *args):
+        task = asyncio.create_task(asyncio.to_thread(lambda: self.admission.check_current(full=True)))
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            try:
+                await _join(task)
+            except Exception:
+                pass
+            raise
+        self.authority(args[0])
+        return await self.backend.complete(*args)
+
+
 class AgentPreparationHost:
     def __init__(self, preparations, root: Path, *, providers=(), live_enabled=False, simulated_enabled=False,
-                 guides=None, choice_rules=None, provider_registry=None):
+                 guides=None, choice_rules=None, provider_registry=None, execution_admission=None):
+        from .preparation_release_policy import AgentExecutionAdmission
+        if execution_admission is not None and (type(execution_admission) is not AgentExecutionAdmission
+                or live_enabled is not False or simulated_enabled is not False or providers):
+            raise PreparationError("invalid_agent_execution_admission")
         if type(live_enabled) is not bool or type(simulated_enabled) is not bool:
             raise PreparationError("agent_host_configuration_invalid")
         self.preparations, self.imports, self.recipes = preparations, preparations.imports, preparations.recipes
@@ -126,6 +153,7 @@ class AgentPreparationHost:
         if len(self.providers) != len(providers) or len(providers) > 16:
             raise PreparationError("agent_provider_configuration_invalid")
         self.live_enabled, self.simulated_enabled = live_enabled, simulated_enabled
+        self.execution_admission = execution_admission
         self.guides = AnalysisGuideRegistry(builtin_analysis_guides() if guides is None else guides)
         self.recipe_choices = AgentRecipeChoiceRegistry(builtin_recipe_choice_rules() if choice_rules is None else choice_rules)
         self.store = AgentAttemptStore(Path(root))
@@ -151,7 +179,15 @@ class AgentPreparationHost:
             self.store.close()
             raise
 
-    def _available(self, provider):
+    def _available(self, provider, model=None):
+        if self.execution_admission is not None:
+            try:
+                self.execution_admission.check_current()
+            except PreparationError:
+                return False
+            return (not self.closing and not provider.simulated and any(
+                self.execution_admission.permits(provider.backend.backend_id, provider.adapter_digest, value)
+                for value in ((model,) if model is not None else provider.models)))
         return self.simulated_enabled if provider.simulated else self.live_enabled
 
     def _provider(self, provider_id, model):
@@ -223,6 +259,8 @@ class AgentPreparationHost:
             permitted_tools=["read-selected-source", "propose-files"], limits=plan["limits"])
 
     def _validate(self, plan, *, dispatch=False):
+        if self.execution_admission is not None:
+            self.execution_admission.check_current()
         if self.closing:
             raise PreparationError("agent_host_closing")
         if time.time() >= plan["expires_at"]:
@@ -235,13 +273,20 @@ class AgentPreparationHost:
         provider = self._provider(plan["provider_id"], plan["model"])
         if provider.digest != plan["provider_digest"]:
             raise PreparationError("agent_provider_changed")
-        if dispatch and not self._available(provider):
+        if plan.get("execution_admission_digest") != (self.execution_admission.digest if self.execution_admission else None):
+            raise PreparationError("agent_execution_admission_changed")
+        if dispatch and not self._available(provider, plan["model"]):
             raise PreparationError("agent_execution_disabled")
         ref = plan["recipe"]
         recipe = self.recipes.assert_admissible(ref["id"], ref["version"], ref["digest"])
         if recipe["epoch"] != plan["recipe_epoch"]:
             raise PreparationError("agent_recipe_changed")
         self._guide(plan, recipe)
+        if self.execution_admission is not None:
+            guide = self.guides.resolve(recipe)
+            component = AnalysisGuideV1.model_validate(guide).component if guide is not None else None
+            if component is None or (component.id, component.version, component.digest) not in self.execution_admission.components:
+                raise PreparationError("agent_recipe_not_admitted")
         request = self._request(plan, draft)
         if request.digest != plan["request_digest"]:
             raise PreparationError("agent_scope_changed")
@@ -299,6 +344,14 @@ class AgentPreparationHost:
         check()
         return data
 
+    def _reviewed_source(self, *args):
+        if self.execution_admission is not None:
+            self.execution_admission.check_current(full=True)
+        result = self._selected_bytes(*args)
+        if self.execution_admission is not None:
+            self.execution_admission.check_current(full=True)
+        return result
+
     async def plan(self, payload):
         if self.closing:
             raise PreparationError("agent_host_closing")
@@ -334,6 +387,7 @@ class AgentPreparationHost:
                 "snapshot_metadata_digest": self._snapshot_metadata(draft),
                 "recipe": selection.recipe.model_dump(), "recipe_epoch": recipe["epoch"],
                 "provider_id": provider.provider_id, "provider_digest": provider.digest, "model": selection.model,
+                "execution_admission_digest": self.execution_admission.digest if self.execution_admission else None,
                 "selected_files": selected, "selected_metadata": metadata,
                 "guide_binding": self._guide_binding(self.guides.resolve(recipe)),
                 "limits": selection.limits.model_dump(),
@@ -348,7 +402,7 @@ class AgentPreparationHost:
         # A joined recipe worker is not authority to create another worker after
         # shutdown has begun. This fence and task registration have no await.
         self._validate(plan)
-        worker = asyncio.create_task(asyncio.to_thread(self._selected_bytes, draft, selected + metadata,
+        worker = asyncio.create_task(asyncio.to_thread(self._reviewed_source, draft, selected + metadata,
             lambda: None, selection.selected_paths))
         self.static_workers.add(worker)
         try:
@@ -374,12 +428,12 @@ class AgentPreparationHost:
         guide = self._guide(plan)
         return {key: plan[key] for key in ("schema_version", "plan_id", "plan_digest", "import_id", "revision",
             "source_revision", "recipe", "provider_id", "model", "selected_files", "selected_metadata", "limits", "expires_at")} | {
-            "destination": provider.destination, "simulated": provider.simulated, "execution_available": self._available(provider),
+            "destination": provider.destination, "simulated": provider.simulated, "execution_available": self._available(provider, plan["model"]),
             "provider_generation": provider.generation,
             "guide": guide, "guide_digest": plan["guide_binding"]["digest"] if guide else None,
             "maximum_reserved_output_tokens": plan["limits"]["max_calls"] * plan["limits"]["max_output_tokens"],
             "monetary_ceiling_enforced": False, "remote_usage_after_cancel": "unknown",
-            "blockers": [] if self._available(provider) else ["agent_execution_disabled"]}
+            "blockers": [] if self._available(provider, plan["model"]) else ["agent_execution_disabled"]}
 
     def _plan(self, plan_id):
         row = self.db.execute("SELECT data FROM agent_host_plans WHERE id=?", (plan_id,)).fetchone()
@@ -440,7 +494,7 @@ class AgentPreparationHost:
         try:
             request, draft, provider = self._validate(plan, dispatch=True)
             job["state"] = "snapshotting"; self._save_job(job)
-            worker = asyncio.create_task(asyncio.to_thread(self._selected_bytes, draft,
+            worker = asyncio.create_task(asyncio.to_thread(self._reviewed_source, draft,
                 plan["selected_files"] + plan.get("selected_metadata", []), check,
                 [item["path"] for item in plan["selected_files"]]))
             captured = await asyncio.shield(worker)
@@ -452,7 +506,9 @@ class AgentPreparationHost:
                     raise PreparationError("agent_scope_changed")
                 check()
                 self._validate(plan, dispatch=True)
-            coordinator = AgentCoordinator(self.store, provider.backend, authority)
+            backend = (_AdmittedBackend(provider.backend, self.execution_admission, authority)
+                if self.execution_admission is not None else provider.backend)
+            coordinator = AgentCoordinator(self.store, backend, authority)
             attempt = coordinator.create(request)
             job.update(state="analyzing", attempt_id=attempt["attempt_id"]); self._save_job(job)
             child = asyncio.create_task(coordinator.run(attempt["attempt_id"], request, source))
@@ -462,9 +518,13 @@ class AgentPreparationHost:
             self._validate(plan, dispatch=True)
             job.update(state="validating", proposal_digest=result.digest); self._save_job(job)
             def validate_candidate():
+                if self.execution_admission is not None:
+                    self.execution_admission.check_current(full=True)
                 check()
                 descriptor, draft = self._candidate_descriptor(job, plan, result, check)
                 self._candidate_binding(descriptor, draft)
+                if self.execution_admission is not None:
+                    self.execution_admission.check_current(full=True)
                 check()
                 return {"descriptor_digest": descriptor.digest, "recipe": descriptor.recipe.model_dump()}
             worker = asyncio.create_task(asyncio.to_thread(validate_candidate))
@@ -656,6 +716,8 @@ class AgentPreparationHost:
             self._validate(plan)
             return True
         def prepare():
+            if self.execution_admission is not None:
+                self.execution_admission.check_current(full=True)
             def check():
                 if stop.is_set():
                     raise PreparationError("agent_cancel_requested")
@@ -665,6 +727,8 @@ class AgentPreparationHost:
             checked = self.preparations.prepare_descriptor_selection(job["import_id"], job["revision"],
                 descriptor.model_dump(mode="json", exclude_none=True), candidate_id=candidate_id,
                 form_digest=plan["plan_digest"], resolution_digest=resolution_digest)
+            if self.execution_admission is not None:
+                self.execution_admission.check_current(full=True)
             if stop.is_set():
                 raise PreparationError("agent_cancel_requested")
             return checked, descriptor.digest, candidate_id

@@ -107,6 +107,18 @@ def capabilities(host=None) -> dict:
         host.public_admission.check_current()
     except PreparationError:
         return result
+    from .host_command import HostCommandAdmission
+    from .preparation_release_command_admission import COMMAND_COMPONENT, ReleasedHostCommands
+    commands = host.commands
+    if (type(commands) is ReleasedHostCommands and type(commands.admission) is HostCommandAdmission
+            and host.public_admission.artifact is not None
+            and commands.artifact is host.public_admission.artifact
+            and COMMAND_COMPONENT in host.public_admission.families
+            and frozenset({COMMAND_COMPONENT}) in host.public_admission.recipe_component_sets
+            and commands._release_current()):
+        # Prepared-package support is independent of automatic recipe state.
+        result["package_schema_versions"].append(2)
+        result["profiles"].append("host-command")
     from .preparation_runner import PreparationRunner
     from .preparation_resolution_runner import OwnedResolutionRunner
     from .preparation_agent_public_resolution import PublicAgentResolutionRunner

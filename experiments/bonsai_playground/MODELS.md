@@ -60,3 +60,33 @@ Controlled runtime comparison: the MiniCPM IQ2 artifact failed the same greeting
 - Local model path: `models/qwen3.5-2b/Qwen3.5-2B-BF16.gguf`.
 - License: Apache-2.0; see [licenses/Qwen3.5-2B-LICENSE](licenses/Qwen3.5-2B-LICENSE).
 - Validation: SHA-256 and byte count match the pinned artifact. With the existing Metal runtime and native Qwen template, the application's two-turn arithmetic check passed. The native GUI greeting passed at temperature 0.2. The temperature-zero greeting exhausted 2048 output tokens without closing its thinking block; see [local verification](README.md#local-verification).
+
+## Falcon3 1B Instruct Q4_K_M
+
+- Publisher: Technology Innovation Institute (TII).
+- Base model: [tiiuae/Falcon3-1B-Instruct](https://huggingface.co/tiiuae/Falcon3-1B-Instruct/tree/28ba2251970a01dd1edc7ba7dad2eb71216ccfdf), immutable revision `28ba2251970a01dd1edc7ba7dad2eb71216ccfdf`.
+- Official GGUF repository: [tiiuae/Falcon3-1B-Instruct-GGUF](https://huggingface.co/tiiuae/Falcon3-1B-Instruct-GGUF/tree/fc404df7cfbd32eaefbcbeb2079aba684e894d39), immutable revision `fc404df7cfbd32eaefbcbeb2079aba684e894d39`.
+- File: `Falcon3-1B-Instruct-q4_k_m.gguf`.
+- Download: https://huggingface.co/tiiuae/Falcon3-1B-Instruct-GGUF/resolve/fc404df7cfbd32eaefbcbeb2079aba684e894d39/Falcon3-1B-Instruct-q4_k_m.gguf
+- Size: `1057044608` bytes.
+- SHA-256: `54a4d303f5fb238db640433a61a600e308bfbb40cca2d7b451092e247df46616`.
+- Local model path: `models/falcon3-1b/Falcon3-1B-Instruct-q4_k_m.gguf`.
+- Local metadata: GGUF v3; architecture `llama`; 165 tensors; context length 8192; tokenizer `gpt2`, pretokenizer `falcon3`; EOS ID 11 (`<|endoftext|>`). No BOS ID is declared in the GGUF metadata.
+- The embedded native template uses `<|system|>`, `<|user|>`, and `<|assistant|>` role tokens. This direct-answer profile sends all ordered messages and preserves plain assistant history; it adds no reasoning prefix or budget.
+- License: the pinned model card identifies TII Falcon-LLM License 2.0 and points to the [official terms](https://falconllm.tii.ae/falcon-terms-and-conditions.html). The December 2024 section is retained in [licenses/Falcon-LLM-LICENSE.md](licenses/Falcon-LLM-LICENSE.md). This is a Falcon license, distinct from the Apache licenses of the other playground models.
+
+## Falcon-H1 Tiny 90M Instruct Q4_K_M
+
+- Publisher: Technology Innovation Institute (TII).
+- Base model: [tiiuae/Falcon-H1-Tiny-90M-Instruct](https://huggingface.co/tiiuae/Falcon-H1-Tiny-90M-Instruct/tree/e6389502a0b12cd8da894b395ba5bf7436873b16), immutable revision `e6389502a0b12cd8da894b395ba5bf7436873b16`.
+- Official GGUF repository: [tiiuae/Falcon-H1-Tiny-90M-Instruct-GGUF](https://huggingface.co/tiiuae/Falcon-H1-Tiny-90M-Instruct-GGUF/tree/578d134817c19bc48991ccff9a14709d664261cc), immutable revision `578d134817c19bc48991ccff9a14709d664261cc`.
+- File: `Falcon-H1-Tiny-90M-Instruct-Q4_K_M.gguf`.
+- Download: https://huggingface.co/tiiuae/Falcon-H1-Tiny-90M-Instruct-GGUF/resolve/578d134817c19bc48991ccff9a14709d664261cc/Falcon-H1-Tiny-90M-Instruct-Q4_K_M.gguf
+- Size: `58600064` bytes.
+- SHA-256: `e7d655345a876ecb073ea86f5ce68e412b99090c34a6bde8a2982bc48afb2612`.
+- Local model path: `models/falcon-h1-tiny-90m/Falcon-H1-Tiny-90M-Instruct-Q4_K_M.gguf`.
+- Local metadata: GGUF v3; architecture `falcon-h1` (hybrid Transformer/Mamba); 386 tensors; context length 262144; tokenizer `gpt2`, pretokenizer `falcon-h1`; BOS ID 17; EOS ID 11. The app defaults to 4096 context, with choices through 32768.
+- The 2707-byte embedded ChatML template is byte-identical to the base model's pinned `chat_template.jinja` (SHA-256 `48bcdc7b00244baa76ae8fbc6fb0f2e39253809fbeaa482579200f7588de53a0`). It has no thinking prefill. This profile preserves plain assistant history and uses native formatting with reasoning disabled.
+- License: the pinned model card identifies Falcon-LLM License and points to the same [official terms](https://falconllm.tii.ae/falcon-terms-and-conditions.html). The model license section is retained in [licenses/Falcon-LLM-LICENSE.md](licenses/Falcon-LLM-LICENSE.md).
+
+The playground's Falcon integration is built using Falcon LLM technology from the Technology Innovation Institute. Both downloads were verified locally against the exact published byte counts and SHA-256 hashes. Neither model's pinned generation configuration prescribes numeric sampling values; temperature 0.2, top k 40, top p 0.95, min p 0, and penalties 0/1 are playground defaults. Functional results are recorded in [local verification](README.md#local-verification).

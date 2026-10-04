@@ -2,303 +2,6 @@ import AppKit
 import Darwin
 import Foundation
 
-private let defaultRuntimePath = "/opt/homebrew/bin/llama-completion"
-
-private struct GenerationSettings {
-    var profile = ModelProfile.bonsai
-    var model = ModelProfile.bonsai.defaultModelPath
-    var runtime = defaultRuntimePath
-    var system = "Be helpful, concise, and accurate."
-    var temperature = 0.2
-    var context = 4096
-    var maximumOutput = 512
-    var seed = 42
-
-    func render(_ prompt: String, conversation: Conversation = Conversation()) -> String {
-        profile.render(system: system, prompt: prompt, conversation: conversation)
-    }
-}
-
-private struct GenerationResult {
-    let elapsed: Double
-    let tokensPerSecond: Double?
-    let failure: String?
-    let stopped: Bool
-
-    var message: String {
-        if stopped && failure != "incomplete_result" { return "Stopped." }
-        switch failure {
-        case "model_missing": return "Choose an existing model file in Settings."
-        case "runtime_missing": return "Choose an executable llama-completion runtime in Settings."
-        case "launch_failed": return "Could not start the model. Check the model and runtime settings."
-        case "io_failed": return "The model connection ended unexpectedly."
-        case "process_failed": return "The model could not complete this prompt. Check the settings."
-        case "timeout": return "The model took too long and was stopped."
-        case "busy": return "Wait for the current response or press Stop."
-        case "context_full": return "Conversation reached the context limit. Increase Context in Settings or start a New Chat."
-        case "empty_result": return "The model finished without an answer. Try another prompt or change the settings."
-        case "incomplete_result": return "The model stopped before finishing its answer. Increase Max response in Settings or try again."
-        case .some: return "The model could not complete this prompt."
-        case .none:
-            if let speed = tokensPerSecond {
-                return String(format: "Done in %.2f s · %.1f tokens/s", elapsed, speed)
-            }
-            return String(format: "Done in %.2f s", elapsed)
-        }
-    }
-}
-
-// Keep a partial UTF-8 sequence until the next pipe read. Replacement is used
-// only for malformed bytes, rather than for valid characters split across reads.
-private struct UTF8Stream {
-    private var pending = Data()
-
-    mutating func consume(_ data: Data, final: Bool = false) -> String {
-        pending.append(data)
-        var count = pending.count
-        if !final && count > 0 {
-            let bytes = Array(pending)
-            var lead = count - 1
-            while lead > 0 && bytes[lead] & 0xc0 == 0x80 { lead -= 1 }
-            let byte = bytes[lead]
-            let width: Int
-            if byte >= 0xc2 && byte <= 0xdf { width = 2 }
-            else if byte >= 0xe0 && byte <= 0xef { width = 3 }
-            else if byte >= 0xf0 && byte <= 0xf4 { width = 4 }
-            else { width = 1 }
-            if count - lead < width { count = lead }
-        }
-        let text = String(decoding: pending.prefix(count), as: UTF8.self)
-        pending.removeFirst(count)
-        return text
-    }
-}
-
-private final class ModelRunner {
-    private final class Job {
-        let process = Process()
-        let input = Pipe()
-        let output = Pipe()
-        let errors = Pipe()
-        let started = Date()
-        let onText: (String) -> Void
-        let onComplete: (GenerationResult) -> Void
-        var decoder = UTF8Stream()
-        var tail = ""
-        var stderr = Data()
-        var outputEnded = false
-        var errorsEnded = false
-        var exited = false
-        var status: Int32 = 0
-        var stopped = false
-        var failure: String?
-        var outputPrefix = ""
-        var profile = ModelProfile.bonsai
-        var hasVisibleText = false
-        var completionText = ""
-
-        init(onText: @escaping (String) -> Void,
-             onComplete: @escaping (GenerationResult) -> Void) {
-            self.onText = onText
-            self.onComplete = onComplete
-        }
-    }
-
-    private let queue = DispatchQueue(label: "BonsaiPlayground.model")
-    private var active: Job?
-
-    func start(prompt: String, settings: GenerationSettings, conversation: Conversation = Conversation(),
-               onText: @escaping (String) -> Void,
-               onComplete: @escaping (GenerationResult) -> Void) {
-        queue.async {
-            guard self.active == nil else {
-                DispatchQueue.main.async {
-                    onComplete(GenerationResult(elapsed: 0, tokensPerSecond: nil,
-                                                failure: "busy", stopped: false))
-                }
-                return
-            }
-            let job = Job(onText: onText, onComplete: onComplete)
-            job.outputPrefix = settings.profile.assistantOutputPrefix
-            job.profile = settings.profile
-            let model = (settings.model as NSString).expandingTildeInPath
-            let runtime = (settings.runtime as NSString).expandingTildeInPath
-            var directory: ObjCBool = false
-            if !FileManager.default.fileExists(atPath: model, isDirectory: &directory)
-                || directory.boolValue {
-                self.completeUnstarted(job, failure: "model_missing")
-                return
-            }
-            if !FileManager.default.isExecutableFile(atPath: runtime) {
-                self.completeUnstarted(job, failure: "runtime_missing")
-                return
-            }
-            self.active = job
-            job.process.executableURL = URL(fileURLWithPath: runtime)
-            job.process.arguments = [
-                "-m", model, "-f", "/dev/stdin", "-c", String(settings.context),
-                "-n", String(settings.maximumOutput), "-ngl", "99", "-fa", "on", "-t", "6",
-                "--no-conversation", "--no-jinja", "--no-display-prompt", "--simple-io",
-                "--no-context-shift", "--no-escape",
-                "--color", "off", "--seed", String(settings.seed), "--temp", String(settings.temperature),
-                "--top-k", "40", "--top-p", "0.95", "--min-p", "0.0"
-            ] + settings.profile.runtimeArguments
-            job.process.standardInput = job.input
-            job.process.standardOutput = job.output
-            job.process.standardError = job.errors
-            job.process.terminationHandler = { process in
-                self.queue.async {
-                    job.exited = true
-                    job.status = process.terminationStatus
-                    self.finishIfReady(job)
-                }
-            }
-            do {
-                try job.process.run()
-            } catch {
-                job.process.terminationHandler = nil
-                self.active = nil
-                self.completeUnstarted(job, failure: "launch_failed")
-                return
-            }
-            self.drain(job.output.fileHandleForReading, job: job, isOutput: true)
-            self.drain(job.errors.fileHandleForReading, job: job, isOutput: false)
-            let rendered = Data(settings.render(prompt, conversation: conversation).utf8)
-            DispatchQueue.global(qos: .userInitiated).async {
-                do {
-                    try job.input.fileHandleForWriting.write(contentsOf: rendered)
-                    try job.input.fileHandleForWriting.close()
-                } catch {
-                    try? job.input.fileHandleForWriting.close()
-                    self.queue.async {
-                        if job.failure == nil { job.failure = "io_failed" }
-                        self.finishIfReady(job)
-                    }
-                }
-            }
-            let timeLimit = settings.profile.generationTimeout(maximumOutput: settings.maximumOutput)
-            self.queue.asyncAfter(deadline: .now() + timeLimit) {
-                guard self.active === job else { return }
-                job.failure = "timeout"
-                self.stop(job)
-            }
-        }
-    }
-
-    func cancel() {
-        queue.async {
-            guard let job = self.active else { return }
-            job.stopped = true
-            self.stop(job)
-        }
-    }
-
-    private func stop(_ job: Job) {
-        guard active === job else { return }
-        if job.process.isRunning { job.process.terminate() }
-        queue.asyncAfter(deadline: .now() + 2) {
-            guard self.active === job, job.process.isRunning else { return }
-            // This PID belongs to the still-running Process owned by this job.
-            Darwin.kill(job.process.processIdentifier, SIGKILL)
-        }
-    }
-
-    private func completeUnstarted(_ job: Job, failure: String) {
-        let result = GenerationResult(elapsed: Date().timeIntervalSince(job.started),
-                                      tokensPerSecond: nil, failure: failure, stopped: false)
-        DispatchQueue.main.async { job.onComplete(result) }
-    }
-
-    private func drain(_ handle: FileHandle, job: Job, isOutput: Bool) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            var failed = false
-            do {
-                while let data = try handle.read(upToCount: 4096), !data.isEmpty {
-                    self.queue.async {
-                        if isOutput {
-                            self.emit(job.decoder.consume(data), job: job, final: false)
-                        } else {
-                            job.stderr.append(data)
-                            if job.stderr.count > 131_072 {
-                                job.stderr.removeFirst(job.stderr.count - 131_072)
-                            }
-                        }
-                    }
-                }
-            } catch { failed = true }
-            try? handle.close()
-            let readFailed = failed
-            self.queue.async {
-                if readFailed && job.failure == nil { job.failure = "io_failed" }
-                if isOutput {
-                    self.emit(job.decoder.consume(Data(), final: true), job: job, final: true)
-                    job.outputEnded = true
-                } else {
-                    job.errorsEnded = true
-                }
-                self.finishIfReady(job)
-            }
-        }
-    }
-
-    private func emit(_ text: String, job: Job, final: Bool) {
-        job.tail += text
-        let visible: String
-        if final {
-            visible = job.profile.cleanCompletionTail(job.tail.replacingOccurrences(
-                of: "\\s+\\[end of text\\]\\s*\\z", with: "", options: .regularExpression))
-            job.tail = ""
-        } else if job.tail.count > 80 {
-            let boundary = job.tail.index(job.tail.endIndex, offsetBy: -80)
-            visible = String(job.tail[..<boundary])
-            job.tail = String(job.tail[boundary...])
-        } else { return }
-        if !visible.isEmpty {
-            if final && !job.hasVisibleText && visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return
-            }
-            if !visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                job.hasVisibleText = true
-            }
-            let chunk = job.outputPrefix + visible
-            job.outputPrefix = ""
-            job.completionText += chunk
-            DispatchQueue.main.async { job.onText(chunk) }
-        }
-    }
-
-    private func finishIfReady(_ job: Job) {
-        guard active === job, job.exited, job.outputEnded, job.errorsEnded else { return }
-        active = nil
-        job.process.terminationHandler = nil
-        let diagnostics = String(decoding: job.stderr, as: UTF8.self)
-        func number(_ pattern: String) -> Double? {
-            guard let expression = try? NSRegularExpression(pattern: pattern),
-                  let match = expression.firstMatch(in: diagnostics,
-                    range: NSRange(diagnostics.startIndex..., in: diagnostics)),
-                  let range = Range(match.range(at: 1), in: diagnostics) else { return nil }
-            return Double(diagnostics[range])
-        }
-        let milliseconds = number("(?<!prompt )eval time\\s*=\\s*([\\d.]+)\\s*ms")
-        let steps = number("(?<!prompt )eval time\\s*=\\s*[\\d.]+\\s*ms\\s*/\\s*(\\d+)\\s*runs")
-        let speed: Double?
-        if let ms = milliseconds, let count = steps, ms > 0 { speed = count * 1000 / ms }
-        else { speed = nil }
-        let contextFull = diagnostics.range(of: "prompt is too long", options: .caseInsensitive) != nil
-            || diagnostics.range(of: "context full", options: .caseInsensitive) != nil
-        let incomplete = job.hasVisibleText && job.profile != .bonsai
-            && job.profile.finalAnswer(job.completionText).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let failure = job.failure ?? (contextFull ? "context_full"
-            : (incomplete ? "incomplete_result"
-                : (job.status != 0 ? "process_failed" : (job.hasVisibleText ? nil : "empty_result"))))
-        let result = GenerationResult(elapsed: Date().timeIntervalSince(job.started),
-                                      tokensPerSecond: speed, failure: failure, stopped: job.stopped)
-        job.stderr.removeAll(keepingCapacity: false)
-        job.completionText.removeAll(keepingCapacity: false)
-        DispatchQueue.main.async { job.onComplete(result) }
-    }
-}
-
 // The document grows inside its clip view; it must not supply a preferred
 // height to the surrounding window or stack view.
 private final class BoundedScrollView: NSScrollView {
@@ -320,6 +23,10 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         let modelPath: String
         let context: String
         let maximumOutput: String
+        let thinkingEnabled: Bool
+        let thinkingBudget: String
+        let samplingPreset: SamplingPreset
+        let temperature: Double
     }
 
     private let runner = ModelRunner()
@@ -336,6 +43,11 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
     private let temperatureValue = NSTextField(labelWithString: "0.20")
     private let context = NSPopUpButton(frame: .zero, pullsDown: false)
     private let maximumOutput = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let thinking = NSButton(checkboxWithTitle: "Think before answering", target: nil, action: nil)
+    private let thinkingBudget = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let thinkingHint = NSTextField(labelWithString: "")
+    private let samplingPreset = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let samplingHint = NSTextField(labelWithString: "")
     private let send = NSButton(title: "Send", target: nil, action: nil)
     private let stop = NSButton(title: "Stop", target: nil, action: nil)
     private let clear = NSButton(title: "New Chat", target: nil, action: nil)
@@ -367,7 +79,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         modelSelector.addItems(withTitles: ModelProfile.selectableProfiles.map { $0.displayName })
         modelSelector.target = self
         modelSelector.action = #selector(selectModel)
-        modelSelector.toolTip = "Bonsai, MiniCPM5-2B-Claude-Fable5-1-Thinking-Agentic, and Qwen3.5-2B in Q4_K_M or full-precision BF16"
+        modelSelector.toolTip = "Bonsai, MiniCPM5 Fable, Qwen3.5 2B, Falcon3 1B, and Falcon-H1 Tiny 90M"
         let modelSelection = row([label("Model"), modelSelector])
         let conversationLabel = label("Conversation")
         let responseScroll = textArea(editable: false)
@@ -482,10 +194,23 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         maximumOutput.target = self; maximumOutput.action = #selector(responseBudgetChanged)
         context.toolTip = "Total tokens available for the conversation, thinking, and final answer."
         maximumOutput.toolTip = "Maximum generated tokens, including thinking and the final answer."
+        runtimeField.toolTip = "Choose llama-completion. The other models also require the sibling llama-server executable in this directory."
+        thinking.target = self; thinking.action = #selector(thinkingChanged)
+        thinkingBudget.target = self; thinkingBudget.action = #selector(thinkingBudgetChanged)
+        thinkingBudget.toolTip = "Maximum thinking tokens. The runtime then continues the final answer within Max response. A lower response limit also reduces this limit to leave room for the answer."
+        samplingPreset.target = self; samplingPreset.action = #selector(samplingPresetChanged)
+        samplingPreset.toolTip = "Model-specific sampling. Coding uses Qwen's recommended settings for precise coding and enables thinking."
+        for hint in [thinkingHint, samplingHint] {
+            hint.font = .systemFont(ofSize: 11)
+            hint.textColor = .secondaryLabelColor
+        }
         seedField.widthAnchor.constraint(equalToConstant: 65).isActive = true
         panel.addArrangedSubview(row([label("Temperature"), temperature, temperatureValue,
                                      label("Context"), context, label("Max response"), maximumOutput,
                                      label("Seed"), seedField]))
+        panel.addArrangedSubview(row([thinking, label("Thinking limit"), thinkingBudget, thinkingHint]))
+        panel.addArrangedSubview(row([label("Sampling"), samplingPreset, samplingHint]))
+        configureReasoningControls(for: selectedProfile)
         let modelBrowse = NSButton(title: "Choose…", target: self, action: #selector(chooseModel))
         let runtimeBrowse = NSButton(title: "Choose…", target: self, action: #selector(chooseRuntime))
         let modelRow = row([label("Model file"), modelField, modelBrowse])
@@ -502,12 +227,65 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
             field.lineBreakMode = .byTruncatingMiddle
         }
         settingsControls = [modelField, runtimeField, seedField, temperature,
-                            context, maximumOutput, modelBrowse, runtimeBrowse]
+                            context, maximumOutput, thinking, thinkingBudget, samplingPreset, modelBrowse, runtimeBrowse]
         return panel
     }
 
     @objc private func updateTemperature() {
         temperatureValue.stringValue = String(format: "%.2f", temperature.doubleValue)
+    }
+
+    private var selectedSamplingPreset: SamplingPreset {
+        let index = samplingPreset.indexOfSelectedItem
+        return selectedProfile.samplingPresets.indices.contains(index) ? selectedProfile.samplingPresets[index] : .recommended
+    }
+
+    private func configureReasoningControls(for profile: ModelProfile, session: ChatSession? = nil) {
+        thinking.state = (session?.thinkingEnabled ?? profile.defaultThinkingEnabled) ? .on : .off
+        thinkingBudget.removeAllItems()
+        thinkingBudget.addItems(withTitles: profile.thinkingBudgets.map(String.init))
+        if !profile.supportsThinking { thinkingBudget.addItem(withTitle: "—") }
+        thinkingBudget.selectItem(withTitle: session?.thinkingBudget ?? String(profile.defaultThinkingBudget))
+        samplingPreset.removeAllItems()
+        samplingPreset.addItems(withTitles: profile.samplingPresets.map { $0.displayName })
+        samplingPreset.selectItem(at: profile.samplingPresets.firstIndex(of: session?.samplingPreset ?? .recommended) ?? 0)
+        temperature.doubleValue = session?.temperature ?? profile.sampling(preset: selectedSamplingPreset, thinking: thinking.state == .on).temperature
+        updateTemperature()
+        refreshReasoningControls()
+    }
+
+    private func refreshReasoningControls() {
+        thinking.isEnabled = !generating && selectedProfile.supportsThinkingToggle
+        thinkingBudget.isEnabled = !generating && selectedProfile.supportsThinking && thinking.state == .on
+        if !selectedProfile.supportsThinking { thinkingHint.stringValue = "This model answers directly." }
+        else if thinking.state == .off { thinkingHint.stringValue = "Direct answers. Thinking is off." }
+        else {
+            let output = Int(maximumOutput.titleOfSelectedItem ?? "512") ?? 512
+            let requested = Int(thinkingBudget.titleOfSelectedItem ?? "0") ?? 0
+            let effective = min(requested, max(0, output - min(512, output / 2)))
+            let suffix = selectedProfile.supportsThinkingToggle ? "" : " · thinking-only model"
+            thinkingHint.stringValue = "Up to \(effective) thinking tokens\(suffix)"
+        }
+        let sample = selectedProfile.sampling(preset: selectedSamplingPreset, thinking: thinking.state == .on)
+        samplingHint.stringValue = String(format: "Top k %d · Top p %.2f · Min p %.2f · Presence %.1f · Repeat %.2f", sample.topK, sample.topP, sample.minP, sample.presencePenalty, sample.repetitionPenalty)
+    }
+
+    @objc private func thinkingChanged() {
+        guard !generating, selectedProfile.supportsThinkingToggle else { return }
+        if thinking.state == .off { samplingPreset.selectItem(at: 0) }
+        temperature.doubleValue = selectedProfile.sampling(preset: selectedSamplingPreset, thinking: thinking.state == .on).temperature
+        updateTemperature()
+        refreshReasoningControls()
+    }
+
+    @objc private func thinkingBudgetChanged() { refreshReasoningControls() }
+
+    @objc private func samplingPresetChanged() {
+        guard !generating else { return }
+        if selectedSamplingPreset == .coding { thinking.state = .on }
+        temperature.doubleValue = selectedProfile.sampling(preset: selectedSamplingPreset, thinking: thinking.state == .on).temperature
+        updateTemperature()
+        refreshReasoningControls()
     }
 
     private func configureTokenControls(for profile: ModelProfile, savedContext: String? = nil,
@@ -521,6 +299,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
     }
 
     @objc private func responseBudgetChanged() {
+        defer { refreshReasoningControls() }
         guard !generating, selectedProfile.isQwen,
               let output = Int(maximumOutput.titleOfSelectedItem ?? ""),
               let current = Int(context.titleOfSelectedItem ?? "") else { return }
@@ -532,6 +311,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
     }
 
     @objc private func contextBudgetChanged() {
+        defer { refreshReasoningControls() }
         guard !generating, selectedProfile.isQwen,
               let current = Int(context.titleOfSelectedItem ?? ""),
               let output = Int(maximumOutput.titleOfSelectedItem ?? "") else { return }
@@ -544,10 +324,10 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
     @objc private func toggleSettings() {
         let visible = settingsToggle.state == .on
         settingsPanel.isHidden = !visible
-        window.contentMinSize = NSSize(width: 760, height: visible ? 760 : 620)
-        if visible && window.contentView!.bounds.height < 760 {
+        window.contentMinSize = NSSize(width: 760, height: visible ? 840 : 620)
+        if visible && window.contentView!.bounds.height < 840 {
             var frame = window.frame
-            let addition = 760 - window.contentView!.bounds.height
+            let addition = 840 - window.contentView!.bounds.height
             frame.origin.y -= addition
             frame.size.height += addition
             window.setFrame(frame, display: true, animate: true)
@@ -565,7 +345,9 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
             transcript: NSAttributedString(attributedString: responseView.attributedString()),
             draft: promptView.string, modelPath: modelField.stringValue,
             context: context.titleOfSelectedItem ?? String(selectedProfile.defaultContext),
-            maximumOutput: maximumOutput.titleOfSelectedItem ?? "512")
+            maximumOutput: maximumOutput.titleOfSelectedItem ?? "512",
+            thinkingEnabled: thinking.state == .on, thinkingBudget: thinkingBudget.titleOfSelectedItem ?? "0",
+            samplingPreset: selectedSamplingPreset, temperature: temperature.doubleValue)
         selectedProfile = profile
         let session = sessions[profile]
         conversation = session?.conversation ?? Conversation()
@@ -574,6 +356,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         promptView.undoManager?.removeAllActions()
         modelField.stringValue = session?.modelPath ?? profile.defaultModelPath
         configureTokenControls(for: profile, savedContext: session?.context, savedOutput: session?.maximumOutput)
+        configureReasoningControls(for: profile, session: session)
         status.stringValue = "Ready. " + profile.speakerName + " chat selected."
         window.makeFirstResponder(promptView)
     }
@@ -609,6 +392,9 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         settings.temperature = temperature.doubleValue
         settings.context = Int(context.titleOfSelectedItem ?? "2048") ?? 2048
         settings.maximumOutput = Int(maximumOutput.titleOfSelectedItem ?? "512") ?? 512
+        settings.thinkingEnabled = selectedProfile.supportsThinking && thinking.state == .on
+        settings.thinkingBudget = Int(thinkingBudget.titleOfSelectedItem ?? "0") ?? 0
+        settings.samplingPreset = selectedSamplingPreset
         settings.seed = seed
         pendingPrompt = prompt
         pendingResponse = ""
@@ -666,6 +452,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         promptView.isEditable = !value
         systemEditor.isEditable = !value
         for control in settingsControls { control.isEnabled = !value }
+        refreshReasoningControls()
     }
 
     @objc private func stopGeneration() {
@@ -801,6 +588,9 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         checks["selector_switches_model_path_and_budget"] = selectedProfile == .minicpmQ4
             && modelField.stringValue == ModelProfile.minicpmQ4.defaultModelPath
             && maximumOutput.titleOfSelectedItem == "2048"
+        checks["minicpm_has_recommended_sampling_and_fixed_thinking"] = temperature.doubleValue == 1
+            && thinking.state == .on && !thinking.isEnabled && thinkingBudget.isEnabled
+            && thinkingBudget.titleOfSelectedItem == "1024"
         checks["models_start_with_separate_chats"] = conversation.isEmpty
             && responseView.string.isEmpty && promptView.string.isEmpty
         conversation.append(user: "synthetic minicpm user", assistant: "synthetic minicpm answer")
@@ -829,6 +619,27 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         checks["qwen_selector_uses_reasoning_model"] = selectedProfile == .qwen35
             && modelField.stringValue == ModelProfile.qwen35.defaultModelPath && conversation.isEmpty
             && context.titleOfSelectedItem == "65536" && maximumOutput.titleOfSelectedItem == "32768"
+        checks["qwen_defaults_to_direct_answers_and_recommended_sampling"] = thinking.state == .off
+            && thinking.isEnabled && !thinkingBudget.isEnabled && temperature.doubleValue == 1
+            && samplingHint.stringValue.contains("Presence 2.0")
+        thinking.state = .on
+        thinkingChanged()
+        checks["qwen_thinking_toggle_updates_sampler_and_budget_controls"] = thinking.state == .on
+            && thinkingBudget.isEnabled && thinkingBudget.titleOfSelectedItem == "2048"
+            && samplingHint.stringValue.contains("Presence 1.5")
+        samplingPreset.selectItem(at: 1)
+        samplingPresetChanged()
+        checks["qwen_coding_preset_uses_precise_thinking_settings"] = selectedSamplingPreset == .coding
+            && thinking.state == .on && temperature.doubleValue == 0.6
+            && samplingHint.stringValue.contains("Presence 0.0")
+        thinkingBudget.selectItem(withTitle: "1024")
+        thinkingBudgetChanged()
+        temperature.doubleValue = 0.75
+        updateTemperature()
+        setGenerating(true)
+        checks["generation_locks_new_reasoning_controls"] = !thinking.isEnabled && !thinkingBudget.isEnabled && !samplingPreset.isEnabled
+        setGenerating(false)
+        checks["generation_restores_eligible_reasoning_controls"] = thinking.isEnabled && thinkingBudget.isEnabled && samplingPreset.isEnabled
         maximumOutput.selectItem(withTitle: "81920")
         responseBudgetChanged()
         checks["larger_qwen_response_raises_context"] = maximumOutput.titleOfSelectedItem == "81920"
@@ -840,6 +651,8 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
             && modelField.stringValue == ModelProfile.qwen35Full.defaultModelPath
             && maximumOutput.titleOfSelectedItem == "32768" && context.titleOfSelectedItem == "65536"
             && conversation.isEmpty
+        checks["full_qwen_starts_with_separate_sampling_and_thinking_defaults"] = thinking.state == .off
+            && selectedSamplingPreset == .recommended && temperature.doubleValue == 1
         context.selectItem(withTitle: "4096")
         contextBudgetChanged()
         checks["smaller_qwen_context_reduces_response_budget"] = maximumOutput.titleOfSelectedItem == "2048"
@@ -849,6 +662,18 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         checks["full_qwen_keeps_q4_history_separate"] = conversation.turns.first?.assistant == "synthetic qwen answer"
         checks["qwen_large_budgets_restore_per_chat"] = maximumOutput.titleOfSelectedItem == "81920"
             && context.titleOfSelectedItem == "131072"
+        checks["sampling_and_thinking_restore_per_model_chat"] = thinking.state == .on
+            && thinkingBudget.titleOfSelectedItem == "1024" && selectedSamplingPreset == .coding
+            && temperature.doubleValue == 0.75
+        maximumOutput.selectItem(withTitle: "128")
+        responseBudgetChanged()
+        checks["thinking_budget_leaves_room_for_short_answers"] = thinkingHint.stringValue.contains("64 thinking tokens")
+        maximumOutput.selectItem(withTitle: "81920")
+        responseBudgetChanged()
+        thinking.state = .off
+        thinkingChanged()
+        checks["turning_thinking_off_restores_direct_sampling"] = selectedSamplingPreset == .recommended
+            && temperature.doubleValue == 1 && !thinkingBudget.isEnabled && samplingHint.stringValue.contains("Presence 2.0")
         func simulateCompletion(_ response: String, failure: String?, stopped: Bool) {
             pendingPrompt = "synthetic retry request"
             pendingResponse = response
@@ -858,6 +683,9 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
             completeGeneration(GenerationResult(elapsed: 0, tokensPerSecond: nil, failure: failure, stopped: stopped))
         }
         let priorCount = conversation.turns.count
+        simulateCompletion("<think>\nSynthetic reasoning</think>\nSynthetic truncated answer", failure: "response_limit", stopped: false)
+        checks["truncated_answer_preserves_history_and_retry_draft"] = conversation.turns.count == priorCount
+            && promptView.string == "synthetic retry request" && status.stringValue.contains("response limit")
         let unfinished = "<think>\nSynthetic unfinished reasoning"
         simulateCompletion(unfinished, failure: "incomplete_result", stopped: false)
         checks["incomplete_reasoning_preserves_chat_and_draft"] = conversation.turns.count == priorCount
@@ -879,11 +707,33 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         selectModel()
         checks["qwen_large_budgets_preserve_bonsai_defaults"] = maximumOutput.titleOfSelectedItem == "512"
             && context.titleOfSelectedItem == "4096" && !maximumOutput.itemTitles.contains("32768")
+        checks["bonsai_sampling_and_thinking_controls_unchanged"] = temperature.doubleValue == 0.2
+            && thinking.state == .off && !thinking.isEnabled && !thinkingBudget.isEnabled
         let bonsaiCount = conversation.turns.count
         simulateCompletion("Synthetic partial Bonsai answer", failure: "process_failed", stopped: true)
         checks["bonsai_stopped_answer_behavior_unchanged"] = conversation.turns.count == bonsaiCount + 1
             && conversation.turns.last?.assistant == "Synthetic partial Bonsai answer" && promptView.string.isEmpty
             && status.stringValue == "Stopped."
+        for profile in [ModelProfile.falcon3, .falconH1Tiny] {
+            modelSelector.selectItem(at: ModelProfile.selectableProfiles.firstIndex(of: profile)!)
+            selectModel()
+            checks[profile.rawValue + "_selector_defaults"] = modelField.stringValue == profile.defaultModelPath
+                && conversation.isEmpty && context.titleOfSelectedItem == "4096"
+                && maximumOutput.titleOfSelectedItem == "512" && temperature.doubleValue == 0.2
+            checks[profile.rawValue + "_direct_controls"] = thinking.state == .off
+                && !thinking.isEnabled && !thinkingBudget.isEnabled
+                && thinkingHint.stringValue == "This model answers directly."
+            simulateCompletion("Synthetic direct answer", failure: nil, stopped: false)
+            checks[profile.rawValue + "_plain_answer_enters_history"] = conversation.turns.count == 1
+                && conversation.turns.last?.assistant == "Synthetic direct answer" && promptView.string.isEmpty
+            replaceDraft("Synthetic Falcon draft")
+            modelSelector.selectItem(at: 0)
+            selectModel()
+            modelSelector.selectItem(at: ModelProfile.selectableProfiles.firstIndex(of: profile)!)
+            selectModel()
+            checks[profile.rawValue + "_chat_restores"] = conversation.turns.count == 1
+                && promptView.string == "Synthetic Falcon draft"
+        }
         return checks
     }
 
@@ -945,7 +795,18 @@ private enum SmokeTest {
             settings.model = profile.defaultModelPath
             settings.maximumOutput = profile == .bonsai ? 64 : (greetingOnly ? 2048 : profile.defaultMaximumOutput)
             settings.context = profile == .bonsai ? 2048 : profile.defaultContext
+            settings.thinkingEnabled = profile.defaultThinkingEnabled
+            settings.thinkingBudget = profile.defaultThinkingBudget
+            settings.temperature = profile.sampling(thinking: settings.thinkingEnabled).temperature
         }
+        if arguments.contains("--thinking"), settings.profile.supportsThinking {
+            settings.thinkingEnabled = true
+            settings.temperature = settings.profile.sampling(thinking: true).temperature
+        }
+        if let index = arguments.firstIndex(of: "--thinking-budget"), index + 1 < arguments.count,
+           let budget = Int(arguments[index + 1]), budget >= 0 { settings.thinkingBudget = budget }
+        if let index = arguments.firstIndex(of: "--max-response"), index + 1 < arguments.count,
+           let budget = Int(arguments[index + 1]), budget > 0 { settings.maximumOutput = budget }
         for (flag, apply) in [
             ("--model", { (value: String) in settings.model = value }),
             ("--runtime", { (value: String) in settings.runtime = value })
@@ -981,7 +842,8 @@ private enum SmokeTest {
                     "elapsed_seconds": result.elapsed,
                     "failure": result.failure ?? (passed ? "none" : "answer_mismatch")]
                 if settings.profile != .bonsai {
-                    metadata["thinking_closed"] = answer.contains("</think>")
+                    metadata["thinking_enabled"] = settings.thinkingEnabled
+                    metadata["thinking_closed"] = !settings.thinkingEnabled || answer.contains("</think>")
                     metadata["response_characters"] = answer.count
                     if !greetingOnly {
                         metadata["expected_integer_present"] = answer.contains(turn == 0 ? "42" : "43")
@@ -1003,6 +865,13 @@ private enum SmokeTest {
 private enum BonsaiPlayground {
     static func main() {
         signal(SIGPIPE, SIG_IGN)
+        _ = ReasoningSupervisor.runIfRequested()
+        if CommandLine.arguments.contains("--reasoning-self-test") {
+            let checks = ReasoningChecks.run()
+            if let data = try? JSONSerialization.data(withJSONObject: checks, options: [.sortedKeys]),
+               let text = String(data: data, encoding: .utf8) { print(text) }
+            exit(checks.values.allSatisfy { $0 } ? 0 : 1)
+        }
         if CommandLine.arguments.contains("--conversation-self-test") {
             let checks = ConversationChecks.run().merging(ModelProfileChecks.run()) { first, _ in first }
             if let data = try? JSONSerialization.data(withJSONObject: checks, options: [.sortedKeys]),

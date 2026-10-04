@@ -1,14 +1,34 @@
 import Foundation
 
+enum SamplingPreset: String, CaseIterable {
+    case recommended
+    case coding
+
+    var displayName: String {
+        switch self { case .recommended: return "Recommended"; case .coding: return "Coding" }
+    }
+}
+
+struct SamplingParameters: Equatable {
+    let temperature: Double
+    let topK: Int
+    let topP: Double
+    let minP: Double
+    let presencePenalty: Double
+    let repetitionPenalty: Double
+}
+
 enum ModelProfile: String, CaseIterable {
     case bonsai
     case minicpm
     case minicpmQ4 = "minicpm-q4"
     case qwen35 = "qwen35"
     case qwen35Full = "qwen35-full"
+    case falcon3 = "falcon3"
+    case falconH1Tiny = "falcon-h1-tiny"
 
     // Keep the failed IQ2 profile available only for reproducible CLI checks.
-    static let selectableProfiles: [ModelProfile] = [.bonsai, .minicpmQ4, .qwen35, .qwen35Full]
+    static let selectableProfiles: [ModelProfile] = [.bonsai, .minicpmQ4, .qwen35, .qwen35Full, .falcon3, .falconH1Tiny]
 
     var displayName: String {
         switch self {
@@ -17,6 +37,8 @@ enum ModelProfile: String, CaseIterable {
         case .minicpmQ4: return "MiniCPM5 2B Fable Agentic · Q4_K_M"
         case .qwen35: return "Qwen3.5 2B Reasoning · Q4_K_M"
         case .qwen35Full: return "Qwen3.5 2B Reasoning · BF16"
+        case .falcon3: return "Falcon3 1B Instruct · Q4_K_M"
+        case .falconH1Tiny: return "Falcon-H1 Tiny 90M Instruct · Q4_K_M"
         }
     }
 
@@ -25,6 +47,8 @@ enum ModelProfile: String, CaseIterable {
         case .bonsai: return "Bonsai"
         case .minicpm, .minicpmQ4: return "MiniCPM5"
         case .qwen35, .qwen35Full: return "Qwen3.5"
+        case .falcon3: return "Falcon3"
+        case .falconH1Tiny: return "Falcon-H1 Tiny"
         }
     }
 
@@ -40,17 +64,51 @@ enum ModelProfile: String, CaseIterable {
             return "/Users/johnshahbazian/development/mcpme/models/qwen3.5-2b/Qwen3.5-2B-Q4_K_M.gguf"
         case .qwen35Full:
             return "/Users/johnshahbazian/development/mcpme/models/qwen3.5-2b/Qwen3.5-2B-BF16.gguf"
+        case .falcon3:
+            return "/Users/johnshahbazian/development/mcpme/models/falcon3-1b/Falcon3-1B-Instruct-q4_k_m.gguf"
+        case .falconH1Tiny:
+            return "/Users/johnshahbazian/development/mcpme/models/falcon-h1-tiny-90m/Falcon-H1-Tiny-90M-Instruct-Q4_K_M.gguf"
         }
     }
 
     var isQwen: Bool { self == .qwen35 || self == .qwen35Full }
+    var isDirectAnswerModel: Bool { self == .falcon3 || self == .falconH1Tiny }
 
-    var defaultMaximumOutput: Int { isQwen ? 32768 : (self == .bonsai ? 512 : 2048) }
+    var defaultThinkingEnabled: Bool { supportsThinking && !isQwen }
+    var supportsThinkingToggle: Bool { isQwen }
+    var supportsThinking: Bool { self == .minicpm || self == .minicpmQ4 || isQwen }
+    var samplingPresets: [SamplingPreset] { isQwen ? [.recommended, .coding] : [.recommended] }
+    var defaultThinkingBudget: Int { isQwen ? 2048 : (supportsThinking ? 1024 : 0) }
+    var thinkingBudgets: [Int] {
+        if isQwen { return [128, 256, 512, 1024, 2048, 4096, 8192, 16384] }
+        return supportsThinking ? [128, 256, 512, 1024, 2048] : []
+    }
+
+    func sampling(preset: SamplingPreset = .recommended, thinking: Bool) -> SamplingParameters {
+        if isQwen {
+            if preset == .coding && thinking {
+                return SamplingParameters(temperature: 0.6, topK: 20, topP: 0.95, minP: 0.0,
+                                          presencePenalty: 0.0, repetitionPenalty: 1.0)
+            }
+            if thinking {
+                return SamplingParameters(temperature: 1.0, topK: 20, topP: 0.95, minP: 0.0,
+                                          presencePenalty: 1.5, repetitionPenalty: 1.0)
+            }
+            return SamplingParameters(temperature: 1.0, topK: 20, topP: 1.0, minP: 0.0,
+                                      presencePenalty: 2.0, repetitionPenalty: 1.0)
+        }
+        return SamplingParameters(temperature: supportsThinking ? 1.0 : 0.2, topK: 40, topP: 0.95, minP: 0.0,
+                                  presencePenalty: 0.0, repetitionPenalty: 1.0)
+    }
+
+    var defaultMaximumOutput: Int { isQwen ? 32768 : (self == .bonsai || isDirectAnswerModel ? 512 : 2048) }
 
     var defaultContext: Int { isQwen ? 65536 : 4096 }
 
     var contextSizes: [Int] {
-        isQwen ? [4096, 8192, 16384, 32768, 65536, 131072] : [2048, 4096, 8192]
+        if isQwen { return [4096, 8192, 16384, 32768, 65536, 131072] }
+        if self == .falconH1Tiny { return [2048, 4096, 8192, 16384, 32768] }
+        return [2048, 4096, 8192]
     }
 
     var maximumOutputs: [Int] {
@@ -63,7 +121,13 @@ enum ModelProfile: String, CaseIterable {
     }
 
     /// Thinking profiles continue a block opened in their generation prompt.
-    var assistantOutputPrefix: String { self == .bonsai ? "" : "<think>\n" }
+    var assistantOutputPrefix: String { assistantOutputPrefix(thinkingEnabled: defaultThinkingEnabled) }
+
+    func assistantOutputPrefix(thinkingEnabled: Bool) -> String {
+        if self == .bonsai || isDirectAnswerModel { return "" }
+        if isQwen && !thinkingEnabled { return "<think>\n\n</think>\n\n" }
+        return "<think>\n"
+    }
 
     var runtimeArguments: [String] { self == .bonsai ? [] : ["--special"] }
 
@@ -80,9 +144,17 @@ enum ModelProfile: String, CaseIterable {
     }
 
     func render(system: String, prompt: String, conversation: Conversation) -> String {
+        render(system: system, prompt: prompt, conversation: conversation,
+               thinkingEnabled: defaultThinkingEnabled)
+    }
+
+    func render(system: String, prompt: String, conversation: Conversation,
+                thinkingEnabled: Bool) -> String {
         if self == .bonsai { return conversation.render(system: system, prompt: prompt) }
+        if isDirectAnswerModel { return renderDirect(system: system, prompt: prompt, conversation: conversation) }
         if isQwen {
-            return renderQwen(system: system, prompt: prompt, conversation: conversation)
+            return renderQwen(system: system, prompt: prompt, conversation: conversation,
+                              thinkingEnabled: thinkingEnabled)
         }
         var messages = "<s><|im_start|>system\n\(system)<|im_end|>\n"
         for turn in conversation.turns {
@@ -94,8 +166,26 @@ enum ModelProfile: String, CaseIterable {
         return messages
     }
 
+    private func renderDirect(system: String, prompt: String, conversation: Conversation) -> String {
+        if self == .falcon3 {
+            var messages = "<|system|>\n\(system)\n"
+            for turn in conversation.turns {
+                messages += "<|user|>\n\(turn.user)\n"
+                messages += "<|assistant|>\n\(turn.assistant)<|endoftext|>\n"
+            }
+            return messages + "<|user|>\n\(prompt)\n<|assistant|>\n"
+        }
+        var messages = system.isEmpty ? "" : "<|im_start|>system\n\(system)<|im_end|>\n"
+        for turn in conversation.turns {
+            messages += "<|im_start|>user\n\(turn.user)<|im_end|>\n"
+            messages += "<|im_start|>assistant\n\(turn.assistant)<|im_end|>\n"
+        }
+        return messages + "<|im_start|>user\n\(prompt)<|im_end|>\n<|im_start|>assistant\n"
+    }
+
     /// Qwen's text-only thinking template removes reasoning from prior turns.
-    private func renderQwen(system: String, prompt: String, conversation: Conversation) -> String {
+    private func renderQwen(system: String, prompt: String, conversation: Conversation,
+                            thinkingEnabled: Bool) -> String {
         func trimmed(_ text: String) -> String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
         var messages = "<|im_start|>system\n\(trimmed(system))<|im_end|>\n"
         for turn in conversation.turns {
@@ -106,13 +196,25 @@ enum ModelProfile: String, CaseIterable {
             }
             messages += "<|im_start|>assistant\n\(answer)<|im_end|>\n"
         }
-        return messages + "<|im_start|>user\n\(trimmed(prompt))<|im_end|>\n<|im_start|>assistant\n<think>\n"
+        return messages + "<|im_start|>user\n\(trimmed(prompt))<|im_end|>\n<|im_start|>assistant\n"
+            + assistantOutputPrefix(thinkingEnabled: thinkingEnabled)
     }
 
     func finalAnswer(_ text: String) -> String {
-        guard self != .bonsai else { return text }
+        guard self != .bonsai && !isDirectAnswerModel else { return text }
+        if isQwen && !text.contains("<think>") { return text }
         guard let close = text.range(of: "</think>", options: .backwards) else { return "" }
         return String(text[close.upperBound...])
+    }
+
+    func chatMessages(system: String, prompt: String, conversation: Conversation) -> [[String: String]] {
+        var result = [["role": "system", "content": system]]
+        for turn in conversation.turns {
+            result.append(["role": "user", "content": turn.user])
+            result.append(["role": "assistant", "content": isQwen ? finalAnswer(turn.assistant) : (isDirectAnswerModel ? turn.assistant : normalizedAssistant(turn.assistant))])
+        }
+        result.append(["role": "user", "content": prompt])
+        return result
     }
 
     private func normalizedAssistant(_ original: String) -> String {
@@ -202,7 +304,7 @@ enum ModelProfileChecks {
         checks["minicpm_q4_uses_verified_thinking_template"] = ModelProfile.minicpmQ4.render(
             system: "Be concise.", prompt: "What value?", conversation: conversation) == rendered
             && ModelProfile.minicpmQ4.defaultModelPath.hasSuffix("i1-Q4_K_M.gguf")
-        let qwen = ModelProfile.qwen35.render(system: "  Be concise.\n", prompt: " What value? ", conversation: conversation)
+        let qwen = ModelProfile.qwen35.render(system: "  Be concise.\n", prompt: " What value? ", conversation: conversation, thinkingEnabled: true)
         let qwenExpected = "<|im_start|>system\nBe concise.<|im_end|>\n"
             + "<|im_start|>user\nRemember 17.<|im_end|>\n"
             + "<|im_start|>assistant\nStored 17.<|im_end|>\n"
@@ -213,14 +315,15 @@ enum ModelProfileChecks {
         checks["qwen_final_answer_requires_closed_thinking"] = ModelProfile.qwen35.finalAnswer("<think>Reason</think>42") == "42"
             && ModelProfile.qwen35.finalAnswer("<think>Unfinished").isEmpty
         checks["qwen_bf16_uses_same_thinking_protocol"] = ModelProfile.qwen35Full.render(
-            system: "  Be concise.\n", prompt: " What value? ", conversation: conversation) == qwen
+            system: "  Be concise.\n", prompt: " What value? ", conversation: conversation, thinkingEnabled: true) == qwen
             && ModelProfile.qwen35Full.assistantOutputPrefix == ModelProfile.qwen35.assistantOutputPrefix
             && ModelProfile.qwen35Full.runtimeArguments == ModelProfile.qwen35.runtimeArguments
             && ModelProfile.qwen35Full.defaultMaximumOutput == ModelProfile.qwen35.defaultMaximumOutput
         checks["qwen_bf16_is_distinct_from_q4"] = ModelProfile.qwen35Full.rawValue == "qwen35-full"
             && ModelProfile.qwen35Full.defaultModelPath.hasSuffix("/qwen3.5-2b/Qwen3.5-2B-BF16.gguf")
             && ModelProfile.qwen35Full.defaultModelPath != ModelProfile.qwen35.defaultModelPath
-        checks["broken_iq2_is_excluded_from_selector"] = ModelProfile.selectableProfiles == [.bonsai, .minicpmQ4, .qwen35, .qwen35Full]
+        checks["broken_iq2_is_excluded_from_selector"] = !ModelProfile.selectableProfiles.contains(.minicpm)
+            && ModelProfile.selectableProfiles.contains(.minicpmQ4)
         let qwens: [ModelProfile] = [.qwen35, .qwen35Full]
         checks["qwen_large_response_profiles_share_defaults_and_options"] = qwens.allSatisfy {
             $0.isQwen && $0.defaultMaximumOutput == 32768 && $0.defaultContext == 65536
@@ -245,6 +348,45 @@ enum ModelProfileChecks {
                 && $0.maximumOutputs == [128, 512, 1024, 2048]
                 && $0.generationTimeout(maximumOutput: 81920) == 90
         }
+        let direct = ModelProfile.qwen35.render(system: "  Be concise.\n", prompt: " What value? ", conversation: conversation, thinkingEnabled: false)
+        checks["qwen_direct_mode_has_closed_empty_thinking_prefill"] = direct == qwenExpected.replacingOccurrences(of: "assistant\n<think>\n", with: "assistant\n<think>\n\n</think>\n\n")
+        checks["thinking_controls_match_model_capabilities"] = qwens.allSatisfy {
+            $0.supportsThinkingToggle && !$0.defaultThinkingEnabled && $0.defaultThinkingBudget == 2048
+        } && ModelProfile.minicpmQ4.defaultThinkingEnabled && !ModelProfile.minicpmQ4.supportsThinkingToggle
+            && !ModelProfile.bonsai.supportsThinking
+        checks["qwen_sampling_uses_official_mode_defaults"] = qwens.allSatisfy {
+            $0.sampling(thinking: true) == SamplingParameters(temperature: 1, topK: 20, topP: 0.95, minP: 0, presencePenalty: 1.5, repetitionPenalty: 1)
+                && $0.sampling(thinking: false) == SamplingParameters(temperature: 1, topK: 20, topP: 1, minP: 0, presencePenalty: 2, repetitionPenalty: 1)
+                && $0.sampling(preset: .coding, thinking: true).temperature == 0.6
+                && $0.sampling(preset: .coding, thinking: true).presencePenalty == 0
+        }
+        checks["minicpm_sampling_and_bonsai_defaults"] = ModelProfile.minicpmQ4.sampling(thinking: true).temperature == 1
+            && ModelProfile.bonsai.sampling(thinking: false).temperature == 0.2
+        let messages = ModelProfile.qwen35.chatMessages(system: "Be concise.", prompt: "Next.", conversation: conversation)
+        checks["structured_messages_keep_all_turns_and_only_final_qwen_history"] = messages.map { $0["role"]! } == ["system", "user", "assistant", "user", "assistant", "user"]
+            && messages[2]["content"] == "\n\nStored 17." && messages[4]["content"] == "\nThe value is 21."
+            && messages[5]["content"] == "Next." && conversation.turns.count == 2
+        checks["qwen_direct_final_answer_and_unfinished_reasoning_distinguished"] = ModelProfile.qwen35.finalAnswer("Direct answer") == "Direct answer"
+            && ModelProfile.qwen35.finalAnswer("<think>Unfinished").isEmpty
+        let falcons = [ModelProfile.falcon3, .falconH1Tiny]
+        checks["falcon_profiles_are_direct_only"] = falcons.allSatisfy {
+            !$0.supportsThinking && !$0.defaultThinkingEnabled && !$0.supportsThinkingToggle
+                && $0.thinkingBudgets.isEmpty && $0.assistantOutputPrefix.isEmpty
+                && $0.finalAnswer("Plain answer") == "Plain answer"
+        }
+        var directHistory = Conversation()
+        directHistory.append(user: "First message", assistant: "First answer")
+        directHistory.append(user: "Second message", assistant: "Second answer")
+        checks["falcon_history_preserves_plain_ordered_messages"] = falcons.allSatisfy {
+            $0.chatMessages(system: "System", prompt: "Third message", conversation: directHistory) == [
+                ["role": "system", "content": "System"], ["role": "user", "content": "First message"],
+                ["role": "assistant", "content": "First answer"], ["role": "user", "content": "Second message"],
+                ["role": "assistant", "content": "Second answer"], ["role": "user", "content": "Third message"]
+            ]
+        }
+        checks["falcon_context_choices_fit_model_limits"] = ModelProfile.falcon3.contextSizes.last == 8192
+            && ModelProfile.falconH1Tiny.contextSizes.last == 32768
+            && falcons.allSatisfy { $0.defaultContext == 4096 && $0.defaultMaximumOutput == 512 }
         return checks
     }
 }

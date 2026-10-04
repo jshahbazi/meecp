@@ -16,6 +16,9 @@ are permitted. An original metadata file may be up to 16 MiB, while each transfe
 record remains bounded to a 256-character relative path, 64-character digest and
 integer byte count. Actual serialized requests, including guidance, schemas,
 metadata and preceding proposals, consume the existing transfer budget.
+Identity-only selection supports captured text and binary files with the same
+whole-byte identity proof. Content selection remains limited to text. Native
+content and identity controls for one path are mutually exclusive.
 
 ## Trusted guide registration
 

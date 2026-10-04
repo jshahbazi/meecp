@@ -233,6 +233,50 @@ def test_unregistered_component_cannot_inherit_published_guide():
     assert AnalysisGuideRegistry((guide,)).resolve(recipe) is None
 
 
+@pytest.mark.parametrize("payload", [b"binary_identity_content_marker\0asset", b"\xff\xfe\x81"])
+@pytest.mark.parametrize("disclosure", ["identity", "content", "changed-identity"])
+async def test_binary_identity_is_proved_without_content_disclosure(adapter_foundation, tmp_path, payload, disclosure):
+    imports, _, preparations, _, *_ = adapter_foundation
+    source = tmp_path / "binary-identity"; source.mkdir()
+    for name in ("worker.py", "LICENSE", "pyproject.toml", "uv.lock"):
+        (source / name).write_bytes((tmp_path / "source" / name).read_bytes())
+    (source / "unknown.asset").write_bytes(payload)
+    draft = imports.create(source, name="Binary identity", intent="Review scalar behavior", source_mode="automatic")
+    foundation = (*adapter_foundation[:3], draft, *adapter_foundation[4:])
+    seen = []
+    def transport(request):
+        assert b"binary_identity_content_marker" not in request.content
+        material = json.loads(json.loads(request.content)["input"][0]["content"][0]["text"])
+        assert set(material["selected_source"]) == {"worker.py"}
+        assert next(row for row in material["selected_metadata"] if row["path"] == "unknown.asset") == {
+            "path": "unknown.asset", "sha256": hashlib.sha256(payload).hexdigest(), "bytes": len(payload)}
+        seen.append(material["role"])
+        return request_only_handler(request)
+    host = AgentPreparationHost(preparations, tmp_path / "agent", providers=(provider(transport),), simulated_enabled=True)
+    try:
+        options = host.options(draft["draft_id"], 1)
+        assert "unknown.asset" in {row["path"] for row in options["metadata_files"]}
+        scope = selected(foundation)
+        if disclosure == "content":
+            scope["selected_paths"] = ["unknown.asset", "worker.py"]
+            with pytest.raises(PreparationError, match="agent_source_identity_mismatch"):
+                await host.plan(scope)
+        else:
+            scope["selected_metadata_paths"] = sorted(scope["selected_metadata_paths"] + ["unknown.asset"])
+            plan = await host.plan(scope)
+            if disclosure == "changed-identity":
+                (Path(draft["source"]["snapshot_path"]) / "unknown.asset").write_bytes(payload + b"changed")
+                with pytest.raises(PreparationError, match="agent_source_identity_mismatch"):
+                    await start(host, plan)
+            else:
+                job = await completed(host, await start(host, plan))
+                assert job["state"] == "succeeded" and len(seen) == 4 and job["candidate"] is not None
+        assert (len(seen) == 4) == (disclosure == "identity")
+        assert imports.inspect(draft["draft_id"])["revision"] == 1 and preparations.list() == []
+    finally:
+        await host.close()
+
+
 @pytest.mark.parametrize("field,value", [("selected_metadata_paths", ["worker.py"]),
     ("selected_metadata_paths", ["uv.lock", "LICENSE"]), ("selected_metadata_paths", ["missing"]),
     ("guide", {})])

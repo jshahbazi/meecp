@@ -48,5 +48,26 @@ metadata is byte-identical to the existing pinned public model metadata. The
 exception remains bound to the one public value and exact file path. It uses synthetic
 owner replies, with zero provider calls or actual resolution/build commands.
 Backend contracts, recipes, credentials and public execution gates are
-unchanged. Independent re-review and the actual combined owner-socket,
-installed, signed and live-provider acceptance remain required.
+unchanged. Installed, signed and live-provider acceptance remain required.
+
+## Independent clearance and root integration
+
+Different-author review cleared frozen checkpoint `937ce1f` with no findings.
+It exercised the complete production parent callback and private HTTP transport
+against the current root backend, rather than only a synthetic view reply.
+The original baseline `7fc0a13` lacked the action and made zero form requests;
+the repaired path read the actual staged proposal's form at the same saved
+context. Missing and unsupported proposals remained blocked. Sixteen parent
+denial categories passed. Three owner-socket form reads and four request-only
+simulated provider calls created no resolution/build jobs or commands; all owners
+joined and production gates stayed closed.
+
+The immutable private receipt is
+`/private/tmp/mcpme-agent-handoff-independent-review-v1.json`, mode `0600`, SHA-256
+`2599e7f06e3440180de1340b2a85109f45bb57cc575c3be5d0b1ad81ff1eb29d`.
+Root integration `4f56d91` rechecked all 132 recorded file identities: five
+checkpoint files, 14 production Swift sources and 113 backend sources. Its
+focused native/wire/provider/recipe-choice run passed 55 checks with no skips in
+15.787 seconds. This clearance covers the explicit form handoff; complete
+installed resolution/build, live-provider and final whole-phase acceptance
+remain open.

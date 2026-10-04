@@ -65,15 +65,15 @@ SHA-256 `f44212380fa76feca783ab5842fb890c13ea78ff08363d6d4f8465b7e6d0ebc7`.
 It rechecks both review packet hashes, all 126 current source identities and both
 actual pipeline receipts and their positive ownership/removal/probe assertions.
 
-## Remaining native and release acceptance
+## Native repair and integration
 
 Independent native review requested changes to checkpoint `cdf5fa55`: after an
 explicit recipe disappears, a second refresh can silently select a different
 recommendation; the credential editor also omits the approved private-file
 storage disclosure. Both have actual AppKit reproductions. Its positive nine
 owner-socket CRUD/review requests, secure-editor/undo clearing and closed gates
-passed. That checkpoint is not integrated; a separate author repair and rerun of
-the original reproductions are required.
+passed. Its original failure evidence is preserved; the following separate
+checkpoints repair those controls before integration.
 
 The author froze the two-defect repair as `7e702d62` in a new worktree. Independent
 re-review cleared both original controls, the 22 repeated-refresh controls and
@@ -82,18 +82,41 @@ host's unlocked-recipe recommendation. Provider calls, agent jobs and ordinary
 preparations remained zero; all owners joined and all gates stayed closed.
 The private review receipt SHA-256 is
 `c01e15753d7fe62dc688e5c8d63738cff9192bc7a7dbfbc3c008786eb4b13e75`.
-This narrow clearance preserves the original failure evidence and does not
-integrate the native checkpoint.
+This narrow clearance preserves the original failure evidence.
 
 A further actual AppKit observation found that
 `NSPopUpButton.addItem(withTitle:)` collapses identical titles. Guided recipe
 aliases and duplicate provider names can therefore lose their distinct exact
-references in the pickers. A separate identity-preserving menu repair and
-duplicate-title controls are required before native integration.
+references in the pickers. Repair `7fc0a1387f1809c0ebe7a786d52f9b8a5f4c4373`
+uses explicit menu items and bounded identity suffixes, preserving exact recipe,
+provider and model references across duplicate labels and refresh. Different-author
+review cleared actual AppKit duplicate/collision, cardinality, retained UUID,
+model disappearance, exact recipe version/digest and direct Edit controls, plus
+the actual current owner-socket flow with zero provider calls. The immutable
+private review receipt is
+`/private/tmp/mcpme-agent-picker-identity-independent-review-v1.json`, mode `0600`,
+SHA-256 `c15f106913050823ffba41d913ed3ad0fc2141f540193b7b0a4de552a1ee31ba`.
 
-Final native provider/recipe integration, native agent-to-resolution handoff,
-selected live-provider compatibility, immutable text-generation recipe refresh,
-combined regressions, signed installed/relocated acceptance and whole-phase
-adversarial review remain open. Legacy LocalPolicy rejection envelopes retain
+The original native setup, sticky-choice/disclosure and picker repairs are
+integrated as `079d4ce`, `b0265af` and `916283b`. The combined source passed 55
+focused native/wire/provider/recipe-choice checks with no skips in 15.591 seconds.
+These checkpoints are pushed on `codex/phase3-llm-integration`.
+
+## Remaining acceptance
+
+Native handoff `937ce1f` independently cleared the original baseline negative
+and repaired production parent/socket controls. It is integrated as `4f56d91`;
+the scoped review receipt SHA-256 is
+`2599e7f06e3440180de1340b2a85109f45bb57cc575c3be5d0b1ad81ff1eb29d`.
+Three ordinary form requests covered a pending unlocked proposal and blocked
+missing/unsupported proposals; 16 parent denial categories passed. These were
+metadata/form reads with four simulated provider calls, zero live calls and
+zero resolution/build jobs. See [native handoff](AGENT_NATIVE_RESOLUTION_HANDOFF.md).
+Text-generation recipe
+1.0.6 is minted and its exact source bindings and historical lifecycle retention
+pass root verification; see [recipe refresh review](TEXTGEN_RECIPE_1_0_6_REVIEW.md).
+Selected live-provider compatibility, final combined regressions, newly built
+native host, signed installed/relocated acceptance and whole-phase adversarial
+review remain open. Legacy LocalPolicy rejection envelopes retain
 their existing behavior; this repair versions the separate agent/provider route
 responses.

@@ -1028,6 +1028,16 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             self.displayDraft(updated); self.preparationView.refreshAvailability(); return true
         }
         agentPreparationView.onStateChange = { [weak self] in self?.refreshWindow() }
+        agentPreparationView.onReviewPreparation = { [weak self] context in
+            guard let self, !uiPreviewMode, self.connection() != nil, self.hostAvailable,
+                  !self.draftDirty, !self.setupRequest, !self.stopping, !self.quitting,
+                  !self.artifactCaptureView.blocksNavigation, !self.agentPreparationView.blocksNavigation,
+                  !self.preparationView.busy, !self.preparationView.hasActiveJob,
+                  let draft = self.currentDraft, draft.editable, draft.packagePath == nil,
+                  ["local_folder", "application_directory"].contains(draft.sourceKind),
+                  PreparationContext(importID: draft.id, revision: draft.revision, sourceRevision: draft.sourceRevision ?? "") == context else { return false }
+            return self.preparationView.reviewAgentProposal(context)
+        }
         recipesView.onRegistryChange = { [weak self] in self?.preparationView.registryChanged(); self?.agentPreparationView.registryChanged() }
         let prepareCard = workspaceCard("2. Prepare the app", subtitle: "Answer the detected questions and review the preparation plan. You can also export instructions for your coding agent.",
                                         views: [recipes, preparationView, workspaceCard("Agent assistance", subtitle: "Review the exact captured files and configured provider before transfer. Candidate selection requires ordinary preparation review.", views: [agentPreparationView]), handoff, handoffReturn, modelControls])

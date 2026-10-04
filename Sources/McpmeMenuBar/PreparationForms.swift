@@ -600,6 +600,18 @@ final class PreparationWorkspaceView: NSStackView {
     func refreshAvailability() { updateControls() }
     func registryChanged() { if !busy && !hasActiveJob { refreshForm() } }
 
+    /// Rediscover the host's current proposal without carrying an older
+    /// candidate, recipe or dependency result into the new review.
+    func reviewAgentProposal(_ expected: PreparationContext) -> Bool {
+        guard context == expected, saved, eligible, available?() == true,
+              request != nil, !busy, !hasActiveJob else { return false }
+        job = nil; attachedNotification = nil; progress.stringValue = ""
+        resolutionJob = nil; resolutionNotification = nil
+        resolutionStatus.stringValue = ""; resolutionProgress.stringValue = ""
+        loadForm(candidateID: nil, recipe: nil, resolutionDigest: nil)
+        return true
+    }
+
     private func updateControls() {
         let enabled = available?() == true && saved && eligible && context != nil && !busy && !hasActiveJob
         let currentForm = form.map { $0.importID == context?.importID && $0.revision == context?.revision && $0.sourceRevision == context?.sourceRevision } == true
@@ -1020,7 +1032,8 @@ private struct PreparationTestRequest {
     let complete: ([String: Any]?, String?) -> Void
 }
 
-private enum PreparationTestData {
+/// Synthetic fixtures shared by native contract self-tests.
+enum PreparationTestData {
     static let importID = "11111111-2222-4333-8444-555555555555"
     static let jobID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
     static let planID = "99999999-2222-4333-8444-555555555555"
@@ -1086,6 +1099,51 @@ private enum PreparationTestData {
 }
 
 extension PreparationWorkspaceView {
+    static func agentProposalReviewSelfTest() -> Bool {
+        let context = PreparationTestData.context, view = PreparationWorkspaceView()
+        var calls: [PreparationTestRequest] = []
+        view.available = { true }; view.bind(context, saved: true, eligible: true)
+        view.request = { calls.append(PreparationTestRequest(path: $0, method: $1, body: $2, complete: $3)) }
+        // An older completed resolution must never supply a candidate or digest
+        // to fresh discovery of the current staged proposal.
+        view.form = OnboardingFormV1(PreparationTestData.resolutionForm(resolved: true))
+        view.resolutionJob = PreparationResolutionJob(PreparationTestData.resolutionJob(state: "succeeded", settled: true))
+        view.resolutionNotification = "old-result"; view.job = PreparationJob(PreparationTestData.job(state: "succeeded"))
+        view.attachedNotification = "old-package"
+        guard view.form != nil, view.resolutionJob != nil, view.job != nil, view.reviewAgentProposal(context), calls.count == 1,
+              calls[0].path == "v1/preparations/form", calls[0].method == "POST",
+              Set(calls[0].body!.keys) == ["import_id", "revision"], view.form == nil,
+              view.job == nil, view.resolutionJob == nil, view.attachedNotification == nil, view.resolutionNotification == nil else { return false }
+        guard !view.reviewAgentProposal(context), calls.count == 1 else { return false }
+        let delayed = calls.removeFirst(); view.bind(context, saved: false, eligible: true)
+        delayed.complete(PreparationTestData.resolutionForm(), nil)
+        guard view.form == nil, !view.busy, !view.reviewAgentProposal(context), calls.isEmpty else { return false }
+        view.bind(context, saved: true, eligible: false)
+        guard !view.reviewAgentProposal(context), calls.isEmpty else { return false }
+        view.bind(context, saved: true, eligible: true); view.available = { false }
+        guard !view.reviewAgentProposal(context), calls.isEmpty else { return false }
+        view.available = { true }; view.request = nil
+        guard !view.reviewAgentProposal(context) else { return false }
+        view.request = { calls.append(PreparationTestRequest(path: $0, method: $1, body: $2, complete: $3)) }
+        for other in [PreparationContext(importID: UUID().uuidString.lowercased(), revision: 1, sourceRevision: context.sourceRevision),
+                      PreparationContext(importID: context.importID, revision: 2, sourceRevision: context.sourceRevision),
+                      PreparationContext(importID: context.importID, revision: 1, sourceRevision: "changed-source")] {
+            guard let other, !view.reviewAgentProposal(other), calls.isEmpty else { return false }
+        }
+        view.job = PreparationJob(PreparationTestData.job())
+        guard view.hasActiveJob, !view.reviewAgentProposal(context), calls.isEmpty else { return false }
+        view.job = nil; view.resolutionJob = PreparationResolutionJob(PreparationTestData.resolutionJob())
+        guard view.hasActiveJob, !view.reviewAgentProposal(context), calls.isEmpty else { return false }
+        // Terminal state alone cannot drop unresolved resolution ownership.
+        view.resolutionJob = PreparationResolutionJob(PreparationTestData.resolutionJob(state: "interrupted", settled: false))
+        guard view.hasActiveJob, !view.reviewAgentProposal(context), calls.isEmpty else { return false }
+        view.resolutionJob = nil
+        guard view.reviewAgentProposal(context), calls.count == 1 else { return false }
+        let current = calls.removeFirst()
+        view.bind(PreparationContext(importID: context.importID, revision: 2, sourceRevision: context.sourceRevision), saved: true, eligible: true)
+        current.complete(PreparationTestData.resolutionForm(), nil)
+        return view.form == nil && !view.busy && calls.isEmpty
+    }
     static func resolutionContractSelfTest() -> Bool {
         var invalid = PreparationTestData.resolutionForm()
         invalid["resolution_required"] = "true"; guard OnboardingFormV1(invalid) == nil else { return false }

@@ -13,13 +13,32 @@ families and adds only the unlocked family and singleton closure. It neither
 writes the tracked release policy nor changes a running host. Review artifacts
 are not execution authority.
 
+If the current policy already admits that exact model through the current
+Responses adapter digest and sole unlocked component, review returns the policy
+unchanged and records `candidate_policy_changed: false`. A different model,
+adapter, additional provider/model/component or missing unlocked authority is
+rejected. Fresh-proposal tests use an explicitly closed synthetic policy; a
+separate subprocess checks the actual current distribution policy.
+
 Actual execution additionally requires `--run-live`, `--host`, `--native`,
 `--credential-file`, and a fresh `--output`. The supplied credential file must be
 an explicit absolute canonical path to a current-user, singly linked regular
-file with mode 0600 and 1–4096 visible ASCII bytes, without a newline. The driver
+file with mode 0600. Its raw size is at most 4098 bytes; the key must contain
+1–4096 visible ASCII bytes, optionally followed by exactly one LF or CRLF.
+Embedded line breaks, multiple trailing lines, a lone CR, spaces and tabs are
+rejected. File identity and size checks bind the original raw bytes, including
+any terminator. The driver
 does not discover credentials, read an environment key, reuse another account's
 state, select a base URL, or accept a provider factory. It never records a key
 or a key-derived digest. Python strings cannot promise memory zeroization.
+
+Live receipts distinguish `credential_read_attempted` (set immediately before
+the bounded read syscall), `credential_read` (the syscall returned bytes), and
+`credential_accepted` (the complete identity and format checks passed). A file
+that was physically read and then rejected therefore cannot appear unread.
+A read syscall failure records an attempt without a completed read. Closed
+preflight failures leave all three fields false. These booleans disclose no key
+content, key hash or normalized key length.
 
 Before reading that file, the driver verifies the matching signed app/host,
 closed member inventory, current policy and adapter/model/component tuple,

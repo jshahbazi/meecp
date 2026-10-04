@@ -119,7 +119,7 @@ def _acl_identity(fd):
 
 
 class _AppRootMetadata:
-    """One held no-follow directory, with immutable ACL/flags baseline."""
+    """One held no-follow directory, with a fixed ACL/group/flags baseline."""
     def __init__(self, path):
         fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
         try:
@@ -128,6 +128,7 @@ class _AppRootMetadata:
                 value.st_nlink, value.st_size, value.st_mtime_ns)
             if not stat.S_ISDIR(value.st_mode) or _identity(path)[:-1] != self.identity: _deny()
             self.flags = value.st_flags
+            self.gid = value.st_gid
             self.acl = _acl_identity(fd)
             self.fd = fd
             self.check(path)
@@ -139,13 +140,15 @@ class _AppRootMetadata:
     def check(self, path):
         before = os.fstat(self.fd)
         if (_identity(path)[:-1] != self.identity or before.st_flags != self.flags
+                or before.st_gid != self.gid or path.lstat().st_gid != self.gid
                 or (before.st_dev, before.st_ino, before.st_mode, before.st_uid,
                     before.st_nlink, before.st_size, before.st_mtime_ns) != self.identity
                 or _acl_identity(self.fd) != self.acl): _deny()
         after = os.fstat(self.fd)
         if ((after.st_dev, after.st_ino, after.st_mode, after.st_uid,
                 after.st_nlink, after.st_size, after.st_mtime_ns) != self.identity
-                or after.st_flags != self.flags or _identity(path)[:-1] != self.identity): _deny()
+                or after.st_flags != self.flags or after.st_gid != self.gid
+                or path.lstat().st_gid != self.gid or _identity(path)[:-1] != self.identity): _deny()
 
 
 def _hash(path):

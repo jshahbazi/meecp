@@ -398,6 +398,7 @@ class Harness:
     async def case(self, label):
         from mcpme.contracts import Tool, validate_package
         from mcpme.preparation_inputs import parse_preparation_receipt
+        from mcpme.recipes import validate_bundle
         stage("source_intake", label)
         started = time.monotonic()
         base, state, home, environment = self.new_case(label)
@@ -559,8 +560,38 @@ class Harness:
                     and retained["epoch"] == disabled["epoch"], "recipe_disabled_restart_failed")
                 http_calls += await self.sdk(state, environment, home, slot_id, expected_tools, calls, "http")
                 stdio_calls += await self.sdk(state, environment, home, slot_id, expected_tools, calls, "stdio")
+                stage("recipe_lifecycle")
+                accepted_receipt_sha256 = digest(package_root / "mcpme.preparation.json")
+                retained_recipe = {key: retained[key] for key in ("digest", "path", "manifest", "evidence")}
+                removed = await self.cli(state, environment, home, "recipes", "remove", "--id", selected_recipe["recipe_id"],
+                    "--version", "1.0.0", "--json")
+                require(removed["state"] == "removed" and removed["digest"] == selected_recipe["digest"]
+                    and all(removed[key] == value for key, value in retained_recipe.items())
+                    and validate_bundle(Path(removed["path"]))["digest"] == selected_recipe["digest"],
+                    "recipe_remove_identity_failed")
+                await self.shutdown(child, state)
+                stage("restart")
+                child = await self.start(state, environment, home, enabled=True)
+                retained = await self.cli(state, environment, home, "recipes", "inspect", "--id", selected_recipe["recipe_id"],
+                    "--version", "1.0.0", "--json")
+                require(retained["state"] == "removed" and retained["digest"] == removed["digest"]
+                    and retained["epoch"] == removed["epoch"]
+                    and all(retained[key] == value for key, value in retained_recipe.items())
+                    and validate_bundle(Path(retained["path"]))["digest"] == selected_recipe["digest"],
+                    "recipe_removed_restart_failed")
+                resumed = await self.cli(state, environment, home, "imports", "inspect", draft["draft_id"], "--json")
+                require(resumed["state"] == "installed" and resumed["result_slot_id"] == slot_id
+                    and resumed["attachment"]["digest"] == package.digest
+                    and digest(package_root / "mcpme.preparation.json") == accepted_receipt_sha256
+                    and validate_package(package_root).digest == package.digest,
+                    "recipe_remove_changed_accepted_package")
+                http_calls += await self.sdk(state, environment, home, slot_id, expected_tools, calls, "http")
+                stdio_calls += await self.sdk(state, environment, home, slot_id, expected_tools, calls, "stdio")
                 recipe_lifecycle = {"digest": retained["digest"], "enabled_restart": True, "disabled_restart": True,
-                    "installed_runtime_after_disable": True}
+                    "removed_restart": True, "installed_runtime_after_disable": True,
+                    "installed_runtime_after_remove": True, "accepted_receipt_retained": True,
+                    "accepted_package_retained": True, "registered_bundle_retained": True,
+                    "independent_evidence_retained": True}
             return {"passed": True, "source_files": len(original_files), "source_locks": 0,
                 "native_receipt_sha256": digest(native_receipt), "native_routes": sorted(set(receipt["routes"])),
                 "source_revision": receipt["source_revision"], "reviewed_revision": receipt["reviewed_revision"],

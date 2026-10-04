@@ -14,7 +14,7 @@ def driver(monkeypatch):
     return importlib.import_module("verify_phase3_public_release_native_agent")
 
 
-# Literal policy from reviewed root candidate 16466850581e5e7ace78f5d19585faf36b18d4e7.
+# Literal policy from reviewed root candidate 63f1db3d9168b7273a74c0e27bbbad3d25e07ffa.
 # Keep its real ComponentReference shape and producer hashes in this regression.
 ROOT_POLICY_JSON = '''{
   "schema_version": 1,
@@ -38,8 +38,8 @@ ROOT_POLICY_JSON = '''{
       },
       {
         "id": "text-generate-v1",
-        "version": "1.0.10",
-        "digest": "77d9b9b834c13f05816626736ee8546c14ee617bef0f8e89353f61496bf9b6db"
+        "version": "1.0.11",
+        "digest": "b206dd2d5cc61af91328393181c7d772eb3a094fc01c21e783ccd56c3c553327"
       }
     ],
     "recipe_component_sets": [
@@ -79,13 +79,13 @@ ROOT_POLICY_JSON = '''{
       [
         {
           "id": "llamacpp-cpu-v1",
-          "version": "1.0.10",
-          "digest": "a3d3f000365e1a485a6bdaa3daa21363df54321656c4aaba1c42920e36cc9ca7"
+          "version": "1.0.11",
+          "digest": "d5e3f2d64b08ee68d7e3feac80756d8350bc22e79dd2e5649ffa4be65f31a9cd"
         },
         {
           "id": "text-generate-v1",
-          "version": "1.0.10",
-          "digest": "77d9b9b834c13f05816626736ee8546c14ee617bef0f8e89353f61496bf9b6db"
+          "version": "1.0.11",
+          "digest": "b206dd2d5cc61af91328393181c7d772eb3a094fc01c21e783ccd56c3c553327"
         }
       ]
     ],
@@ -153,23 +153,26 @@ def test_actual_candidate_policy_requires_typed_exact_closed_record(driver, dama
         with pytest.raises(driver.common.AcceptanceError): driver.closed_release_policy(value)
 
 
-def test_textgen_keys_bind_real_component_reference_shapes(driver, monkeypatch):
-    from mcpme.preparation_components import ComponentReference
+@pytest.mark.parametrize("previous_version", [None, "1.0.9", "1.0.10"])
+def test_textgen_keys_bind_actual_current_producer_to_literal_policy(driver, monkeypatch, previous_version):
     from mcpme import preparation_textgen
     assert ENGINE[0] == preparation_textgen.ENGINE_ID == "llamacpp-cpu-v1"
     assert TASK[0] == preparation_textgen.TASK_ID == "text-generate-v1"
-    records = [ComponentReference.model_validate(item)
-        for item in ROOT_POLICY["preparation"]["recipe_component_sets"][-1]]
-    monkeypatch.setattr(preparation_textgen, "VERSION", "1.0.10")
-    monkeypatch.setattr(preparation_textgen, "references", lambda: records)
-    assert driver.textgen_keys() == (ENGINE, TASK)
-    monkeypatch.setattr(preparation_textgen, "VERSION", "1.0.9")
-    with pytest.raises(driver.common.AcceptanceError): driver.textgen_keys()
+    assert preparation_textgen.VERSION == "1.0.11"
+    assert {item.key for item in preparation_textgen.references()} == {ENGINE, TASK}
+    if previous_version:
+        monkeypatch.setattr(preparation_textgen, "VERSION", previous_version)
+        with pytest.raises(driver.common.AcceptanceError, match="combined_textgen_version_changed"):
+            driver.textgen_keys()
+    else:
+        assert driver.textgen_keys() == (ENGINE, TASK)
 
 
 def test_candidate_policy_literal_matches_reviewed_root_blob():
     assert hashlib.sha256(ROOT_POLICY_JSON.encode()).hexdigest() == (
-        "4602a8d74aff8cdb50a4b006ecab587064d4420b0ebf1474b774485beb709c66")
+        "b1057900a673de718100db1a469acb68343274eb62b06519c2082a28603e3446")
+    from mcpme.preparation_release_policy import POLICY_PATH
+    assert (Path(__file__).resolve().parents[1] / POLICY_PATH).read_bytes() == ROOT_POLICY_JSON.encode()
 
 
 def capabilities(driver):
@@ -184,7 +187,7 @@ def capabilities(driver):
 
 
 @pytest.mark.parametrize("damage", [None, "python", "resolution", "onnx", "command", "command-closure",
-    "schema", "profile", "engine", "task", "agent-family", "agent-closure", "version", "wrong-engine-alias",
+    "schema", "profile", "engine", "task", "agent-family", "agent-closure", "version", "version10", "wrong-engine-alias",
     "extra-family", "extra-closure"])
 def test_combined_discovery_requires_all_exact_families_and_closed_agent(driver, damage):
     value = copy.deepcopy(capabilities(driver)); engine, task = ENGINE, TASK
@@ -201,6 +204,7 @@ def test_combined_discovery_requires_all_exact_families_and_closed_agent(driver,
     elif damage == "agent-family": execution["families"].append(["agent-python-adapter-v1", "1.0.0", "f" * 64])
     elif damage == "agent-closure": execution["recipe_component_sets"].append([["agent-python-adapter-v1", "1.0.0", "f" * 64]])
     elif damage == "version": engine = (ENGINE[0], "1.0.9", ENGINE[2])
+    elif damage == "version10": engine = (ENGINE[0], "1.0.10", ENGINE[2])
     elif damage == "wrong-engine-alias":
         engine = ("textgen-engine-v1", ENGINE[1], ENGINE[2])
         execution["recipe_component_sets"][4][0][0] = engine[0]

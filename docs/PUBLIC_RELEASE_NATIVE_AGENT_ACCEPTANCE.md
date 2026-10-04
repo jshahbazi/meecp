@@ -1,7 +1,7 @@
 # Native agent acceptance against a combined signed release
 
 `scripts/verify_phase3_public_release_native_agent.py` accepts a clean signed app
-whose shipped policy admits ordinary Python/MCP, ONNX, CLI and TextGen `1.0.10`
+whose shipped policy admits ordinary Python/MCP, ONNX, CLI and TextGen `1.0.11`
 with engine `llamacpp-cpu-v1`. Its agent record must contain exactly empty
 `components` and `providers` lists and `unlocked_resolution: false`. It adds no
 public gate or runtime setting.

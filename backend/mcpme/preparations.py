@@ -218,7 +218,7 @@ class PreparationStore(PreparationAuthority):
         return {**metadata, "execution_available": False, "verified_capabilities": [],
                 "candidates": sorted(({**candidate, "verified": False} for candidate in candidates),
                                      key=lambda item: item["candidate_id"]),
-                "blockers": [] if candidates else sorted({code for item in inspections for code in item["blockers"]})}
+                "blockers": [] if candidates else sorted({code for item in inspections for code in item.get("blockers", [])})}
 
     def release_family_inputs(self, job_id):
         with self.imports._lock:

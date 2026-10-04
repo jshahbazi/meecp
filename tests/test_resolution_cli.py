@@ -1,4 +1,4 @@
-"""Private owner CLI resolution stays closed and never selects owner fallback."""
+"""Static CLI review never confers execution authority or selects owner fallback."""
 import json
 import uuid
 
@@ -38,6 +38,13 @@ async def test_resolution_cli_private_transport_owner_gate_and_scoped_denial(tmp
         assert disabled["error"]["code"] == "resolution_runner_unavailable"
         assert (await execute(host.root, "resolutions", "list"))["resolutions"] == []
         grant = await execute(host.root, "authorize", "--prepare")
-        denied = await execute(host.root, "--credential-file", grant["credential_file"], *arguments)
+        scoped_review = await execute(host.root, "--credential-file", grant["credential_file"], *arguments)
+        assert scoped_review["error"]["code"] == "resolution_runner_unavailable"
+        read_only = await execute(host.root, "authorize", "--read-only")
+        denied = await execute(host.root, "--credential-file", read_only["credential_file"], *arguments)
         assert denied["error"]["code"] == "grant_scope"
+        denied_start = await execute(host.root, "--credential-file", grant["credential_file"],
+            "resolutions", "start", "--plan", str(uuid.uuid4()), "--plan-digest", "a" * 64,
+            "--idempotency-key", str(uuid.uuid4()))
+        assert denied_start["error"]["code"] == "grant_scope"
         assert host.resolutions.list() == [] and not host.resolution_reservations

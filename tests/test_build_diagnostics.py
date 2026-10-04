@@ -155,7 +155,8 @@ def test_bundled_model_generator_has_licensed_source_closure_without_checkout(tm
 def test_host_build_preserves_nested_document_links_and_binds_all_document_hashes(monkeypatch, tmp_path, with_engine):
     source = tmp_path / "source"
     files = {"pyproject.toml": '[project]\nversion = "0.1.0"\n', "uv.lock": "synthetic lock",
-             "backend/mcpme/service.py": "synthetic source", "backend/mcpme_local_transport.py": "synthetic transport",
+             "backend/mcpme/service.py": "synthetic source", "backend/mcpme_service/__init__.py": "synthetic service runtime",
+             "backend/mcpme_local_transport.py": "synthetic transport",
              "README.md": "synthetic readme", "THIRD_PARTY_NOTICES.md": "synthetic notices",
              "scripts/mcpme-command-reap.c": "synthetic helper source",
              "scripts/mcpme-command-resource-reap.c": "synthetic monitor source",
@@ -213,6 +214,9 @@ def test_host_build_preserves_nested_document_links_and_binds_all_document_hashe
     monkeypatch.setattr(host_builder, "bundle_textgen_toolchain", bundle_engine)
     host = host_builder.build(tmp_path / "host", textgen_engine=engine if with_engine else None)
     receipt = json.loads((host / "build.json").read_text())
+    service_runtime = "backend/mcpme_service/__init__.py"
+    assert (host / service_runtime).read_bytes() == (source / service_runtime).read_bytes()
+    assert receipt["artifact_sha256"][service_runtime] == hashlib.sha256((source / service_runtime).read_bytes()).hexdigest()
     included = {"docs/AUTOMATIC_PREPARATION.md", "docs/reviews/DIRECTORY_ONBOARDING_REVIEW.md", "docs/reviews/figure.svg"}
     for relative in included:
         assert (host / relative).read_bytes() == (source / relative).read_bytes()

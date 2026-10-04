@@ -281,7 +281,7 @@ async def test_owner_add_enable_variant_and_restart_through_private_cli(tmp_path
     async with private_manager(tmp_path) as host:
         defaults = {record["recipe_id"] for record in host.recipes.list()}
         assert defaults == {"mcpme.python-callable", "mcpme.resolved-python", "mcpme.onnx-hotdog",
-                            "mcpme.text-generation", "mcpme.native-command",
+                            "mcpme.text-generation", "mcpme.native-command", "mcpme.local-openai-text",
                             "mcpme.agent-python-adapter", "mcpme.agent-unlocked-python-adapter"}
         for path, entry in ((first_path, first), (second_path, second)):
             added = await execute(host.root, "recipes", "add", "--path", path)
@@ -299,16 +299,19 @@ async def test_owner_add_enable_variant_and_restart_through_private_cli(tmp_path
 
 
 @pytest.mark.parametrize("mode", ["read", "prepare"])
-async def test_existing_scoped_grants_cannot_manage_recipes_or_preparation_jobs(tmp_path, mode):
+async def test_existing_scoped_grants_review_metadata_but_cannot_mutate_recipes_or_start_jobs(tmp_path, mode):
     path = tmp_path / "recipe"
     scaffold_recipe(path, "local.owner")
     async with private_manager(tmp_path) as host:
         baseline = host.recipes.list()
         grant = await execute(host.root, "authorize", "--read-only" if mode == "read" else "--prepare")
         scoped = ("--credential-file", grant["credential_file"])
-        for command in (("recipes", "list"), ("recipes", "add", "--path", path),
+        assert (await execute(host.root, *scoped, "recipes", "list"))["recipes"] == host.recipes.list_summaries()
+        assert (await execute(host.root, *scoped, "preparations", "list"))["preparations"] == []
+        for command in (("recipes", "add", "--path", path),
                         ("recipes", "enable", "--id", "local.owner", "--version", "1.0.0"),
-                        ("preparations", "list")):
+                        ("preparations", "start", "--plan", str(uuid.uuid4()),
+                         "--plan-digest", "a" * 64, "--idempotency-key", str(uuid.uuid4()))):
             denied = await execute(host.root, *scoped, *command)
             assert denied["error"]["code"] == "grant_scope"
         assert host.recipes.list() == baseline and host.preparations.list() == []

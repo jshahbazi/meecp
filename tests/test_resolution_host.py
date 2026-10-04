@@ -107,8 +107,9 @@ async def test_resolution_routes_preserve_owner_origin_and_exact_idempotency(tmp
             grant = host.grants.issue({"mode": "prepare", "ttl_seconds": 60})
             credential = read_credential(Path(grant["credential_file"]))
             headers = {"Authorization": "Bearer " + credential["token"]}
-            for method, path, value in (("GET", "/v1/resolutions", None),
-                    ("POST", "/v1/resolutions/plan", payload), ("POST", "/v1/resolutions/start", {}),
+            metadata = await client.get("/v1/resolutions", headers=headers)
+            assert metadata.status_code == 200 and metadata.json()["resolutions"] == []
+            for method, path, value in (("POST", "/v1/resolutions/start", {}),
                     ("POST", "/v1/resolutions/" + str(uuid.uuid4()) + "/cancel", {}),
                     ("POST", "/v1/resolutions/" + str(uuid.uuid4()) + "/recover", {})):
                 response = await client.request(method, path, json=value, headers=headers)
@@ -116,6 +117,10 @@ async def test_resolution_routes_preserve_owner_origin_and_exact_idempotency(tmp
             assert (await client.post("/v1/resolutions/plan", json=payload,
                 headers={"Origin": "https://example.com"})).status_code == 403
             assert host.resolution_runner.calls == []
+            scoped_review = await client.post("/v1/resolutions/plan", json=payload, headers=headers)
+            assert scoped_review.status_code == 200 and scoped_review.json()["execution_available"] is True
+            assert host.resolution_runner.calls == ["plan"]
+            assert host.resolutions.list_summaries() == [] and not host.resolution_reservations
             assert (await client.post("/v1/resolutions/plan", json={**payload, "unknown": True})).status_code == 400
             reviewed = (await client.post("/v1/resolutions/plan", json=payload)).json()
             assert reviewed["execution_available"] is True and reviewed["request"]["source_revision"] == draft["source"]["revision"]

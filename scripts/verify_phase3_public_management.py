@@ -281,7 +281,9 @@ class ManagementHarness(common.Harness):
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
         exported = await self.cli(state, environment, home, "--credential-file", credential, "management", "export", "--json")
-        configuration = validate_export(exported, self.launcher, state, credential)
+        # The production bundled CLI exports its enclosing app's native entry.
+        # verify() has already bound this exact native/host pair and full app.
+        configuration = validate_export(exported, self.native, state, credential)
         timed_out = False
         lifetime = asyncio.timeout(SDK_SESSION_SECONDS)
         try:

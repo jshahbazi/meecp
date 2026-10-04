@@ -108,6 +108,67 @@ def test_export_pins_actual_shipped_command_state_and_credential(driver, tmp_pat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("app_name", ["Synthetic.app", "Relocated app.app"])
+async def test_actual_bundled_export_reaches_exact_native_sdk_entrypoint(driver, tmp_path, monkeypatch, app_name):
+    """Use production export/credential parsing; stop before opening transport."""
+    from contextlib import asynccontextmanager
+    import uuid
+    import mcp.client.stdio as transport
+    from mcpme import __main__ as cli
+    from mcpme.private import write_private_json
+
+    app = tmp_path / app_name
+    host = app / "Contents/Resources/host"
+    module = host / "backend/mcpme/__main__.py"
+    native = app / "Contents/MacOS/mcpme"
+    launcher = host / "bin/mcpme"
+    for path in (module, native, launcher):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("Synthetic location fixture.\n")
+    monkeypatch.setattr(cli, "__file__", str(module))
+    state = tmp_path / "state"
+    credentials = tmp_path / "credentials"
+    credentials.mkdir(mode=0o700)
+    credential = credentials / "scoped.json"
+    token = "s" * 43
+    grant_id = str(uuid.uuid4())
+    write_private_json(credential, {"schema_version": 1, "grant_id": grant_id, "token": token})
+    args = cli.parser().parse_args(["--state-dir", str(state), "--credential-file", str(credential),
+        "management", "export", "--json"])
+    exported = await cli.execute(args)
+    expected = {"command": str(native), "args": ["--state-dir", str(state), "--credential-file",
+        str(credential), "management", "connect"]}
+    assert exported["grant_id"] == grant_id
+    assert driver.validate_export(exported, native, state, credential) == expected
+    assert token not in json.dumps(exported)
+    with pytest.raises(driver.common.AcceptanceError, match="^management_export_binding_changed$"):
+        driver.validate_export(exported, launcher, state, credential)
+
+    harness = driver.ManagementHarness(tmp_path, host, native, {"safe_to_remove": True},
+        report={"public_cli_starts": 0, "sdk_sessions_exited": 0, "cases": {}})
+    exports = []
+    async def actual_export(*arguments):
+        exports.append(arguments)
+        return await cli.execute(args)
+    monkeypatch.setattr(harness, "cli", actual_export)
+    transports = []
+    class StopBeforeTransport(Exception):
+        pass
+    @asynccontextmanager
+    async def guarded_transport(parameters, **kwargs):
+        transports.append(parameters)
+        assert parameters.command == str(native) and parameters.args == expected["args"]
+        raise StopBeforeTransport()
+        yield
+    monkeypatch.setattr(transport, "stdio_client", guarded_transport)
+    with pytest.raises(StopBeforeTransport):
+        async with harness.sdk(state, {"PATH": "/usr/bin:/bin"}, tmp_path, credential):
+            pytest.fail("guarded fixture opened a session")
+    assert len(exports) == len(transports) == 1 and not harness.children
+    assert harness.report["sdk_sessions_exited"] == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["complete", "overflow", "timeout"])
 async def test_actual_bounded_ram_capture_and_cleanup(driver, harness, tmp_path, mode, monkeypatch):
     def forbidden(*args, **kwargs): pytest.fail("raw protocol bytes written to a temporary file")
@@ -257,8 +318,8 @@ async def test_closed_release_fails_before_signature_or_start_without_input_muta
 async def test_actual_silent_sdk_child_times_out_and_original_transport_handle_joins(driver, harness, tmp_path, monkeypatch, stage):
     import asyncio
     import mcp.client.stdio as transport
-    launcher = harness.launcher
-    launcher.parent.mkdir(parents=True)
+    launcher = harness.native
+    launcher.parent.mkdir(parents=True, exist_ok=True)
     code = ("#!" + sys.executable + "\nimport json,sys\n"
         "for line in sys.stdin:\n"
         " request=json.loads(line)\n"
@@ -303,8 +364,8 @@ async def test_actual_silent_sdk_child_times_out_and_original_transport_handle_j
 async def test_actual_early_exit_is_not_reclassified_as_a_fired_sdk_timeout(driver, harness, tmp_path, monkeypatch):
     import asyncio
     import mcp.client.stdio as transport
-    launcher = harness.launcher
-    launcher.parent.mkdir(parents=True)
+    launcher = harness.native
+    launcher.parent.mkdir(parents=True, exist_ok=True)
     launcher.write_text("#!" + sys.executable + "\nraise SystemExit(0)\n")
     launcher.chmod(0o700)
     owned = []

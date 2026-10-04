@@ -425,7 +425,8 @@ async def test_actual_installed_call_and_last_native_fence_retain_original_proof
 
 
 @pytest.mark.asyncio
-async def test_actual_queued_invocation_revocation_joins_owned_helper(packaged, tmp_path, native):
+async def test_actual_queued_invocation_revocation_joins_owned_helper(packaged, tmp_path, native, monkeypatch):
+    from mcpme.command_execution_v2 import SEED_SIZE
     from mcpme.supervisor import Supervisor
     shutil.copyfile(native[1], packaged.helpers[0])
     packaged.helpers[0].chmod(0o700)
@@ -438,26 +439,37 @@ async def test_actual_queued_invocation_revocation_joins_owned_helper(packaged, 
     host.commands = release.ReleasedHostCommands(host, admitted, proof)
     tasks = []
     try:
-        slot = await install(host, package(tmp_path, native, "hang", deadline=150, smoke=False), "Queued release fixture")
+        slot = await install(host, package(tmp_path, native, "hang", deadline=3000, smoke=False), "Queued release fixture")
         sessions = [await host.commands.session(slot), await host.commands.session(slot)]
         tasks = [asyncio.create_task(host.commands.invoke(sessions[0], "probe", {"ok": True}, 1))]
         async with asyncio.timeout(2):
             while host.commands.executor(slot.id)._active is None:
                 await asyncio.sleep(0.001)
         owned = host.commands.executor(slot.id)._active
-        # Give the queued call a later deadline so it reaches the authority
-        # fence after the first owned helper settles rather than expiring too.
-        await asyncio.sleep(0.05)
+        runtime, queued = host.commands.executor(slot.id), asyncio.Event()
+        execute = runtime.execute
+        async def observed(spec, payload, *, instance_id):
+            queued.set()
+            return await execute(spec, payload, instance_id=instance_id)
+        monkeypatch.setattr(runtime, "execute", observed)
         tasks.append(asyncio.create_task(host.commands.invoke(sessions[1], "probe", {"ok": True}, 2)))
         async with asyncio.timeout(2):
-            while host.commands.counts.get(slot.id, 0) < 2:
-                await asyncio.sleep(0.001)
+            await queued.wait()
+        assert host.commands.counts.get(slot.id) == 2
         proof.policy.write_bytes(b'{"changed":true}')
+        # Cancel and join the first owned call after revocation. The queued
+        # call has ample time to reach its authority fence once that join ends.
+        tasks[0].cancel()
         outcomes = await asyncio.gather(*tasks, return_exceptions=True)
-        assert isinstance(outcomes[0], (TimeoutError, release.InstalledCommandError))
+        assert isinstance(outcomes[0], asyncio.CancelledError)
         assert isinstance(outcomes[1], release.InstalledCommandError)
-        assert owned.poll() == 0 and not host.commands.pending(slot.id)
+        assert str(outcomes[1]) == "command_not_admitted"
+        assert owned.poll() in (0, 64) and not host.commands.pending(slot.id)
         assert len(host.commands.executor(slot.id).journal["entries"]) == 1
+        item = runtime.journal["entries"][0]
+        assert runtime._proof(item)[0] and runtime.reconcile() == {"pending": 0, "reserved_units": 0}
+        if owned.returncode == 64:
+            assert runtime._receipt_path(item).read_bytes()[SEED_SIZE] == ord("N")
         for session in sessions: await session.close()
     finally:
         for task in tasks:

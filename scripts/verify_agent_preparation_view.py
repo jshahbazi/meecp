@@ -15,7 +15,7 @@ def main():
         source.write_text('import AppKit\nlet _ = NSApplication.shared\nexit(runAgentPreparationContractSelfTest() ? 0 : 1)\n')
         executable = private / "contract"
         inputs = [root / "Sources/McpmeMenuBar" / name for name in (
-            "Brand.swift", "WorkspaceStyle.swift", "PreparationForms.swift", "PreparationResolution.swift", "AgentPreparationView.swift")]
+            "Brand.swift", "WorkspaceStyle.swift", "PreparationForms.swift", "PreparationResolution.swift", "AgentProviderSettingsView.swift", "AgentPreparationView.swift")]
         commands = [("compile", ["/usr/bin/swiftc", *map(str, inputs), str(source), "-o", str(executable)]),
                     ("handlers", [str(executable)])]
         for stage, argv in commands:

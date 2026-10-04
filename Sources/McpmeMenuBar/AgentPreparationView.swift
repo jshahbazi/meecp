@@ -1,5 +1,25 @@
 import AppKit
 
+private struct AgentRecipeChoice {
+    let recipe: [String: Any]
+    let label: String
+    let compatible: Bool
+    let recommended: Bool
+    var identity: String { (recipe["id"] as! String) + "\u{1f}" + (recipe["version"] as! String) + "\u{1f}" + (recipe["digest"] as! String) }
+    init?(_ object: [String: Any], recipes: [[String: Any]]) {
+        guard Set(object.keys) == ["recipe", "label", "compatibility", "recommended"],
+              let recipe = object["recipe"] as? [String: Any],
+              Set(recipe.keys) == ["id", "version", "digest"], preparationText(recipe["id"], maximum: 128) != nil,
+              preparationText(recipe["version"], maximum: 128) != nil, preparationDigest(recipe["digest"]) != nil,
+              recipes.contains(where: { NSDictionary(dictionary: $0).isEqual(to: recipe) }),
+              let label = preparationText(object["label"], maximum: 96),
+              !label.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) || CharacterSet.newlines.contains($0) }),
+              let compatibility = object["compatibility"] as? String, ["compatible", "unresolved"].contains(compatibility),
+              let recommended = preparationBoolean(object["recommended"]), !recommended || compatibility == "compatible" else { return nil }
+        self.recipe = recipe; self.label = label; self.compatible = compatibility == "compatible"; self.recommended = recommended
+    }
+}
+
 struct AgentPreparationJob {
     let id: String
     let context: PreparationContext
@@ -56,7 +76,7 @@ extension AgentPreparationView {
             requests.append(method + " " + path)
             if path.hasSuffix("/plans"), body?.count == 2 {
                 completion(["schema_version": 1, "import_id": importID, "revision": 1, "source_revision": source,
-                    "providers": [["provider_id": "configured", "models": ["configured-model"]]],
+                    "providers": [["provider_id": "configured", "name": "Configured test", "generation": NSNull(), "models": ["configured-model"]]],
                     "files": [["path": "worker.py", "sha256": digest, "size": 32]],
                     "metadata_files": [["path": "uv.lock", "sha256": digest, "size": 32768],
                         ["path": "worker.py", "sha256": digest, "size": 32]], "recipes": [recipe], "latest_job": NSNull()], nil)
@@ -82,12 +102,18 @@ extension AgentPreparationView {
         }
         view.loadButton.performClick(nil)
         guard view.fileControls.count == 1, view.metadataControls.count == 2, view.metadataControls[0].state == .off, !view.sendButton.isEnabled else { return false }
+        guard view.scopeRequest() == nil else { return false }
+        guard view.recipePicker.selectedItem?.representedObject == nil else { return false }
+        view.recipePicker.selectItem(at: 1)
         view.fileControls[0].performClick(nil)
         view.metadataControls[1].performClick(nil)
         guard view.fileControls[0].state == .off, view.metadataControls[1].state == .on else { return false }
         view.fileControls[0].performClick(nil)
         guard view.metadataControls[1].state == .off, view.fileControls[0].state == .on else { return false }
-        view.metadataControls[0].performClick(nil); view.reviewButton.performClick(nil)
+        view.metadataControls[0].performClick(nil)
+        guard view.scopeRequest() == nil, !view.reviewButton.isEnabled else { return false }
+        view.modelPicker.selectItem(withTitle: "configured-model"); view.selectionChanged(view.modelPicker)
+        view.reviewButton.performClick(nil)
         guard view.sendButton.isEnabled, view.reviewLabel.stringValue.contains("worker.py"),
               view.reviewLabel.stringValue.contains("Identity-only transfer"), view.reviewLabel.stringValue.contains("uv.lock"),
               view.reviewLabel.stringValue.contains("test.guide"),
@@ -139,14 +165,132 @@ extension AgentPreparationView {
         replacement["job_id"] = "10000000-0000-4000-8000-000000000004"
         delayed.job = AgentPreparationJob(replacement); delayed.refreshAvailability()
         held?(row("succeeded", candidate: true), nil)
-        return delayed.job?.id == replacement["job_id"] as? String && !delayed.adoptButton.isEnabled
+        guard delayed.job?.id == replacement["job_id"] as? String && !delayed.adoptButton.isEnabled else { return false }
+        // A configured profile changing after options load requires a new review.
+        let generation = UUID().uuidString.lowercased(), nextGeneration = UUID().uuidString.lowercased()
+        var reviewed: [String: Any]?
+        view.request = { path, method, body, complete in
+            guard path.hasSuffix("/plans"), method == "POST", let body else { complete(nil, "invalid_test_request"); return }
+            reviewed = ["schema_version": 1, "import_id": importID, "revision": 1, "source_revision": source,
+                "plan_id": planID, "plan_digest": digest, "expires_at": Date().timeIntervalSince1970 + 300,
+                "provider_id": "configured", "provider_generation": nextGeneration, "model": "configured-model", "recipe": recipe,
+                "selected_files": [["path": "worker.py", "sha256": digest, "bytes": 32]], "selected_metadata": [["path": "uv.lock", "sha256": digest, "bytes": 32768]],
+                "limits": body["limits"]!, "destination": "https://api.openai.com/v1/responses", "simulated": true,
+                "monetary_ceiling_enforced": false, "execution_available": false]
+            complete(reviewed, nil)
+        }
+        view.job = nil; view.options?["providers"] = [["provider_id": "configured", "generation": generation, "models": ["configured-model"]]]
+        view.plan = nil; view.refreshAvailability(); view.reviewScope()
+        guard reviewed != nil, view.plan == nil, view.errorCode == "agent_plan_invalid", !view.sendButton.isEnabled else { return false }
+        reviewed?["provider_generation"] = generation
+        guard let body = view.scopeRequest(), let reviewed else { return false }
+        return view.validPlan(reviewed, body: body)
     }
 }
 
-func runAgentPreparationContractSelfTest() -> Bool { AgentPreparationView.contractSelfTest() }
+func runAgentPreparationContractSelfTest() -> Bool {
+    AgentProviderSettingsView.contractSelfTest() && AgentPreparationView.providerOwnershipSelfTest() &&
+        AgentPreparationView.recipeChoiceSelfTest() && AgentPreparationView.contractSelfTest()
+}
+
+extension AgentPreparationView {
+    static func recipeChoiceSelfTest() -> Bool {
+        let view = AgentPreparationView(); view.available = { true }
+        guard let context = PreparationContext(importID: UUID().uuidString.lowercased(), revision: 1, sourceRevision: "sha256:" + String(repeating: "a", count: 64)) else { return false }
+        view.bind(context, saved: true)
+        let unrelated: [String: Any] = ["id": "mcpme.resolved-python", "version": "1.0.1", "digest": String(repeating: "b", count: 64)]
+        let locked: [String: Any] = ["id": "mcpme.agent-python-adapter", "version": "1.0.0", "digest": String(repeating: "c", count: 64)]
+        var unlocked: [String: Any] = ["id": "mcpme.agent-unlocked-python-adapter", "version": "1.0.0", "digest": String(repeating: "d", count: 64)]
+        func choice(_ recipe: [String: Any], label: String, compatible: Bool, recommended: Bool = false) -> [String: Any] {
+            ["recipe": recipe, "label": label, "compatibility": compatible ? "compatible" : "unresolved", "recommended": recommended]
+        }
+        var recipes = [unrelated, locked, unlocked]
+        var choices = [choice(unrelated, label: "Detected Python tools", compatible: false),
+                       choice(locked, label: "Python app with an existing dependency lock", compatible: false),
+                       choice(unlocked, label: "Python app needing dependency resolution", compatible: true, recommended: true)]
+        var truncated = false, calls = 0
+        view.request = { path, method, body, completion in
+            calls += 1
+            guard path == "v1/agent-preparations/plans", method == "POST", body?.count == 2, let current = view.context else { completion(nil, "invalid_test_request"); return }
+            completion(["api_version": 1, "schema_version": 1, "import_id": current.importID, "revision": current.revision, "source_revision": current.sourceRevision,
+                "providers": [["provider_id": "configured", "models": ["test-model"]]],
+                "files": [["path": "worker.py", "size": 40, "sha256": String(repeating: "e", count: 64)]],
+                "metadata_files": [["path": "LICENSE", "size": 200, "sha256": String(repeating: "f", count: 64)]],
+                "recipes": recipes, "recipe_choices": choices, "recipes_truncated": truncated, "latest_job": NSNull()], nil)
+        }
+        view.loadButton.performClick(nil)
+        guard (view.recipePicker.selectedItem?.representedObject as? [String: Any])?["id"] as? String == unlocked["id"] as? String,
+              view.recipePicker.titleOfSelectedItem?.contains("Python app needing dependency resolution") == true,
+              view.modelPicker.selectedItem?.representedObject == nil, calls == 1 else { return false }
+        // Explicit choice takes precedence over the recommended default.
+        view.recipePicker.selectItem(at: 1); view.selectionChanged(view.recipePicker)
+        view.loadOptions()
+        guard (view.recipePicker.selectedItem?.representedObject as? [String: Any])?["id"] as? String == unrelated["id"] as? String else { return false }
+        view.modelPicker.selectItem(withTitle: "test-model"); view.selectionChanged(view.modelPicker)
+        view.fileControls[0].performClick(nil)
+        guard view.scopeRequest() == nil, !view.reviewButton.isEnabled else { return false }
+        // Disappearing explicit references are never silently replaced.
+        recipes = [locked, unlocked]; choices.removeFirst(); view.loadOptions()
+        guard view.recipePicker.selectedItem?.representedObject == nil, view.status.stringValue.contains("no longer available") else { return false }
+        view.recipePicker.selectItem(at: 2); view.selectionChanged(view.recipePicker)
+        unlocked["version"] = "1.0.1"; unlocked["digest"] = String(repeating: "1", count: 64)
+        recipes = [locked, unlocked]; choices[1] = choice(unlocked, label: "Python app needing dependency resolution", compatible: true, recommended: true)
+        view.loadOptions()
+        guard view.recipePicker.selectedItem?.representedObject == nil, view.status.stringValue.contains("no longer available") else { return false }
+        // Ambiguous captured metadata leaves the choice visibly unresolved.
+        view.bind(PreparationContext(importID: context.importID, revision: 2, sourceRevision: context.sourceRevision), saved: true)
+        choices = [choice(locked, label: "Python app with an existing dependency lock", compatible: false),
+                   choice(unlocked, label: "Python app needing dependency resolution", compatible: false)]
+        view.loadOptions()
+        guard view.recipePicker.selectedItem?.representedObject == nil, view.status.stringValue.contains("No compatible preparation path") else { return false }
+        // An incomplete inventory suppresses recommendations and asks for narrowing.
+        truncated = true; choices[1] = choice(unlocked, label: "Python app needing dependency resolution", compatible: true, recommended: true)
+        view.loadOptions()
+        guard view.recipePicker.selectedItem?.representedObject == nil, view.status.stringValue.contains("Manage enabled recipes") else { return false }
+        // A recommendation for an undisplayed reference cannot gain selection.
+        truncated = false; choices[0] = choice(unrelated, label: "Unknown reference", compatible: true, recommended: true)
+        view.loadOptions()
+        guard view.errorCode == "agent_options_invalid", view.options == nil, !view.reviewButton.isEnabled else { return false }
+        choices = [choice(locked, label: "Locked", compatible: true, recommended: true), choice(unlocked, label: "Unlocked", compatible: true, recommended: true)]
+        view.loadOptions()
+        return view.errorCode == "agent_options_invalid" && view.options == nil && !view.sendButton.isEnabled && calls == 8
+    }
+    static func providerOwnershipSelfTest() -> Bool {
+        let view = AgentPreparationView(); view.available = { true }; view.refreshAvailability()
+        let adapter: [String: Any] = ["adapter_id": "openai-responses-v1", "name": "OpenAI Responses", "destination": "https://api.openai.com/v1/responses",
+            "configuration_schema": ["type": "object", "properties": [:], "additionalProperties": false],
+            "credential_fields": [["id": "api_key", "label": "API key", "required": true, "max_bytes": 4096]], "model_selection": "explicit_ids"]
+        let list: [String: Any] = ["schema_version": 1, "adapters": [adapter], "providers": [], "live_execution_enabled": false]
+        var paths: [String] = []
+        view.request = { path, method, body, completion in
+            paths.append(path)
+            guard path == "v1/agent-providers", method == "GET", body == nil else { completion(nil, "invalid_test_request"); return }
+            completion(list, nil)
+        }
+        // Setup does not require an authored or saved import draft.
+        view.providerSettings.loadProviders(); view.providerSettings.addProvider()
+        guard view.blocksNavigation, !view.loadButton.isEnabled, !view.reviewButton.isEnabled, !view.sendButton.isEnabled else { return false }
+        view.providerSettings.cancelEditing()
+        guard !view.blocksNavigation else { return false }
+        var held: (([String: Any]?, String?) -> Void)?
+        view.request = { path, _, _, completion in paths.append(path); held = completion }
+        view.providerSettings.loadProviders()
+        guard view.blocksNavigation else { return false }
+        view.bind(PreparationContext(importID: UUID().uuidString.lowercased(), revision: 1, sourceRevision: "sha256:" + String(repeating: "b", count: 64)), saved: true)
+        guard view.blocksNavigation, !view.loadButton.isEnabled else { return false }
+        held?(list, nil)
+        guard !view.blocksNavigation, view.loadButton.isEnabled, paths.allSatisfy({ $0 == "v1/agent-providers" }) else { return false }
+        // Editing provider settings invalidates an existing transfer review.
+        view.plan = ["plan_id": "synthetic-plan"]
+        view.providerSettings.addProvider()
+        guard view.plan == nil, view.blocksNavigation else { return false }
+        view.clearCredentialEntry(); view.providerSettings.cancelEditing()
+        return !view.blocksNavigation && !view.sendButton.isEnabled
+    }
+}
 
 /// Explicit selected-file transfer followed by ordinary host preparation review.
-/// This view has no credentials, endpoint settings, code or installation authority.
+/// Provider settings confer no code or installation authority.
 final class AgentPreparationView: NSStackView {
     var request: PreparationRequest?
     var available: (() -> Bool)?
@@ -162,9 +306,11 @@ final class AgentPreparationView: NSStackView {
     private(set) var errorCode: String?
     private var options: [String: Any]?
     private var plan: [String: Any]?
+    private var preferredRecipe: [String: Any]?
     private var pendingStart: [String: Any]?
     private var pendingContext: PreparationContext?
     private let providerPicker = NSPopUpButton()
+    private let providerSettings = AgentProviderSettingsView()
     private let modelPicker = NSPopUpButton()
     private let recipePicker = NSPopUpButton()
     private var fileControls: [NSButton] = []
@@ -181,7 +327,8 @@ final class AgentPreparationView: NSStackView {
     private var cancelButton: NSButton!
     private var retryButton: NSButton!
     private var adoptButton: NSButton!
-    var blocksNavigation: Bool { busy || pendingStart != nil || job?.active == true }
+    private var analysisBlocksNavigation: Bool { busy || pendingStart != nil || job?.active == true }
+    var blocksNavigation: Bool { analysisBlocksNavigation || providerSettings.blocksNavigation }
 
     override init(frame: NSRect) {
         super.init(frame: frame); orientation = .vertical; alignment = .leading; spacing = 8
@@ -201,6 +348,22 @@ final class AgentPreparationView: NSStackView {
         for button in [loadButton!, reviewButton!, sendButton!, cancelButton!, retryButton!, adoptButton!] {
             button.bezelStyle = .rounded; button.setAccessibilityLabel(button.title)
         }
+        providerSettings.available = { [weak self] in
+            guard let self else { return false }
+            return self.available?() == true && !self.analysisBlocksNavigation
+        }
+        providerSettings.request = { [weak self] path, method, body, completion in
+            guard let request = self?.request else { completion(nil, "manager_request_failed"); return }
+            request(path, method, body, completion)
+        }
+        providerSettings.onStateChange = { [weak self] in
+            guard let self else { return }
+            if self.providerSettings.blocksNavigation { self.plan = nil }
+            self.refreshAvailability(); self.onStateChange?()
+        }
+        providerSettings.onRegistryChange = { [weak self] in self?.registryChanged() }
+        addArrangedSubview(providerSettings)
+        workspaceFill(providerSettings, in: self)
         addArrangedSubview(workspaceStack([providerPicker, modelPicker, recipePicker], horizontal: true))
         addArrangedSubview(files)
         addArrangedSubview(workspaceStack([workspaceLabel("Transfer bytes", size: 12), transfer,
@@ -215,8 +378,9 @@ final class AgentPreparationView: NSStackView {
 
     func bind(_ next: PreparationContext?, saved: Bool) {
         if next != context || saved != self.saved {
+            providerSettings.clearCredentialEntry()
             invalidateJobResponses()
-            epoch &+= 1; context = next; self.saved = saved; options = nil; plan = nil
+            epoch &+= 1; context = next; self.saved = saved; options = nil; plan = nil; preferredRecipe = nil
             // Keep a known pending request/job across draft changes. The owner
             // remains visible and cancellable until the host reports settlement.
             if !blocksNavigation { job = nil; errorCode = nil }
@@ -224,20 +388,25 @@ final class AgentPreparationView: NSStackView {
         refreshAvailability()
     }
     private func invalidateJobResponses() { jobEpoch &+= 1; polling = false }
-    func invalidate() { invalidateJobResponses(); epoch &+= 1; options = nil; plan = nil; refreshAvailability() }
-    func registryChanged() { if !blocksNavigation { invalidate() } }
+    func invalidate() { invalidateJobResponses(); epoch &+= 1; options = nil; plan = nil; providerSettings.invalidate(); refreshAvailability() }
+    func clearCredentialEntry() { providerSettings.clearCredentialEntry() }
+    func resetProviderConnection() { providerSettings.connectionReset() }
+    func registryChanged() {
+        if !blocksNavigation { invalidateJobResponses(); epoch &+= 1; options = nil; plan = nil; refreshAvailability() }
+    }
     func refreshAvailability() {
         let online = available?() == true
         let editable = online && context != nil && saved && !blocksNavigation
         loadButton?.isEnabled = editable
         reviewButton?.isEnabled = editable && scopeRequest() != nil
-        sendButton?.isEnabled = online && !busy && pendingStart == nil && job?.active != true && currentPlan()
+        sendButton?.isEnabled = online && !blocksNavigation && currentPlan()
         cancelButton?.isEnabled = online && !busy && job?.active == true && job?.state != "cancel_requested"
         retryButton?.isEnabled = online && !busy && (pendingStart != nil || job != nil)
         adoptButton?.isEnabled = editable && job?.state == "succeeded" && job?.settled == true && job?.candidateDigest != nil && job?.context == context
         for control in [providerPicker, modelPicker, recipePicker, transfer, output, deadline] as [NSControl] { control.isEnabled = editable }
         fileControls.forEach { $0.isEnabled = editable }
         metadataControls.forEach { $0.isEnabled = editable }
+        providerSettings.refreshAvailability()
     }
     private func fail(_ code: String) {
         errorCode = preparationCode(code) ?? "agent_request_failed"
@@ -247,6 +416,7 @@ final class AgentPreparationView: NSStackView {
     private func finishRequest() { busy = false; refreshAvailability(); onStateChange?() }
     @objc private func selectionChanged(_ sender: NSControl) {
         guard !blocksNavigation else { return }
+        if sender === recipePicker { preferredRecipe = recipePicker.selectedItem?.representedObject as? [String: Any] }
         if let button = sender as? NSButton, button.state == .on {
             if fileControls.contains(where: { $0 === button }) {
                 metadataControls.filter { $0.identifier?.rawValue == button.title }.forEach { $0.state = .off }
@@ -256,20 +426,32 @@ final class AgentPreparationView: NSStackView {
         }
         if senderProviderChanged() { reloadModels() }
         plan = nil; reviewLabel.stringValue = "Review the exact files and provider before sending. Canceling cannot guarantee remote calls stop or avoid charges."
+        if let selected = recipePicker.selectedItem?.representedObject as? [String: Any], let choice = recipeChoice(selected), !choice.compatible {
+            status.stringValue = "This preparation path is unresolved for the captured files. No source has been sent."
+        }
         refreshAvailability()
     }
     private var modelProvider: String?
     private func senderProviderChanged() -> Bool { modelProvider != providerPicker.selectedItem?.representedObject as? String }
     private var providers: [[String: Any]] { options?["providers"] as? [[String: Any]] ?? [] }
+    private func recipeChoice(_ recipe: [String: Any]) -> AgentRecipeChoice? {
+        guard let options, let choices = options["recipe_choices"] as? [[String: Any]], let recipes = options["recipes"] as? [[String: Any]],
+              let object = choices.first(where: { ($0["recipe"] as? NSDictionary)?.isEqual(to: recipe) == true }) else { return nil }
+        return AgentRecipeChoice(object, recipes: recipes)
+    }
     private func reloadModels() {
         modelPicker.removeAllItems(); modelProvider = providerPicker.selectedItem?.representedObject as? String
+        modelPicker.addItem(withTitle: "Choose a model…")
         if let provider = providers.first(where: { $0["provider_id"] as? String == modelProvider }) {
-            modelPicker.addItems(withTitles: provider["models"] as? [String] ?? [])
+            for model in provider["models"] as? [String] ?? [] {
+                modelPicker.addItem(withTitle: model); modelPicker.lastItem?.representedObject = model
+            }
         }
     }
     @objc func loadOptions() {
         guard available?() == true, !blocksNavigation, saved, let context, let request else { return }
         invalidateJobResponses()
+        plan = nil; options = nil
         busy = true; refreshAvailability(); let expected = epoch
         request("v1/agent-preparations/plans", "POST", ["import_id": context.importID, "revision": context.revision]) { [weak self] object, code in
             guard let self else { return }; self.finishRequest()
@@ -280,12 +462,38 @@ final class AgentPreparationView: NSStackView {
                   let providers = object["providers"] as? [[String: Any]], providers.count <= 16,
                   let records = object["files"] as? [[String: Any]], records.count <= 256,
                   let recipes = object["recipes"] as? [[String: Any]], recipes.count <= 128 else { self.fail(code ?? "agent_options_invalid"); return }
-            guard providers.allSatisfy({ preparationText($0["provider_id"], maximum: 128) != nil && ($0["models"] as? [String]).map { $0.count <= 16 && $0.allSatisfy { preparationText($0, maximum: 128) != nil } } == true }),
+            guard providers.allSatisfy({ preparationText($0["provider_id"], maximum: 128) != nil && ($0["generation"] == nil || $0["generation"] is NSNull || preparationUUID($0["generation"]) != nil) && ($0["name"] == nil || preparationText($0["name"], maximum: 80) != nil) && ($0["models"] as? [String]).map { $0.count <= 16 && $0.allSatisfy { preparationText($0, maximum: 128) != nil } } == true }),
                   records.allSatisfy({ preparationText($0["path"], maximum: 256) != nil && preparationDigest($0["sha256"]) != nil && (1...16384).contains(preparationInteger($0["size"]) ?? 0) }),
                   recipes.allSatisfy({ preparationText($0["id"], maximum: 128) != nil && preparationText($0["version"], maximum: 128) != nil && preparationDigest($0["digest"]) != nil }) else { self.fail("agent_options_invalid"); return }
+            var choices: [AgentRecipeChoice] = []
+            if object["recipe_choices"] != nil {
+                guard let raw = object["recipe_choices"] as? [[String: Any]], raw.count == recipes.count else { self.fail("agent_options_invalid"); return }
+                choices = raw.compactMap { AgentRecipeChoice($0, recipes: recipes) }
+                guard choices.count == raw.count, Set(choices.map(\.identity)).count == choices.count,
+                      choices.filter(\.recommended).count <= 1 else { self.fail("agent_options_invalid"); return }
+            }
+            guard object["recipes_truncated"] == nil || preparationBoolean(object["recipes_truncated"]) != nil else { self.fail("agent_options_invalid"); return }
             self.options = object; self.plan = nil; self.providerPicker.removeAllItems(); self.recipePicker.removeAllItems()
-            for value in providers { self.providerPicker.addItem(withTitle: value["provider_id"] as! String); self.providerPicker.lastItem?.representedObject = value["provider_id"] }
-            for value in recipes { self.recipePicker.addItem(withTitle: (value["id"] as! String) + " " + (value["version"] as! String)); self.recipePicker.lastItem?.representedObject = value }
+            self.recipePicker.addItem(withTitle: "Choose a preparation path…")
+            for value in providers {
+                let id = value["provider_id"] as! String
+                self.providerPicker.addItem(withTitle: self.providerSettings.providerNames[id] ?? preparationText(value["name"], maximum: 80) ?? id)
+                self.providerPicker.lastItem?.representedObject = id
+            }
+            for value in recipes {
+                let id = value["id"] as! String
+                let label = choices.first(where: { NSDictionary(dictionary: $0.recipe).isEqual(to: value) })?.label ??
+                    ["mcpme.agent-python-adapter": "Python app with an existing dependency lock",
+                     "mcpme.agent-unlocked-python-adapter": "Python app needing dependency resolution"][id] ?? id
+                self.recipePicker.addItem(withTitle: label + " · " + (value["version"] as! String)); self.recipePicker.lastItem?.representedObject = value
+            }
+            var previousChoiceUnavailable = false
+            if let preferred = self.preferredRecipe {
+                if let index = recipes.firstIndex(where: { NSDictionary(dictionary: $0).isEqual(to: preferred) }) { self.recipePicker.selectItem(at: index + 1) }
+                else { self.preferredRecipe = nil; previousChoiceUnavailable = true }
+            } else if preparationBoolean(object["recipes_truncated"]) != true, let choice = choices.first(where: \.recommended), let index = recipes.firstIndex(where: { NSDictionary(dictionary: $0).isEqual(to: choice.recipe) }) {
+                self.recipePicker.selectItem(at: index + 1)
+            }
             self.reloadModels()
             self.fileControls.forEach { self.files.removeArrangedSubview($0); $0.removeFromSuperview() }; self.fileControls = []
             self.metadataControls.forEach { self.files.removeArrangedSubview($0); $0.removeFromSuperview() }; self.metadataControls = []
@@ -306,16 +514,24 @@ final class AgentPreparationView: NSStackView {
                 self.metadataControls.append(button); self.files.addArrangedSubview(button)
             }
             if let latest = object["latest_job"] as? [String: Any], let job = AgentPreparationJob(latest), job.context.importID == context.importID { self.job = job }
-            self.status.stringValue = providers.isEmpty ? "No agent provider is configured. Live analysis is unavailable." : "Choose the files to transfer. Files are never sent while loading options."
+            self.status.stringValue = providers.isEmpty ? "No agent provider is configured. Refresh Providers, then choose Add Provider above." : "Choose a model and files to transfer. Loading options sends no files."
+            if previousChoiceUnavailable { self.status.stringValue += " Your previously selected preparation path is no longer available. Choose a current path explicitly." }
+            if !choices.isEmpty, !choices.contains(where: \.recommended), self.preferredRecipe == nil {
+                self.status.stringValue += " No compatible preparation path was recommended for these captured files."
+            }
+            if preparationBoolean(object["recipes_truncated"]) == true {
+                self.status.stringValue += " The enabled recipe list is incomplete. Manage enabled recipes to narrow the choices, then reload options."
+            }
             self.refreshAvailability()
         }
     }
     private func scopeRequest() -> [String: Any]? {
-        guard let context, saved, let provider = providerPicker.selectedItem?.representedObject as? String,
-              let model = modelPicker.titleOfSelectedItem, let recipe = recipePicker.selectedItem?.representedObject as? [String: Any],
+        guard options != nil, let context, saved, let provider = providerPicker.selectedItem?.representedObject as? String,
+              let model = modelPicker.selectedItem?.representedObject as? String, let recipe = recipePicker.selectedItem?.representedObject as? [String: Any],
               let bytes = Int(transfer.stringValue), (1...2097152).contains(bytes),
               let tokens = Int(output.stringValue), (64...16384).contains(tokens),
               let seconds = Int(deadline.stringValue), (1...600).contains(seconds) else { return nil }
+        if options?["recipe_choices"] != nil, recipeChoice(recipe)?.compatible != true { return nil }
         let paths = fileControls.filter { $0.state == .on }.map(\.title).sorted()
         let metadataPaths = metadataControls.filter { $0.state == .on }.compactMap { $0.identifier?.rawValue }.sorted()
         guard (1...32).contains(paths.count) else { return nil }
@@ -345,7 +561,7 @@ final class AgentPreparationView: NSStackView {
             self.plan = object
             var lines = ["External destination: " + destination,
                 simulated ? "Simulated provider: no live external transfer is proven." : "Configured external provider",
-                "Provider: " + (object["provider_id"] as! String) + " / " + (object["model"] as! String),
+                "Provider: " + (self.providers.first(where: { $0["provider_id"] as? String == object["provider_id"] as? String })?["name"] as? String ?? object["provider_id"] as! String) + " / " + (object["model"] as! String),
                 "Recipe: " + ((body["recipe"] as! [String: Any])["id"] as! String) + " " + ((body["recipe"] as! [String: Any])["version"] as! String),
                 "Four calls, at most three parallel. Transfer bytes: \(limits["max_transfer_bytes"]!).",
                 "Output tokens per call: \(limits["max_output_tokens"]!). Deadline seconds: \(limits["wall_seconds"]!).",
@@ -365,6 +581,9 @@ final class AgentPreparationView: NSStackView {
         }
     }
     private func validPlan(_ object: [String: Any], body: [String: Any]) -> Bool {
+        if let provider = providers.first(where: { $0["provider_id"] as? String == body["provider_id"] as? String }), let generation = provider["generation"] as? String {
+            guard preparationUUID(object["provider_generation"]) == generation else { return false }
+        }
         guard preparationInteger(object["schema_version"]) == 1, preparationUUID(object["plan_id"]) != nil,
               preparationDigest(object["plan_digest"]) != nil, preparationNumber(object["expires_at"]) != nil,
               object["import_id"] as? String == body["import_id"] as? String,
@@ -393,7 +612,7 @@ final class AgentPreparationView: NSStackView {
         return true
     }
     @objc func startAnalysis() {
-        guard available?() == true, !busy, pendingStart == nil, currentPlan(), let plan else { return }
+        guard available?() == true, !blocksNavigation, currentPlan(), let plan else { return }
         pendingStart = ["action": "analyze", "plan_id": plan["plan_id"]!, "plan_digest": plan["plan_digest"]!, "idempotency_key": UUID().uuidString.lowercased()]
         pendingContext = context
         sendPending()

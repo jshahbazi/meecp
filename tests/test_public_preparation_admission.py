@@ -34,11 +34,12 @@ def ordinary_admission(kinds=("python-callable",)):
     return PublicPreparationAdmission(frozenset(), frozenset(), frozenset(kinds))
 
 
-@pytest.mark.parametrize("damage", ["mutable", "empty_set", "key", "digest", "agent", "schema"])
+@pytest.mark.parametrize("damage", ["mutable", "empty_set", "shared_empty_set", "key", "digest", "agent", "schema"])
 def test_admission_is_typed_immutable_and_closed(damage):
     values = dict(families=frozenset(), recipe_component_sets=frozenset(), resolution_candidate_kinds=frozenset())
     if damage == "mutable": values["families"] = set()
     if damage == "empty_set": values["recipe_component_sets"] = frozenset({frozenset()})
+    if damage == "shared_empty_set": values["recipe_component_sets"] = frozenset({values["families"]})
     if damage == "key": values["families"] = frozenset({("python",)})
     if damage == "digest": values["families"] = frozenset({("python", "1.0.0", "invalid")})
     if damage == "agent": values["resolution_candidate_kinds"] = frozenset({"agent-adapter"})

@@ -28,8 +28,10 @@ class PublicPreparationAdmission:
                 or not self.resolution_candidate_kinds <= {"python-callable", "python-mcp"}):
             raise PreparationError("invalid_public_preparation_admission")
         try:
+            if any(type(keys) is not frozenset or not keys for keys in self.recipe_component_sets):
+                raise ValueError()
             for keys in (self.families, *self.recipe_component_sets):
-                if type(keys) is not frozenset or (keys is not self.families and not keys):
+                if type(keys) is not frozenset:
                     raise ValueError()
                 for key in keys:
                     if type(key) is not tuple or len(key) != 3:

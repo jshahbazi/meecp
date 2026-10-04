@@ -208,21 +208,9 @@ def test_historical_policy_literal_remains_frozen():
 
 def test_current13_policy_changes_only_textgen_references():
     from mcpme.preparation_release_policy import POLICY_PATH
-    historical = json.loads(ROOT_POLICY_JSON)
-    expected = copy.deepcopy(historical)
+    selected12 = json.loads(selected12_fixture_bytes())
+    expected = copy.deepcopy(selected12)
     expected["policy_id"] = "phase3-live-agent-acceptance-candidate-v1"
-    unlocked = {"id": "agent-unlocked-python-adapter-v1", "version": "1.0.0",
-                "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"}
-    expected["preparation"]["families"].append(unlocked)
-    expected["preparation"]["recipe_component_sets"].append([unlocked])
-    expected["agent"] = {
-        "components": [{"id": "agent-unlocked-python-adapter-v1", "version": "1.0.0",
-                         "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"}],
-        "providers": [{"adapter_id": "openai-responses-v1",
-                        "adapter_digest": "f651b36ab4b3d4fe6479457e5a31f129b1339c41536e02bfb53cbbf4025cebc1",
-                        "models": ["gpt-6.1-sol"]}],
-        "unlocked_resolution": True,
-    }
     expected["preparation"]["families"][3] = {"id": "text-generate-v1", "version": "1.0.13",
         "digest": "936c30b0ede738344713d37d62cb71dbfea59b7375dfa24ea023d9693bf9274a"}
     expected["preparation"]["recipe_component_sets"][4] = [
@@ -234,6 +222,22 @@ def test_current13_policy_changes_only_textgen_references():
     assert json.loads(policy_path.read_bytes()) == expected
     assert hashlib.sha256(policy_path.read_bytes()).hexdigest() == (
         "8a9a8fd69217352b49e0e338d4d652df8cebcac86609edae1190a88cd2d9a592")
+    from mcpme import preparation_textgen
+    assert {item.key for item in preparation_textgen.references()} == {
+        ("llamacpp-cpu-v1", "1.0.13", "899aa082f51bbe079968ce4540fa801215adcb9f8a2fc622844e4e63ee133c9e"),
+        ("text-generate-v1", "1.0.13", "936c30b0ede738344713d37d62cb71dbfea59b7375dfa24ea023d9693bf9274a")}
+
+
+def selected12_fixture_bytes():
+    path = Path(__file__).resolve().parents[1] / "templates/release-policies/phase3-v1.json"
+    raw = path.read_bytes()
+    for current, old in ((b"1.0.13", b"1.0.12"),
+                         (b"899aa082f51bbe079968ce4540fa801215adcb9f8a2fc622844e4e63ee133c9e", b"7800e0d271ee220b6feff59b9df1959c22387d57b5485414473c302ba8c502fa"),
+                         (b"936c30b0ede738344713d37d62cb71dbfea59b7375dfa24ea023d9693bf9274a", b"60ee19b6a5989e75481f1886d85b545f2f7948eca3496c0ab8b3cc3cb0d0fa2d")):
+        raw = raw.replace(current, old)
+    # The selected 1.0.12 policy is retained as a byte-exact fixture.
+    assert hashlib.sha256(raw).hexdigest() == "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375"
+    return raw
 
 
 def test_lifecycle_policy_guard_accepts_historical_and_current_bytes(tmp_path, monkeypatch):
@@ -244,6 +248,7 @@ def test_lifecycle_policy_guard_accepts_historical_and_current_bytes(tmp_path, m
     policy_path = host / management.POLICY_PATH
     policy_path.parent.mkdir(parents=True)
     for raw, expected_scope, expected in ((ROOT_POLICY_JSON.encode(), "closed", "c8fa615def941e66e85a68ac0e7cc46dd7caf1797918fc03fdd5277ac2326522"),
+                          (selected12_fixture_bytes(), "selected_model_accepted", "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375"),
                           ((Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes(), "selected_model_accepted", "8a9a8fd69217352b49e0e338d4d652df8cebcac86609edae1190a88cd2d9a592")):
         policy_path.write_bytes(raw)
         scope, observed = lifecycle.verify_lifecycle_policy(host)

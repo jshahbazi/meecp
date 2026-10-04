@@ -613,9 +613,7 @@ async def verify(host_path, native_path, model, report):
     common.require(model.is_file() and model.stat().st_size == MODEL_BYTES and common.digest(model) == MODEL_SHA256,
         "textgen_selected_model_identity_mismatch")
     with isolated_workspace(report) as (root, lease):
-        host, native = root / "relocated host", root / "McpmeMenuBar"
-        shutil.copytree(host_path, host, symlinks=True)
-        shutil.copyfile(native_path, native); native.chmod(0o700)
+        host, native = common.relocate_host_and_native(root, host_path, native_path, report)
         _host_paths(host); _host_imports(host)
         identity = await asyncio.to_thread(sealed_host_identity, host)
         from mcpme_textgen import fixture
@@ -650,6 +648,8 @@ async def verify(host_path, native_path, model, report):
                 report["owned_children_joined"] = not harness.children
         common.require(common.digest(model) == MODEL_SHA256 and model.stat().st_size == MODEL_BYTES, "textgen_original_model_mutated")
         common.require(harness_identities() == verifier_identities, "textgen_harness_mutated")
+        if report.get("native_bundle_preserved"):
+            common.verify_native_app_signature(native)
         report["verified"] = report["owned_children_joined"] and len(report["cases"]) == 2 and all(item["passed"] for item in report["cases"].values())
 
 

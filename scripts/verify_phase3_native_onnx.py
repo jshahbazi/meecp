@@ -425,9 +425,7 @@ async def verify(host_path, native_path, model, report):
     _host_paths(host_path)
     common.require(native_path.is_file() and native_path.resolve() == native_path and os.access(native_path, os.X_OK), "native_acceptance_binary_required")
     with isolated_workspace(report) as (root, lease):
-        host, native = root / "relocated host", root / "McpmeMenuBar"
-        shutil.copytree(host_path, host, symlinks=True)
-        shutil.copyfile(native_path, native); native.chmod(0o700)
+        host, native = common.relocate_host_and_native(root, host_path, native_path, report)
         _host_paths(host); _host_imports(host)
         identity = await asyncio.to_thread(onnx.host_hashes, host)
         report.update({"host_source_commit": identity["source_commit"], "host_source_tree_dirty": False,
@@ -454,6 +452,8 @@ async def verify(host_path, native_path, model, report):
                 raise
             finally:
                 report["owned_children_joined"] = not harness.children
+        if report.get("native_bundle_preserved"):
+            common.verify_native_app_signature(native)
         report["verified"] = report["owned_children_joined"] and len(report["cases"]) == 2 and all(item["passed"] for item in report["cases"].values())
 
 

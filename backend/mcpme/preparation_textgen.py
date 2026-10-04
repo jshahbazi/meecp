@@ -27,7 +27,7 @@ from mcpme_textgen.fixture import (MODEL_BYTES, MODEL_SHA256, LICENSE_SHA256, MO
 
 ENGINE_ID = "llamacpp-cpu-v1"
 TASK_ID = "text-generate-v1"
-VERSION = "1.0.11"
+VERSION = "1.0.12"
 MIN_MEMORY_MB = 1024
 ASSETS = ("LICENSE", "LICENSE-MODEL", "engine-closure.json", "fixtures.json", "model.json", "model-provenance.json", "launcher.c",
           "tools.json", "pyproject.toml", "uv.lock", "signed-runtime.json", "signed-runtime-provenance.json")
@@ -75,6 +75,7 @@ def builtin_textgen_components():
     # the job's dependency, toolchain and verifier runtime identities.
     sources = [*sorted((root / "mcpme").glob("*.py")), root / "mcpme_local_transport.py",
         *sorted((root / "mcpme_textgen").glob("*.py")),
+        *sorted((root / "mcpme_service").glob("*.py")),
         *[root / "jevk5_app" / name for name in ("__init__.py", "server.py", "contracts.py", "state.py")]]
     identity = {"implementation": {p.relative_to(root).as_posix(): hashlib.sha256(_read(p, 1024**2)).hexdigest()
                                    for p in sources},

@@ -114,6 +114,23 @@ def test_recipe_has_only_the_two_pinned_components(tmp_path):
         {"component": engine.id, "version": engine.version, "digest": engine.digest}]
 
 
+@pytest.mark.parametrize("filename", ["__init__.py", "protocol.py", "server.py"])
+def test_producer_identity_binds_service_runtime_bytes(monkeypatch, filename):
+    before = textgen.references()
+    read = textgen._read
+
+    def changed(path, limit):
+        data = read(path, limit)
+        if path.parent.name == "mcpme_service" and path.name == filename:
+            return data + b"\n# Synthetic producer identity change.\n"
+        return data
+
+    monkeypatch.setattr(textgen, "_read", changed)
+    after = textgen.references()
+    assert [(item.id, item.version) for item in after] == [(item.id, item.version) for item in before]
+    assert all(old.digest != new.digest for old, new in zip(before, after, strict=True))
+
+
 def test_textgen_form_preserves_draft_name_and_reduces_saved_memory_to_current_ceiling():
     source = draft()
     source["name"] = "Selected local model"

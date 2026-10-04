@@ -14,7 +14,7 @@ def driver(monkeypatch):
     return importlib.import_module("verify_phase3_public_release_native_agent")
 
 
-# Literal policy from reviewed root candidate 63f1db3d9168b7273a74c0e27bbbad3d25e07ffa.
+# Literal combined policy for TextGen 1.0.12 and service connector 1.0.0.
 # Keep its real ComponentReference shape and producer hashes in this regression.
 ROOT_POLICY_JSON = '''{
   "schema_version": 1,
@@ -38,8 +38,13 @@ ROOT_POLICY_JSON = '''{
       },
       {
         "id": "text-generate-v1",
-        "version": "1.0.11",
-        "digest": "b206dd2d5cc61af91328393181c7d772eb3a094fc01c21e783ccd56c3c553327"
+        "version": "1.0.12",
+        "digest": "60ee19b6a5989e75481f1886d85b545f2f7948eca3496c0ab8b3cc3cb0d0fa2d"
+      },
+      {
+        "id": "service-text-generate-v1",
+        "version": "1.0.0",
+        "digest": "bc540561a87cba329d1d62d837596d6318a2d740fc4f6cf49b3eab95a9145d75"
       }
     ],
     "recipe_component_sets": [
@@ -79,13 +84,30 @@ ROOT_POLICY_JSON = '''{
       [
         {
           "id": "llamacpp-cpu-v1",
-          "version": "1.0.11",
-          "digest": "d5e3f2d64b08ee68d7e3feac80756d8350bc22e79dd2e5649ffa4be65f31a9cd"
+          "version": "1.0.12",
+          "digest": "7800e0d271ee220b6feff59b9df1959c22387d57b5485414473c302ba8c502fa"
         },
         {
           "id": "text-generate-v1",
-          "version": "1.0.11",
-          "digest": "b206dd2d5cc61af91328393181c7d772eb3a094fc01c21e783ccd56c3c553327"
+          "version": "1.0.12",
+          "digest": "60ee19b6a5989e75481f1886d85b545f2f7948eca3496c0ab8b3cc3cb0d0fa2d"
+        }
+      ],
+      [
+        {
+          "id": "openai-chat-completions-v1",
+          "version": "1.0.0",
+          "digest": "01d9379a0ed5fdd9fc86e1b6aeb47465f153162af57157cfbd42f6644f338587"
+        },
+        {
+          "id": "loopback-http-bearer-v1",
+          "version": "1.0.0",
+          "digest": "2f93a9f9258fa5d2b6b9c854f9e828d2f43ceeb7f0108183759e9f428fbaa4dc"
+        },
+        {
+          "id": "service-text-generate-v1",
+          "version": "1.0.0",
+          "digest": "bc540561a87cba329d1d62d837596d6318a2d740fc4f6cf49b3eab95a9145d75"
         }
       ]
     ],
@@ -153,12 +175,12 @@ def test_actual_candidate_policy_requires_typed_exact_closed_record(driver, dama
         with pytest.raises(driver.common.AcceptanceError): driver.closed_release_policy(value)
 
 
-@pytest.mark.parametrize("previous_version", [None, "1.0.9", "1.0.10"])
+@pytest.mark.parametrize("previous_version", [None, "1.0.9", "1.0.10", "1.0.11"])
 def test_textgen_keys_bind_actual_current_producer_to_literal_policy(driver, monkeypatch, previous_version):
     from mcpme import preparation_textgen
     assert ENGINE[0] == preparation_textgen.ENGINE_ID == "llamacpp-cpu-v1"
     assert TASK[0] == preparation_textgen.TASK_ID == "text-generate-v1"
-    assert preparation_textgen.VERSION == "1.0.11"
+    assert preparation_textgen.VERSION == "1.0.12"
     assert {item.key for item in preparation_textgen.references()} == {ENGINE, TASK}
     if previous_version:
         monkeypatch.setattr(preparation_textgen, "VERSION", previous_version)
@@ -170,7 +192,7 @@ def test_textgen_keys_bind_actual_current_producer_to_literal_policy(driver, mon
 
 def test_candidate_policy_literal_matches_reviewed_root_blob():
     assert hashlib.sha256(ROOT_POLICY_JSON.encode()).hexdigest() == (
-        "b1057900a673de718100db1a469acb68343274eb62b06519c2082a28603e3446")
+        "c8fa615def941e66e85a68ac0e7cc46dd7caf1797918fc03fdd5277ac2326522")
     from mcpme.preparation_release_policy import POLICY_PATH
     assert (Path(__file__).resolve().parents[1] / POLICY_PATH).read_bytes() == ROOT_POLICY_JSON.encode()
 
@@ -188,7 +210,7 @@ def capabilities(driver):
 
 @pytest.mark.parametrize("damage", [None, "python", "resolution", "onnx", "command", "command-closure",
     "schema", "profile", "engine", "task", "agent-family", "agent-closure", "version", "version10", "wrong-engine-alias",
-    "extra-family", "extra-closure"])
+    "extra-family", "extra-closure", "service-family", "service-protocol", "service-transport", "service-closure"])
 def test_combined_discovery_requires_all_exact_families_and_closed_agent(driver, damage):
     value = copy.deepcopy(capabilities(driver)); engine, task = ENGINE, TASK
     execution = value["preparation_execution"]
@@ -210,6 +232,10 @@ def test_combined_discovery_requires_all_exact_families_and_closed_agent(driver,
         execution["recipe_component_sets"][4][0][0] = engine[0]
     elif damage == "extra-family": execution["families"].append(["extra-v1", "1.0.0", "f" * 64])
     elif damage == "extra-closure": execution["recipe_component_sets"].append([["extra-v1", "1.0.0", "f" * 64]])
+    elif damage == "service-family": execution["families"][4][2] = "f" * 64
+    elif damage == "service-protocol": execution["recipe_component_sets"][5][0][2] = "f" * 64
+    elif damage == "service-transport": execution["recipe_component_sets"][5][1][2] = "f" * 64
+    elif damage == "service-closure": execution["recipe_component_sets"][5].pop()
     policy = driver.closed_release_policy(copy.deepcopy(ROOT_POLICY))
     if damage is None:
         assert driver.combined_capabilities(value, engine, task, policy) == "a" * 64

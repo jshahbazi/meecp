@@ -190,11 +190,25 @@ def test_textgen_keys_bind_actual_current_producer_to_literal_policy(driver, mon
         assert driver.textgen_keys() == (ENGINE, TASK)
 
 
-def test_candidate_policy_literal_matches_reviewed_root_blob():
+def test_historical_policy_literal_and_current_agent_delta():
     assert hashlib.sha256(ROOT_POLICY_JSON.encode()).hexdigest() == (
         "c8fa615def941e66e85a68ac0e7cc46dd7caf1797918fc03fdd5277ac2326522")
     from mcpme.preparation_release_policy import POLICY_PATH
-    assert (Path(__file__).resolve().parents[1] / POLICY_PATH).read_bytes() == ROOT_POLICY_JSON.encode()
+    current = json.loads((Path(__file__).resolve().parents[1] / POLICY_PATH).read_bytes())
+    historical = json.loads(ROOT_POLICY_JSON)
+    assert current != historical
+    assert current["preparation"]["families"][:-1] == historical["preparation"]["families"]
+    assert current["preparation"]["recipe_component_sets"][:-1] == historical["preparation"]["recipe_component_sets"]
+    assert current["preparation"]["resolution_candidate_kinds"] == historical["preparation"]["resolution_candidate_kinds"]
+    assert current["policy_id"] == "phase3-live-agent-acceptance-candidate-v1"
+    assert current["agent"] == {
+        "components": [{"id": "agent-unlocked-python-adapter-v1", "version": "1.0.0",
+                         "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"}],
+        "providers": [{"adapter_id": "openai-responses-v1",
+                        "adapter_digest": "f651b36ab4b3d4fe6479457e5a31f129b1339c41536e02bfb53cbbf4025cebc1",
+                        "models": ["gpt-6.1-sol"]}],
+        "unlocked_resolution": True,
+    }
 
 
 def capabilities(driver):

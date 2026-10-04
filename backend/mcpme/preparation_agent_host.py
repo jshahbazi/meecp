@@ -233,7 +233,10 @@ class AgentPreparationHost:
         return hashlib.sha256(b"agent-host-snapshot-metadata-v1\0" + data).hexdigest()
 
     @staticmethod
-    def _selected_bytes(draft, records, check):
+    def _selected_bytes(draft, records, check, content_paths=None):
+        # Every reviewed identity receives the same whole-byte proof. Only the
+        # explicitly selected content subset must additionally be text.
+        content_paths = {item["path"] for item in records} if content_paths is None else set(content_paths)
         root = Path(draft["source"]["snapshot_path"])
         if draft["source"]["kind"] == "application_directory":
             application_source_records(draft)
@@ -244,7 +247,8 @@ class AgentPreparationHost:
         for item in records:
             check()
             payload, _, kind, identity = _read_file(root / item["path"], snapshot=True, with_identity=True)
-            if (kind != "text" or len(payload) != item["bytes"] or hashlib.sha256(payload).hexdigest() != item["sha256"]):
+            if ((item["path"] in content_paths and kind != "text")
+                    or len(payload) != item["bytes"] or hashlib.sha256(payload).hexdigest() != item["sha256"]):
                 raise PreparationError("agent_source_identity_mismatch")
             data[item["path"]], identities[item["path"]] = payload, identity
         check()
@@ -307,7 +311,8 @@ class AgentPreparationHost:
         # A joined recipe worker is not authority to create another worker after
         # shutdown has begun. This fence and task registration have no await.
         self._validate(plan)
-        worker = asyncio.create_task(asyncio.to_thread(self._selected_bytes, draft, selected + metadata, lambda: None))
+        worker = asyncio.create_task(asyncio.to_thread(self._selected_bytes, draft, selected + metadata,
+            lambda: None, selection.selected_paths))
         self.static_workers.add(worker)
         try:
             captured = await asyncio.shield(worker)
@@ -398,7 +403,8 @@ class AgentPreparationHost:
             request, draft, provider = self._validate(plan, dispatch=True)
             job["state"] = "snapshotting"; self._save_job(job)
             worker = asyncio.create_task(asyncio.to_thread(self._selected_bytes, draft,
-                plan["selected_files"] + plan.get("selected_metadata", []), check))
+                plan["selected_files"] + plan.get("selected_metadata", []), check,
+                [item["path"] for item in plan["selected_files"]]))
             captured = await asyncio.shield(worker)
             source = {item["path"]: captured[item["path"]] for item in plan["selected_files"]}
             check()

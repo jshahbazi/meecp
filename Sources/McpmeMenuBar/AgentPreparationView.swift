@@ -58,7 +58,8 @@ extension AgentPreparationView {
                 completion(["schema_version": 1, "import_id": importID, "revision": 1, "source_revision": source,
                     "providers": [["provider_id": "configured", "models": ["configured-model"]]],
                     "files": [["path": "worker.py", "sha256": digest, "size": 32]],
-                    "metadata_files": [["path": "uv.lock", "sha256": digest, "size": 32768]], "recipes": [recipe], "latest_job": NSNull()], nil)
+                    "metadata_files": [["path": "uv.lock", "sha256": digest, "size": 32768],
+                        ["path": "worker.py", "sha256": digest, "size": 32]], "recipes": [recipe], "latest_job": NSNull()], nil)
             } else if path.hasSuffix("/plans"), let body {
                 completion(["schema_version": 1, "import_id": importID, "revision": 1, "source_revision": source,
                     "plan_id": planID, "plan_digest": digest, "expires_at": Date().timeIntervalSince1970 + 300,
@@ -80,8 +81,13 @@ extension AgentPreparationView {
             else { completion(row("succeeded", candidate: true), nil) }
         }
         view.loadButton.performClick(nil)
-        guard view.fileControls.count == 1, view.metadataControls.count == 1, view.metadataControls[0].state == .off, !view.sendButton.isEnabled else { return false }
-        view.fileControls[0].performClick(nil); view.metadataControls[0].performClick(nil); view.reviewButton.performClick(nil)
+        guard view.fileControls.count == 1, view.metadataControls.count == 2, view.metadataControls[0].state == .off, !view.sendButton.isEnabled else { return false }
+        view.fileControls[0].performClick(nil)
+        view.metadataControls[1].performClick(nil)
+        guard view.fileControls[0].state == .off, view.metadataControls[1].state == .on else { return false }
+        view.fileControls[0].performClick(nil)
+        guard view.metadataControls[1].state == .off, view.fileControls[0].state == .on else { return false }
+        view.metadataControls[0].performClick(nil); view.reviewButton.performClick(nil)
         guard view.sendButton.isEnabled, view.reviewLabel.stringValue.contains("worker.py"),
               view.reviewLabel.stringValue.contains("Identity-only transfer"), view.reviewLabel.stringValue.contains("uv.lock"),
               view.reviewLabel.stringValue.contains("test.guide"),
@@ -239,8 +245,15 @@ final class AgentPreparationView: NSStackView {
         refreshAvailability(); onStateChange?()
     }
     private func finishRequest() { busy = false; refreshAvailability(); onStateChange?() }
-    @objc private func selectionChanged() {
+    @objc private func selectionChanged(_ sender: NSControl) {
         guard !blocksNavigation else { return }
+        if let button = sender as? NSButton, button.state == .on {
+            if fileControls.contains(where: { $0 === button }) {
+                metadataControls.filter { $0.identifier?.rawValue == button.title }.forEach { $0.state = .off }
+            } else if metadataControls.contains(where: { $0 === button }) {
+                fileControls.filter { $0.title == button.identifier?.rawValue }.forEach { $0.state = .off }
+            }
+        }
         if senderProviderChanged() { reloadModels() }
         plan = nil; reviewLabel.stringValue = "Review the exact files and provider before sending. Canceling cannot guarantee remote calls stop or avoid charges."
         refreshAvailability()

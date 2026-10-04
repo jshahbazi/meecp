@@ -10,6 +10,15 @@ Native integration `916283b`, text-generation recipe 1.0.6 and handoff
 checkpoint `937ce1f` (integrated as `4f56d91`) retain independent clearance.
 Each status names its recorded scope; final family and signed release gates
 remain open.
+
+A0R's [saved recipe selection repair](A0R_RECIPE_SELECTION_REPAIR.md) prevents
+silent substitution after disable/deprecate/revoke/remove and cleared the
+original owner-socket controls. Immutable text-generation recipe 1.0.7 binds
+the corrected producer; 189 combined source checks, 96 independent checks and
+95 actual scanner-fixture checks pass. Every earlier bundle is unchanged.
+This later producer composition awaits a fresh combined host/native acceptance
+and applicable common-contract rechecks; A0's completed receipt names its
+recorded earlier composition.
 Common confinement, CLI recipe 1.0.1, locked/unlocked generated adapters and
 the reviewed agent request repair are integrated. The locked request-only
 pipeline passed 147 focused checks and its actual private build/probe/attachment
@@ -26,8 +35,8 @@ credential-disclosure issues; repair `7e702d62` cleared their original controls.
 Picker repair `7fc0a13` independently cleared duplicate-title, exact-reference
 and selection-continuity controls. These native checkpoints are integrated
 through `916283b`, which passed 55 focused checks with no skips.
-Text-generation recipe 1.0.6 binds the current producer composition; 57 static
-identity checks and 99 focused recipe/upgrade/CLI checks passed. All six earlier
+At the earlier text-generation recipe 1.0.6 checkpoint, 57 static identity
+checks and 99 focused recipe/upgrade/CLI checks passed. All six earlier
 bundles, containing 42 files, retain their exact bytes; historical owner opt-out
 and restart controls pass.
 The native agent-to-ordinary-preparation handoff passed independent actual
@@ -44,7 +53,7 @@ combined installed artifact and the independent whole-phase adversarial review.
 
 The tables below track **104 subgoals**: 71 acceptance subgoals, 24 required
 cross-family verification subgoals and nine shared delivery subgoals. Of these,
-11 are complete, 52 have verified checkpoint evidence, 34 are open, three are
+11 are complete, 51 have verified checkpoint evidence, 35 are open, three are
 in progress and four have separate capability gates. These counts describe the
 evidence ledger; they are not a release-completion percentage. Additional A6
 capabilities require their own acceptance before they can be advertised.
@@ -65,7 +74,7 @@ being fixed; **Separate gate** covers additional capability work.
 | A1: automatic Python/MCP | In progress | Callable and existing-MCP preparation, dependencies, SDK probes, attachment and installed calls have checkpoint evidence. | Separate callable and existing-MCP cases on the final native, installed and relocated artifact. |
 | A2: automatic ONNX | In progress | Exact supported detector, real inference, native intake, tensor controls and limits have checkpoint evidence. | Repeat inference, maximum workloads, negative eligibility and lifecycle under current confinement on the final artifact. |
 | A3: native CLI | In progress | Command contracts, immutable builder, measured verification, resource cleanup and ownership repairs have checkpoint evidence. | Final native directory-to-installed flow, topology/recovery/resource checks and individual capability enablement. |
-| A4: local text generation | In progress | Pinned CPU runtime, actual generation, shared queue, cancellation, native preparation, parity and immutable recipe 1.0.6 have checkpoint evidence. | Repeat confined inference, workloads and signed installed acceptance on the final combined artifact. |
+| A4: local text generation | In progress | Pinned CPU runtime, actual generation, shared queue, cancellation, native preparation, parity and immutable recipes through 1.0.7 have checkpoint evidence. | Repeat confined inference, workloads and signed installed acceptance on the final combined artifact. |
 | A5: integrated agent | In progress | Scoped request review, parallel proposals, locked/unlocked derivation, provider setup backend/native controls, API compatibility, recipe discovery, native resolution handoff and actual local probes have checkpoint evidence. | Complete a live provider/model run and final native installed flow. |
 | A6: broader modular coverage | Separate gate | Component/recipe extension seams have checkpoint evidence. | Each additional provider, provider-backed app, runtime, model family or execution capability needs its own acceptance before advertisement. |
 
@@ -84,10 +93,10 @@ being fixed; **Separate gate** covers additional capability work.
 | A0.09 | A0 | Keep source, prompts, responses, credentials and raw diagnostics out of journals | Complete | None; packaged sentinel/privacy controls, full provider regressions and repository credential scan pass. |
 | A0.10 | A0 | Managed private Python/ONNX probe confinement | Complete | None for common confinement; both launcher shapes pass actual packaged SDK probes with source removed. A2 model inference retains its separate gate. |
 | A0.11 | A0 | Current job authority and complete package identities at native creation | Complete | None; ten held native-task identity/deadline negatives create zero processes, with graph accounting off/on; existing authority/tree guards pass. |
-| A0R.01 | A0R: recipe extensibility | Immutable recipe bundles, component composition and version collisions | Verified checkpoint | Recipe 1.0.6 static identities and 99 focused catalog/upgrade/CLI checks pass; final packaged catalog regression remains. |
+| A0R.01 | A0R: recipe extensibility | Immutable recipe bundles, component composition and version collisions | Verified checkpoint | Recipe 1.0.7 producer/bundle/catalog identities independently pass; all 15 earlier builtin bundles and frozen agent closures are unchanged. Fresh packaged catalog regression remains. |
 | A0R.02 | A0R | Scaffold, check, add, inspect and manage recipes | Verified checkpoint | Final packaged CLI/native recheck. |
 | A0R.03 | A0R | Add an independent recipe without host dispatcher, import or UI edits | Verified checkpoint | Recheck the independent recipe against the final host. |
-| A0R.04 | A0R | Generated fields, explicit recipe selection and compatible defaults | Verified checkpoint | Final mixed-family/native form tests. |
+| A0R.04 | A0R | Generated fields, explicit recipe selection and compatible defaults | Verified checkpoint | Saved-selection substitution defect is repaired and original socket controls pass; fresh packaged/mixed-family/native forms remain. |
 | A0R.05 | A0R | Enable/disable/revoke/remove/deprecate, restart retention and lifecycle races | Verified checkpoint | Complete combined race matrix; nine installed/native lifecycle cases have earlier evidence. |
 | A0R.06 | A0R | Additional executable preparation workers | Separate gate | Capability and descendant-ownership acceptance before enabling this extension kind. |
 | A1.01 | A1: automatic Python/MCP | Ordinary callable directory to resolved interface and private dependency closure | Verified checkpoint | Recheck current common confinement on the final host. |
@@ -114,14 +123,14 @@ being fixed; **Separate gate** covers additional capability work.
 | A3.08 | A3 | Resource scope and fork-capable ownership acceptance | Verified checkpoint | Original same-user scope is documented. Independent overload, cancellation and actual SIGKILL recovery controls passed; sampled footprint remains an observed window measurement. Final combined installed ownership acceptance remains. |
 | A3.09 | A3 | Native directory to attached, installed and relocated app | Open | Author's isolated measured API path includes installed HTTP/stdio and relocation evidence. Final integrated native-directory and signed-app acceptance remain. |
 | A3.10 | A3 | Public CLI capability enablement | Open | Remains disabled until the independently reviewed measured path and final installed/native gates pass. |
-| A4.01 | A4: local text generation | Pinned CPU model, engine, tokenizer, template and runtime closure | Verified checkpoint | Recipe 1.0.6 binds the current producer composition; final bundled runtime/engine/model identity check remains. |
+| A4.01 | A4: local text generation | Pinned CPU model, engine, tokenizer, template and runtime closure | Verified checkpoint | Recipe 1.0.7 binds the corrected current producer composition; final bundled runtime/engine/model identity check remains. |
 | A4.02 | A4 | Actual generation, token/output limits, one engine and bounded shared queue | Verified checkpoint | Recheck the combined artifact with restricted probes. |
 | A4.03 | A4 | Native captured model and folder plus model preparation | Verified checkpoint | Both cases passed on the clean 68a7533 host; recheck the next coherent host. |
 | A4.04 | A4 | Matching attachment, installed HTTP/stdio calls, restart and relocation | Verified checkpoint | Final signed artifact. |
 | A4.05 | A4 | Official SDK cancellation and reservation settlement | Verified checkpoint | Latest native cases retain ownership until inference settles; final regression. |
 | A4.06 | A4 | Measured engine/adapter memory, capacity denial and JevK5 parity | Verified checkpoint | Final combined workload and parity run. |
-| A4.07 | A4 | Restricted engine/adapter probes and current host-owned bindings | Verified checkpoint | Independent 111-case policy/verifier run passed; integrated as 55781f0. Recipe 1.0.6 is minted; current confined inference awaits the next coherent host. Wildcard-listener containment is unproved. |
-| A4.08 | A4 | Immutable recipe upgrade with preserved lifecycle choices | Verified checkpoint | Recipe 1.0.6 passed 57 static checks and seven new upgrade controls within a 99-pass focused run. Six historical bundles/42 files are unchanged; disable/revoke/remove/deprecate, restart retention and collection tombstones pass. Final packaged lifecycle acceptance remains. |
+| A4.07 | A4 | Restricted engine/adapter probes and current host-owned bindings | Verified checkpoint | Independent 111-case policy/verifier run passed; integrated as 55781f0. Recipe 1.0.7 is minted; current confined inference awaits the next coherent host. Wildcard-listener containment is unproved. |
+| A4.08 | A4 | Immutable recipe upgrade with preserved lifecycle choices | Verified checkpoint | Recipe 1.0.7 independently binds the corrected closure; upgrade controls cover retained 1.0.5 and 1.0.6 owner opt-outs/restart/collection. Seven earlier TextGen bundles/49 files are unchanged. Final packaged lifecycle acceptance remains. |
 | A5.01 | A5: integrated agent | Concrete provider transport and parallel task coordinator | Verified checkpoint | Repair 9de90fc independently passed 147 focused checks, release Swift/native self-test and an actual request-only confined pipeline; integrated through 5d87e93. Reviewed binary identities transfer no content. Live provider and final installed acceptance remain. |
 | A5.02 | A5 | Integrate parallel subtask outputs into one reviewed proposal | Verified checkpoint | Interface/dependencies run in parallel; fixtures consume the agreed interface and adapter consumes all proposals. Both locked and unlocked encoded-request-only pipelines reached actual build, SDK probe and attachment. Live compatibility and final native acceptance remain. |
 | A5.03 | A5 | Review exact source transfer, provider/model, recipe and usage limits | Verified checkpoint | Repaired checkpoint 06f253f6 cleared independent review with all 15 hashes matched; integrated as 86ff1a5. Final artifact acceptance remains. |
@@ -191,7 +200,7 @@ until the final combined families and artifact have the applicable evidence.
 | D02 | Scoped artifact acquisition, verified TLS, disk limits and joined cancellation | Verified checkpoint | Final packaged acquisition/cleanup regressions. |
 | D03 | Generated native forms, review, stage polling and explicit cancellation | Verified checkpoint | Agent parent control repair independently cleared; final native flows remain. |
 | D04 | Exact signed application and relocated payload hashes | Open | Build and validate the final combined signed candidate. Existing development hosts do not close this gate. |
-| D05 | Full combined Python and Swift regressions | Verified checkpoint | Clean ed59a64: 2,978 Python passes / 87 explicit skips and 18 Swift passes / 3 installer opt-in skips; zero failures. Recheck after later production integration; final family and signed gates remain separate. |
+| D05 | Full combined Python and Swift regressions | Open | Clean ed59a64 passed 2,978 Python / 87 explicit skips and 18 Swift / 3 installer opt-in skips. New A0R producer/native integration needs another full run; final family and signed gates remain separate. |
 | D06 | First public automatic Python/MCP/ONNX capability | Open | A0, A0R and A1–A2 must pass on the final installed/relocated artifact before enabling it. |
 | D07 | Independent CLI, local LLM and agent capability enablement | Open | Enable individually after A3–A5 acceptance. |
 | D08 | Final independent whole-phase adversarial review and repairs | Open | Review the complete integrated result; checkpoint reviews have already produced repairs. |
@@ -201,7 +210,7 @@ until the final combined families and artifact have the applicable evidence.
 
 1. Continue from the completed A0 composition and freeze remaining family
    changes for acceptance. Full regressions pass at ed59a64. CLI recipe 1.0.1
-   and text-generation recipe 1.0.6 are minted; any later backend producer edit
+   and text-generation recipe 1.0.7 are minted; any later backend producer edit
    requires a fresh immutable text-generation version and applicable rechecks.
 2. Build one coherent artifact and rerun Python/MCP, ONNX and local LLM native,
    installed, restricted-probe and relocation acceptance.

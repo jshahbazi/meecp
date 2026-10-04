@@ -170,6 +170,66 @@ def test_saved_candidate_and_recipe_remain_selected_among_multiple_choices(form_
     assert reloaded["blockers"] == [] and len(reloaded["recipe_choices"]) == 2
 
 
+@pytest.mark.parametrize("action", ["disable", "deprecate", "revoke", "remove"])
+@pytest.mark.parametrize("fallback", ["sole", "preferred"])
+@pytest.mark.parametrize("restart", [False, True])
+def test_unavailable_saved_recipe_requires_explicit_replacement(form_source, tmp_path, action, fallback, restart):
+    service, draft, marker = form_source
+    original = service.form(draft["draft_id"], 1)
+    value, _ = resolve(service, original, answers(original, **{"Expected test result": {"value": 2}}))
+    updated = service.store.select_descriptor(draft["draft_id"], 1, value.model_dump(exclude_none=True),
+        candidate_id=original["candidate_id"], form_digest=original["form_digest"])
+    previous = service.store.selected_descriptor(draft["draft_id"])
+    scaffold_recipe(tmp_path / "replacement", "test.replacement")
+    replacement = service.recipes.add(tmp_path / "replacement")
+    service.recipes.enable(replacement["recipe_id"], replacement["version"])
+    replacement_ref = {"id": replacement["recipe_id"], "version": replacement["version"], "digest": replacement["digest"]}
+    preferred = ()
+    if fallback == "preferred":
+        scaffold_recipe(tmp_path / "other", "test.other")
+        other = service.recipes.add(tmp_path / "other")
+        service.recipes.enable(other["recipe_id"], other["version"])
+        preferred = (replacement_ref,)
+    getattr(service.recipes, action)(original["recipe"]["id"], original["recipe"]["version"])
+    if restart:
+        service.imports.close()
+    imports = ImportStore(tmp_path / "state") if restart else service.imports
+    try:
+        reopened = PreparationForms(PreparationStore(imports, RecipeStore(imports)), preferred_recipes=preferred)
+        form = reopened.form(draft["draft_id"], updated["revision"])
+        assert form["recipe"] is None and "recipe_selection_required" in form["blockers"]
+        assert form["fields"] == [] and len(form["recipe_choices"]) == (2 if fallback == "preferred" else 1)
+        assert reopened.store.selected_descriptor(draft["draft_id"]) == previous
+        with pytest.raises(PreparationError, match="^preparation_recipe_mismatch$"):
+            reopened.form(draft["draft_id"], updated["revision"], recipe=original["recipe"])
+        selected = reopened.form(draft["draft_id"], updated["revision"], recipe=replacement_ref)
+        assert selected["recipe"] == replacement_ref and selected["blockers"] == []
+        replacement_value, _ = resolve(reopened, selected, answers(selected, **{"Expected test result": {"value": 2}}))
+        assert replacement_value.recipe.model_dump() == replacement_ref
+        assert reopened.store.selected_descriptor(draft["draft_id"]) == previous
+        assert not marker.exists()
+    finally:
+        if restart:
+            imports.close()
+
+
+def test_unavailable_saved_recipe_without_alternatives_blocks_until_reenabled(form_source):
+    service, draft, marker = form_source
+    original = service.form(draft["draft_id"], 1)
+    value, _ = resolve(service, original, answers(original, **{"Expected test result": {"value": 2}}))
+    updated = service.store.select_descriptor(draft["draft_id"], 1, value.model_dump(exclude_none=True),
+        candidate_id=original["candidate_id"], form_digest=original["form_digest"])
+    service.recipes.disable(original["recipe"]["id"], original["recipe"]["version"])
+    blocked = service.form(draft["draft_id"], updated["revision"])
+    assert blocked["recipe"] is None and blocked["recipe_choices"] == []
+    assert "compatible_recipe_required" in blocked["blockers"]
+    service.recipes.enable(original["recipe"]["id"], original["recipe"]["version"])
+    restored = service.form(draft["draft_id"], updated["revision"])
+    assert restored["recipe"] == original["recipe"] and restored["blockers"] == []
+    assert next(field for field in restored["fields"] if field["label"] == "Expected test result")["value"] == {"value": 2}
+    assert not marker.exists()
+
+
 @pytest.mark.parametrize("kind,value", [("integer", True), ("number", False), ("boolean", 1),
     ("string", 1), ("object", []), ("choice", "unlisted")])
 def test_widget_types_never_coerce_json_primitives(kind, value):

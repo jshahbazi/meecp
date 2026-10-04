@@ -464,14 +464,16 @@ class PreparationForms:
                 providers[reference.digest] = matching[0]
             if len(recipe_choices) > MAX_CHOICES:
                 raise PreparationError("preparation_form_limit")
-            if selected is None and previous is not None and previous["candidate_id"] == candidate_id:
+            saved_choice = previous is not None and previous["candidate_id"] == candidate_id
+            if selected is None and saved_choice:
                 saved = previous["descriptor"]["recipe"]
                 selected = next((choice.recipe for choice in recipe_choices if choice.recipe.model_dump() == saved), None)
-            if selected is None:
+            # An unavailable saved recipe requires an explicit replacement.
+            if selected is None and not saved_choice:
                 preferred = [choice.recipe for choice in recipe_choices if choice.recipe in self.preferred_recipes]
                 if len(preferred) == 1:
                     selected = preferred[0]
-            if selected is None and len(recipe_choices) == 1:
+            if selected is None and not saved_choice and len(recipe_choices) == 1:
                 selected = recipe_choices[0].recipe
         record = next((item for item in records if selected is not None and
             (item["recipe_id"], item["version"], item["digest"]) == (selected.id, selected.version, selected.digest)), None)

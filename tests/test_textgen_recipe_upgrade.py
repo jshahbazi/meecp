@@ -10,9 +10,10 @@ from mcpme.preparation_textgen import VERSION
 from mcpme.recipes import RecipeStore, builtin_components, validate_bundle
 
 
-def versions(monkeypatch):
+def versions(monkeypatch, old_version):
     root = seeds.CATALOG_ROOT
-    old_bundle = validate_bundle(root / "text-generation-v1-0-5")
+    old_directory = "text-generation-v" + old_version.replace(".", "-")
+    old_bundle = validate_bundle(root / old_directory)
     current = next(item for item in seeds._catalog().recipes if item.recipe_id == "mcpme.text-generation")
     new_bundle = validate_bundle(root / current.directory)
     refs = {step["component"]: step for step in old_bundle["manifest"]["steps"]}
@@ -20,14 +21,14 @@ def versions(monkeypatch):
     # Metadata from the immutable previous bundle simulates the retained
     # previous release registry; no historical worker is executed.
     for identifier, step in refs.items():
-        components[identifier + "@1.0.5"] = {
+        components[identifier + "@" + old_version] = {
             "digest": step["digest"], "input_schema": {"type": "object", "additionalProperties": False},
             "dependencies": [] if identifier == "llamacpp-cpu-v1" else [
-                {"component": "llamacpp-cpu-v1", "version": "1.0.5", "digest": refs["llamacpp-cpu-v1"]["digest"]}],
+                {"component": "llamacpp-cpu-v1", "version": old_version, "digest": refs["llamacpp-cpu-v1"]["digest"]}],
         }
     monkeypatch.setattr(seeds, "builtin_components", lambda: components)
     entries = []
-    for version, directory, bundle in [("1.0.5", "text-generation-v1-0-5", old_bundle),
+    for version, directory, bundle in [(old_version, old_directory, old_bundle),
                                        (VERSION, current.directory, new_bundle)]:
         entries.append(seeds.BuiltinRecipeEntry(recipe_id="mcpme.text-generation", version=version,
             directory=directory, digest=bundle["digest"]))
@@ -39,8 +40,9 @@ def choose(monkeypatch, entry):
 
 
 @pytest.mark.parametrize("action", ["disable", "revoke", "remove", "deprecate"])
-def test_exact_textgen_upgrade_preserves_owner_opt_out_across_restart(tmp_path, monkeypatch, action):
-    components, (old, new) = versions(monkeypatch)
+@pytest.mark.parametrize("old_version", ["1.0.5", "1.0.6"])
+def test_exact_textgen_upgrade_preserves_owner_opt_out_across_restart(tmp_path, monkeypatch, action, old_version):
+    components, (old, new) = versions(monkeypatch, old_version)
     state = tmp_path.resolve() / "state"
     with ImportStore(state) as imports:
         store = RecipeStore(imports, component_catalog=components)
@@ -61,8 +63,9 @@ def test_exact_textgen_upgrade_preserves_owner_opt_out_across_restart(tmp_path, 
         assert not any(item["version"] == VERSION for item in restarted.list())
 
 
-def test_enabled_historical_recipe_and_exact_snapshot_survive_upgrade(tmp_path, monkeypatch):
-    components, (old, new) = versions(monkeypatch)
+@pytest.mark.parametrize("old_version", ["1.0.5", "1.0.6"])
+def test_enabled_historical_recipe_and_exact_snapshot_survive_upgrade(tmp_path, monkeypatch, old_version):
+    components, (old, new) = versions(monkeypatch, old_version)
     with ImportStore(tmp_path.resolve() / "state") as imports:
         store = RecipeStore(imports, component_catalog=components)
         choose(monkeypatch, old); assert seeds.seed_builtin_recipes(store)["recipes"][0]["ready"]
@@ -76,8 +79,9 @@ def test_enabled_historical_recipe_and_exact_snapshot_survive_upgrade(tmp_path, 
         assert validate_bundle(Path(before["path"]))["digest"] == old_digest
 
 
-def test_collected_old_tombstone_prevents_new_default(tmp_path, monkeypatch):
-    components, (old, new) = versions(monkeypatch)
+@pytest.mark.parametrize("old_version", ["1.0.5", "1.0.6"])
+def test_collected_old_tombstone_prevents_new_default(tmp_path, monkeypatch, old_version):
+    components, (old, new) = versions(monkeypatch, old_version)
     with ImportStore(tmp_path.resolve() / "state") as imports:
         store = RecipeStore(imports, component_catalog=components)
         choose(monkeypatch, old); assert seeds.seed_builtin_recipes(store)["recipes"][0]["ready"]

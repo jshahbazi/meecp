@@ -49,7 +49,7 @@ Run the opt-in case with `MCPME_AGENT_PIPELINE_HOST` set to an externally verifi
 
 Changing the shared `preparations.py` implementation intentionally invalidates the old current TextGen 1.0.5 implementation identity in this branch. Three existing derived-build tests stop at the aggregate default-catalog readiness assertion until the root mints its planned coherent replacement. No published recipe bytes are restamped and the opt-in Python pipeline selects only the exact unchanged current ResolvedPython bundle. Root must rerun the full catalog/regression suite after integration and minting.
 
-Live provider choice, model/schema compatibility, actual remote transfer/usage, generated adapter support, packaged native full flow, installed invocation/restart, adversarial crash and authority races, filesystem/network confinement, hard aggregate resources, signing and the final whole-Phase-3 review remain open. Simulated integration does not close A5.
+Live provider choice, model/schema compatibility, actual remote transfer/usage, generated adapter support, packaged native full flow, installed invocation/restart, adversarial crash and authority races, documented confinement and measured resource acceptance, signing and the final whole-Phase-3 review remain open. Simulated integration does not close A5.
 
 The final focused source packet passed 138 tests in 8.23 seconds. The actual AppKit handler checker passed; the existing Swift packet passed 18 with 3 opt-in skips. The opted source-only Python pipeline passed in 22.93 seconds against the immutable 68a private host: 4 simulated transport calls, 6 generated fields, 5 real build commands, 1 SDK tool/fixture, exact reviewed/attached revision 2, source and original attachment removal, and a relocated probe with all owners joined. Full membership and all 4,782 host hashes matched before and after execution. The final numerical receipt is `/private/tmp/mcpme-agent-pipeline-receipt-v2.json` (1139 bytes, mode 0600), SHA-256 `6b3cb9ffcbddc96d6ddae6a6e33b99168b665c026f8cc19b650555e161570b8d`. It records zero live provider calls and `a5_scope_complete=false`. Earlier harness failures after successful build/probe came from report-field and historical-task-map assertions; they did not authorize a product waiver.
 
@@ -89,3 +89,14 @@ unsaved-edit discard. Operation-detail navigation uses the same guard. The
 frozen pre-fix receipt has SHA-256
 `d83510c524325d77e434eeaa4ba66d8bd44eaf9be088839ef073d40a86488599`.
 Independent repaired-parent acceptance remains required.
+
+Independent applied-wiring review cleared source `2dc8508`: the actual
+transport-held parent control disables New Draft immediately and rejects both
+button clicks and direct navigation without clearing the current draft. The
+review matched all four parent/child/Supervisor/API-test hashes and passed 50
+owner-route, backend and selection checks. Root's release build and all three
+preparation/agent/capture UI self-tests passed. Receipt SHA-256:
+`107ee29f03c5fc003e0ac9cd12269ed5f8b8f5f04fcc215844954c6e45111c99`.
+This clears shared registration and parent handler behavior only; live transfer,
+generated adapters and the final installed native artifact remain separate
+acceptance requirements.

@@ -29,6 +29,12 @@
       "directory": "native-command-v1",
       "recipe_id": "mcpme.native-command",
       "version": "1.0.0"
+    },
+    {
+      "digest": "ed6413e202c9f9e8de682c324b2e46695c9c59e1bb44d15db6a5f423dce3cc04",
+      "directory": "agent-python-adapter-v1-0-0",
+      "recipe_id": "mcpme.agent-python-adapter",
+      "version": "1.0.0"
     }
   ],
   "schema_version": 1

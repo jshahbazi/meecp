@@ -215,12 +215,16 @@ class Supervisor(UpgradeHost):
             except ValueError:
                 raise HostError("invalid_artifact_storage_policy") from None
             self.captures = ArtifactCaptureStore(self.imports, self.artifacts, storage_policy=storage_policy)
+            from .preparation_agent_adapter import AgentPythonAdapterFamily
+            from .preparation_agent_adapter_store import AgentAdapterDerivationStore
+            self.agent_adapter_derivations = AgentAdapterDerivationStore(self.imports, self.recipes)
             from .preparation_onnx import OnnxPreparationFamily
             from .preparation_textgen import TextGenerationFamily
             from .preparation_command_registration import shipped_command_family
             command_family = shipped_command_family(self.reaper.parent.parent)
             self.preparations = PreparationStore(self.imports, self.recipes, resolutions=self.resolutions,
                 families=(OnnxPreparationFamily(self.captures), TextGenerationFamily(self.captures),
+                          AgentPythonAdapterFamily(self.agent_adapter_derivations),
                           *((command_family,) if command_family is not None else ())))
             from .preparation_forms import PreparationForms
             self.preparation_forms = PreparationForms(self.preparations, preferred_recipes=tuple(

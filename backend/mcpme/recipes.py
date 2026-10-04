@@ -45,10 +45,11 @@ def builtin_components() -> dict:
     paths = {"python-function-v1": root / "templates/python-function-v1/adapter.py",
              "existing-mcp-v1": root / "templates/prepare.py"}
     from .preparation_resolved_python import component_catalog
+    from .preparation_agent_adapter import component_catalog as agent_adapter_components
     from .preparation_onnx import builtin_onnx_components
     from .preparation_textgen import builtin_textgen_components
     from .preparation_command import component_catalog as command_components
-    return {**component_catalog(), **builtin_onnx_components(), **builtin_textgen_components(), **command_components(), **{name + "@1.0.0": {"digest": hashlib.sha256(path.read_bytes()).hexdigest(),
+    return {**component_catalog(), **agent_adapter_components(), **builtin_onnx_components(), **builtin_textgen_components(), **command_components(), **{name + "@1.0.0": {"digest": hashlib.sha256(path.read_bytes()).hexdigest(),
                               "input_schema": {"type": "object", "additionalProperties": False},
                               "dependencies": []} for name, path in paths.items()}}
 

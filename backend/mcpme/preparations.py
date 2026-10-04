@@ -250,7 +250,28 @@ class PreparationStore(PreparationAuthority):
             self._check_selection(descriptor, current)
         selected = descriptor.recipe
         self.recipes.assert_admissible(selected.id, selected.version, selected.digest)
+        if self._family_inputs_current(descriptor, current) is not True:
+            raise PreparationError("preparation_family_current_inputs_denied")
         return current
+
+    def _family_inputs_current(self, descriptor, draft):
+        """Trusted, synchronous metadata continuity for separately owned inputs.
+
+        Family hooks compare their original durable baseline. They must not
+        hash bytes, start work, or acquire a new baseline inside admission.
+        """
+        if descriptor.schema_version != 2:
+            return True
+        checker = getattr(self.family_for(descriptor), "check_current", None)
+        if checker is None:
+            return True
+        import inspect
+        if not callable(checker) or inspect.iscoroutinefunction(checker):
+            return False
+        checked = checker(descriptor, draft)
+        if inspect.iscoroutine(checked):
+            checked.close()
+        return checked is True
 
     def selected_descriptor(self, import_id):
         with self.imports._lock:
@@ -468,6 +489,15 @@ class PreparationStore(PreparationAuthority):
         recipe = binding["recipe"]
         self.recipes.assert_admissible(recipe["id"], recipe["version"], recipe["digest"],
             existing_job=job["execution_started_at"] is not None if job.get("managed") else job["state"] != "queued")
+        if job.get("managed"):
+            row = self.db.execute("SELECT data FROM preparation_job_inputs WHERE job_id=?", (job["job_id"],)).fetchone()
+            if row is None:
+                raise PreparationError("preparation_authority_required")
+            raw = json.loads(row["data"])["descriptor"]
+            if raw["schema_version"] == 2:
+                value = parse_preparation_descriptor(raw)
+                if self._family_inputs_current(value, draft) is not True:
+                    raise PreparationError("preparation_family_current_inputs_denied")
 
     def transition(self, job_id, state, *, ownership_settled: bool | None = None, error_code: str | None = None):
         if ownership_settled is not None and type(ownership_settled) is not bool:

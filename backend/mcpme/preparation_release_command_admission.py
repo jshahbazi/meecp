@@ -122,6 +122,18 @@ def _signature(path, *, deep=False):
         _deny()
 
 
+def _accepted_platform():
+    try:
+        observed = (installed_platform_policy(), resource_platform_policy())
+    except (InstalledCommandError, ResourceCommandError) as error:
+        if error.code == "command_platform_unsupported":
+            return False
+        raise
+    if any(type(value) is not str or re.fullmatch(r"[0-9a-f]{64}", value) is None for value in observed):
+        _deny()
+    return observed == (INSTALLED_PLATFORM_POLICY, RESOURCE_PLATFORM_POLICY)
+
+
 def command_release_admission(policy: CommandReleasePolicyV1 | None, host_root: Path, *, artifact=None):
     """Return both exact capabilities, or no capability for a closed release.
 
@@ -145,9 +157,6 @@ def command_release_admission(policy: CommandReleasePolicyV1 | None, host_root: 
             _deny()
         app = host_root.parents[2]
         if not app.name.endswith(".app"):
-            _deny()
-        if (installed_platform_policy() != policy.installed_platform_policy
-                or resource_platform_policy() != policy.resource_platform_policy):
             _deny()
         files, directories = _members(host_root)
         app_files = {app / "Contents/Info.plist", app / "Contents/Resources/app-build.json", app / "Contents/MacOS/mcpme"}
@@ -265,15 +274,18 @@ def command_release_admission(policy: CommandReleasePolicyV1 | None, host_root: 
         for helper in helpers:
             _signature(helper)
         current()
-        if (installed_platform_policy() != policy.installed_platform_policy
-                or resource_platform_policy() != policy.resource_platform_policy):
-            _deny()
+        platform_accepted = _accepted_platform()
         artifact.check_current(full=True)
-        return (HostCommandAdmission(helpers[0], command["helper_sha256"]),
-            CommandPreparationResourceAdmission(helpers[1], resource["helper_sha256"], policy.resource_platform_policy, ResourcePolicyV1()))
     except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError, subprocess.SubprocessError,
             InstalledCommandError, ResourceCommandError, PreparationError):
         _deny()
+    # This distinct result is available only after every signed artifact check
+    # and final held-proof fence. An integrity failure never becomes a partial
+    # capability downgrade that the ordinary loader may continue past.
+    if not platform_accepted:
+        raise PreparationError("command_release_platform_unavailable")
+    return (HostCommandAdmission(helpers[0], command["helper_sha256"]),
+        CommandPreparationResourceAdmission(helpers[1], resource["helper_sha256"], policy.resource_platform_policy, ResourcePolicyV1()))
 
 
 class ReleasedHostCommands(HostCommands):

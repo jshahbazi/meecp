@@ -2309,7 +2309,309 @@ private func nativeSelfTest() -> Bool {
     return true
 }
 
+private struct NativeRecipeDirectoryIdentity: Equatable {
+    let device: UInt64
+    let inode: UInt64
+
+    init?(_ url: URL) {
+        guard url.isFileURL, url.path.hasPrefix("/"), url.resolvingSymlinksInPath().path == url.path else { return nil }
+        let fd = open(url.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { return nil }; defer { close(fd) }
+        var opened = stat(), named = stat()
+        guard fstat(fd, &opened) == 0, lstat(url.path, &named) == 0,
+              (opened.st_mode & S_IFMT) == S_IFDIR, opened.st_uid == getuid(), (opened.st_mode & 0o777) == 0o700,
+              opened.st_dev == named.st_dev, opened.st_ino == named.st_ino, opened.st_mode == named.st_mode,
+              opened.st_uid == named.st_uid else { return nil }
+        device = UInt64(opened.st_dev); inode = UInt64(opened.st_ino)
+    }
+}
+
+private struct NativeRecipeFileIdentity: Equatable {
+    let values: [String: Int]
+
+    init?(_ url: URL) {
+        let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { return nil }; defer { close(fd) }
+        var before = stat(), after = stat(), named = stat()
+        guard fstat(fd, &before) == 0, lstat(url.path, &named) == 0,
+              (before.st_mode & S_IFMT) == S_IFREG, before.st_uid == getuid(), before.st_nlink == 1,
+              (before.st_mode & 0o777) == 0o600, before.st_size > 0, before.st_size <= 262144,
+              fstat(fd, &after) == 0 else { return nil }
+        func identity(_ info: stat) -> [String: Int] {
+            ["device": Int(info.st_dev), "inode": Int(info.st_ino), "bytes": Int(info.st_size), "mode": Int(info.st_mode & 0o777),
+             "modified_seconds": Int(info.st_mtimespec.tv_sec), "modified_nanoseconds": Int(info.st_mtimespec.tv_nsec),
+             "changed_seconds": Int(info.st_ctimespec.tv_sec), "changed_nanoseconds": Int(info.st_ctimespec.tv_nsec)]
+        }
+        let value = identity(before)
+        guard value == identity(after), value == identity(named), url.resolvingSymlinksInPath().path == url.path else { return nil }
+        values = value
+    }
+
+    func matches(_ object: [String: Any]) -> Bool {
+        Set(object.keys) == Set(values.keys) && values.allSatisfy { preparationInteger(object[$0.key]) == $0.value }
+    }
+}
+
+private struct NativeRecipeAcceptanceContext {
+    let fixture: URL
+    let state: URL
+    let output: URL
+    let nonce: String
+    let marker: URL
+    let expiry: Int
+    let fixtureIdentity: NativeRecipeFileIdentity
+    let markerIdentity: NativeRecipeFileIdentity
+    let managerIdentity: NativeRecipeFileIdentity
+    let rootIdentity: NativeRecipeDirectoryIdentity
+    let stateIdentity: NativeRecipeDirectoryIdentity
+    let workspaceIdentity: NativeRecipeDirectoryIdentity
+    let object: [String: Any]
+
+    static func privateDirectory(_ url: URL) -> Bool {
+        NativeRecipeDirectoryIdentity(url) != nil
+    }
+
+    init?(fixture: URL) {
+        guard let fixtureIdentity = NativeRecipeFileIdentity(fixture),
+              Self.privateDirectory(fixture.deletingLastPathComponent()), let object = PrivateFile.read(fixture, limit: 262144),
+              Set(object.keys) == ["schema_version", "state_dir", "output_path", "fixture_nonce", "recipes", "forms"],
+              preparationInteger(object["schema_version"]) == 1,
+              let nonce = preparationUUID(object["fixture_nonce"]),
+              let statePath = preparationText(object["state_dir"], maximum: 4096), statePath.hasPrefix("/"),
+              let outputPath = preparationText(object["output_path"], maximum: 4096), outputPath.hasPrefix("/") else { return nil }
+        let state = URL(fileURLWithPath: statePath), output = URL(fileURLWithPath: outputPath)
+        let root = fixture.deletingLastPathComponent()
+        let workspace = root.deletingLastPathComponent()
+        guard workspace.lastPathComponent.hasPrefix("mcpme-native-onboarding-"), let workspaceIdentity = NativeRecipeDirectoryIdentity(workspace),
+              let rootIdentity = NativeRecipeDirectoryIdentity(root),
+              state.path == root.appendingPathComponent("state").path, let stateIdentity = NativeRecipeDirectoryIdentity(state),
+              output.deletingLastPathComponent().path == root.path, output.lastPathComponent.count <= 128,
+              output.path != fixture.path, !FileManager.default.fileExists(atPath: output.path),
+              let recipes = object["recipes"] as? [[String: Any]], recipes.count <= 8,
+              let forms = object["forms"] as? [[String: Any]], forms.count <= 16, !recipes.isEmpty || !forms.isEmpty else { return nil }
+        let marker = state.appendingPathComponent("native-recipes-" + nonce + ".json")
+        guard let markerIdentity = NativeRecipeFileIdentity(marker), let proof = PrivateFile.read(marker, limit: 8192),
+              Set(proof.keys) == ["schema_version", "fixture_nonce", "expires_at", "manager_file"],
+              preparationInteger(proof["schema_version"]) == 1, preparationUUID(proof["fixture_nonce"]) == nonce,
+              let expiry = preparationInteger(proof["expires_at"]), expiry > Int(Date().timeIntervalSince1970), expiry <= Int(Date().timeIntervalSince1970) + 300,
+              let expectedManager = proof["manager_file"] as? [String: Any],
+              let managerIdentity = NativeRecipeFileIdentity(state.appendingPathComponent("manager-connection.json")),
+              managerIdentity.matches(expectedManager), NativeRecipeFileIdentity(fixture) == fixtureIdentity,
+              NativeRecipeFileIdentity(marker) == markerIdentity else { return nil }
+        self.fixture = fixture; self.state = state; self.output = output; self.nonce = nonce; self.marker = marker; self.expiry = expiry
+        self.fixtureIdentity = fixtureIdentity; self.markerIdentity = markerIdentity; self.managerIdentity = managerIdentity; self.object = object
+        self.rootIdentity = rootIdentity; self.stateIdentity = stateIdentity; self.workspaceIdentity = workspaceIdentity
+    }
+
+    func current() -> Bool {
+        Int(Date().timeIntervalSince1970) < expiry && NativeRecipeDirectoryIdentity(state) == stateIdentity &&
+            NativeRecipeDirectoryIdentity(fixture.deletingLastPathComponent()) == rootIdentity &&
+            NativeRecipeDirectoryIdentity(fixture.deletingLastPathComponent().deletingLastPathComponent()) == workspaceIdentity &&
+            NativeRecipeFileIdentity(fixture) == fixtureIdentity &&
+            NativeRecipeFileIdentity(marker) == markerIdentity && NativeRecipeFileIdentity(state.appendingPathComponent("manager-connection.json")) == managerIdentity
+    }
+
+    func claim() -> Bool {
+        guard current() else { return false }
+        let path = state.appendingPathComponent("native-recipes-" + nonce + ".claimed")
+        let fd = open(path.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else { return false }; defer { close(fd) }
+        let bytes = Array("claimed\n".utf8)
+        return bytes.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) == $0.count } && fsync(fd) == 0 && current()
+    }
+
+    static func contractSelfTest() -> Bool {
+        let workspace = FileManager.default.temporaryDirectory.appendingPathComponent("mcpme-native-onboarding-" + UUID().uuidString).resolvingSymlinksInPath()
+        let root = workspace.appendingPathComponent("context-test"), state = root.appendingPathComponent("state")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        do {
+            for directory in [workspace, root, state] {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            }
+            func save(_ value: [String: Any], to url: URL, replace: Bool = false) throws {
+                let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+                try data.write(to: url, options: replace ? .atomic : .withoutOverwriting)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            }
+            let manager = state.appendingPathComponent("manager-connection.json")
+            try save(["synthetic": true], to: manager)
+            guard let identity = NativeRecipeFileIdentity(manager) else { return false }
+            let nonce = UUID().uuidString.lowercased(), marker = state.appendingPathComponent("native-recipes-" + nonce + ".json")
+            try save(["schema_version": 1, "fixture_nonce": nonce, "expires_at": Int(Date().timeIntervalSince1970) + 120, "manager_file": identity.values], to: marker)
+            let fixture = root.appendingPathComponent("case.json")
+            try save(["schema_version": 1, "fixture_nonce": nonce, "state_dir": state.path,
+                "output_path": root.appendingPathComponent("receipt.json").path, "recipes": [], "forms": [["synthetic": true]]], to: fixture)
+            guard let context = Self(fixture: fixture), context.current(), context.claim(), !context.claim() else { return false }
+            let priorRoot = workspace.appendingPathComponent("prior-context-test")
+            try FileManager.default.moveItem(at: root, to: priorRoot)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            for child in try FileManager.default.contentsOfDirectory(at: priorRoot, includingPropertiesForKeys: nil) {
+                try FileManager.default.moveItem(at: child, to: root.appendingPathComponent(child.lastPathComponent))
+            }
+            guard !context.current() else { return false }
+            for child in try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) {
+                try FileManager.default.moveItem(at: child, to: priorRoot.appendingPathComponent(child.lastPathComponent))
+            }
+            try FileManager.default.removeItem(at: root)
+            try FileManager.default.moveItem(at: priorRoot, to: root)
+            guard let restoredContext = Self(fixture: fixture), restoredContext.current() else { return false }
+            try save(["synthetic": true], to: manager, replace: true)
+            guard !restoredContext.current(), Self(fixture: fixture) == nil else { return false }
+            try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: fixture.path)
+            guard NativeRecipeFileIdentity(fixture) == nil else { return false }
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fixture.path)
+            let link = root.appendingPathComponent("linked-case.json")
+            guard Darwin.link(fixture.path, link.path) == 0, NativeRecipeFileIdentity(fixture) == nil else { return false }
+            try FileManager.default.removeItem(at: link)
+            let symlink = root.appendingPathComponent("symlinked-case.json")
+            try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: fixture)
+            return NativeRecipeFileIdentity(symlink) == nil
+        } catch { return false }
+    }
+}
+
 extension McpmeApp {
+    /// Developer-only acceptance: dialog choices are simulated by an owned
+    /// fixture; production handlers and authenticated owner socket are real.
+    fileprivate static func recipesNativeAcceptance(fixture: URL) -> Bool {
+        guard let context = NativeRecipeAcceptanceContext(fixture: fixture),
+              let rows = context.object["recipes"] as? [[String: Any]], let formRows = context.object["forms"] as? [[String: Any]] else { return false }
+        struct RecipeCase {
+            let identity: PreparationRecipeIdentity
+            let folder: URL?
+            let folderIdentity: NativeRecipeDirectoryIdentity?
+            let operations: [(action: String, state: String)]
+        }
+        var cases: [RecipeCase] = []
+        for row in rows {
+            guard Set(row.keys) == ["folder", "recipe", "operations"], let reference = row["recipe"] as? [String: Any],
+                  Set(reference.keys) == ["recipe_id", "version", "digest"], let identity = PreparationRecipeIdentity(reference),
+                  identity.id.range(of: "^[a-z0-9]+(?:[.-][a-z0-9]+)+$", options: .regularExpression) != nil,
+                  identity.version.range(of: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[A-Za-z0-9.-]+)?$", options: .regularExpression) != nil,
+                  let operations = row["operations"] as? [[String: Any]], !operations.isEmpty, operations.count <= 16 else { return false }
+            var folder: URL?
+            if !(row["folder"] is NSNull) {
+                guard let path = preparationText(row["folder"], maximum: 4096) else { return false }
+                let selected = URL(fileURLWithPath: path)
+                guard selected.path.hasPrefix(fixture.deletingLastPathComponent().path + "/"), NativeRecipeAcceptanceContext.privateDirectory(selected) else { return false }
+                folder = selected
+            }
+            var steps: [(action: String, state: String)] = []
+            for operation in operations {
+                guard Set(operation.keys) == ["action", "expected_state"], let action = operation["action"] as? String,
+                      ["add", "inspect", "refresh", "enable", "disable", "deprecate", "revoke", "remove"].contains(action),
+                      let state = operation["expected_state"] as? String,
+                      ["proposed", "enabled", "disabled", "deprecated", "revoked", "removed"].contains(state), action != "add" || folder != nil else { return false }
+                steps.append((action, state))
+            }
+            cases.append(RecipeCase(identity: identity, folder: folder, folderIdentity: folder.flatMap(NativeRecipeDirectoryIdentity.init), operations: steps))
+        }
+        for row in formRows {
+            guard Set(row.keys) == ["draft_id", "expected_recipe", "choose_recipe", "expected_blockers"],
+                  preparationUUID(row["draft_id"]) != nil, let blockers = row["expected_blockers"] as? [String], blockers.count <= 128,
+                  blockers.allSatisfy({ preparationCode($0) != nil }) else { return false }
+            for key in ["expected_recipe", "choose_recipe"] {
+                guard row[key] is NSNull || (row[key] as? [String: Any]).flatMap(PreparationRecipeReference.init) != nil else { return false }
+            }
+        }
+        guard context.claim(), let connectionObject = PrivateFile.read(context.state.appendingPathComponent("manager-connection.json")),
+              let connection = ManagerConnection(connectionObject) else { return false }
+        let prior = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"]
+        setenv("MCPME_STATE_DIR", context.state.path, 1)
+        defer { if let prior { setenv("MCPME_STATE_DIR", prior, 1) } else { unsetenv("MCPME_STATE_DIR") } }
+        let app = McpmeApp(); _ = app.makeSetupWorkspace()
+        app.nativeAcceptanceConnection = connection; app.hostAvailable = true
+        let view = app.recipesView
+        var pending = 0, sent = 0, completed = 0, changes = 0, formChecks = 0
+        var active: RecipeCase?, stage = "recipes_refresh", errorCode: String?
+        func awaitCondition(_ condition: () -> Bool) -> Bool {
+            let end = Date().addingTimeInterval(60)
+            while !condition(), Date() < end { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+            return condition()
+        }
+        let request: PreparationRequest = { path, method, body, callback in
+            guard context.current(), sent < 512 else { errorCode = "native_recipe_context_stale"; callback(nil, errorCode); return }
+            let staticRoute = path == "v1/recipes" && method == "GET" || path == "v1/recipes/inspect" && method == "POST" ||
+                path == "v1/preparations/form" && method == "POST" || method == "GET" && formRows.contains { path == "v1/imports/" + ($0["draft_id"] as? String ?? "") }
+            if !staticRoute {
+                guard let active else { errorCode = "native_recipe_action_rejected"; callback(nil, errorCode); return }
+                if path == "v1/recipes", method == "POST" {
+                    guard let folder = active.folder, NativeRecipeDirectoryIdentity(folder) == active.folderIdentity,
+                          Set(body?.keys.map { $0 } ?? []) == ["path"], body?["path"] as? String == folder.path else { errorCode = "native_recipe_action_rejected"; callback(nil, errorCode); return }
+                } else {
+                    guard method == "POST", ["enable", "disable", "deprecate", "revoke", "remove"].contains(path.components(separatedBy: "/").last ?? ""),
+                          path == "v1/recipes/" + (path.components(separatedBy: "/").last ?? ""),
+                          Set(body?.keys.map { $0 } ?? []) == ["recipe_id", "version"], body?["recipe_id"] as? String == active.identity.id,
+                          body?["version"] as? String == active.identity.version else { errorCode = "native_recipe_action_rejected"; callback(nil, errorCode); return }
+                }
+            }
+            pending += 1; sent += 1
+            app.request(path, method: method, body: body) { object, code in
+                pending -= 1; completed += 1
+                if let code { errorCode = preparationCode(code) ?? "native_recipe_request_failed" }
+                callback(object, code)
+            }
+        }
+        view.available = { context.current() }; view.request = request
+        app.preparationView.request = request
+        view.onRegistryChange = { changes += 1; app.preparationView.registryChanged() }
+        func report(_ passed: Bool) -> Bool {
+            let joined = awaitCondition { pending == 0 && !view.acceptanceBusy && !app.preparationView.busy }
+            view.invalidate(); app.preparationView.invalidate()
+            var receipt: [String: Any] = ["schema_version": 1, "passed": passed && joined, "stage": stage,
+                "recipe_cases": cases.count, "registry_changes": changes, "form_checks": formChecks,
+                "requests_sent": sent, "requests_completed": completed, "callbacks_joined": joined,
+                "simulated_dialog_folder_selection": true, "simulated_lifecycle_confirmation": true,
+                "production_handlers": true, "owner_private_socket": true, "fixture_nonce_consumed": true,
+                "execution_started_by_driver": false, "provider_calls": 0, "model_runs": 0]
+            if let errorCode { receipt["error_code"] = errorCode }
+            guard let data = try? JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]), data.count <= 262144 else { return false }
+            let fd = open(context.output.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+            guard fd >= 0 else { return false }; defer { close(fd) }
+            let written = data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) == $0.count }
+            return written && fsync(fd) == 0 && passed && joined
+        }
+        view.refreshRecipes()
+        guard awaitCondition({ pending == 0 && !view.acceptanceBusy }), errorCode == nil else { return report(false) }
+        for item in cases {
+            active = item
+            for operation in item.operations {
+                guard context.current(), errorCode == nil else { return report(false) }
+                stage = "recipe_" + operation.action
+                if operation.action == "add" {
+                    guard let folder = item.folder, NativeRecipeDirectoryIdentity(folder) == item.folderIdentity, view.acceptanceChooseRecipeFolder(folder) else { return report(false) }
+                } else {
+                    guard view.acceptanceSelectRecipe(item.identity), awaitCondition({ pending == 0 && !view.acceptanceBusy }),
+                          view.acceptanceIdentity == item.identity else { return report(false) }
+                    if operation.action == "refresh" { view.refreshRecipes() }
+                    else if operation.action != "inspect", !view.acceptanceConfirmedChange(operation.action, identity: item.identity) { return report(false) }
+                }
+                guard awaitCondition({ pending == 0 && !view.acceptanceBusy }), errorCode == nil,
+                      view.acceptanceIdentity == item.identity, view.acceptanceState == operation.state else { return report(false) }
+            }
+        }
+        active = nil; stage = "generated_forms"
+        for row in formRows {
+            let id = row["draft_id"] as! String
+            var draft: ImportDraft?, fetched = false
+            request("v1/imports/" + id, "GET", nil) { object, _ in draft = object.flatMap(ImportDraft.init); fetched = true }
+            guard awaitCondition({ fetched && pending == 0 }), let draft, draft.editable, draft.packagePath == nil else { return report(false) }
+            app.preparationView.invalidate(); app.displayDraft(draft); app.preparationView.refreshForm()
+            guard awaitCondition({ pending == 0 && !app.preparationView.busy }), var form = app.preparationView.form else { return report(false) }
+            if let choice = (row["choose_recipe"] as? [String: Any]).flatMap(PreparationRecipeReference.init) {
+                guard app.preparationView.acceptanceSelectExactRecipe(choice), awaitCondition({ pending == 0 && !app.preparationView.busy }),
+                      let chosen = app.preparationView.form else { return report(false) }
+                form = chosen
+            }
+            let expected = (row["expected_recipe"] as? [String: Any]).flatMap(PreparationRecipeReference.init)
+            guard form.recipe == expected, Set(form.blockers) == Set(row["expected_blockers"] as! [String]),
+                  expected != nil || !app.preparationView.acceptanceReviewEnabled else { return report(false) }
+            formChecks += 1
+        }
+        stage = "complete"
+        return report(errorCode == nil && context.current())
+    }
+
     /// Runs the native form actions against an already launched, owner-only
     /// host. Backend execution remains governed by that host's factory gates.
     fileprivate static func preparationNativeAcceptance(fixture: URL) -> Bool {
@@ -2694,6 +2996,21 @@ if CommandLine.arguments.dropFirst().first == "--preparation-native-acceptance" 
     guard arguments.count == 2, arguments[1].hasPrefix("/") else { exit(2) }
     let passed = McpmeApp.preparationNativeAcceptance(fixture: URL(fileURLWithPath: arguments[1]))
     print(passed ? "preparation_native_acceptance_passed" : "preparation_native_acceptance_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--recipes-native-acceptance" {
+    _ = NSApplication.shared
+    let arguments = Array(CommandLine.arguments.dropFirst())
+    guard arguments.count == 2, arguments[1].hasPrefix("/") else { exit(2) }
+    let passed = McpmeApp.recipesNativeAcceptance(fixture: URL(fileURLWithPath: arguments[1]))
+    print(passed ? "recipes_native_acceptance_passed" : "recipes_native_acceptance_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--recipes-native-context-self-test" {
+    let passed = NativeRecipeAcceptanceContext.contractSelfTest()
+    print(passed ? "recipes_native_context_passed" : "recipes_native_context_failed")
     exit(passed ? 0 : 1)
 }
 

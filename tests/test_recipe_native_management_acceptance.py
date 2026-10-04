@@ -149,3 +149,43 @@ def test_compiled_context_checks_replay_and_same_byte_inode_substitution(native_
     assert child.returncode == 0
     assert printed == b"recipes_native_context_passed\n" and error == b""
     assert not list(temporary.iterdir())
+
+
+def test_python_canonical_fixture_reaches_exact_once_claim(native_recipe_driver, tmp_path):
+    workspace = tmp_path.resolve() / ("mcpme-native-onboarding-" + str(uuid.uuid4()))
+    root = workspace / "native_management"
+    state, home, temporary = (root / name for name in ("state", "home", "tmp"))
+    for directory in (workspace, root, state, home, temporary):
+        directory.mkdir(mode=0o700)
+    manager = state / "manager-connection.json"
+    private_json(manager, {"synthetic": True})
+    nonce = str(uuid.uuid4())
+    marker = state / ("native-recipes-" + nonce + ".json")
+    private_json(marker, {"schema_version": 1, "fixture_nonce": nonce,
+        "expires_at": int(time.time()) + 120, "manager_file": file_identity(manager)})
+    output, fixture = root / "receipt.json", root / "case.json"
+    private_json(fixture, {"schema_version": 1, "state_dir": str(state), "output_path": str(output),
+        "fixture_nonce": nonce, "recipes": [{"folder": None, "recipe": {
+            "recipe_id": "local.native-control", "version": "1.0.0", "digest": "a" * 64},
+            "operations": [{"action": "inspect", "expected_state": "proposed"}]}], "forms": []})
+    claimed = state / ("native-recipes-" + nonce + ".claimed")
+    identity = None
+    for _ in range(2):
+        child = subprocess.Popen([str(native_recipe_driver), "--recipes-native-acceptance", str(fixture)],
+            env={"HOME": str(home), "PATH": "/usr/bin:/bin", "TMPDIR": str(temporary),
+                 "MCPME_STATE_DIR": str(state)}, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            printed, error = child.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.communicate()
+            pytest.fail("native_recipe_positive_admission_timeout", pytrace=False)
+        # A valid Python-created context is consumed exactly once. The deliberately
+        # invalid synthetic connection then prevents any owner request; actual
+        # socket acceptance is a separate independently authored live control.
+        assert child.returncode == 1
+        assert printed == b"recipes_native_acceptance_failed\n" and error == b""
+        assert claimed.read_bytes() == b"claimed\n" and not output.exists()
+        observed = file_identity(claimed)
+        assert identity is None or observed == identity
+        identity = observed

@@ -55,14 +55,30 @@ false; the original measured same-user scope is unchanged.
 
 ## Signed artifact and current authority
 
-An empty closed policy works from source and grants no execution. A nonempty
-policy must belong to the exact running module's enclosing
+Ordinary source checkouts and standalone development hosts return no release
+admissions, regardless of the tracked policy's contents. Their manual package
+and SDK paths remain available after a distribution policy is activated. This
+context comes only from the running module's lexical and resolved location;
+there is no environment or API override. An app ancestor in either location
+keeps strict app validation, including links into or out of an app. The private
+policy-loading test seam continues to reject invalid active artifacts outside
+an app.
+
+An empty closed policy grants no execution. A nonempty policy in an app must
+belong to the exact running module's enclosing
 `*.app/Contents/Resources/host`. The loader checks a clean build receipt, complete
 host file membership and hashes, the exact policy member digest, enclosing app
 receipt linkage, regular files, ownership and modes. It requires the reviewed
 Developer ID leaf, Apple chain, Team ID, hardened runtime, timestamp and valid
 strict app seal. Public signer identifiers are fixed source constants shared
 with command admission. No signing or identity discovery occurs in the loader.
+
+Ad-hoc app builds need an explicitly closed packaged policy to retain manual
+operation. A receipt claiming `ad_hoc` does not downgrade active-policy
+validation; malformed, missing or Developer ID receipts cannot select a closed
+fallback. The app producer can package the closed policy before creating its
+manifest and seal without changing backend component bytes. Active-policy
+acceptance remains specific to the reviewed Developer ID distribution.
 
 The verified result retains an immutable baseline of host/app file and directory
 identities plus exact original policy bytes. Small synchronous fences check

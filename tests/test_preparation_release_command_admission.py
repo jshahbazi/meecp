@@ -248,7 +248,8 @@ def test_signature_inspection_cannot_hide_inode_or_current_platform_replacement(
         elif fault == "late-extra": (packaged.host / "late-extra").write_bytes(b"Late synthetic addition")
         else: monkeypatch.setattr(release, "resource_platform_policy", lambda: "a" * 64)
     monkeypatch.setattr(release, "_signature", signature)
-    with pytest.raises(PreparationError, match="^command_release_not_admitted$"):
+    code = "command_release_platform_unavailable" if fault == "late-kernel" else "command_release_not_admitted"
+    with pytest.raises(PreparationError, match="^" + code + "$"):
         admit(packaged)
 
 
@@ -264,8 +265,44 @@ def test_release_closes_on_unaccepted_platform_or_artifact(packaged, monkeypatch
     else:
         def invalid(*args, **kwargs): raise PreparationError("command_release_not_admitted")
         monkeypatch.setattr(release, "_signature", invalid)
-    with pytest.raises(PreparationError, match="^command_release_not_admitted$"):
+    code = "command_release_platform_unavailable" if failure in {"unknown-kernel", "unsupported-os"} else "command_release_not_admitted"
+    with pytest.raises(PreparationError, match="^" + code + "$"):
         admit(packaged, selected, host)
+    if failure in {"unknown-kernel", "unsupported-os"}:
+        assert packaged.checks == [(packaged.app, {"deep": True}), (packaged.helpers[0], {}), (packaged.helpers[1], {})]
+
+
+@pytest.mark.parametrize("fault", ["helper", "source", "inventory", "membership", "signature", "held-policy"])
+def test_platform_mismatch_cannot_hide_any_artifact_denial(packaged, monkeypatch, fault):
+    proof = packaged.capture()
+    queries = []
+    monkeypatch.setattr(release, "installed_platform_policy", lambda: queries.append(True) or "a" * 64)
+    if fault == "helper": packaged.helpers[0].write_bytes(b"Changed helper")
+    elif fault == "source": (packaged.host / "backend/mcpme/host_command.py").write_bytes(b"Changed source")
+    elif fault == "inventory": (packaged.host / "command-execution.json").write_bytes(b"{}")
+    elif fault == "membership": (packaged.host / "extra").write_bytes(b"Extra member")
+    elif fault == "held-policy": proof.policy.write_bytes(b"Changed policy")
+    else:
+        def invalid(*args, **kwargs): raise PreparationError("command_release_platform_unavailable")
+        monkeypatch.setattr(release, "_signature", invalid)
+    with pytest.raises(PreparationError, match="^command_release_not_admitted$"):
+        release.command_release_admission(policy(), packaged.host, artifact=proof)
+    assert not queries
+
+
+@pytest.mark.parametrize("fault", ["invalid-digest", "wrong-type", "installed-other-error", "resource-other-error", "resource-unsupported"])
+def test_only_authentic_platform_unavailability_has_distinct_code(packaged, monkeypatch, fault):
+    if fault == "invalid-digest": monkeypatch.setattr(release, "installed_platform_policy", lambda: "future")
+    elif fault == "wrong-type": monkeypatch.setattr(release, "installed_platform_policy", lambda: True)
+    else:
+        kind = release.InstalledCommandError if fault == "installed-other-error" else release.ResourceCommandError
+        code = "command_platform_unsupported" if fault == "resource-unsupported" else "command_helper_mismatch"
+        def failed(): raise kind(code)
+        monkeypatch.setattr(release, "installed_platform_policy" if fault == "installed-other-error" else "resource_platform_policy", failed)
+    expected = "command_release_platform_unavailable" if fault == "resource-unsupported" else "command_release_not_admitted"
+    with pytest.raises(PreparationError, match="^" + expected + "$"):
+        admit(packaged)
+    assert packaged.checks == [(packaged.app, {"deep": True}), (packaged.helpers[0], {}), (packaged.helpers[1], {})]
 
 
 @pytest.mark.parametrize("fault", [None, "invalid", "team", "hardened", "timestamp", "entitlements", "timeout"])

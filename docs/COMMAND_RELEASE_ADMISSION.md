@@ -13,6 +13,11 @@ already bind the complete product version, kernel release/build and architecture
 The new gate compares their current digests to the accepted constants. A future
 kernel or OS update requires new acceptance and source approval; it does not
 inherit command admission merely because its major version remains 26.
+After complete artifact and helper verification, an authentic unsupported
+platform returns the fixed `command_release_platform_unavailable` code. The
+ordinary release loader can then withhold the command family while retaining
+other approved families. Invalid artifact, source, helper, signatures or malformed
+platform metadata remain admission failures and cannot become that downgrade.
 
 The trusted caller derives the packaged host root from its installed module.
 The gate requires that same module location inside the enclosing mcpme app. It

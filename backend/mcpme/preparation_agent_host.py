@@ -23,6 +23,8 @@ from .contracts import StrictModel
 from .preparation_agent_backend import AgentBackend, ENDPOINT
 from .preparation_agent_contracts import AnalysisGuideV1, AnalysisRequestV1, AgentLimitsV1, SourceFileV1, SourceMetadataV1
 from .preparation_agent_guides import AnalysisGuideRegistry, builtin_analysis_guides
+from .preparation_agent_recipe_choices import (AgentRecipeChoiceRegistry, MAX_AGENT_RECIPE_CHOICES,
+                                              builtin_recipe_choice_rules, source_choice_inventory)
 from .preparation_agent_coordinator import AgentAttemptStore, AgentCoordinator, TERMINAL
 from .preparation_application_source import _read_file, _scan, application_source_records
 from .preparation_selection_snapshot import selection_snapshot_metadata
@@ -105,7 +107,8 @@ async def _join(task):
 
 
 class AgentPreparationHost:
-    def __init__(self, preparations, root: Path, *, providers=(), live_enabled=False, simulated_enabled=False, guides=None):
+    def __init__(self, preparations, root: Path, *, providers=(), live_enabled=False, simulated_enabled=False,
+                 guides=None, choice_rules=None):
         if type(live_enabled) is not bool or type(simulated_enabled) is not bool:
             raise PreparationError("agent_host_configuration_invalid")
         self.preparations, self.imports, self.recipes = preparations, preparations.imports, preparations.recipes
@@ -114,6 +117,7 @@ class AgentPreparationHost:
             raise PreparationError("agent_provider_configuration_invalid")
         self.live_enabled, self.simulated_enabled = live_enabled, simulated_enabled
         self.guides = AnalysisGuideRegistry(builtin_analysis_guides() if guides is None else guides)
+        self.recipe_choices = AgentRecipeChoiceRegistry(builtin_recipe_choice_rules() if choice_rules is None else choice_rules)
         self.store = AgentAttemptStore(Path(root))
         self.tasks, self.stops, self.children = {}, {}, {}
         self.static_workers = set()
@@ -159,17 +163,24 @@ class AgentPreparationHost:
     def options(self, import_id, revision):
         """Static metadata inventory; this never reads credentials or dispatches."""
         draft = self._draft(import_id, revision)
+        enabled = [value for value in self.recipes.list() if value["state"] == "enabled"]
+        displayed = enabled[:MAX_AGENT_RECIPE_CHOICES]
+        source_inventory = source_choice_inventory(draft["source"])
+        choices = self.recipe_choices.choices(draft["source"], self.recipes, self.guides, displayed,
+                                             source_inventory=source_inventory)
+        if len(enabled) > len(displayed):
+            for choice in choices:
+                choice["recommended"] = False
         return {"schema_version": 1, "import_id": import_id, "revision": revision,
             "source_revision": draft["source"]["revision"],
             "providers": [{"provider_id": value.provider_id, "models": list(value.models),
                 "backend": value.backend.backend_id, "destination": ENDPOINT, "simulated": value.simulated,
                 "execution_available": self._available(value)} for value in self.providers.values()],
-            "files": [item for item in draft["source"]["files"] if 1 <= item["size"] <= 16384][:256],
-            "files_truncated": sum(1 <= item["size"] <= 16384 for item in draft["source"]["files"]) > 256,
-            "metadata_files": [item for item in draft["source"]["files"] if 1 <= item["size"] <= 16 * 1024 * 1024][:256],
-            "metadata_files_truncated": sum(1 <= item["size"] <= 16 * 1024 * 1024 for item in draft["source"]["files"]) > 256,
+            **source_inventory,
             "recipes": [{"id": value["recipe_id"], "version": value["version"], "digest": value["digest"]}
-                        for value in self.recipes.list() if value["state"] == "enabled"],
+                        for value in displayed],
+            "recipes_truncated": len(enabled) > len(displayed),
+            "recipe_choices": choices,
             "latest_job": next((self.get(json.loads(row[0])["job_id"]) for row in self.db.execute(
                 "SELECT data FROM agent_host_jobs ORDER BY rowid DESC") if (json.loads(row[0])["import_id"],
                 json.loads(row[0])["revision"], json.loads(row[0])["source_revision"]) ==

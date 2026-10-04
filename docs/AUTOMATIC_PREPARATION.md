@@ -1,6 +1,8 @@
 # Automatic and agent-assisted app preparation
 
-Status: proposed implementation plan, 2026-10-02. Implementation has not started.
+Status: implementation plan, 2026-10-02. Static foundation implemented; automatic execution gates remain open.
+
+Implementation update: the [static preparation foundation](PREPARATION_FOUNDATION.md) is now implemented. Automatic execution and integrated agent execution remain gated. The [small-model prompt pack](SMALL_MODEL_PREPARATION_PROMPTS.md) specifies bounded analysis/proposal tasks for the future integrated coordinator.
 
 Baseline: `1d723e5af50639aa40702091c3e39e47dc3020dd`, including the standalone hotdog example. This plan extends [project onboarding](PROJECT_ONBOARDING.md), [package authoring](PACKAGE_AUTHORING.md), and the [implemented Phase 2 boundary](PHASE2_ONBOARDING.md).
 

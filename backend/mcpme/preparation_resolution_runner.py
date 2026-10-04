@@ -21,6 +21,7 @@ from packaging.utils import canonicalize_name
 from .contracts import Tool
 from .ownership_receipts import verify_receipt
 from .preparation_acquisition import WheelAcquirer
+from .preparation_admission import PublicPreparationAdmission
 from .preparation_builder import MCP_VERSION, PYTHON_VERSION, _runtime, load_private_toolchain
 from .preparation_components import ComponentReference, read_snapshot
 from .preparation_contracts import PreparationError, canonical_bytes, check_schema, contract_digest
@@ -36,7 +37,7 @@ FILES = ("preparation_resolution.py", "preparation_resolution_runner.py", "prepa
          "preparation_builder.py", "preparation_acquisition.py", "preparation_inspection.py", "preparation_components.py",
          "preparation_processes.py", "preparation_verifier.py", "preparation_probe_confinement.py", "preparation_runner.py", "processes.py",
          "ownership_receipts.py", "downloads.py", "preparation_contracts.py", "preparation_inputs.py",
-         "contracts.py", "imports.py", "preparation_application_source.py", "recipes.py", "private.py",
+         "contracts.py", "imports.py", "preparation_application_source.py", "recipes.py", "private.py", "preparation_admission.py",
          "_native_tls/__init__.py", "_native_tls/_api.py", "_native_tls/_macos.py",
          "_native_tls/_openssl.py", "_native_tls/_ssl_constants.py", "_native_tls/_windows.py")
 SANDBOX = Path("/usr/bin/sandbox-exec")
@@ -181,9 +182,14 @@ class OwnedResolutionRunner(PreparationRunner):
         return None
 
     """Reuse joined ownership plumbing, with separate resolution authority."""
-    def __init__(self, store, host_root, reaper, *, reserve_resources=None, release_resources=None, enabled=False):
+    def __init__(self, store, host_root, reaper, *, reserve_resources=None, release_resources=None, enabled=False,
+                 public_admission=None):
+        if public_admission is not None and (type(public_admission) is not PublicPreparationAdmission
+                or store.public_admission is not public_admission):
+            raise PreparationError("invalid_public_preparation_admission")
         super().__init__(store, host_root, reaper, reserve_resources=reserve_resources,
                          release_resources=release_resources, enabled=enabled)
+        self.public_resolution_admission = public_admission
 
     async def plan(self, import_id, revision, candidate_id, policy, *, expires_in=300):
         if self._closed or not self.enabled:
@@ -209,6 +215,8 @@ class OwnedResolutionRunner(PreparationRunner):
         except ValueError:
             raise PreparationError("invalid_resolution_policy") from None
         draft, candidate = await asyncio.to_thread(self.store.candidate, import_id, revision, candidate_id)
+        if self.public_resolution_admission is not None:
+            self.public_resolution_admission.require_candidate(candidate)
         expected = {"resolve_dependencies"} | ({"discover_interface"} if candidate["kind"] == "python-mcp" else set())
         if set(policy.operations) != expected or set(policy.network) != {"pypi.org", "files.pythonhosted.org"}:
             raise PreparationError("resolution_policy_mismatch")
@@ -219,7 +227,7 @@ class OwnedResolutionRunner(PreparationRunner):
             source_revision=draft["source"]["revision"], candidate_id=candidate_id, candidate_kind=candidate["kind"],
             candidate_digest=contract_digest("preparation-resolution-candidate-v1", candidate), policy=policy.model_dump(mode="json"),
             runtime={"name": "private-python-toolchain", "digest": toolchain.identity}, producer=producer.model_dump())
-        return self.store.plan(request, candidate, expires_in=expires_in)
+        return await asyncio.to_thread(self.store.plan, request, candidate, expires_in=expires_in)
 
     async def _producer(self):
         task = asyncio.create_task(asyncio.to_thread(self._producer_sync))
@@ -233,6 +241,10 @@ class OwnedResolutionRunner(PreparationRunner):
             reaper=self.reaper, dependencies=dependencies)
         digest = contract_digest("preparation-resolution-producer-v1", {"implementation": implementation,
             "sandbox": hashlib.sha256(SANDBOX.read_bytes()).hexdigest()})
+        if self.public_resolution_admission is not None:
+            digest = contract_digest("public-preparation-resolution-producer-v1", {
+                "implementation": digest, "admission": self.public_resolution_admission.digest})
+            return ComponentReference(id="python-resolution-v1", version="1.0.1", digest=digest)
         return ComponentReference(id="python-resolution-v1", version="1.0.0", digest=digest)
 
     async def _release(self, job_id):
@@ -298,6 +310,11 @@ class OwnedResolutionRunner(PreparationRunner):
 
     async def _execute(self, attempt, executor, toolchain, argv, *, broker=None, env_extra=None, stdout_limit=4096):
         attempt.check()
+        if self.public_resolution_admission is not None:
+            job = self.store.get(attempt.job_id)
+            await self._thread(attempt, self.store.require_public_request,
+                ResolutionRequestV1.model_validate(job["request"]), job["candidate"])
+            attempt.check()
         env = {"PATH": "/usr/bin:/bin", "HOME": str(attempt.workspace / "home"), "TMPDIR": str(attempt.workspace / "tmp"),
             "UV_CACHE_DIR": str(attempt.workspace / "cache"), "UV_PYTHON": str(toolchain.python_runtime / "bin/python3.12"),
             "UV_PYTHON_DOWNLOADS": "never", "UV_NO_ENV_FILE": "1", "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
@@ -389,6 +406,8 @@ class OwnedResolutionRunner(PreparationRunner):
                 for name in ("home", "tmp", "cache"):
                     (attempt.workspace / name).mkdir(mode=0o700)
                 candidate = job["candidate"]
+                if self.public_resolution_admission is not None:
+                    await self._thread(attempt, self.store.require_public_request, request, candidate)
                 current_draft, current_candidate = await self._thread(attempt, self.store.candidate,
                     request.import_id, request.revision, request.candidate_id)
                 if current_candidate != candidate or contract_digest("preparation-resolution-candidate-v1", candidate) != request.candidate_digest:
@@ -415,6 +434,8 @@ class OwnedResolutionRunner(PreparationRunner):
                             path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                             path.write_bytes(item.data)
                     self.store.stage(attempt.job_id, "discovering")
+                    await self._thread(attempt, self.store.require_public_request, request, candidate)
+                    attempt.check()
                     tools, peak = await self._controlled(attempt, discover_interface(owner,
                         runtime / "python/bin/python3.12", runtime / "python", source, attempt.workspace, candidate,
                         timeout=min(60, attempt.deadline - time.monotonic()), memory_mb=request.policy.memory_mb, check=attempt.check))

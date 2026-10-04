@@ -223,6 +223,12 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
     assert resource["production_admission"] == "disabled"
     for relative, digest in host_receipt["artifact_sha256"].items():
         assert digest == app_builder.sha256(resources / "host" / relative)
+    assert {"bin/mcpme-handoff", "native-app.json"}.issubset(host_receipt["artifact_sha256"])
+    assert set(host_receipt["artifact_sha256"]) == {
+        str(path.relative_to(resources / "host"))
+        for path in (resources / "host").rglob("*") if path.is_file() and not path.is_symlink()
+        and path.name != "build.json"
+    }
     starter = resources / app_builder.STARTER_PACKAGE_PATH
     verified = validate_package(starter)
     assert receipt["starter_packages"] == [{"path": "starter-packages/json-utilities",

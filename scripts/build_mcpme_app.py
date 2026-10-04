@@ -223,6 +223,13 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
         refresh_command_inventory(host)
     if (host / "command-resource-execution.json").is_file():
         refresh_command_resource_inventory(host)
+    # These files are appended after build_host freezes its payload. Include
+    # them in the sealed inventory before rewriting the receipt.
+    for relative in ("bin/mcpme-handoff", "native-app.json"):
+        path = host / relative
+        if not path.is_file() or path.is_symlink():
+            raise SystemExit("Bundled host receipt requires regular post-build files")
+        host_receipt["artifact_sha256"][relative] = sha256(path)
     for relative in host_receipt["artifact_sha256"]:
         host_receipt["artifact_sha256"][relative] = sha256(host / relative)
     host_receipt["signing"] = "developer_id" if release else "ad_hoc"

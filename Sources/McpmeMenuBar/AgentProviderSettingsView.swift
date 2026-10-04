@@ -49,6 +49,7 @@ struct AgentProviderMetadata {
     let credentialGeneration: String
     let credentialAvailable: Bool
     let removed: Bool
+    let executionAvailable: Bool
 
     init?(_ object: [String: Any]) {
         let keys: Set<String> = ["provider_id", "adapter_id", "name", "models", "configuration", "generation",
@@ -60,10 +61,12 @@ struct AgentProviderMetadata {
               let credentialStatus = object["credential_status"] as? String, ["configured", "unavailable"].contains(credentialStatus),
               let status = object["status"] as? String, ["active", "removed"].contains(status),
               object["destination"] as? String == agentProviderDestination,
-              preparationBoolean(object["execution_available"]) == false else { return nil }
+              let executionAvailable = preparationBoolean(object["execution_available"]),
+              !executionAvailable || (credentialStatus == "configured" && status == "active") else { return nil }
         self.id = id; self.name = name; self.models = models; self.generation = generation
         self.credentialGeneration = credentialGeneration; self.credentialAvailable = credentialStatus == "configured"
         self.removed = status == "removed"
+        self.executionAvailable = executionAvailable
     }
 }
 
@@ -81,6 +84,7 @@ final class AgentProviderSettingsView: NSStackView {
     private var selected: AgentProviderMetadata? { records.first { $0.id == picker.selectedItem?.representedObject as? String } }
     private var editingProvider: AgentProviderMetadata?
     private var loaded = false
+    private var liveExecutionEnabled = false
     private var needsRefresh = false
     private var epoch: UInt64 = 0
     private var requestEpoch: UInt64 = 0
@@ -114,7 +118,7 @@ final class AgentProviderSettingsView: NSStackView {
         editButton = button("Edit Provider", #selector(editProvider)); removeButton = button("Remove Provider", #selector(removeProvider))
         saveButton = button("Save Provider", #selector(saveProvider)); cancelButton = button("Cancel", #selector(cancelEditing))
         editor.orientation = .vertical; editor.alignment = .leading; editor.spacing = 6
-        let notice = workspaceLabel("Destination: " + agentProviderDestination + "\nAPI keys are saved as plain text in private files on this Mac.\nEnter exact model IDs available to your account. Model compatibility has not been checked. Saving sends no source files and makes no provider request. Agent execution stays disabled.", size: 12, secondary: true)
+        let notice = workspaceLabel("Destination: " + agentProviderDestination + "\nAPI keys are saved as plain text in private files on this Mac.\nEnter exact model IDs available to your account. Model compatibility has not been checked. Saving sends no source files and makes no provider request. Review the selected source and usage limits before starting agent assistance.", size: 12, secondary: true)
         for view in [NSTextField(labelWithString: "OpenAI Responses"),
                      workspaceStack([workspaceLabel("Profile name", size: 12), nameField], horizontal: true),
                      workspaceStack([workspaceLabel("Model IDs", size: 12), modelsField], horizontal: true),
@@ -149,7 +153,7 @@ final class AgentProviderSettingsView: NSStackView {
     }
     func invalidate() {
         epoch &+= 1; clearEditor(); editing = false; editingProvider = nil
-        loaded = false; needsRefresh = true; records = []; picker.removeAllItems()
+        loaded = false; liveExecutionEnabled = false; needsRefresh = true; records = []; picker.removeAllItems()
         refreshAvailability(); onStateChange?()
     }
     /// The parent calls this only when replacing a settled/lost host connection.
@@ -180,14 +184,15 @@ final class AgentProviderSettingsView: NSStackView {
         request("v1/agent-providers", "GET", nil) { [weak self] object, code in
             guard let self, self.finishRequest(token), self.epoch == expected else { return }
             guard let object, providerEnvelope(object, keys: ["schema_version", "adapters", "providers", "live_execution_enabled"]),
-                  preparationInteger(object["schema_version"]) == 1, preparationBoolean(object["live_execution_enabled"]) == false,
+                  preparationInteger(object["schema_version"]) == 1, let liveEnabled = preparationBoolean(object["live_execution_enabled"]),
                   let adapters = object["adapters"] as? [[String: Any]], adapters.count == 1, Self.validAdapter(adapters[0]),
                   let providers = object["providers"] as? [[String: Any]], providers.count <= 128 else { self.fail(code ?? "agent_provider_response_invalid"); return }
             let parsed = providers.compactMap(AgentProviderMetadata.init)
             guard parsed.count == providers.count, Set(parsed.map(\.id)).count == parsed.count,
-                  parsed.filter({ !$0.removed }).count <= 16 else { self.fail("agent_provider_response_invalid"); return }
+                  parsed.filter({ !$0.removed }).count <= 16,
+                  liveEnabled || !parsed.contains(where: { $0.executionAvailable }) else { self.fail("agent_provider_response_invalid"); return }
             let previous = self.selected?.id
-            self.records = parsed; self.loaded = true; self.needsRefresh = false; self.picker.removeAllItems()
+            self.records = parsed; self.loaded = true; self.liveExecutionEnabled = liveEnabled; self.needsRefresh = false; self.picker.removeAllItems()
             let active = parsed.filter { !$0.removed }
             guard let titles = agentPickerTitles(active.map { $0.name + ($0.credentialAvailable ? "" : " · Key unavailable") }, identities: active.map(\.id)) else { self.fail("agent_provider_response_invalid"); return }
             for (record, title) in zip(active, titles) {
@@ -196,7 +201,9 @@ final class AgentProviderSettingsView: NSStackView {
             }
             guard self.picker.numberOfItems == active.count else { self.fail("agent_provider_response_invalid"); return }
             if let previous, let index = self.picker.itemArray.firstIndex(where: { $0.representedObject as? String == previous }) { self.picker.selectItem(at: index) }
-            self.status.stringValue = self.providerNames.isEmpty ? "No provider is configured. Choose Add Provider." : "Provider settings loaded. Source transfer requires a separate review; agent execution remains disabled."
+            self.status.stringValue = self.providerNames.isEmpty ? "No provider is configured. Choose Add Provider." :
+                liveEnabled ? "Provider settings loaded. Review the selected source and usage limits before starting agent assistance." :
+                "Provider settings loaded. Agent assistance is unavailable in this app."
             self.refreshAvailability(); self.onRegistryChange?()
         }
     }
@@ -266,7 +273,7 @@ final class AgentProviderSettingsView: NSStackView {
                   expected == nil ? !self.records.contains(where: { $0.id == next.id }) : next.id == expected?.id && next.generation != expected?.generation &&
                     (rotating ? next.credentialGeneration != expected?.credentialGeneration : next.credentialGeneration == expected?.credentialGeneration) else { self.fail(code ?? "agent_provider_response_invalid"); self.onRegistryChange?(); return }
             self.records.removeAll { $0.id == next.id }; self.records.append(next)
-            self.status.stringValue = removing ? "Provider removed. Refresh Providers to continue." : "Provider saved. Refresh Providers to choose its models. Agent execution remains disabled."
+            self.status.stringValue = removing ? "Provider removed. Refresh Providers to continue." : "Provider saved. Refresh Providers to choose its models."
             self.refreshAvailability(); self.onRegistryChange?()
         }
     }
@@ -426,7 +433,30 @@ extension AgentProviderSettingsView {
         var invalid = row(firstGeneration, credential: credential); invalid["api_key"] = "synthetic-only-key"
         guard AgentProviderMetadata(invalid) == nil else { return false }
         invalid = row(firstGeneration, credential: credential); invalid["execution_available"] = true
+        guard AgentProviderMetadata(invalid)?.executionAvailable == true else { return false }
+        let liveRow = invalid
+        invalid["credential_status"] = "unavailable"
         guard AgentProviderMetadata(invalid) == nil else { return false }
+        invalid = liveRow; invalid["status"] = "removed"
+        guard AgentProviderMetadata(invalid) == nil else { return false }
+        for malformed in [1, "true"] as [Any] {
+            invalid = liveRow; invalid["execution_available"] = malformed
+            guard AgentProviderMetadata(invalid) == nil else { return false }
+        }
+        var liveList = list([liveRow]); liveList["live_execution_enabled"] = true
+        view.request = { _, _, _, completion in completion(liveList, nil) }
+        view.loadProviders()
+        guard view.loaded, view.liveExecutionEnabled, view.records.first?.executionAvailable == true,
+              !view.status.stringValue.contains("disabled"), view.keyField.stringValue.isEmpty else { return false }
+        view.request = { _, _, _, completion in completion(list([liveRow]), nil) }
+        view.loadProviders()
+        guard view.errorCode == "agent_provider_response_invalid" else { return false }
+        liveList["live_execution_enabled"] = 1
+        view.request = { _, _, _, completion in completion(liveList, nil) }
+        view.loadProviders()
+        guard view.errorCode == "agent_provider_response_invalid" else { return false }
+        view.connectionReset()
+        guard !view.liveExecutionEnabled, view.records.isEmpty else { return false }
         invalid = row(firstGeneration, credential: credential); invalid["destination"] = "https://example.invalid"
         guard AgentProviderMetadata(invalid) == nil else { return false }
         var wrongVersion = list([]); wrongVersion["api_version"] = 2

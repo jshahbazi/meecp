@@ -176,7 +176,8 @@ private final class ModelRunner {
                     }
                 }
             }
-            self.queue.asyncAfter(deadline: .now() + 90) {
+            let timeLimit = settings.profile.generationTimeout(maximumOutput: settings.maximumOutput)
+            self.queue.asyncAfter(deadline: .now() + timeLimit) {
                 guard self.active === job else { return }
                 job.failure = "timeout"
                 self.stop(job)
@@ -317,6 +318,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         let transcript: NSAttributedString
         let draft: String
         let modelPath: String
+        let context: String
         let maximumOutput: String
     }
 
@@ -475,10 +477,11 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         temperature.target = self; temperature.action = #selector(updateTemperature)
         temperature.widthAnchor.constraint(equalToConstant: 140).isActive = true
         temperatureValue.widthAnchor.constraint(equalToConstant: 35).isActive = true
-        context.addItems(withTitles: ["2048", "4096", "8192"])
-        context.selectItem(withTitle: "4096")
-        maximumOutput.addItems(withTitles: ["128", "512", "1024", "2048"])
-        maximumOutput.selectItem(withTitle: "512")
+        configureTokenControls(for: selectedProfile)
+        context.target = self; context.action = #selector(contextBudgetChanged)
+        maximumOutput.target = self; maximumOutput.action = #selector(responseBudgetChanged)
+        context.toolTip = "Total tokens available for the conversation, thinking, and final answer."
+        maximumOutput.toolTip = "Maximum generated tokens, including thinking and the final answer."
         seedField.widthAnchor.constraint(equalToConstant: 65).isActive = true
         panel.addArrangedSubview(row([label("Temperature"), temperature, temperatureValue,
                                      label("Context"), context, label("Max response"), maximumOutput,
@@ -507,6 +510,37 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         temperatureValue.stringValue = String(format: "%.2f", temperature.doubleValue)
     }
 
+    private func configureTokenControls(for profile: ModelProfile, savedContext: String? = nil,
+                                        savedOutput: String? = nil) {
+        context.removeAllItems()
+        context.addItems(withTitles: profile.contextSizes.map(String.init))
+        context.selectItem(withTitle: savedContext ?? String(profile.defaultContext))
+        maximumOutput.removeAllItems()
+        maximumOutput.addItems(withTitles: profile.maximumOutputs.map(String.init))
+        maximumOutput.selectItem(withTitle: savedOutput ?? String(profile.defaultMaximumOutput))
+    }
+
+    @objc private func responseBudgetChanged() {
+        guard !generating, selectedProfile.isQwen,
+              let output = Int(maximumOutput.titleOfSelectedItem ?? ""),
+              let current = Int(context.titleOfSelectedItem ?? "") else { return }
+        // Leave room for conversation when the requested response grows.
+        let required = output + 8192
+        if current < required, let larger = selectedProfile.contextSizes.first(where: { $0 >= required }) {
+            context.selectItem(withTitle: String(larger))
+        }
+    }
+
+    @objc private func contextBudgetChanged() {
+        guard !generating, selectedProfile.isQwen,
+              let current = Int(context.titleOfSelectedItem ?? ""),
+              let output = Int(maximumOutput.titleOfSelectedItem ?? "") else { return }
+        if output > current - 512,
+           let smaller = selectedProfile.maximumOutputs.last(where: { $0 <= current - 512 }) {
+            maximumOutput.selectItem(withTitle: String(smaller))
+        }
+    }
+
     @objc private func toggleSettings() {
         let visible = settingsToggle.state == .on
         settingsPanel.isHidden = !visible
@@ -530,6 +564,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         sessions[selectedProfile] = ChatSession(conversation: conversation,
             transcript: NSAttributedString(attributedString: responseView.attributedString()),
             draft: promptView.string, modelPath: modelField.stringValue,
+            context: context.titleOfSelectedItem ?? String(selectedProfile.defaultContext),
             maximumOutput: maximumOutput.titleOfSelectedItem ?? "512")
         selectedProfile = profile
         let session = sessions[profile]
@@ -538,7 +573,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         replaceDraft(session?.draft ?? "")
         promptView.undoManager?.removeAllActions()
         modelField.stringValue = session?.modelPath ?? profile.defaultModelPath
-        maximumOutput.selectItem(withTitle: session?.maximumOutput ?? String(profile.defaultMaximumOutput))
+        configureTokenControls(for: profile, savedContext: session?.context, savedOutput: session?.maximumOutput)
         status.stringValue = "Ready. " + profile.speakerName + " chat selected."
         window.makeFirstResponder(promptView)
     }
@@ -793,15 +828,27 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         selectModel()
         checks["qwen_selector_uses_reasoning_model"] = selectedProfile == .qwen35
             && modelField.stringValue == ModelProfile.qwen35.defaultModelPath && conversation.isEmpty
+            && context.titleOfSelectedItem == "65536" && maximumOutput.titleOfSelectedItem == "32768"
+        maximumOutput.selectItem(withTitle: "81920")
+        responseBudgetChanged()
+        checks["larger_qwen_response_raises_context"] = maximumOutput.titleOfSelectedItem == "81920"
+            && context.titleOfSelectedItem == "131072"
         conversation.append(user: "synthetic qwen user", assistant: "synthetic qwen answer")
         modelSelector.selectItem(at: ModelProfile.selectableProfiles.firstIndex(of: .qwen35Full)!)
         selectModel()
         checks["full_qwen_selector_uses_full_precision_model"] = selectedProfile == .qwen35Full
             && modelField.stringValue == ModelProfile.qwen35Full.defaultModelPath
-            && maximumOutput.titleOfSelectedItem == "2048" && conversation.isEmpty
+            && maximumOutput.titleOfSelectedItem == "32768" && context.titleOfSelectedItem == "65536"
+            && conversation.isEmpty
+        context.selectItem(withTitle: "4096")
+        contextBudgetChanged()
+        checks["smaller_qwen_context_reduces_response_budget"] = maximumOutput.titleOfSelectedItem == "2048"
+            && context.titleOfSelectedItem == "4096"
         modelSelector.selectItem(at: ModelProfile.selectableProfiles.firstIndex(of: .qwen35)!)
         selectModel()
         checks["full_qwen_keeps_q4_history_separate"] = conversation.turns.first?.assistant == "synthetic qwen answer"
+        checks["qwen_large_budgets_restore_per_chat"] = maximumOutput.titleOfSelectedItem == "81920"
+            && context.titleOfSelectedItem == "131072"
         func simulateCompletion(_ response: String, failure: String?, stopped: Bool) {
             pendingPrompt = "synthetic retry request"
             pendingResponse = response
@@ -830,6 +877,8 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
             && status.stringValue == "Stopped."
         modelSelector.selectItem(at: ModelProfile.selectableProfiles.firstIndex(of: .bonsai)!)
         selectModel()
+        checks["qwen_large_budgets_preserve_bonsai_defaults"] = maximumOutput.titleOfSelectedItem == "512"
+            && context.titleOfSelectedItem == "4096" && !maximumOutput.itemTitles.contains("32768")
         let bonsaiCount = conversation.turns.count
         simulateCompletion("Synthetic partial Bonsai answer", failure: "process_failed", stopped: true)
         checks["bonsai_stopped_answer_behavior_unchanged"] = conversation.turns.count == bonsaiCount + 1
@@ -894,8 +943,8 @@ private enum SmokeTest {
            let profile = ModelProfile(rawValue: arguments[index + 1]) {
             settings.profile = profile
             settings.model = profile.defaultModelPath
-            settings.maximumOutput = profile == .bonsai ? 64 : profile.defaultMaximumOutput
-            settings.context = profile == .bonsai ? 2048 : 4096
+            settings.maximumOutput = profile == .bonsai ? 64 : (greetingOnly ? 2048 : profile.defaultMaximumOutput)
+            settings.context = profile == .bonsai ? 2048 : profile.defaultContext
         }
         for (flag, apply) in [
             ("--model", { (value: String) in settings.model = value }),

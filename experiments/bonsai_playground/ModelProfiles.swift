@@ -43,7 +43,24 @@ enum ModelProfile: String, CaseIterable {
         }
     }
 
-    var defaultMaximumOutput: Int { self == .bonsai ? 512 : 2048 }
+    var isQwen: Bool { self == .qwen35 || self == .qwen35Full }
+
+    var defaultMaximumOutput: Int { isQwen ? 32768 : (self == .bonsai ? 512 : 2048) }
+
+    var defaultContext: Int { isQwen ? 65536 : 4096 }
+
+    var contextSizes: [Int] {
+        isQwen ? [4096, 8192, 16384, 32768, 65536, 131072] : [2048, 4096, 8192]
+    }
+
+    var maximumOutputs: [Int] {
+        isQwen ? [128, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 81920]
+            : [128, 512, 1024, 2048]
+    }
+
+    func generationTimeout(maximumOutput: Int) -> TimeInterval {
+        isQwen ? max(300, min(1800, Double(maximumOutput) / 40 + 120)) : 90
+    }
 
     /// Thinking profiles continue a block opened in their generation prompt.
     var assistantOutputPrefix: String { self == .bonsai ? "" : "<think>\n" }
@@ -64,7 +81,7 @@ enum ModelProfile: String, CaseIterable {
 
     func render(system: String, prompt: String, conversation: Conversation) -> String {
         if self == .bonsai { return conversation.render(system: system, prompt: prompt) }
-        if self == .qwen35 || self == .qwen35Full {
+        if isQwen {
             return renderQwen(system: system, prompt: prompt, conversation: conversation)
         }
         var messages = "<s><|im_start|>system\n\(system)<|im_end|>\n"
@@ -204,6 +221,30 @@ enum ModelProfileChecks {
             && ModelProfile.qwen35Full.defaultModelPath.hasSuffix("/qwen3.5-2b/Qwen3.5-2B-BF16.gguf")
             && ModelProfile.qwen35Full.defaultModelPath != ModelProfile.qwen35.defaultModelPath
         checks["broken_iq2_is_excluded_from_selector"] = ModelProfile.selectableProfiles == [.bonsai, .minicpmQ4, .qwen35, .qwen35Full]
+        let qwens: [ModelProfile] = [.qwen35, .qwen35Full]
+        checks["qwen_large_response_profiles_share_defaults_and_options"] = qwens.allSatisfy {
+            $0.isQwen && $0.defaultMaximumOutput == 32768 && $0.defaultContext == 65536
+                && $0.contextSizes == ModelProfile.qwen35.contextSizes
+                && $0.maximumOutputs == ModelProfile.qwen35.maximumOutputs
+                && $0.contextSizes.last == 131072 && $0.maximumOutputs.last == 81920
+        }
+        checks["default_response_fits_context_with_prompt_headroom"] = ModelProfile.allCases.allSatisfy {
+            $0.defaultMaximumOutput < $0.defaultContext
+                && $0.contextSizes.contains($0.defaultContext)
+                && $0.maximumOutputs.contains($0.defaultMaximumOutput)
+        }
+        checks["qwen_generation_timeout_scales_and_is_bounded"] = qwens.allSatisfy {
+            $0.generationTimeout(maximumOutput: 128) == 300
+                && $0.generationTimeout(maximumOutput: $0.defaultMaximumOutput) > 900
+                && $0.generationTimeout(maximumOutput: 81920) == 1800
+                && $0.generationTimeout(maximumOutput: Int.max) == 1800
+        }
+        checks["smaller_profiles_keep_short_generation_limits"] = [ModelProfile.bonsai, .minicpm, .minicpmQ4].allSatisfy {
+            !$0.isQwen && $0.defaultContext == 4096
+                && $0.contextSizes == [2048, 4096, 8192]
+                && $0.maximumOutputs == [128, 512, 1024, 2048]
+                && $0.generationTimeout(maximumOutput: 81920) == 90
+        }
         return checks
     }
 }

@@ -75,6 +75,13 @@ owner-socket CRUD/review requests, secure-editor/undo clearing and closed gates
 passed. That checkpoint is not integrated; a separate author repair and rerun of
 the original reproductions are required.
 
+The author froze the two-defect repair as `7e702d62` in a new worktree; independent
+re-review remains open. A further actual AppKit observation found that
+`NSPopUpButton.addItem(withTitle:)` collapses identical titles. Guided recipe
+aliases and duplicate provider names can therefore lose their distinct exact
+references in the pickers. A separate identity-preserving menu repair and
+duplicate-title controls are required before native integration.
+
 Final native provider/recipe integration, native agent-to-resolution handoff,
 selected live-provider compatibility, immutable text-generation recipe refresh,
 combined regressions, signed installed/relocated acceptance and whole-phase

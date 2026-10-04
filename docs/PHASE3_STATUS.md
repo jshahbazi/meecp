@@ -13,9 +13,11 @@ Provider/backend API checkpoint `cd7c0405` cleared independent review and is
 integrated. Recipe discovery `3c3c575` also cleared independent review and is
 integrated. Combined source passed 204 focused checks; both actual locked and
 unlocked pipelines passed with 126 source and 4,782 runtime identities checked.
-Native checkpoint `cdf5fa55` has two confirmed issues under repair: repeated
-refresh can replace a disappeared explicit recipe, and the credential editor
-omits its private-file storage disclosure. That checkpoint is not integrated.
+Native checkpoint `cdf5fa55` has confirmed issues under repair: repeated refresh
+can replace a disappeared explicit recipe, the credential editor omits its
+private-file storage disclosure, and duplicate picker titles collapse distinct
+recipe/provider identities. Repair `7e702d62` covers the first two and awaits
+re-review; the separate picker repair is active. These checkpoints are not integrated.
 Final native, live-provider and signed artifact acceptance remain open. No A0–A5
 goal has completed final release acceptance.
 
@@ -104,7 +106,7 @@ being fixed; **Separate gate** covers additional capability work.
 | A5 | Native agent controls and owner-only shared routes | Verified checkpoint | Independent owner-route and actual parent-handler checks passed. New Draft/navigation controls preserve the owned draft. These checks do not close the newly identified API envelope mismatch or final socket/native acceptance. |
 | A5 | Unfamiliar supported Python source through proposal, build, SDK probe and attachment | Verified checkpoint | Independent actual private build, SDK probe, attachment and relocation passed with four simulated provider calls and zero live calls. Live-provider and generated-adapter acceptance remain open. |
 | A5 | Owner-only provider configuration and private credentials | Verified checkpoint | Checkpoint cd7c0405 independently passed 337 checks, including 28 new fault/race controls; integrated through 8d93ae5. Final packaged CRUD/rotation/restart acceptance remains; configuration itself performs no provider calls. |
-| A5 | Secure native provider setup and explicit model selection | In repair | Frozen native cdf5fa55 passed positive actual socket/AppKit CRUD/review and secure-editor controls, but two independent reproductions require repair: repeated refresh replaces an explicit choice and private-file storage is undisclosed in the editor. New isolated repair, re-review and integration remain. |
+| A5 | Secure native provider setup and explicit model selection | In repair | Actual socket/AppKit CRUD/review and secure-editor controls pass. Two-defect repair 7e702d62 awaits re-review; a separate duplicate-title repair must preserve distinct recipe/provider references. Native integration and final acceptance remain. |
 | A5 | Native/agent API response compatibility | Verified checkpoint | Agent/provider success, fixed errors and ownership denial include api_version 1. Production parser/private transport passed 15 owner-socket scenarios and invalid-version controls; root combined run passed. Final signed app acceptance remains. |
 | A5 | Compatible agent recipe choices for ordinary directories | Verified checkpoint | Metadata producer 3c3c575 independently passed 257 checks, including 45 new controls; integrated. Exact guide/component, visible source/identity records, ambiguity, lifecycle and discovery limits pass. Native consumer repair and final actual onboarding remain. |
 | A5 | Live backend, selected credentials and model compatibility | Open | Complete a configured provider/model run after host/native setup and integration. Current evidence uses simulated calls only; no live dispatch has occurred. |

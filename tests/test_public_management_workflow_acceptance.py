@@ -1,5 +1,6 @@
 """Metadata/transport controls for the public driver; no released-host workloads."""
 import importlib
+import copy
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -38,6 +39,9 @@ async def test_every_start_uses_ordinary_cli_even_if_enabled_requested(driver, h
 def policy(driver, tmp_path):
     source = Path(__file__).resolve().parents[1] / "templates/release-policies/phase3-v1.json"
     value = json.loads(source.read_bytes())
+    # Historical closed-agent controls use an explicit fixture, independently
+    # of whether the current distribution admits the reviewed selected model.
+    value["agent"] = {"components": [], "providers": [], "unlocked_resolution": False}
     target = tmp_path / driver.POLICY_PATH
     target.parent.mkdir(parents=True)
     def write(): target.write_text(json.dumps(value))
@@ -45,8 +49,62 @@ def policy(driver, tmp_path):
     return SimpleNamespace(host=tmp_path, value=value, path=target, write=write)
 
 
-def test_actual_current_policy_has_exact_python_closure_and_closed_agent(driver, policy):
+def test_explicit_closed_policy_has_exact_python_closure(driver, policy):
     assert driver.active_policy(policy.host) == policy.path.read_bytes()
+    assert driver.typed_policy_scope(policy.path.read_bytes()) == "closed"
+
+
+def test_actual_current_policy_has_exact_python_closure_and_reviewed_agent(driver, tmp_path, monkeypatch):
+    from mcpme.preparation_agent_providers import OpenAIResponsesAdapter
+    from mcpme.preparation_release_policy import ReleasePolicy
+    source = Path(__file__).resolve().parents[1] / "templates/release-policies/phase3-v1.json"
+    data = source.read_bytes(); value = json.loads(data)
+    target = tmp_path / driver.POLICY_PATH
+    target.parent.mkdir(parents=True); target.write_bytes(data)
+    monkeypatch.setattr(OpenAIResponsesAdapter, "backend", lambda *_: pytest.fail("provider constructed"))
+    assert driver.active_policy(tmp_path) == data
+    public, agent, command = ReleasePolicy.model_validate(value).admissions()
+    assert driver.typed_policy_scope(data) == "selected_model_accepted"
+    assert agent.providers == frozenset({("openai-responses-v1", OpenAIResponsesAdapter().digest,
+        driver.REVIEWED_AGENT_MODEL)}) and agent.components <= public.families
+    assert source.read_bytes() == target.read_bytes() == data
+    # Policy inspection creates no host, state, job, credential or dispatcher.
+    assert sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*") if path.is_file()) == [driver.POLICY_PATH]
+
+
+@pytest.mark.parametrize("fault", ["model", "extra-model", "adapter", "digest", "extra-provider",
+    "component", "extra-component", "locked", "missing-family", "missing-closure", "extra-agent-field"])
+def test_selected_policy_rejects_any_unreviewed_agent_authority(driver, tmp_path, fault):
+    source = Path(__file__).resolve().parents[1] / "templates/release-policies/phase3-v1.json"
+    value = json.loads(source.read_bytes())
+    selected = value["agent"]
+    if fault == "model": selected["providers"][0]["models"] = ["another-model"]
+    elif fault == "extra-model": selected["providers"][0]["models"].append("another-model")
+    elif fault == "adapter": selected["providers"][0]["adapter_id"] = "another-adapter"
+    elif fault == "digest": selected["providers"][0]["adapter_digest"] = "0" * 64
+    elif fault == "extra-provider": selected["providers"].append(copy.deepcopy(selected["providers"][0]))
+    elif fault == "component": selected["components"][0]["digest"] = "0" * 64
+    elif fault == "extra-component": selected["components"].append(copy.deepcopy(selected["components"][0]))
+    elif fault == "locked": selected["unlocked_resolution"] = False
+    elif fault == "missing-family": value["preparation"]["families"].remove(driver.live.UNLOCKED)
+    elif fault == "missing-closure": value["preparation"]["recipe_component_sets"].remove([driver.live.UNLOCKED])
+    else: selected["allow_extra"] = True
+    target = tmp_path / driver.POLICY_PATH
+    target.parent.mkdir(parents=True); target.write_text(json.dumps(value)); before = target.read_bytes()
+    with pytest.raises(driver.common.AcceptanceError): driver.active_policy(tmp_path)
+    with pytest.raises((driver.common.AcceptanceError, ValueError)): driver.typed_policy_scope(before)
+    assert target.read_bytes() == before and source.read_bytes() != before
+
+
+def test_typed_policy_requires_current_adapter_without_constructing_provider(driver, monkeypatch):
+    from mcpme.preparation_agent_providers import OpenAIResponsesAdapter
+    source = Path(__file__).resolve().parents[1] / "templates/release-policies/phase3-v1.json"
+    before = source.read_bytes()
+    monkeypatch.setattr(OpenAIResponsesAdapter, "digest", property(lambda _: "0" * 64))
+    monkeypatch.setattr(OpenAIResponsesAdapter, "backend", lambda *_: pytest.fail("provider constructed"))
+    with pytest.raises(driver.common.AcceptanceError, match="^management_adapter_not_reviewed$"):
+        driver.typed_policy_scope(before)
+    assert source.read_bytes() == before
 
 
 @pytest.mark.parametrize("fault", ["schema", "unknown", "closure", "digest", "family", "agent-extra", "agent-none",

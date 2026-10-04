@@ -105,7 +105,12 @@ def test_current_review_rejects_wrong_or_superset_authority(driver, policy, faul
     assert current == before
 
 
-def test_output_exclusive_and_no_credential_environment_read(driver, monkeypatch, tmp_path):
+def test_output_exclusive_and_no_credential_environment_read(driver, policy, monkeypatch, tmp_path):
+    # Output/privacy semantics do not require the tracked distribution policy
+    # to remain closed or to admit this synthetic fresh-proposal model.
+    source = tmp_path / "templates/release-policies/phase3-v1.json"
+    source.parent.mkdir(parents=True); source.write_text(json.dumps(policy))
+    monkeypatch.setattr(driver, "ROOT", tmp_path)
     output = tmp_path / "review.json"
     monkeypatch.setattr("sys.argv", ["prepare", "--model", "synthetic-explicit-model", "--output", str(output)])
     original_getenv = os.getenv

@@ -27,11 +27,14 @@ import uuid
 
 import verify_phase3_native_onboarding as common
 import verify_phase3_public_native_command as signed
+import verify_phase3_live_agent as live
 
 require = common.require
 PYTHON = ("python-function-v1", "1.0.0", "b28f98582aeff09e344b4a7049af7fdadbaf19436dc6724638ab64b6a9139d4e")
 RESOLVED = ("resolved-python-v1", "1.0.1", "3c24410b46415cb83b9d945ebf0049f552e9f7493943164f311939a79b49000e")
 POLICY_PATH = "templates/release-policies/phase3-v1.json"
+REVIEWED_AGENT_MODEL = "gpt-6.1-sol"
+REVIEWED_ADAPTER_DIGEST = "f651b36ab4b3d4fe6479457e5a31f129b1339c41536e02bfb53cbbf4025cebc1"
 TERMINAL = {"succeeded", "failed", "canceled", "interrupted"}
 SDK_READ_SECONDS = 30
 SDK_STEP_SECONDS = 20
@@ -125,6 +128,37 @@ def probe_entry(reader, manager, manager_identity, reaper, interpreter, marker):
     return None
 
 
+def agent_policy_scope(value):
+    """Recognize only the historical closure or the separately accepted tuple."""
+    closed = {"components": [], "providers": [], "unlocked_resolution": False}
+    accepted = {"components": [live.UNLOCKED], "providers": [{"adapter_id": "openai-responses-v1",
+        "adapter_digest": REVIEWED_ADAPTER_DIGEST, "models": [REVIEWED_AGENT_MODEL]}],
+        "unlocked_resolution": True}
+    require(type(value) is dict and type(value.get("unlocked_resolution")) is bool
+        and value in (closed, accepted), "management_agent_not_reviewed")
+    return "closed" if value == closed else "selected_model_accepted"
+
+
+def typed_policy_scope(data):
+    """Validate using the selected host modules after host-origin binding."""
+    from mcpme.preparation_release_policy import ReleasePolicy
+    from mcpme.preparation_contracts import load_contract
+    from mcpme.preparation_agent_providers import OpenAIResponsesAdapter
+    try:
+        value = load_contract(data)
+        ReleasePolicy.model_validate(value).admissions()
+        scope = agent_policy_scope(value["agent"])
+        if scope != "closed":
+            adapter = OpenAIResponsesAdapter()
+            require(adapter.digest == REVIEWED_ADAPTER_DIGEST, "management_adapter_not_reviewed")
+            live.active_candidate(value, REVIEWED_AGENT_MODEL, adapter.digest)
+        return scope
+    except (ValueError, TypeError, KeyError) as error:
+        if isinstance(error, common.AcceptanceError):
+            raise
+        raise common.AcceptanceError("management_policy_invalid") from None
+
+
 def active_policy(host):
     data, value = signed._json(host / POLICY_PATH)
     component = dict(zip(("id", "version", "digest"), PYTHON))
@@ -138,8 +172,10 @@ def active_policy(host):
         and type(preparation["families"]) is list and resolved in preparation["families"]
         and type(preparation["recipe_component_sets"]) is list
         and [component] in preparation["recipe_component_sets"], "management_python_not_admitted")
-    require(value["agent"] == {"components": [], "providers": [], "unlocked_resolution": False}
-        and type(value["agent"]["unlocked_resolution"]) is bool, "management_agent_not_closed")
+    scope = agent_policy_scope(value["agent"])
+    if scope != "closed":
+        require(live.UNLOCKED in preparation["families"]
+            and [live.UNLOCKED] in preparation["recipe_component_sets"], "management_agent_not_admitted")
     return data
 
 
@@ -511,16 +547,15 @@ async def verify(host_path, native_path, report, *, source_root):
             common._host_paths(host); build = common.verify_host_payload(host)
             require(build["source_commit"] == source_before[0], "management_source_app_commit_mismatch")
             common._host_imports(host)
-            from mcpme.preparation_release_policy import ReleasePolicy
-            from mcpme.preparation_contracts import load_contract
-            # Typed validation inspects policy; it does not manufacture admission.
-            ReleasePolicy.model_validate(load_contract(active_policy(host)))
+            # Typed inspection passes no authority to a host or worker.
+            agent_scope = typed_policy_scope(active_policy(host))
             relocated = common.native_app_root(native)
             copied = signed.snapshot(relocated)
             harness = ManagementHarness(root, host, native, lease, report=report)
             report.update(host_source_commit=build["source_commit"], host_build_sha256=common.digest(host / "build.json"),
                 policy_sha256=common.digest(host / POLICY_PATH), original_app_files=sum(item[1] is not None for item in before.values()),
                 source_commit=source_before[0], source_files=len(source_before[1]),
+                agent_policy_scope=agent_scope,
                 driver_sha256=common.digest(Path(__file__).resolve()),
                 source_inventory_sha256=hashlib.sha256(json.dumps(source_before[1], sort_keys=True).encode()).hexdigest(),
                 relocated_whole_signed_app=True, public_execution_authority="shipped_signed_release_policy",

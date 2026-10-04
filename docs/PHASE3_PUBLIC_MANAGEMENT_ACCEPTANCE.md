@@ -6,6 +6,15 @@ complete app, starts its shipped CLI with ordinary public admission, and opens
 the official packaged MCP stdio client against exported scoped credentials.
 It does not select a serve factory or construct execution admission.
 
+Management acceptance supports either the historical closed-agent policy or
+the separately accepted sole OpenAI Responses `gpt-6.1-sol` selection with the
+current reviewed adapter and exact unlocked Python component. It validates the
+typed host policy after binding imports to the packaged host, rejects additional
+models, adapters or components, and records which scope was inspected. This
+permits management testing after selected-model activation; it grants the scoped
+MCP connection no agent, provider, secret or installation permissions and makes
+no provider calls. Historical closed-agent controls use explicit fixtures.
+
 The scoped SDK connection uses the exact native app entrypoint exported by the
 production bundled CLI. The driver binds it to the already validated native/host
 pair, state directory and credential file; it rejects a substituted command,

@@ -35,6 +35,7 @@ PUBLIC_GGUF_METADATA_DIGEST = "c828d4ced3ffa97554baf70310ae1b232a03bb63eff517952
 PUBLIC_GGUF_METADATA_PATHS = (
     "backend/mcpme_textgen/fixture.py",
     "templates/text-generate-v1/model-provenance.json",
+    "templates/text-generate-signed-v1/model-provenance.json",
     # Byte-identical metadata shipped inside the immutable declarative recipe.
     "templates/builtin-recipes/text-generation-v1/model-provenance.json",
     "templates/builtin-recipes/text-generation-v1-0-1/model-provenance.json",
@@ -44,6 +45,7 @@ PUBLIC_GGUF_METADATA_PATHS = (
     "templates/builtin-recipes/text-generation-v1-0-5/model-provenance.json",
     "templates/builtin-recipes/text-generation-v1-0-6/model-provenance.json",
     "templates/builtin-recipes/text-generation-v1-0-7/model-provenance.json",
+    "templates/builtin-recipes/text-generation-v1-0-8/model-provenance.json",
 )
 
 

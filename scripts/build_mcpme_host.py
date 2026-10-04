@@ -321,8 +321,14 @@ def copy_private_runtime(runtime: Path, destination: Path) -> None:
         target.chmod(stat.S_IMODE(mode))
 
 
-def build(destination: Path, version: str | None = None, *, textgen_engine: Path | None = None):
+def build(destination: Path, version: str | None = None, *, textgen_engine: Path | None = None,
+          textgen_signed_asset: Path | None = None):
     version = project_version(version)
+    if textgen_engine is not None and textgen_signed_asset is not None:
+        raise ValueError("textgen_runtime_selection_conflict")
+    if textgen_signed_asset is not None:
+        from signed_textgen_asset import admit_archive
+        admit_archive(textgen_signed_asset)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise SystemExit("Build requires Apple silicon macOS")
     if destination.exists():
@@ -354,6 +360,9 @@ def build(destination: Path, version: str | None = None, *, textgen_engine: Path
     bundle_preparation_toolchain(destination, runtime)
     if textgen_engine is not None:
         bundle_textgen_toolchain(destination, textgen_engine)
+    if textgen_signed_asset is not None:
+        from signed_textgen_asset import bundle
+        bundle(destination, textgen_signed_asset)
     shutil.copyfile(ROOT / "README.md", destination / "README.md")
     shutil.copytree(ROOT / "assets/brand", destination / "assets/brand")
     shutil.copytree(ROOT / "docs", destination / "docs",
@@ -381,9 +390,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=ROOT / "dist/mcpme-host")
     parser.add_argument("--textgen-engine", type=Path, help="Exact reviewed engine Resources directory for private CPU text preparation")
+    parser.add_argument("--textgen-signed-asset", type=Path, help="Exact immutable signed TextGen runtime archive")
     args = parser.parse_args()
     try:
-        print(build(args.output.absolute(), textgen_engine=args.textgen_engine))
+        print(build(args.output.absolute(), textgen_engine=args.textgen_engine, textgen_signed_asset=args.textgen_signed_asset))
     except KeyboardInterrupt:
         raise SystemExit("host_build_interrupted") from None
     except BuildCommandError as failure:

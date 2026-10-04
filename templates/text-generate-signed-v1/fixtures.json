@@ -1,0 +1,17 @@
+[
+  {
+    "arguments": {
+      "max_output_tokens": 1,
+      "text": "What is 1 + 1? Reply only with 2."
+    },
+    "expected": {
+      "input_tokens": 43,
+      "output_tokens": 1,
+      "stop_reason": "length",
+      "text": "2"
+    },
+    "id": "synthetic-arithmetic",
+    "synthetic": true,
+    "tool": "text_generate"
+  }
+]

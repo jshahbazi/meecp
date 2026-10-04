@@ -17,13 +17,13 @@ a private frozen field excluded from its constructor. Manually constructed or
 copied dataclass proofs retain strict comparisons by default.
 
 The original baseline remains held. Comparisons retain the app directory's
-device, inode, type and permissions, UID, link count, size, and mtime. Every
+device, inode, type and permissions, UID, GID, link count, size, and mtime. Every
 descendant directory and regular file retains its full prior identity,
 including ctime; nested directories named `.app` receive no exception. Existing
 outer-ancestor identity checks, exact membership, hashes, signed provenance,
 policy bytes, ownership, queue and final native-creation fences remain in place.
 
-The root's filesystem flags and POSIX extended ACL are independently bound
+The root's GID, filesystem flags and POSIX extended ACL are independently bound
 before signature validation. One no-follow directory descriptor is held for
 the proof's lifetime and closed when its metadata owner is released. Each
 comparison checks its descriptor and path identity before and after reading
@@ -33,6 +33,8 @@ inspection is limited to 128 entries and 4096 bytes. There are no subprocesses
 or account-name lookups at current-authority checks. An absent ACL is the
 Darwin `acl_get_fd_np` ENOENT result on the held live descriptor; unreadable,
 unsupported, invalid, oversized or failed inspections deny admission.
+The private metadata owner retains a fixed baseline by implementation; it is
+not a language-enforced immutable object or a client-supplied authority object.
 
 This stops treating ctime alone as execution authority while preserving ACL
 and filesystem flag revocation. Other extended-attribute history, including
@@ -46,7 +48,8 @@ mutation during both signature boundaries and later held checks, strict manual
 proofs, root structural/permission/mtime/inode changes, a simulated UID change,
 and descendant ctime, inode, permissions and restored-byte mutations. Actual
 private ACL add/remove/replace and filesystem flag changes deny both shared
-and command-local checks. A cosmetic root xattr update preserves the held
+and command-local checks. Owned group-switch and explicit stat-fixture controls
+cover GID changes before and during ACL inspection. A cosmetic root xattr update preserves the held
 nonempty ACL across repeated checks. The same
 two positive controls fail with the original unchanged Git modules loaded in
 RAM. No real signed app, installed state, credential, model, or provider is

@@ -230,3 +230,67 @@ def test_acl_inspection_failures_never_become_absence(artifact, monkeypatch, fai
     try:
         with pytest.raises(PreparationError): artifact_module.verify_release_artifact(host, POLICY_PATH, b"{}")
     finally: set_acl(app)
+
+
+@pytest.mark.parametrize("boundary", ["shared", "command", "acl-read"])
+def test_owned_root_group_switch_revokes(packaged, monkeypatch, boundary):
+    # /private/tmp may inherit a group the owner cannot restore after chown.
+    # Establish a restorable owned-fixture baseline before taking the proof.
+    os.chown(packaged.app, -1, os.getgid())
+    original_gid = packaged.app.stat().st_gid
+    alternatives = sorted(set(os.getgroups()) - {original_gid})
+    if not alternatives:
+        pytest.skip("no supplementary group available; explicit stat controls remain mandatory")
+    proof = shared_proof(packaged, monkeypatch)
+    before = artifact_module._identity(packaged.app)
+    def mutate(*args, **kwargs):
+        os.chown(packaged.app, -1, alternatives[0])
+        assert artifact_module._identity(packaged.app)[:-1] == before[:-1]
+    try:
+        if boundary == "command":
+            monkeypatch.setattr(command, "_signature", mutate)
+            with pytest.raises(PreparationError, match="^command_release_not_admitted$"):
+                command.command_release_admission(policy(), packaged.host, artifact=proof)
+        else:
+            if boundary == "acl-read":
+                original_acl = artifact_module._acl_identity
+                def during(fd):
+                    value = original_acl(fd)
+                    mutate()
+                    return value
+                monkeypatch.setattr(artifact_module, "_acl_identity", during)
+            else: mutate()
+            with pytest.raises(PreparationError): proof.check_current()
+    finally:
+        os.chown(packaged.app, -1, original_gid)
+
+
+@pytest.mark.parametrize("boundary", ["fd-before", "fd-after", "path-before", "path-after"])
+def test_root_group_stat_fixture_revokes_without_other_metadata_change(artifact, monkeypatch, boundary):
+    from pathlib import Path
+    from types import SimpleNamespace
+    app, host, *_ = artifact
+    proof = artifact_module.verify_release_artifact(host, POLICY_PATH, b"{}")
+    fd = proof._app_root_metadata.fd
+    original_fstat, original_lstat = os.fstat, Path.lstat
+    changed = not boundary.endswith("after")
+    def observed(value):
+        fields = {name: getattr(value, name) for name in dir(value) if name.startswith("st_")}
+        fields["st_gid"] += 1
+        return SimpleNamespace(**fields)
+    def fstat(selected):
+        value = original_fstat(selected)
+        return observed(value) if changed and selected == fd and boundary.startswith("fd") else value
+    def lstat(path):
+        value = original_lstat(path)
+        return observed(value) if changed and path == app and boundary.startswith("path") else value
+    original_acl = artifact_module._acl_identity
+    def acl(selected):
+        nonlocal changed
+        value = original_acl(selected)
+        changed = True
+        return value
+    monkeypatch.setattr(os, "fstat", fstat)
+    monkeypatch.setattr(Path, "lstat", lstat)
+    monkeypatch.setattr(artifact_module, "_acl_identity", acl)
+    with pytest.raises(PreparationError): proof.check_current(full=True)

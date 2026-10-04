@@ -25,6 +25,7 @@ import time
 import uuid
 
 import verify_phase3_native_onboarding as onboarding
+import verify_phase3_public_management as management
 from verify_phase3_primitives import _check_module_origins, _host_imports, _host_paths
 
 CASES = ("disabled_queued", "revoked_verification", "revoked_attachment", "updated_active",
@@ -806,6 +807,7 @@ async def verify(host_path, native_path, report, cases=CASES):
         harness = LifecycleHarness(root, host, native, lease)
         try:
             _check_module_origins(host)
+            report["typed_policy_scope"] = management.typed_policy_scope(management.active_policy(host))
             report["active_policy_defaults"] = await harness.active_defaults()
             for case in cases:
                 report["active_case"] = case

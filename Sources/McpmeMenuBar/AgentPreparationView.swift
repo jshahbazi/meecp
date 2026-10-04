@@ -190,10 +190,65 @@ extension AgentPreparationView {
 
 func runAgentPreparationContractSelfTest() -> Bool {
     AgentProviderSettingsView.contractSelfTest() && AgentPreparationView.providerOwnershipSelfTest() &&
-        AgentPreparationView.recipeChoiceSelfTest() && AgentPreparationView.contractSelfTest()
+        AgentPreparationView.recipeChoiceSelfTest() && AgentPreparationView.recipeRefreshOwnershipSelfTest() && AgentPreparationView.contractSelfTest()
 }
 
 extension AgentPreparationView {
+    static func recipeRefreshOwnershipSelfTest() -> Bool {
+        let view = AgentPreparationView(); view.available = { true }
+        guard let context = PreparationContext(importID: UUID().uuidString.lowercased(), revision: 1, sourceRevision: "sha256:" + String(repeating: "a", count: 64)) else { return false }
+        view.bind(context, saved: true)
+        let original: [String: Any] = ["id": "mcpme.agent-python-adapter", "version": "1.0.0", "digest": String(repeating: "b", count: 64)]
+        let replacement: [String: Any] = ["id": "mcpme.agent-python-adapter", "version": "1.0.1", "digest": String(repeating: "c", count: 64)]
+        let recommended: [String: Any] = ["id": "mcpme.agent-unlocked-python-adapter", "version": "1.0.0", "digest": String(repeating: "d", count: 64)]
+        var recipes = [original, recommended], calls = 0
+        view.request = { path, method, body, completion in
+            calls += 1
+            guard path == "v1/agent-preparations/plans", method == "POST", body?.count == 2, let current = view.context else { completion(nil, "invalid_test_request"); return }
+            completion(["api_version": 1, "schema_version": 1, "import_id": current.importID, "revision": current.revision, "source_revision": current.sourceRevision,
+                "providers": [["provider_id": "configured", "models": ["test-model"]]],
+                "files": [["path": "worker.py", "size": 40, "sha256": String(repeating: "e", count: 64)]],
+                "recipes": recipes, "recipe_choices": recipes.map { ["recipe": $0, "label": $0["id"] as! String, "compatibility": "compatible",
+                    "recommended": NSDictionary(dictionary: $0).isEqual(to: recommended)] }, "latest_job": NSNull()], nil)
+        }
+        func selected(_ recipe: [String: Any]) -> Bool {
+            (view.recipePicker.selectedItem?.representedObject as? NSDictionary)?.isEqual(to: recipe) == true
+        }
+        func refreshRequiresChoice() -> Bool {
+            view.loadButton.performClick(nil)
+            return view.recipePicker.selectedItem?.representedObject == nil && view.requiresExplicitRecipeChoice &&
+                view.status.stringValue.contains("Choose a current path explicitly") && !view.reviewButton.isEnabled && !view.sendButton.isEnabled
+        }
+        view.loadButton.performClick(nil)
+        guard selected(recommended), calls == 1 else { return false }
+        // Ordinary exact explicit choices survive repeated refreshes.
+        view.recipePicker.selectItem(at: 1); view.selectionChanged(view.recipePicker)
+        for _ in 0..<3 { view.loadButton.performClick(nil); guard selected(original) else { return false } }
+        // Disappearance leaves a persistent choice requirement, including a
+        // deliberate placeholder selection and same-draft saved-state changes.
+        recipes = [recommended]
+        for _ in 0..<3 { guard refreshRequiresChoice() else { return false } }
+        view.recipePicker.selectItem(at: 0); view.selectionChanged(view.recipePicker)
+        guard refreshRequiresChoice() else { return false }
+        view.bind(context, saved: false); view.bind(context, saved: true)
+        guard refreshRequiresChoice() else { return false }
+        // Reappearance cannot revoke the requirement for a new user choice.
+        recipes = [original, recommended]
+        for _ in 0..<3 { guard refreshRequiresChoice() else { return false } }
+        view.recipePicker.selectItem(at: 1); view.selectionChanged(view.recipePicker)
+        guard !view.requiresExplicitRecipeChoice else { return false }
+        for _ in 0..<2 { view.loadButton.performClick(nil); guard selected(original) else { return false } }
+        // A different version/digest with the same ID is a different choice.
+        recipes = [replacement, recommended]
+        for _ in 0..<3 { guard refreshRequiresChoice() else { return false } }
+        recipes = [original, replacement, recommended]
+        for _ in 0..<2 { guard refreshRequiresChoice() else { return false } }
+        view.recipePicker.selectItem(at: 2); view.selectionChanged(view.recipePicker)
+        for _ in 0..<2 { view.loadButton.performClick(nil); guard selected(replacement) else { return false } }
+        guard let next = PreparationContext(importID: context.importID, revision: 2, sourceRevision: context.sourceRevision) else { return false }
+        view.bind(next, saved: true); view.loadButton.performClick(nil)
+        return selected(recommended) && !view.requiresExplicitRecipeChoice && calls == 22
+    }
     static func recipeChoiceSelfTest() -> Bool {
         let view = AgentPreparationView(); view.available = { true }
         guard let context = PreparationContext(importID: UUID().uuidString.lowercased(), revision: 1, sourceRevision: "sha256:" + String(repeating: "a", count: 64)) else { return false }
@@ -307,6 +362,7 @@ final class AgentPreparationView: NSStackView {
     private var options: [String: Any]?
     private var plan: [String: Any]?
     private var preferredRecipe: [String: Any]?
+    private var requiresExplicitRecipeChoice = false
     private var pendingStart: [String: Any]?
     private var pendingContext: PreparationContext?
     private let providerPicker = NSPopUpButton()
@@ -378,9 +434,11 @@ final class AgentPreparationView: NSStackView {
 
     func bind(_ next: PreparationContext?, saved: Bool) {
         if next != context || saved != self.saved {
+            let contextChanged = next != context
             providerSettings.clearCredentialEntry()
             invalidateJobResponses()
-            epoch &+= 1; context = next; self.saved = saved; options = nil; plan = nil; preferredRecipe = nil
+            epoch &+= 1; context = next; self.saved = saved; options = nil; plan = nil
+            if contextChanged { preferredRecipe = nil; requiresExplicitRecipeChoice = false }
             // Keep a known pending request/job across draft changes. The owner
             // remains visible and cancellable until the host reports settlement.
             if !blocksNavigation { job = nil; errorCode = nil }
@@ -416,7 +474,13 @@ final class AgentPreparationView: NSStackView {
     private func finishRequest() { busy = false; refreshAvailability(); onStateChange?() }
     @objc private func selectionChanged(_ sender: NSControl) {
         guard !blocksNavigation else { return }
-        if sender === recipePicker { preferredRecipe = recipePicker.selectedItem?.representedObject as? [String: Any] }
+        if sender === recipePicker {
+            let selected = recipePicker.selectedItem?.representedObject as? [String: Any]
+            if let selected, let recipes = options?["recipes"] as? [[String: Any]],
+               recipes.contains(where: { NSDictionary(dictionary: $0).isEqual(to: selected) }) {
+                preferredRecipe = selected; requiresExplicitRecipeChoice = false
+            } else { preferredRecipe = nil }
+        }
         if let button = sender as? NSButton, button.state == .on {
             if fileControls.contains(where: { $0 === button }) {
                 metadataControls.filter { $0.identifier?.rawValue == button.title }.forEach { $0.state = .off }
@@ -487,11 +551,10 @@ final class AgentPreparationView: NSStackView {
                      "mcpme.agent-unlocked-python-adapter": "Python app needing dependency resolution"][id] ?? id
                 self.recipePicker.addItem(withTitle: label + " · " + (value["version"] as! String)); self.recipePicker.lastItem?.representedObject = value
             }
-            var previousChoiceUnavailable = false
             if let preferred = self.preferredRecipe {
                 if let index = recipes.firstIndex(where: { NSDictionary(dictionary: $0).isEqual(to: preferred) }) { self.recipePicker.selectItem(at: index + 1) }
-                else { self.preferredRecipe = nil; previousChoiceUnavailable = true }
-            } else if preparationBoolean(object["recipes_truncated"]) != true, let choice = choices.first(where: \.recommended), let index = recipes.firstIndex(where: { NSDictionary(dictionary: $0).isEqual(to: choice.recipe) }) {
+                else { self.preferredRecipe = nil; self.requiresExplicitRecipeChoice = true }
+            } else if !self.requiresExplicitRecipeChoice, preparationBoolean(object["recipes_truncated"]) != true, let choice = choices.first(where: \.recommended), let index = recipes.firstIndex(where: { NSDictionary(dictionary: $0).isEqual(to: choice.recipe) }) {
                 self.recipePicker.selectItem(at: index + 1)
             }
             self.reloadModels()
@@ -515,7 +578,7 @@ final class AgentPreparationView: NSStackView {
             }
             if let latest = object["latest_job"] as? [String: Any], let job = AgentPreparationJob(latest), job.context.importID == context.importID { self.job = job }
             self.status.stringValue = providers.isEmpty ? "No agent provider is configured. Refresh Providers, then choose Add Provider above." : "Choose a model and files to transfer. Loading options sends no files."
-            if previousChoiceUnavailable { self.status.stringValue += " Your previously selected preparation path is no longer available. Choose a current path explicitly." }
+            if self.requiresExplicitRecipeChoice { self.status.stringValue += " Your previously selected preparation path is no longer available. Choose a current path explicitly." }
             if !choices.isEmpty, !choices.contains(where: \.recommended), self.preferredRecipe == nil {
                 self.status.stringValue += " No compatible preparation path was recommended for these captured files."
             }

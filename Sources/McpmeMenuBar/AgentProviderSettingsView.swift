@@ -98,7 +98,7 @@ final class AgentProviderSettingsView: NSStackView {
         editButton = button("Edit Provider", #selector(editProvider)); removeButton = button("Remove Provider", #selector(removeProvider))
         saveButton = button("Save Provider", #selector(saveProvider)); cancelButton = button("Cancel", #selector(cancelEditing))
         editor.orientation = .vertical; editor.alignment = .leading; editor.spacing = 6
-        let notice = workspaceLabel("Destination: " + agentProviderDestination + "\nEnter exact model IDs available to your account. Model compatibility has not been checked. Saving sends no source files and makes no provider request. Agent execution stays disabled.", size: 12, secondary: true)
+        let notice = workspaceLabel("Destination: " + agentProviderDestination + "\nAPI keys are saved as plain text in private files on this Mac.\nEnter exact model IDs available to your account. Model compatibility has not been checked. Saving sends no source files and makes no provider request. Agent execution stays disabled.", size: 12, secondary: true)
         for view in [NSTextField(labelWithString: "OpenAI Responses"),
                      workspaceStack([workspaceLabel("Profile name", size: 12), nameField], horizontal: true),
                      workspaceStack([workspaceLabel("Model IDs", size: 12), modelsField], horizontal: true),
@@ -295,6 +295,12 @@ extension AgentProviderSettingsView {
         }
         view.refreshButton.performClick(nil); view.addButton.performClick(nil)
         guard view.editing, view.blocksNavigation, !view.refreshButton.isEnabled else { return false }
+        func visibleStorageNotice(_ parent: NSView) -> Bool {
+            guard !parent.isHidden else { return false }
+            if let field = parent as? NSTextField, field.stringValue.contains("API keys are saved as plain text in private files on this Mac.") { return true }
+            return parent.subviews.contains(where: visibleStorageNotice)
+        }
+        guard !view.editor.isHidden, view.saveButton.isEnabled, visibleStorageNotice(view), requests.count == 1 else { return false }
         view.nameField.stringValue = "Local test profile"; view.modelsField.stringValue = "test-model"
         view.keyField.stringValue = "synthetic-only-key"
         guard window.makeFirstResponder(view.keyField), view.keyField.currentEditor() != nil else { return false }

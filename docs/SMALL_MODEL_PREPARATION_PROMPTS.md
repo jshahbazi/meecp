@@ -2,6 +2,8 @@
 
 Status: proposed prompt pack and coordinator design, 2026-10-03. These prompts have not been evaluated on a small model. They add no runtime capability.
 
+For the runnable Bonsai experiment, use the [preparation prompt lab](../experiments/prompt_lab/README.md). It tests 12 self-contained questions with fixed expected answers and preserves both prompt variants. The larger coordinator proposal below remains an unevaluated design draft.
+
 The coordinator runs a fixed workflow. A small generative model receives one bounded interpretation task at a time and returns a typed proposal. Deterministic services verify source identity, resolve dependencies, materialize runtimes, execute approved recipes, close the artifact tree, run independent probes and attach the exact result. Repeated tasks operate on one parameter, return branch, dependency, artifact or license group.
 
 The [preparation foundation](PREPARATION_FOUNDATION.md) implements static descriptors, recipes, planning and internal admission contracts. It currently reports `execution_available: false`; an enabled recipe remains `runnable: false`. The builder, independent verifier, binary intake and integrated agent still need their acceptance gates. The older [automatic preparation plan](AUTOMATIC_PREPARATION.md) supplies the intended execution architecture. The proposal below must not bypass its unavailable capabilities through internal job methods or a generic shell tool.

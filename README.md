@@ -132,7 +132,8 @@ For the opt-in installer lifecycle checks, run `MCPME_RUN_INSTALL_LIFECYCLE_TEST
 - [Implementation guide](docs/MCPME_STATUS.md): CLI usage, builds, package contracts, and migration.
 - [Host design](docs/MCPME_DESIGN.md): architecture and planned features.
 - [Source onboarding](docs/PHASE2_ONBOARDING.md), [package authoring](docs/PACKAGE_AUTHORING.md), and [management MCP](docs/MANAGEMENT_MCP.md): preparation, review, and assistant access.
-- [Small-model preparation prompts](docs/SMALL_MODEL_PREPARATION_PROMPTS.md): bounded task prompts, typed outputs, host validation gates, and the original hotdog walkthrough.
+- [Preparation prompt lab](experiments/prompt_lab/README.md): run and grade editable prompts against the existing Bonsai model.
+- [Small-model preparation prompts](docs/SMALL_MODEL_PREPARATION_PROMPTS.md): unevaluated coordinator design draft.
 - [macOS distribution](docs/MACOS_DISTRIBUTION.md), [GitHub releases](docs/GITHUB_RELEASES.md), and [automatic update plan](docs/AUTO_UPDATE_PLAN.md): installation, release verification, and planned updates.
 - [Verification](docs/MCPME_VERIFICATION.md): tested behavior and known limits.
 - [Visual identity](docs/BRAND.md): artwork, icons, and the [menu bar preview](assets/brand/icon-preview.html).

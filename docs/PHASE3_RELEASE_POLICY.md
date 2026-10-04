@@ -53,6 +53,18 @@ measured-preparation admission. Inventory JSON remains byte identification, not
 authority. Hard aggregate enforcement and complete lifetime coverage remain
 false; the original measured same-user scope is unchanged.
 
+An otherwise valid signed distribution can run on a supported host OS whose
+exact kernel/product tuple has not passed command acceptance. The command gate
+validates the full artifact, component, helper and signatures before reporting
+the fixed `command_release_platform_unavailable` outcome. Only that outcome
+removes the exact command family and every recipe closure containing it from
+effective preparation admission. Independent families, ordinary Python
+resolution and admitted agents retain their authority. The effective admission
+still binds the full original policy digest and verified host manifest; a
+reduced capability set has its own digest. Invalid policies, helpers,
+signatures or held identities remain fatal admission failures. The accepted
+command platform matrix never expands from observed runtime values.
+
 ## Signed artifact and current authority
 
 Ordinary source checkouts and standalone development hosts return no release

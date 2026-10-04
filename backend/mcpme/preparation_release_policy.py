@@ -206,7 +206,20 @@ def _load_policy(host_root):
                     raise ValueError()
         if command is not None:
             from .preparation_release_command_admission import command_release_admission
-            command_admissions = command_release_admission(command, host_root, artifact=artifact)
+            try:
+                command_admissions = command_release_admission(command, host_root, artifact=artifact)
+            except PreparationError as error:
+                if error.code != "command_release_platform_unavailable":
+                    raise
+                # The command gate validates the full artifact before reporting
+                # an unaccepted platform. Close only this implementation and
+                # dependent closures; retain the complete reviewed policy and
+                # host identity for the remaining admitted families.
+                preparation = replace(preparation,
+                    families=preparation.families - {command.component},
+                    recipe_component_sets=frozenset(group for group in preparation.recipe_component_sets
+                        if command.component not in group))
+                command_admissions = (None, None)
         else:
             command_admissions = (None, None)
         if _read(path, MAX_POLICY_BYTES) != data:

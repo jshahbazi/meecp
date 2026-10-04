@@ -2385,8 +2385,9 @@ private struct NativeDirectoryAcceptanceContext {
     let workspaceIdentity: NativeRecipeDirectoryIdentity
     let sourceIdentity: NativeRecipeDirectoryIdentity
     let object: [String: Any]
+    let publicPython: Bool
 
-    init?(fixture: URL) {
+    init?(fixture: URL, publicPython: Bool = false) {
         guard let fixtureIdentity = NativeRecipeFileIdentity(fixture),
               let object = PrivateFile.read(fixture, limit: 262144),
               Set(object.keys) == ["schema_version", "state_dir", "output_path", "source_directory", "fixture_nonce", "answers_by_label"],
@@ -2407,7 +2408,7 @@ private struct NativeDirectoryAcceptanceContext {
               let sourceIdentity = NativeRecipeDirectoryIdentity(source),
               output.deletingLastPathComponent().path == root.path, output.lastPathComponent.count <= 128,
               output.path != fixture.path, lstat(output.path, &outputInfo) != 0, errno == ENOENT else { return nil }
-        let marker = state.appendingPathComponent("native-directory-" + nonce + ".json")
+        let marker = state.appendingPathComponent((publicPython ? "native-public-directory-" : "native-directory-") + nonce + ".json")
         guard let markerIdentity = NativeRecipeFileIdentity(marker), let proof = PrivateFile.read(marker, limit: 8192),
               Set(proof.keys) == ["schema_version", "fixture_nonce", "expires_at", "manager_file", "source_directory"],
               preparationInteger(proof["schema_version"]) == 1, preparationUUID(proof["fixture_nonce"]) == nonce,
@@ -2423,6 +2424,7 @@ private struct NativeDirectoryAcceptanceContext {
         self.marker = marker; self.expiry = expiry; self.fixtureIdentity = fixtureIdentity; self.markerIdentity = markerIdentity
         self.managerIdentity = managerIdentity; self.rootIdentity = rootIdentity; self.stateIdentity = stateIdentity
         self.workspaceIdentity = workspaceIdentity; self.sourceIdentity = sourceIdentity; self.object = object
+        self.publicPython = publicPython
     }
 
     func current() -> Bool {
@@ -2435,7 +2437,7 @@ private struct NativeDirectoryAcceptanceContext {
 
     func claim() -> Bool {
         guard current() else { return false }
-        let path = state.appendingPathComponent("native-directory-" + nonce + ".claimed")
+        let path = marker.deletingPathExtension().appendingPathExtension("claimed")
         let fd = open(path.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
         guard fd >= 0 else { return false }; defer { close(fd) }
         let bytes = Array("claimed\n".utf8)
@@ -2782,7 +2784,7 @@ extension McpmeApp {
                 // harness. No source, model, provider or request values.
                 print("native_agent_stage=" + stage); fflush(stdout); tracedStage = stage
             }
-            let deadline = Date().addingTimeInterval(directoryContext == nil ? seconds : min(seconds, 30))
+            let deadline = Date().addingTimeInterval(directoryContext == nil || directoryContext?.publicPython == true ? seconds : min(seconds, 30))
             while !condition(), Date() < deadline, directoryContext?.current() != false,
                   agentContext?.current() != false { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
             return directoryContext?.current() != false && agentContext?.current() != false && condition()
@@ -2803,7 +2805,11 @@ extension McpmeApp {
                     parts.count == 4 && parts[0] == "v1" && parts[1] == "imports" && preparationUUID(String(parts[2])) != nil && parts[3] == "revise" && method == "POST" ||
                     ["v1/preparations/form", "v1/preparations/plan-form", "v1/preparations/start"].contains(path) && method == "POST" ||
                     parts.count == 3 && parts[0] == "v1" && parts[1] == "preparations" && preparationUUID(String(parts[2])) != nil && method == "GET"
-                guard allowed, context.current(), scopedRequests < 512 else { return false }
+                let publicResolution = context.publicPython && (
+                    ["v1/resolutions/plan", "v1/resolutions/start"].contains(path) && method == "POST" ||
+                    path == "v1/resolutions" && method == "GET" ||
+                    parts.count == 3 && parts[0] == "v1" && parts[1] == "resolutions" && preparationUUID(String(parts[2])) != nil && method == "GET")
+                guard allowed || publicResolution, context.current(), scopedRequests < (context.publicPython ? 4096 : 512) else { return false }
                 scopedRequests += 1
                 let route = method + " " + path
                 if !routes.contains(route) { routes.append(route) }
@@ -2818,11 +2824,12 @@ extension McpmeApp {
                   imported.sourcePath == context.source.path else { return report(false) }
             draftID = imported.id; receipt["draft_id"] = imported.id
             receipt["native_directory_selection"] = true; receipt["initial_revision"] = imported.revision
-            app.intentField?.string = "Expose the selected bounded JSON command."
+            app.intentField?.string = context.publicPython ? "Expose the selected synthetic integer tools." : "Expose the selected bounded JSON command."
             app.startCheck?.state = .on; app.policyField?.selectItem(at: 1); app.setupChanged()
             var saved: Bool?
             app.saveCurrentDraft { saved = $0 }
             guard awaitCondition(30, { saved != nil }), saved == true else { return report(false) }
+            receipt["source_selection_revision"] = app.currentDraft?.revision
         } else if let agentContext {
             app.nativeAcceptanceScope = { agentContext.current() }
             app.nativeAcceptanceRoute = { path, method in
@@ -3225,6 +3232,15 @@ if CommandLine.arguments.dropFirst().first == "--directory-native-acceptance" {
     let context = arguments.count == 2 ? NativeDirectoryAcceptanceContext(fixture: URL(fileURLWithPath: arguments[1])) : nil
     let passed = context.map { $0.claim() && McpmeApp.preparationNativeAcceptance(fixture: $0.fixture, directoryContext: $0) } ?? false
     print(passed ? "directory_native_acceptance_passed" : "directory_native_acceptance_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--public-directory-native-acceptance" {
+    _ = NSApplication.shared
+    let arguments = Array(CommandLine.arguments.dropFirst())
+    let context = arguments.count == 2 ? NativeDirectoryAcceptanceContext(fixture: URL(fileURLWithPath: arguments[1]), publicPython: true) : nil
+    let passed = context.map { $0.claim() && McpmeApp.preparationNativeAcceptance(fixture: $0.fixture, directoryContext: $0) } ?? false
+    print(passed ? "public_directory_native_acceptance_passed" : "public_directory_native_acceptance_failed")
     exit(passed ? 0 : 1)
 }
 

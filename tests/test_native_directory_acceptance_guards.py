@@ -10,7 +10,7 @@ import pytest
 from test_recipe_native_management_acceptance import file_identity, native_recipe_driver, private_json
 
 
-def context(tmp_path):
+def context(tmp_path, public=False):
     workspace = tmp_path.resolve() / ("mcpme-native-onboarding-" + str(uuid.uuid4()))
     root = workspace / "directory_guard"
     state, source, home, temporary = (root / name for name in ("state", "source", "home", "tmp"))
@@ -19,7 +19,7 @@ def context(tmp_path):
     manager = state / "manager-connection.json"
     private_json(manager, {"synthetic": True})
     nonce = str(uuid.uuid4())
-    marker = state / ("native-directory-" + nonce + ".json")
+    marker = state / (("native-public-directory-" if public else "native-directory-") + nonce + ".json")
     details = source.stat(follow_symlinks=False)
     proof = {"schema_version": 1, "fixture_nonce": nonce, "expires_at": int(time.time()) + 120,
         "manager_file": file_identity(manager), "source_directory": {"device": details.st_dev, "inode": details.st_ino}}
@@ -29,8 +29,9 @@ def context(tmp_path):
     return root, state, source, home, temporary, manager, marker, fixture, output, nonce, proof, case
 
 
-def run(binary, fixture, state, home, temporary):
-    child = subprocess.Popen([str(binary), "--directory-native-acceptance", str(fixture)],
+def run(binary, fixture, state, home, temporary, public=False):
+    flag = "--public-directory-native-acceptance" if public else "--directory-native-acceptance"
+    child = subprocess.Popen([str(binary), flag, str(fixture)],
         env={"HOME": str(home), "PATH": "/usr/bin:/bin", "TMPDIR": str(temporary), "MCPME_STATE_DIR": str(state)},
         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
@@ -38,14 +39,16 @@ def run(binary, fixture, state, home, temporary):
     except subprocess.TimeoutExpired:
         child.kill(); child.communicate()
         pytest.fail("native_directory_guard_timeout", pytrace=False)
-    assert child.returncode == 1 and printed == b"directory_native_acceptance_failed\n" and error == b""
+    expected = b"public_directory_native_acceptance_failed\n" if public else b"directory_native_acceptance_failed\n"
+    assert child.returncode == 1 and printed == expected and error == b""
 
 
+@pytest.mark.parametrize("public", [False, True])
 @pytest.mark.parametrize("fault", ["unknown_field", "wrong_nonce", "expired", "manager_replaced",
     "source_replaced", "source_link", "marker_hardlink", "fixture_mode", "claimed_nonce",
     "existing_output", "output_link", "outside_source"])
-def test_unowned_or_stale_directory_is_rejected_before_claim(native_recipe_driver, tmp_path, fault):
-    root, state, source, home, temporary, manager, marker, fixture, output, nonce, proof, case = context(tmp_path)
+def test_unowned_or_stale_directory_is_rejected_before_claim(native_recipe_driver, tmp_path, fault, public):
+    root, state, source, home, temporary, manager, marker, fixture, output, nonce, proof, case = context(tmp_path, public)
     if fault == "unknown_field":
         case["descriptor"] = {}
     elif fault == "wrong_nonce":
@@ -59,7 +62,7 @@ def test_unowned_or_stale_directory_is_rejected_before_claim(native_recipe_drive
         linked.symlink_to(source, target_is_directory=True)
         case["source_directory"] = str(linked)
     private_json(marker, proof); private_json(fixture, case)
-    claimed = state / ("native-directory-" + nonce + ".claimed")
+    claimed = marker.with_suffix(".claimed")
     if fault == "manager_replaced":
         replacement = state / "replacement.json"
         private_json(replacement, {"synthetic": True}); replacement.replace(manager)
@@ -77,19 +80,20 @@ def test_unowned_or_stale_directory_is_rejected_before_claim(native_recipe_drive
         output.symlink_to(root / "missing-output")
     before_claim = claimed.read_bytes() if claimed.exists() else None
     before_output = output.read_bytes() if output.exists() else None
-    run(native_recipe_driver, fixture, state, home, temporary)
+    run(native_recipe_driver, fixture, state, home, temporary, public)
     assert (claimed.read_bytes() if claimed.exists() else None) == before_claim
     assert (output.read_bytes() if output.exists() else None) == before_output
 
 
-def test_positive_python_fixture_claims_once_before_invalid_connection(native_recipe_driver, tmp_path):
-    root, state, source, home, temporary, manager, marker, fixture, output, nonce, proof, case = context(tmp_path)
+@pytest.mark.parametrize("public", [False, True])
+def test_positive_python_fixture_claims_once_before_invalid_connection(native_recipe_driver, tmp_path, public):
+    root, state, source, home, temporary, manager, marker, fixture, output, nonce, proof, case = context(tmp_path, public)
     private_json(marker, proof); private_json(fixture, case)
-    claimed = state / ("native-directory-" + nonce + ".claimed")
+    claimed = marker.with_suffix(".claimed")
     identity = None
     output_identity = None
     for _ in range(2):
-        run(native_recipe_driver, fixture, state, home, temporary)
+        run(native_recipe_driver, fixture, state, home, temporary, public)
         assert claimed.read_bytes() == b"claimed\n"
         receipt = json.loads(output.read_bytes())
         assert receipt["passed"] is False and receipt["stage"] == "connection" and receipt["routes"] == []
@@ -99,3 +103,11 @@ def test_positive_python_fixture_claims_once_before_invalid_connection(native_re
         observed_output = file_identity(output)
         assert output_identity is None or observed_output == output_identity
         output_identity = observed_output
+
+
+@pytest.mark.parametrize("public", [False, True])
+def test_directory_namespaces_cannot_consume_each_others_context(native_recipe_driver, tmp_path, public):
+    root, state, source, home, temporary, manager, marker, fixture, output, nonce, proof, case = context(tmp_path, public)
+    private_json(marker, proof); private_json(fixture, case)
+    run(native_recipe_driver, fixture, state, home, temporary, not public)
+    assert not marker.with_suffix(".claimed").exists() and not output.exists()

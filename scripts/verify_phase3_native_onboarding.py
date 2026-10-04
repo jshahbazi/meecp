@@ -453,6 +453,61 @@ class Harness:
         if remove:
             shutil.rmtree(source)
 
+    async def native_preparation(self, base, state, home, environment, source, label, selected_recipe):
+        stage("source_intake")
+        draft = await self.cli(state, environment, home, "imports", "create", "--source", source,
+            "--name", "Native acceptance " + label, "--intent", "Expose the selected synthetic integer tools.",
+            "--start", "--start-policy", "host", "--json")
+        observed = await self.cli(state, environment, home, "preparations", "inspect-source", "--import", draft["draft_id"],
+            "--revision", draft["revision"], "--json")
+        candidates = [item for item in observed["candidates"] if item["kind"] ==
+            ("python-mcp" if label == "dynamic_mcp" else "python-callable")]
+        require(len(candidates) == 1, "fixture_candidate_ambiguous")
+        names = ["dynamic_one", "dynamic_two"] if label == "dynamic_mcp" else ["double"]
+        answers = {}
+        for name in names:
+            suffix = " · " + name if label == "dynamic_mcp" else ""
+            answers["Test input" + suffix] = {"n": 7}
+            answers["Expected test result" + suffix] = {"value": 14}
+        if selected_recipe:
+            answers.update({"Tool label": "Independent native fixture", "Decimal places": 3})
+        fixture, native_receipt = base / "native-case.json", base / "native-receipt.json"
+        case = {"state_dir": str(state), "draft_id": draft["draft_id"], "output_path": str(native_receipt),
+            "candidate_id": candidates[0]["candidate_id"], "answers_by_label": answers}
+        if selected_recipe:
+            case["recipe_id"] = selected_recipe["recipe_id"]
+        write_private_json(fixture, case)
+        stage("native")
+        code, _ = await self.run([str(self.native), "--preparation-native-acceptance", str(fixture)], environment, home, timeout=1200)
+        require(native_receipt.is_file(), "native_receipt_missing")
+        receipt = private_json(native_receipt, 256 * 1024)
+        if code or receipt.get("passed") is not True:
+            failure = AcceptanceError(receipt.get("error_code", "native_acceptance_failed"))
+            failure.native_stage = receipt.get("stage") if receipt.get("stage") in NATIVE_STAGES else "connection"
+            try:
+                listing = await self.cli(state, environment, home, "preparations", "list", "--json")
+                jobs = [job for job in listing["preparations"] if job["import_id"] == draft["draft_id"]]
+                current = await self.cli(state, environment, home, "imports", "inspect", draft["draft_id"], "--json")
+                observation = {"preparation_jobs": len(jobs), "native_exit_code": code,
+                    "receipt_sha256": digest(native_receipt), "current_revision": current["revision"],
+                    "attachment_present": current.get("attachment") is not None,
+                    "same_source_revision": current["source"]["revision"] == draft["source"]["revision"],
+                    "resolution_completed": "resolution_digest" in receipt,
+                    "reviewed_revision": receipt.get("reviewed_revision")}
+                if len(jobs) == 1:
+                    job = jobs[0]
+                    observation["preparation_state"] = job["state"] if job["state"] in JOB_STATES else "unknown"
+                    error_code = job.get("error_code")
+                    if isinstance(error_code, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", error_code):
+                        observation["preparation_error_code"] = error_code
+                    progress = job.get("progress") or {}
+                    observation["fixtures_checked"] = progress.get("fixtures_checked", 0)
+                failure.native_observation = observation
+            except Exception:
+                pass
+            raise failure
+        return draft, candidates, receipt, native_receipt
+
     async def case(self, label):
         from mcpme.contracts import Tool, validate_package
         from mcpme.preparation_inputs import parse_preparation_receipt
@@ -480,58 +535,9 @@ class Harness:
                     "--version", "1.0.0", "--json")
                 require(added["state"] == "proposed" and selected_recipe["state"] == "enabled"
                     and selected_recipe["digest"] == checked["digest"], "independent_recipe_admission_failed")
-            stage("source_intake")
-            draft = await self.cli(state, environment, home, "imports", "create", "--source", source,
-                "--name", "Native acceptance " + label, "--intent", "Expose the selected synthetic integer tools.",
-                "--start", "--start-policy", "host", "--json")
-            observed = await self.cli(state, environment, home, "preparations", "inspect-source", "--import", draft["draft_id"],
-                "--revision", draft["revision"], "--json")
-            candidates = [item for item in observed["candidates"] if item["kind"] ==
-                ("python-mcp" if label == "dynamic_mcp" else "python-callable")]
-            require(len(candidates) == 1, "fixture_candidate_ambiguous")
+            draft, candidates, receipt, native_receipt = await self.native_preparation(
+                base, state, home, environment, source, label, selected_recipe)
             names = ["dynamic_one", "dynamic_two"] if label == "dynamic_mcp" else ["double"]
-            answers = {}
-            for name in names:
-                suffix = " · " + name if label == "dynamic_mcp" else ""
-                answers["Test input" + suffix] = {"n": 7}
-                answers["Expected test result" + suffix] = {"value": 14}
-            if selected_recipe:
-                answers.update({"Tool label": "Independent native fixture", "Decimal places": 3})
-            fixture, native_receipt = base / "native-case.json", base / "native-receipt.json"
-            case = {"state_dir": str(state), "draft_id": draft["draft_id"], "output_path": str(native_receipt),
-                "candidate_id": candidates[0]["candidate_id"], "answers_by_label": answers}
-            if selected_recipe:
-                case["recipe_id"] = selected_recipe["recipe_id"]
-            write_private_json(fixture, case)
-            stage("native")
-            code, _ = await self.run([str(self.native), "--preparation-native-acceptance", str(fixture)], environment, home, timeout=1200)
-            require(native_receipt.is_file(), "native_receipt_missing")
-            receipt = private_json(native_receipt, 256 * 1024)
-            if code or receipt.get("passed") is not True:
-                failure = AcceptanceError(receipt.get("error_code", "native_acceptance_failed"))
-                failure.native_stage = receipt.get("stage") if receipt.get("stage") in NATIVE_STAGES else "connection"
-                try:
-                    listing = await self.cli(state, environment, home, "preparations", "list", "--json")
-                    jobs = [job for job in listing["preparations"] if job["import_id"] == draft["draft_id"]]
-                    current = await self.cli(state, environment, home, "imports", "inspect", draft["draft_id"], "--json")
-                    observation = {"preparation_jobs": len(jobs), "native_exit_code": code,
-                        "receipt_sha256": digest(native_receipt), "current_revision": current["revision"],
-                        "attachment_present": current.get("attachment") is not None,
-                        "same_source_revision": current["source"]["revision"] == draft["source"]["revision"],
-                        "resolution_completed": "resolution_digest" in receipt,
-                        "reviewed_revision": receipt.get("reviewed_revision")}
-                    if len(jobs) == 1:
-                        job = jobs[0]
-                        observation["preparation_state"] = job["state"] if job["state"] in JOB_STATES else "unknown"
-                        error_code = job.get("error_code")
-                        if isinstance(error_code, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", error_code):
-                            observation["preparation_error_code"] = error_code
-                        progress = job.get("progress") or {}
-                        observation["fixtures_checked"] = progress.get("fixtures_checked", 0)
-                    failure.native_observation = observation
-                except Exception:
-                    pass
-                raise failure
             require(receipt["stage"] == "attached" and receipt["draft_id"] == draft["draft_id"]
                 and receipt["candidate_id"] == candidates[0]["candidate_id"]
                 and receipt["source_revision"] == draft["source"]["revision"], "native_binding_mismatch")

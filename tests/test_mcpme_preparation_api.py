@@ -14,7 +14,7 @@ from mcpme.supervisor import Supervisor, capabilities, management_app
 from test_mcpme_imports import prepared_for, source_folder
 
 
-async def test_new_foundation_routes_require_owner_and_execution_stays_unavailable(tmp_path):
+async def test_foundation_metadata_allows_prepare_and_execution_stays_unavailable(tmp_path):
     host = Supervisor(tmp_path.resolve() / "state", tmp_path / "unused-reaper")
     port, owner = 19886, "synthetic-owner-authorization"
     try:
@@ -24,9 +24,13 @@ async def test_new_foundation_routes_require_owner_and_execution_stays_unavailab
                                      base_url=f"http://127.0.0.1:{port}") as client:
             for route in ("/v1/recipes", "/v1/preparations"):
                 assert (await client.get(route)).status_code == 401
-                rejected = await client.get(route, headers={"Authorization": "Bearer " + scoped})
-                assert rejected.status_code == 403 and rejected.json()["error"]["code"] == "grant_scope"
+                metadata = await client.get(route, headers={"Authorization": "Bearer " + scoped})
+                assert metadata.status_code == 200
                 assert (await client.get(route, headers={"Authorization": "Bearer " + owner})).status_code == 200
+            denied = await client.post("/v1/preparations/start", json={}, headers={"Authorization": "Bearer " + scoped})
+            assert denied.status_code == 403 and denied.json()["error"]["code"] == "grant_scope"
+            denied = await client.post("/v1/recipes/enable", json={}, headers={"Authorization": "Bearer " + scoped})
+            assert denied.status_code == 403 and denied.json()["error"]["code"] == "grant_scope"
             unavailable = await client.post("/v1/preparations/start", json={}, headers={"Authorization": "Bearer " + owner})
             assert unavailable.status_code == 400 and unavailable.json()["error"]["code"] == "invalid_preparation_request"
             assert not host.registry.list_slots() and not host.registry.list_operations()

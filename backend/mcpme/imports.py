@@ -27,6 +27,10 @@ from .contracts import LOCK_NAME, MANIFEST_NAME, PackageError, package_relative_
 from .private import PrivateStateError, _check_ancestors, check_private_file, ensure_private_directory, snapshot_package
 
 IMPORT_SCHEMA_VERSION = 1
+# Durable job authority requires a reader that understands execution grants.
+# Keep saved draft contracts at version 1; older hosts must reject the database
+# before they can reinterpret a new granted job as an owner-authorized job.
+IMPORT_DB_SCHEMA_VERSION = 2
 MAX_SOURCE_FILES = 2048
 MAX_SCANNED_ENTRIES = 10000
 MAX_SOURCE_FILE_BYTES = 16 * 1024 * 1024
@@ -471,23 +475,22 @@ class ImportStore:
             self._connection.row_factory = sqlite3.Row
             self._connection.execute("PRAGMA journal_mode=DELETE")
             self._connection.execute("PRAGMA synchronous=FULL")
-            version = self._connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, IMPORT_SCHEMA_VERSION):
-                raise ImportError("unsupported_import_schema")
-            self._connection.executescript("""
-                CREATE TABLE IF NOT EXISTS drafts (
+            with self._transaction():
+                version = self._connection.execute("PRAGMA user_version").fetchone()[0]
+                if version not in (0, 1, IMPORT_DB_SCHEMA_VERSION):
+                    raise ImportError("unsupported_import_schema")
+                self._connection.execute("""CREATE TABLE IF NOT EXISTS drafts (
                     draft_id TEXT PRIMARY KEY,
                     revision INTEGER NOT NULL,
                     data TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS revisions (
+                )""")
+                self._connection.execute("""CREATE TABLE IF NOT EXISTS revisions (
                     draft_id TEXT NOT NULL,
                     revision INTEGER NOT NULL,
                     data TEXT NOT NULL,
                     PRIMARY KEY(draft_id, revision)
-                );
-                PRAGMA user_version=1;
-            """)
+                )""")
+                self._connection.execute("PRAGMA user_version=2")
             self._recover_inactive_staging()
             self._recover_attachment_staging()
         except (sqlite3.Error, ImportError, OSError, ValueError, UnicodeError) as error:

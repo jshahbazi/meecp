@@ -39,6 +39,7 @@ FILES = ("preparation_resolution.py", "preparation_resolution_runner.py", "prepa
          "ownership_receipts.py", "downloads.py", "preparation_contracts.py", "preparation_inputs.py",
          "contracts.py", "imports.py", "preparation_application_source.py", "recipes.py", "private.py", "preparation_admission.py",
          "preparation_release_policy.py", "preparation_release_artifact.py", "preparation_agent_public_resolution.py",
+         "management_workflow_grants.py", "grants.py",
          "_native_tls/__init__.py", "_native_tls/_api.py", "_native_tls/_macos.py",
          "_native_tls/_openssl.py", "_native_tls/_ssl_constants.py", "_native_tls/_windows.py")
 SANDBOX = Path("/usr/bin/sandbox-exec")
@@ -205,10 +206,10 @@ class OwnedResolutionRunner(PreparationRunner):
             finally:
                 self._planning.discard(task)
 
-    async def start(self, plan_id, plan_digest, idempotency_key):
+    async def start(self, plan_id, plan_digest, idempotency_key, *, grant_id=None):
         if self._closed or not self.enabled:
             raise PreparationError("resolution_runner_unavailable")
-        return await super().start(plan_id, plan_digest, idempotency_key)
+        return await super().start(plan_id, plan_digest, idempotency_key, grant_id=grant_id)
 
     async def _resolution_plan(self, import_id, revision, candidate_id, policy, expires_in):
         try:

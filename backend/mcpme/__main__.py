@@ -269,6 +269,16 @@ def parser() -> argparse.ArgumentParser:
     scope.add_argument("--read-only", action="store_true")
     scope.add_argument("--prepare", action="store_true")
     scope.add_argument("--slot", type=uuid_argument, action="append", dest="slot_ids")
+    scope.add_argument("--preparation-plan", type=uuid_argument)
+    scope.add_argument("--resolution-plan", type=uuid_argument)
+    scope.add_argument("--recipe", dest="recipe_id")
+    authorize.add_argument("--plan-digest")
+    authorize.add_argument("--idempotency-key", type=uuid_argument)
+    authorize.add_argument("--recipe-version")
+    authorize.add_argument("--recipe-digest")
+    authorize.add_argument("--recipe-action", choices=["register", "enable", "disable", "deprecate", "revoke", "remove"],
+                           action="append", dest="recipe_actions")
+    authorize.add_argument("--recipe-path", type=Path)
     authorize.add_argument("--action", choices=["start", "stop", "restart"], action="append", dest="actions")
     authorize.add_argument("--ttl-seconds", type=int)
     authorize.add_argument("--json", action="store_true")
@@ -337,6 +347,7 @@ def parser() -> argparse.ArgumentParser:
         item.add_argument("--path", type=Path, required=True)
         item.add_argument("--json", action="store_true")
     recipes.add_parser("list").add_argument("--json", action="store_true")
+    recipes.add_parser("schema").add_argument("--json", action="store_true")
     for action in ("inspect", "enable", "disable", "revoke", "remove", "deprecate"):
         item = recipes.add_parser(action)
         item.add_argument("--id", dest="recipe_id", required=True)
@@ -445,6 +456,26 @@ async def execute(args) -> dict | None:
             "mcpme-management": {"command": str(cli_launcher()), "args": ["--state-dir", str(state),
                 "--credential-file", str(credential), "management", "connect"]}}}}
     if args.command == "authorize":
+        workflow_plan = args.preparation_plan or args.resolution_plan
+        recipe_options = (args.recipe_version, args.recipe_digest, args.recipe_actions, args.recipe_path)
+        if workflow_plan is not None:
+            if args.actions or any(value is not None for value in recipe_options) or args.plan_digest is None or args.idempotency_key is None:
+                return {"error": {"code": "invalid_grant_request"}}
+            return await api("POST", "/v1/grants", {"mode": "preparation-execution" if args.preparation_plan else "resolution-execution",
+                "plan_id": workflow_plan, "plan_digest": args.plan_digest, "idempotency_key": args.idempotency_key,
+                "ttl_seconds": args.ttl_seconds if args.ttl_seconds is not None else 300})
+        if args.recipe_id is not None:
+            if (args.actions or args.plan_digest is not None or args.idempotency_key is not None
+                    or args.recipe_version is None or args.recipe_digest is None or not args.recipe_actions):
+                return {"error": {"code": "invalid_grant_request"}}
+            body = {"mode": "recipe-management", "recipe_id": args.recipe_id, "version": args.recipe_version,
+                    "digest": args.recipe_digest, "actions": args.recipe_actions,
+                    "ttl_seconds": args.ttl_seconds if args.ttl_seconds is not None else 300}
+            if args.recipe_path is not None:
+                body["path"] = str(args.recipe_path.absolute())
+            return await api("POST", "/v1/grants", body)
+        if args.plan_digest is not None or args.idempotency_key is not None or any(value is not None for value in recipe_options):
+            return {"error": {"code": "invalid_grant_request"}}
         if args.plan is not None:
             if args.actions or args.ttl_seconds not in {None, 900}:
                 return {"error": {"code": "invalid_grant_request"}}
@@ -495,6 +526,8 @@ async def execute(args) -> dict | None:
             return check_recipe(args.path.absolute())
         if args.action == "list":
             return await api("GET", "/v1/recipes")
+        if args.action == "schema":
+            return await api("GET", "/v1/recipes/schema")
         if args.action == "add":
             return await api("POST", "/v1/recipes", {"path": str(args.path.absolute())})
         return await api("POST", "/v1/recipes/" + args.action,

@@ -283,7 +283,7 @@ class RecipeStore:
             blockers.append("invalid_recipe_component_config")
         return blockers
 
-    def add(self, path: Path) -> dict:
+    def add(self, path: Path, *, admit=None) -> dict:
         bundle = validate_bundle(path)
         manifest = bundle["manifest"]
         digest = bundle["digest"]
@@ -310,6 +310,8 @@ class RecipeStore:
                       "epoch": 1, "revoked": False, "runnable": False, "evidence": None, "created_at": now, "updated_at": now,
                       "blockers": self._compatibility(manifest)}
             with self.imports._transaction():
+                if admit is not None:
+                    admit(record)
                 existing = self.imports._connection.execute("SELECT data FROM recipes WHERE recipe_id=? AND version=?",
                     (manifest["id"], manifest["version"])).fetchone()
                 if existing is not None:
@@ -350,7 +352,7 @@ class RecipeStore:
         with self.imports._lock:
             return self._get(recipe_id, version)
 
-    def enable(self, recipe_id: str, version: str) -> dict:
+    def enable(self, recipe_id: str, version: str, *, admit=None) -> dict:
         before = self.inspect(recipe_id, version)
         bundle = validate_bundle(Path(before["path"]))
         if bundle["digest"] != before["digest"]:
@@ -360,6 +362,8 @@ class RecipeStore:
             raise RecipeError(blockers[0])
         with self.imports._transaction():
             record = self._get(recipe_id, version)
+            if admit is not None:
+                admit(record)
             if record["state"] == "removed" or record.get("revoked"):
                 raise RecipeError("recipe_unavailable")
             record.update(state="enabled", epoch=record["epoch"] + 1, updated_at=time.time(), blockers=[],
@@ -367,9 +371,11 @@ class RecipeStore:
             self._save(record)
             return record
 
-    def _change(self, recipe_id: str, version: str, state: str) -> dict:
+    def _change(self, recipe_id: str, version: str, state: str, *, admit=None) -> dict:
         with self.imports._transaction():
             record = self._get(recipe_id, version)
+            if admit is not None:
+                admit(record)
             if record["state"] == state:
                 return record
             if record.get("revoked") and state != "removed":
@@ -381,18 +387,18 @@ class RecipeStore:
             self._save(record)
             return record
 
-    def disable(self, recipe_id: str, version: str) -> dict:
-        return self._change(recipe_id, version, "disabled")
+    def disable(self, recipe_id: str, version: str, *, admit=None) -> dict:
+        return self._change(recipe_id, version, "disabled", admit=admit)
 
-    def revoke(self, recipe_id: str, version: str) -> dict:
-        return self._change(recipe_id, version, "revoked")
+    def revoke(self, recipe_id: str, version: str, *, admit=None) -> dict:
+        return self._change(recipe_id, version, "revoked", admit=admit)
 
-    def remove(self, recipe_id: str, version: str) -> dict:
+    def remove(self, recipe_id: str, version: str, *, admit=None) -> dict:
         # Retain bytes and evidence; generated packages/jobs may still reference them.
-        return self._change(recipe_id, version, "removed")
+        return self._change(recipe_id, version, "removed", admit=admit)
 
-    def deprecate(self, recipe_id: str, version: str) -> dict:
-        return self._change(recipe_id, version, "deprecated")
+    def deprecate(self, recipe_id: str, version: str, *, admit=None) -> dict:
+        return self._change(recipe_id, version, "deprecated", admit=admit)
 
     def _component_closure(self, manifest):
         pending, closure = list(manifest["steps"]), {}

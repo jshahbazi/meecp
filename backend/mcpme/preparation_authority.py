@@ -35,6 +35,8 @@ def _digest(value):
 
 class PreparationAuthority:
     def _init_authority(self):
+        from .management_workflow_grants import init_job_authority
+        init_job_authority(self)
         self.db.execute("""CREATE TABLE IF NOT EXISTS preparation_execution_plans (
             plan_id TEXT PRIMARY KEY, digest TEXT NOT NULL, data TEXT NOT NULL)""")
         self.db.execute("""CREATE TABLE IF NOT EXISTS preparation_job_inputs (
@@ -86,7 +88,7 @@ class PreparationAuthority:
                             (scope["plan_id"], digest, canonical_bytes(stored).decode()))
         return {**scope, "plan_digest": digest, "form": recipe["manifest"]["form"]}
 
-    def authorize_start(self, plan_id, plan_digest, idempotency_key):
+    def authorize_start(self, plan_id, plan_digest, idempotency_key, *, grant_id=None):
         """Owner intent selects the exact reviewed scope; one plan creates one attempt."""
         _digest(plan_digest)
         _uuid(idempotency_key, "invalid_preparation_key")
@@ -94,14 +96,18 @@ class PreparationAuthority:
             plan = self._execution_plan(plan_id)
             if plan["plan_digest"] != plan_digest:
                 raise PreparationError("preparation_plan_mismatch")
+            from .management_workflow_grants import start_authority, existing_start
+            authority = start_authority(self, "preparation", plan, idempotency_key, grant_id)
             if plan["job_id"] is not None:
                 row = self.db.execute("SELECT idempotency_key FROM preparation_jobs WHERE job_id=?", (plan["job_id"],)).fetchone()
                 if row is None or row["idempotency_key"] != idempotency_key:
                     raise PreparationError("preparation_plan_consumed")
-                return self._get(plan["job_id"])
+                job = self._get(plan["job_id"])
+                existing_start(self, "preparation", job, authority)
+                return job
         return self.reserve(plan["import_id"], plan["revision"], plan["descriptor"],
                             ExecutionPolicy.model_validate(plan["execution_policy"]), idempotency_key=idempotency_key,
-                            authorization=plan)
+                            authorization=plan, management_grant_id=grant_id)
 
     def _check_start_authority(self, plan, value, observed, policy):
         current = self._execution_plan(plan["plan_id"])
@@ -127,6 +133,8 @@ class PreparationAuthority:
                         (canonical_bytes(current).decode(), plan["plan_id"]))
 
     def _check_managed_authority(self, job):
+        from .management_workflow_grants import check_job_authority
+        check_job_authority(self, "preparation", job)
         if not job.get("managed"):
             return
         plan = self._execution_plan(job["authority_plan_id"])

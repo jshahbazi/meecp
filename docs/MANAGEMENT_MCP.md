@@ -1,6 +1,6 @@
 # Scoped management and MCP
 
-This Phase 2 milestone adds owner-issued management grants and a separate tools-only MCP connection. The local owner CLI remains available. Ordinary app connections expose only that app's tools. The backend API identifies installed apps as slots.
+Owner-issued management grants support a separate tools-only MCP connection. The local owner CLI remains available. Ordinary app connections expose only that app's tools. The backend API identifies installed apps as slots. Phase 3 adds [exact preparation/resolution execution grants and recipe lifecycle tools](MANAGEMENT_PREPARATION_WORKFLOWS.md).
 
 ## Authority
 
@@ -12,12 +12,15 @@ Issue grants through the local owner CLI using the running host's state director
 | Prepare | Read, draft creation/revision/attachment/cancellation/expiry, installation planning | Host-wide preparation; no package execution or installation apply |
 | Lifecycle | Inspection and selected Start/Stop/Restart actions | Selected app UUIDs and their current package digests |
 | Install | Plan inspection, exact-plan apply/retry, operation/result inspection | One saved plan and one durable installation operation |
+| Recipe management | Static registration and explicitly selected state changes | Exact recipe ID/version/digest and registration path |
+| Preparation execution | Exact-plan start/retry, bound draft/job inspection and cancellation | One complete saved preparation plan and attempt key |
+| Resolution execution | Exact-plan start/retry, bound draft/job inspection and cancellation | One complete saved resolution plan and attempt key |
 
 Read and preparation grants include all drafts and management metadata. Lifecycle grants permit normal restart-generation changes; replacing an app's package invalidates their access. Changing an installed app's startup policy and removing it require owner authority; no scoped grant permits these operations. An installation grant covers the complete saved plan, including package/source binding, target UUID/port, start effects, and resource choices. Changing the plan rejects apply. A second plan for the same draft cannot use the first plan's grant.
 
-Install grants expire after 15 minutes. Other grants default to one hour and accept 60 seconds through 24 hours. Requests check the registry for expiry/revocation each time. Apply rechecks after acquiring its installation lock. The operation and grant's one-operation binding commit in the same SQLite transaction. Concurrent retries return that operation, including after host restart. Interrupted runtime operations retain the existing recovery requirements. An in-process retry also repairs a transient draft-submission failure and schedules the original pending plan.
+Install grants expire after 15 minutes. Read/prepare/lifecycle grants default to one hour and accept 60 seconds through 24 hours. The three new workflow modes default to five minutes and accept 1–3,600 seconds. Requests check their ledger for expiry/revocation each time. Apply rechecks after acquiring its installation lock. The installation operation and grant's one-operation binding commit in the same SQLite transaction. Concurrent retries return that operation, including after host restart. Interrupted runtime operations retain the existing recovery requirements. An in-process retry also repairs a transient draft-submission failure and schedules the original pending plan.
 
-Revocation blocks further requests. It does not cancel an operation with durable authorization; operation cancellation remains unsupported. Deleting a credential file does not revoke copied tokens: use the revoke command. Files are reopened for every CLI/MCP call, so a missing file fails closed. Management MCP never falls back to the owner credential.
+Revocation blocks further requests. Installation operation cancellation remains unsupported. Preparation/resolution execution grants also fence active work; owner revocation drains only the verified original job and retains reservations until owned cleanup settles. Deleting a credential file does not revoke copied tokens: use the revoke command. Files are reopened for every CLI/MCP call, so a missing file fails closed. Management MCP never falls back to the owner credential.
 
 These API scopes follow the same-user trust boundary. They do not isolate another process running with the owner's macOS account permissions.
 
@@ -49,7 +52,7 @@ scripts/mcpme --credential-file /absolute/private/grant.json operations get OPER
 
 Global `--state-dir` and `--credential-file` options precede the command. Scoped management credentials cannot be used for `serve`, app `connect`, or app connection export. App invocation credentials never authorize management routes.
 
-The registry retains at most 4,096 grants. When issuance reaches that limit, it retires expired/revoked history and reclaims its credential files before admitting a new grant. Active records and installation operations remain intact. If all records are active, issuance reports `grant_limit`. List returns the latest 100 records and the retained count; inspect/revoke accept an exact known grant UUID.
+The earlier registry retains at most 4,096 grants. When issuance reaches that limit, it retires expired/revoked history and reclaims its credential files before admitting a new grant. Active records and installation operations remain intact. If all records are active, issuance reports `grant_limit`. The separate workflow ledger retains at most 4,096 records and preserves its job authority history; it reports `grant_limit` when full. List returns the latest 100 records across both ledgers and their combined retained count; inspect/revoke accept an exact known grant UUID.
 
 ## Connect an external agent
 
@@ -61,7 +64,7 @@ scripts/mcpme --credential-file /absolute/private/grant.json management export -
 
 The returned `mcpServers` configuration invokes the installed launcher with the state directory, credential-file reference, and `management connect`. Configure that entry in the intended MCP client. Export contains no credential value. Export again after relocating the app or credential file. A running supervisor is required for management calls; initialization does not open the app or start a slot.
 
-The facade exposes 18 typed tools: capabilities; draft list/create/inspect/revise/export/attach/cancel/expire; slot list/inspect; installation plan/inspect/apply; operation inspection; and Start/Stop/Restart. There are no grant-issuance tools, unrestricted shell tools, startup-setting/removal tools, upgrade tools, or automatic retries of failed calls. Tool visibility does not confer authority: the host rejects operations outside the connection's grant. An agent can prepare with one connection and use a separately owner-issued exact-plan connection after review.
+The facade exposes 40 typed tools: the original 18 capabilities/draft/slot/installation/operation/lifecycle tools plus versioned recipe metadata/schema/registration/state, preparation source/forms/plan/job lifecycle, and resolution plan/job lifecycle tools. The [workflow contract](MANAGEMENT_PREPARATION_WORKFLOWS.md) lists exact names and scope. There are no grant-issuance tools, unrestricted shell tools, startup-setting/removal tools, upgrade tools, or automatic retries of failed calls. Tool visibility does not confer authority: the host rejects operations outside the connection's grant. Existing prepare grants permit static planning; execution requires a separately owner-issued exact-plan and attempt credential plus an admitted host runner.
 
 The facade and CLI use the owner-only manager Unix socket, preserve Host/Origin checks, and have no TCP/proxy fallback. MCP uses revision `2025-11-25`, advertises only tools, bounds frames and responses to 1 MiB, permits at most 16 pending requests, and applies finite call/write deadlines. Malformed/oversized frames close the connection. Errors contain stable codes without source contents, credentials, or raw exceptions. EOF and signals shut down the facade.
 

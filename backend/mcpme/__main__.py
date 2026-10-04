@@ -294,6 +294,19 @@ def parser() -> argparse.ArgumentParser:
     management.add_parser("export").add_argument("--json", action="store_true")
     imports = commands.add_parser("imports").add_subparsers(dest="action", required=True)
     imports.add_parser("list").add_argument("--json", action="store_true")
+    service = imports.add_parser("create-service")
+    service.add_argument("--name", required=True)
+    service.add_argument("--intent", required=True)
+    service.add_argument("--port", type=int, required=True)
+    service.add_argument("--model", required=True)
+    service.add_argument("--secret-reference", type=uuid_argument, required=True)
+    service.add_argument("--timeout-seconds", type=int, default=30)
+    service.add_argument("--max-input-bytes", type=int, default=16384)
+    service.add_argument("--max-output-tokens", type=int, default=512)
+    service.add_argument("--max-response-bytes", type=int, default=1048576)
+    service.add_argument("--start", action="store_true")
+    service.add_argument("--start-policy", choices=["manual", "host"], default="manual")
+    service.add_argument("--json", action="store_true")
     create = imports.add_parser("create")
     create.add_argument("--source", type=Path, required=True)
     create.add_argument("--source-mode", choices=["legacy", "automatic"], default="legacy",
@@ -592,6 +605,19 @@ async def execute(args) -> dict | None:
                 return {"error": {"code": error.code}}
         return await api("POST", "/v1/upgrade/plan", body)
     if args.command == "imports":
+        if args.action == "create-service":
+            catalog = await api("GET", "/v1/service-connectors")
+            records = catalog.get("connectors", [])
+            if len(records) != 1:
+                return {"error": {"code": "service_connector_unavailable"}}
+            selected = records[0]
+            connection = {"schema_version": 1, **{key: selected[key] for key in ("protocol", "transport_auth", "task")},
+                "endpoint": {"scheme": "http", "host": "127.0.0.1", "port": args.port, "base_path": "/v1"},
+                "model": args.model, "secret_references": {"api_key": args.secret_reference},
+                "limits": {"timeout_seconds": args.timeout_seconds, "max_input_bytes": args.max_input_bytes,
+                    "max_output_tokens": args.max_output_tokens, "max_response_bytes": args.max_response_bytes}}
+            return await api("POST", "/v1/imports/service", {"schema_version": 1, "name": args.name,
+                "intent": args.intent, "start": args.start, "start_policy": args.start_policy, "connection": connection})
         if args.action == "list":
             return await api("GET", "/v1/imports")
         if args.action == "create":

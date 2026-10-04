@@ -206,8 +206,8 @@ private struct ImportDraft {
               !name.unicodeScalars.contains(where: { $0.value < 32 }),
               let source = object["source"] as? [String: Any],
               let kind = safeCode(source["kind"]),
-              let path = source["locator"] as? String ?? ((summary || kind == "captured_artifact_collection") ? "" : nil),
-              (summary || path.hasPrefix("/") || (kind == "captured_artifact_collection" && path.isEmpty)),
+              let path = source["locator"] as? String ?? ((summary || ["captured_artifact_collection", "service_connection"].contains(kind)) ? "" : nil),
+              (summary || path.hasPrefix("/") || (["captured_artifact_collection", "service_connection"].contains(kind) && path.isEmpty)),
               !path.contains("\0"),
               let policy = object["start_policy"] as? String, ["manual", "host"].contains(policy),
               let start = object["start"] as? Bool else { return nil }
@@ -455,6 +455,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private var recipesWindow: NSWindow?
     private let recipesView = PreparationRecipesView()
     private let preparationView = PreparationWorkspaceView()
+    private let serviceConnectionView = ServiceConnectionView()
     private let agentPreparationView = AgentPreparationView()
     private let stateDirectory: URL = {
         if let configured = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"], configured.hasPrefix("/") {
@@ -567,6 +568,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         setupRequest = false; detailRequests = []; pendingAppRequests = []
         preparationView.invalidate(); recipesView.invalidate(); agentPreparationView.invalidate()
         agentPreparationView.resetProviderConnection()
+        serviceConnectionView.connectionReset()
     }
 
     private func startHost() {
@@ -912,6 +914,20 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                                        views: [starterLabel, starter])
         content.addArrangedSubview(starterCard); workspaceFill(starterCard, in: content, inset: 28)
 
+        serviceConnectionView.request = { [weak self] path, method, body, completion in
+            self?.request(path, method: method, body: body, completion: completion)
+        }
+        serviceConnectionView.available = { [weak self] in self?.intakeEnabled == true }
+        serviceConnectionView.beforeCreate = { [weak self] completion in self?.saveDraftBeforeNavigation(completion: completion) }
+        serviceConnectionView.onCreated = { [weak self] object in
+            guard let self, self.intakeEnabled, let draft = ImportDraft(object), draft.editable,
+                  draft.sourceKind == "service_connection", draft.packagePath == nil else { return }
+            self.displayDraft(draft); self.pollImports()
+        }
+        serviceConnectionView.onCreateSecret = { [weak self] in self?.createSecret("Local service credential") }
+        let serviceCard = workspaceCard("Connect a local service", subtitle: "Use an authenticated service on this Mac without a source folder.", views: [serviceConnectionView])
+        content.addArrangedSubview(serviceCard); workspaceFill(serviceCard, in: content, inset: 28)
+
         let drop = SourceDropView(frame: .zero)
         drop.wantsLayer = true; drop.layer?.borderWidth = 1; drop.layer?.cornerRadius = 8
         drop.layer?.borderColor = NSColor.separatorColor.cgColor
@@ -1093,6 +1109,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private func refreshWindow() {
+        serviceConnectionView.refreshAvailability()
         let captureContext = currentDraft.flatMap { draft -> ArtifactCaptureContext? in
             guard draft.editable, draft.packagePath == nil, !draftDirty,
                   ["local_folder", "document", "captured_artifact_collection"].contains(draft.sourceKind),
@@ -1208,6 +1225,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             guard let self, let rows = object?["secrets"] as? [[String: Any]] else { return }
             self.secrets = rows.compactMap(SetupSecret.init)
             self.configurationView.updateSecrets(self.secrets)
+            self.serviceConnectionView.updateSecrets(self.secrets.map { (id: $0.id, name: $0.name) })
         }
     }
 
@@ -1234,6 +1252,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                         self.setupLabel?.stringValue = "Secret could not be saved (\(code ?? "invalid_secret"))."; self.refreshWindow(); return
                     }
                     self.secrets.append(secret)
+                    self.serviceConnectionView.updateSecrets(self.secrets.map { (id: $0.id, name: $0.name) })
                     if generation == self.importViewGeneration { self.configurationView.selectSecret(secret, for: logicalName) }
                     self.refreshWindow()
                 }
@@ -1745,12 +1764,13 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private func displayDraft(_ draft: ImportDraft) {
+        serviceConnectionView.invalidate()
         restoringDraft = true; defer { restoringDraft = false }
         importViewGeneration &+= 1
         let changed = currentDraft?.id != draft.id || currentDraft?.revision != draft.revision || currentDraft?.packageDigest != draft.packageDigest
         currentDraft = draft; draftDirty = false
         upgradeTarget = nil
-        pathField?.stringValue = draft.sourceKind == "captured_artifact_collection" ? "Captured artifacts" : draft.sourcePath
+        pathField?.stringValue = draft.sourceKind == "service_connection" ? "Local service connection" : draft.sourceKind == "captured_artifact_collection" ? "Captured artifacts" : draft.sourcePath
         nameField?.stringValue = draft.name; intentField?.string = draft.intent
         policyField?.selectItem(at: draft.policy == "host" ? 1 : 0)
         startCheck?.state = draft.start ? .on : .off
@@ -1819,6 +1839,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     @objc private func newDraft() { saveDraftBeforeNavigation { [weak self] saved in if saved { self?.clearDraft() } } }
 
     private func clearDraft() {
+        serviceConnectionView.invalidate()
         importViewGeneration &+= 1
         currentDraft = nil; draftDirty = false; setupPlan = nil; setupOperation = nil
         upgradeTarget = nil; setupSettings = ["schema_version": 1, "configuration": [String: Any](), "secret_references": [String: String]()]

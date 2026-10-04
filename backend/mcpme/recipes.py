@@ -50,7 +50,8 @@ def builtin_components() -> dict:
     from .preparation_onnx import builtin_onnx_components
     from .preparation_textgen import builtin_textgen_components
     from .preparation_command import component_catalog as command_components
-    return {**component_catalog(), **agent_adapter_components(), **agent_unlocked_components(), **builtin_onnx_components(), **builtin_textgen_components(), **command_components(), **{name + "@1.0.0": {"digest": hashlib.sha256(path.read_bytes()).hexdigest(),
+    from .preparation_service import component_catalog as service_components
+    return {**component_catalog(), **agent_adapter_components(), **agent_unlocked_components(), **builtin_onnx_components(), **builtin_textgen_components(), **command_components(), **service_components(), **{name + "@1.0.0": {"digest": hashlib.sha256(path.read_bytes()).hexdigest(),
                               "input_schema": {"type": "object", "additionalProperties": False},
                               "dependencies": []} for name, path in paths.items()}}
 

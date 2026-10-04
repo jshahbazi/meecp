@@ -41,6 +41,12 @@
       "directory": "agent-unlocked-python-adapter-v1-0-0",
       "recipe_id": "mcpme.agent-unlocked-python-adapter",
       "version": "1.0.0"
+    },
+    {
+      "digest": "579defab9a646d37f07eb92f2e6a2260ad1923477f1cadb96c46fc9edf6d28c3",
+      "directory": "local-openai-text-v1",
+      "recipe_id": "mcpme.local-openai-text",
+      "version": "1.0.0"
     }
   ],
   "schema_version": 1

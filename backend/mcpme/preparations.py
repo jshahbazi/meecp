@@ -19,8 +19,9 @@ from pydantic import ValidationError
 from .contracts import PackageError, _read_file, validate_package
 from .preparation_components import builtin_component_registry
 from .preparation_authority import PreparationAuthority
-from .preparation_inputs import (parse_preparation_descriptor, descriptor_tools, parse_preparation_receipt,
+from .preparation_inputs import (parse_preparation_descriptor, descriptor_tools,
                                  candidate_contract_digest, extend_package_contract)
+from .preparation_service_receipts import parse_receipt as parse_preparation_receipt, validate_job_receipt
 from .preparation_contracts import (
     ExecutionPolicy, JobBinding, PreparationError, PreparationReceipt,
     MAX_CONTRACT_BYTES, RUNNER_IDENTITY, VERIFIER_IDENTITY, contract_digest, schema_accepts,
@@ -411,6 +412,11 @@ class PreparationStore(PreparationAuthority):
         except (ValueError, TypeError, AttributeError):
             raise PreparationError("invalid_preparation_key") from None
         value, observed, recipe_record = self._bound_descriptor(import_id, revision, descriptor)
+        from .preparation_service_contracts import ServiceExecutionPolicyV1
+        if observed["source"]["kind"] == "service_connection":
+            self.family_for(value).execution_policy(value, observed, policy)
+        elif isinstance(policy, ServiceExecutionPolicyV1):
+            raise PreparationError("service_probe_authority_mismatch")
         bound_inputs = None
         if value.schema_version == 2:
             if authorization is None:
@@ -473,6 +479,8 @@ class PreparationStore(PreparationAuthority):
             if bound_inputs is not None:
                 job["bound_inputs"] = bound_inputs.model_dump(mode="json")
                 job["bound_inputs_digest"] = bound_inputs.digest
+                if bound_inputs.schema_version == 2:
+                    job["service_probe_grant_digest"] = policy.service_probe.digest
             if authorization is not None:
                 self._record_start_authority(job, authorization, value, policy)
             self.db.execute("INSERT INTO preparation_jobs VALUES (?,?,?,?)", (job_id, idempotency_key, identity,
@@ -595,6 +603,7 @@ class PreparationStore(PreparationAuthority):
         with self.imports._transaction():
             job = self._get(job_id)
             self._current_inputs(job)
+            validate_job_receipt(receipt, job)
             ownership_ok = not self.pending_ownership(job_id) and (job["ownership_settled"] or (job.get("managed")
                 and job.get("verification_publication_pending")))
             if (job["state"] != "verifying" or not ownership_ok

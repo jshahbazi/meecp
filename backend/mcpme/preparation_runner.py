@@ -44,7 +44,8 @@ RUNNER_FILES = ("preparation_runner.py", "preparation_builder.py", "preparation_
                 "preparation_components.py", "preparation_processes.py", "preparations.py",
                 "preparation_authority.py", "preparation_contracts.py", "processes.py", "ownership_receipts.py",
                 "imports.py", "preparation_application_source.py", "private.py", "recipes.py", "contracts.py", "preparation_inputs.py",
-                "preparation_resolved_python.py", "preparation_resolution.py", "preparation_admission.py", "preparation_release_policy.py", "preparation_release_artifact.py")
+                "preparation_resolved_python.py", "preparation_resolution.py", "preparation_admission.py", "preparation_release_policy.py", "preparation_release_artifact.py",
+                "preparation_service_contracts.py", "preparation_service_receipts.py")
 VERIFIER_FILES = ("preparation_verifier.py", "preparation_probe_confinement.py", "process_graph_accounting_v1.py",
                   "preparation_processes.py", "preparation_contracts.py",
                   "contracts.py", "processes.py", "ownership_receipts.py")
@@ -137,7 +138,8 @@ def _policy(value, descriptor) -> ExecutionPolicy:
                                 memory_mb=max(2048, descriptor.resources.memory_mb))
     elif isinstance(value, dict):
         try:
-            value = ExecutionPolicy.model_validate(value)
+            from .preparation_service_contracts import parse_policy
+            value = parse_policy(value)
         except ValueError:
             raise PreparationError("invalid_preparation_policy") from None
     if (not isinstance(value, ExecutionPolicy) or set(value.operations) != {"build", "probe"}
@@ -209,7 +211,11 @@ def _remove_workspace(state: Path, job_id: str, workspace: Path):
 
 def seal_receipt(package, job: dict):
     """Lock the authority receipt before the independent probe sees the package."""
-    if job.get("bound_inputs") is not None:
+    if (job.get("bound_inputs") or {}).get("schema_version") == 2:
+        from .preparation_service_receipts import ServicePreparationReceiptV1
+        receipt = ServicePreparationReceiptV1(schema_version=3, binding=job["binding"], inputs=job["bound_inputs"],
+            fixture_digest=job["fixture_digest"], service_probe_grant_digest=job["service_probe_grant_digest"])
+    elif job.get("bound_inputs") is not None:
         receipt = PreparationReceiptV2(schema_version=2, binding=job["binding"], inputs=job["bound_inputs"],
             fixture_digest=job["fixture_digest"])
     else:
@@ -509,7 +515,16 @@ class PreparationRunner:
         value, _, _ = await asyncio.to_thread(self.store._bound_descriptor, import_id, revision, descriptor)
         self._require_admission(value)
         toolchain = await asyncio.to_thread(load_private_toolchain, self.host_root)
+        family = self.store.family_for(value) if value.schema_version == 2 else None
+        if family is not None and hasattr(family, "execution_policy"):
+            draft = self.store.imports.inspect(import_id)
+            if draft["revision"] != revision:
+                raise PreparationError("import_revision_mismatch")
+            policy = await asyncio.to_thread(family.execution_policy, value, draft, policy)
         selected = _policy(policy, value)
+        from .preparation_service_contracts import ServiceExecutionPolicyV1
+        if isinstance(selected, ServiceExecutionPolicyV1) and (family is None or family.source_kind != "service_connection"):
+            raise PreparationError("service_probe_authority_mismatch")
         dependencies = await asyncio.to_thread(dependency_identity, self.host_root)
         runner, verifier = await self._implementation_identities(value, dependencies)
         return await asyncio.to_thread(self.store.execution_plan, import_id, revision, descriptor, selected, runner_digest=runner,

@@ -1,0 +1,41 @@
+{
+  "artifacts": [
+    {
+      "license": "LICENSE",
+      "origin": "mcpme-recipe-sdk-v1",
+      "path": "LICENSE",
+      "sha256": "581dcf167cf2fd0f557cb99f829e2b7e4f5901fa53beebd5dfced3746df505b4",
+      "size": 1075
+    },
+    {
+      "license": "LICENSE",
+      "origin": "mcpme-recipe-sdk-v1",
+      "path": "README.md",
+      "sha256": "058fb8560287055a7fc6e90a51b92905865029a077d1227362d8e54aa197993b",
+      "size": 839
+    },
+    {
+      "license": "LICENSE",
+      "origin": "mcpme-recipe-sdk-v1",
+      "path": "THIRD_PARTY_NOTICES.md",
+      "sha256": "2fbfef9fcf14caaf749d913d5c1fd6f7a72ff64c1682bb979ff2b19ff1b439eb",
+      "size": 361
+    },
+    {
+      "license": "LICENSE",
+      "origin": "mcpme-recipe-sdk-v1",
+      "path": "fixtures/synthetic.json",
+      "sha256": "2780fbfa55be0c13e5172cb8fca91bd6eed92fa0165928675a2dec5aa075f2d0",
+      "size": 200
+    },
+    {
+      "license": "LICENSE",
+      "origin": "mcpme service implementation source",
+      "path": "service-provenance.json",
+      "sha256": "401454f9c7c1c8a0d2220f2ccedb8a729ab2d393ccb37948585f09e94f3ff133",
+      "size": 1044
+    }
+  ],
+  "manifest_sha256": "f94a26ec4a799d0a44dfbbee349b8d7f950c65003251d7538d192d586c6923e8",
+  "schema_version": 1
+}

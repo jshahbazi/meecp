@@ -1,0 +1,1 @@
+{"model_bytes_attested": false, "schema_version": 1, "scope": "authenticated loopback protocol fixture", "synthetic": true, "tools": ["generate", "check_connection"], "upstream_process_owned": false}

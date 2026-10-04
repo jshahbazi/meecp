@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "source_commit": "916283b",
+  "recipe_version": "1.0.6",
+  "recipe_id": "mcpme.text-generation",
+  "recipe_directory": "templates/builtin-recipes/text-generation-v1-0-6",
+  "recipe_digest": "29214dca106f1e1e0e2c8895b6a1a9ee658386b432fcb0fc08b96d5da54d736c",
+  "component_references": [
+    {"id": "llamacpp-cpu-v1", "version": "1.0.6", "digest": "eeb0587569869a256a5c8ba6e7a01312191cd34efb05d3d773f8c95f7ad2200c"},
+    {"id": "text-generate-v1", "version": "1.0.6", "digest": "0e7b11847ef6f346f16936b50b00efc712e2d3a5c123ae64ef5db27923881840"}
+  ],
+  "new_bundle_files": 7,
+  "new_bundle_mode": "0600",
+  "public_model_provenance_equal_to_1.0.5": true,
+  "preserved_old_bundle_inventory": {
+    "text-generation-v1": {"files": 7, "inventory_sha256": "c0d56ecbf5da7692609d47ddb6a789d89c9d5a59b5871020a45a252cacc02942", "recipe_digest": "5b54707eb691052272272a5ce40b91479dc3aa5feb3226c2cdd3d67338747aa2"},
+    "text-generation-v1-0-2": {"files": 7, "inventory_sha256": "3c57fae7d709841d0c541adf5a493640b736de2d4ea4f2d3c57e4bdd279b818e", "recipe_digest": "f146c4cca5c0a33b0daca8740c762cff1f3281bee1923e4e9308b02c13940df3"},
+    "text-generation-v1-0-3": {"files": 7, "inventory_sha256": "03adad879a14d383373f162534087d201519b95cb7f8b6d82c427a0ab213d44d", "recipe_digest": "291c31b0266b8d888cc753879d916d1ea2a5707d8f45f2d2ae38a18d751dc516"},
+    "text-generation-v1-0-4": {"files": 7, "inventory_sha256": "8ed12acb33269e39155a7dbb7c97484d666bc8e13077e523b63cc17c6b21eb34", "recipe_digest": "cff04c91645f213b65ae6071c44dca2005bf546e8b2b10e6e4d466aeb34bc257"},
+    "text-generation-v1-0-5": {"files": 7, "inventory_sha256": "d7e29f59d7b3ce913d17779914f5bee77ba49bd4fc96d17056c642b10464cb89", "recipe_digest": "35355ea07d02f5271b19a718e19da8ed286f8cbf9176a1c2400a50bf95f75527"}
+  },
+  "verification": {
+    "textgen_tests": "90 passed",
+    "lifecycle_tests": "20 passed",
+    "core_recipe_tests": "81 passed, 1 failed: catalog_expected_subset_stale",
+    "secret_scanner": "secret_scan_passed",
+    "diff_check": "passed",
+    "scope": "version constant, new recipe bundle, one catalog entry, one exact scanner path, review documentation"
+  }
+}

@@ -88,6 +88,55 @@ def test_issuance_limit_keeps_existing_token_and_binding(workflow,monkeypatch):
     assert start(workflow,grant,key)["management_authority"]["grant_id"]==grant["grant_id"]
 
 
+@pytest.mark.parametrize("state",["queued","running","succeeded"])
+def test_resolution_grant_plan_survives_unrelated_planning_after_plan_expiry(resolution_workflow,tmp_path,monkeypatch,state):
+    """Plan collection cannot shorten an admitted grant's execution lifetime."""
+    grants,store,plan,*_=resolution_workflow
+    grant,key=issued(resolution_workflow,"resolution",ttl_seconds=3600)
+    job=start(resolution_workflow,grant,key)
+    if state in {"running","succeeded"}:store.begin(job["job_id"],tmp_path/"unused-workspace")
+    if state=="succeeded":
+        from mcpme.preparation_resolution import ResolutionRequestV1,result_from_files
+        derived=tmp_path/"unused-workspace"/"derived";derived.mkdir(parents=True)
+        (derived/"pyproject.toml").write_bytes(b"[project]\nname='synthetic'\nversion='1.0.0'\n")
+        (derived/"uv.lock").write_bytes(b"version=1\n")
+        result=result_from_files(ResolutionRequestV1.model_validate(plan["request"]),derived,[],None,1024)
+        store.publish(job["job_id"],result)
+    original=store.db.execute("SELECT data FROM resolution_plans WHERE plan_id=?",(plan["plan_id"],)).fetchone()[0]
+    monkeypatch.setattr("mcpme.preparation_resolution.time.time",lambda:plan["expires_at"]+1)
+    def assert_current():
+        if state=="running":assert store.check_authority(job["job_id"])
+        elif state=="succeeded":
+            grants.authorize_route(grant["grant_id"],"GET","/v1/resolutions/"+job["job_id"])
+            assert [item["job_id"] for item in grants.filter_jobs(grant["grant_id"],store.list_summaries())]==[job["job_id"]]
+        else:
+            with pytest.raises(PreparationError,match="^resolution_authority_expired$"):
+                store.check_authority(job["job_id"])
+    assert_current()
+    from mcpme.preparation_resolution import ResolutionRequestV1
+    other=store.plan(ResolutionRequestV1.model_validate(plan["request"]),plan["candidate"],expires_in=300)
+    assert other["plan_id"]!=plan["plan_id"]
+    assert_current()
+    assert store.db.execute("SELECT data FROM resolution_plans WHERE plan_id=?",(plan["plan_id"],)).fetchone()[0]==original
+    grants.revoke(grant["grant_id"])
+    with pytest.raises(PreparationError,match="^management_execution_revoked$"):
+        store.check_authority(job["job_id"])
+
+
+def test_expired_unused_resolution_plan_is_collected_without_grant_rollover(resolution_workflow,monkeypatch):
+    grants,store,plan,*_=resolution_workflow
+    grant,key=issued(resolution_workflow,"resolution",ttl_seconds=3600)
+    monkeypatch.setattr("mcpme.preparation_resolution.time.time",lambda:plan["expires_at"]+1)
+    from mcpme.preparation_resolution import ResolutionRequestV1
+    other=store.plan(ResolutionRequestV1.model_validate(plan["request"]),plan["candidate"],expires_in=300)
+    assert store.db.execute("SELECT 1 FROM resolution_plans WHERE plan_id=?",(plan["plan_id"],)).fetchone() is None
+    with pytest.raises(PreparationError,match="^resolution_plan_not_found$"):
+        start(resolution_workflow,grant,key)
+    with pytest.raises(GrantError,match="^grant_scope$"):
+        store.authorize_start(other["plan_id"],other["plan_digest"],key,grant_id=grant["grant_id"])
+    assert store.list()==[] and grants.inspect(grant["grant_id"])["job_id"] is None
+
+
 @pytest.mark.parametrize("kind", ["preparation", "resolution"])
 def test_exact_attempt_hash_only_credentials_and_atomic_duplicate(request, kind):
     fixture = request.getfixturevalue("workflow" if kind == "preparation" else "resolution_workflow")

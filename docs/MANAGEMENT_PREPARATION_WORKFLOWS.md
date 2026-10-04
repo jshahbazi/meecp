@@ -66,6 +66,8 @@ Deleting a credential file prevents that file from being used, but copied tokens
 
 Workflow grants share `imports.sqlite` and its transaction with preparation/resolution job admission. The database stores saved scope contracts and token hashes. The job, authority-kind row, exact grant/job association, and consumed-plan pointer commit together; a failed admission rolls them all back.
 
+Preparation and resolution jobs retain their original saved plans, including completed jobs that remain visible through an active grant. Planning collects only expired plans with no job reference. Plan expiry still denies queued admission; an admitted running job remains bounded by its execution policy and current grant expiry/revocation.
+
 Every new preparation/resolution job has schema version 2 and an explicit owner or execution-grant marker. An independent authority-kind row records that marker at creation. A missing, changed or deleted grant association cannot turn a granted job into an owner job. Existing schema-1 owner jobs remain byte-preserved and are recognized only without a new authority marker/kind row.
 
 The import database migrates versions 0/1 to version 2 transactionally. Draft contracts remain schema version 1 and saved draft/job bytes are preserved. Older hosts reject database version 2 before reading jobs; unknown newer versions are denied. Downgrading requires a separately preserved compatible state directory.

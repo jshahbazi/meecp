@@ -284,7 +284,14 @@ class ResolutionStore:
         value["plan_digest"] = contract_digest("preparation-resolution-plan-v1", value)
         with self.imports._transaction():
             self._current(request)
-            self.db.execute("DELETE FROM resolution_plans WHERE json_extract(data,'$.expires_at')<?", (time.time(),))
+            # An admitted job retains its original plan for grant/current and
+            # result inspection. Expiry fences queued admission; collecting an
+            # unrelated plan must not revoke running or completed authority.
+            self.db.execute("""DELETE FROM resolution_plans
+                WHERE json_extract(data,'$.expires_at')<? AND NOT EXISTS (
+                    SELECT 1 FROM resolution_jobs
+                    WHERE json_extract(resolution_jobs.data,'$.plan_id')=resolution_plans.plan_id
+                )""", (time.time(),))
             if self.db.execute("SELECT count(*) FROM resolution_plans").fetchone()[0] >= MAX_RESOLUTIONS:
                 raise PreparationError("resolution_limit")
             self.db.execute("INSERT INTO resolution_plans VALUES (?,?)", (value["plan_id"], canonical_bytes(value).decode()))

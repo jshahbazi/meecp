@@ -54,6 +54,56 @@ struct AgentPreparationJob {
 }
 
 extension AgentPreparationView {
+    /// Synthetic owner replies exercise real selection/review handlers, no send.
+    static func liveAcceptanceSelfTest() -> Bool {
+        let id = "10000000-0000-4000-8000-000000000001", generation = "10000000-0000-4000-8000-000000000002"
+        let digest = String(repeating: "a", count: 64), source = "sha256:" + String(repeating: "b", count: 64)
+        guard let context = PreparationContext(importID: id, revision: 1, sourceRevision: source) else { return false }
+        let recipe: [String: Any] = ["id": "test.agent", "version": "1.0.0", "digest": digest]
+        var scope: [String: Any] = ["provider_id": id, "provider_generation": generation, "model": "synthetic",
+            "recipe": recipe, "selected_paths": ["worker.py"], "selected_metadata_paths": ["LICENSE"]]
+        let view = AgentPreparationView(); view.available = { true }; view.bind(context, saved: true)
+        var requests = 0, wrongGeneration = false, wrongLimit = false, simulation = false
+        view.request = { path, method, body, completion in
+            requests += 1
+            guard path == "v1/agent-preparations/plans", method == "POST", let body else { completion(nil, "test_route_denied"); return }
+            if body.count == 2 {
+                completion(["schema_version": 1, "import_id": id, "revision": 1, "source_revision": source,
+                    "providers": [["provider_id": id, "generation": generation, "models": ["synthetic"],
+                        "simulated": simulation, "execution_available": true]],
+                    "files": [["path": "worker.py", "sha256": digest, "size": 32]],
+                    "metadata_files": [["path": "LICENSE", "sha256": digest, "size": 32]], "recipes": [recipe]], nil)
+            } else {
+                var limits = body["limits"] as! [String: Int]
+                if wrongLimit { limits["max_calls"] = 5 }
+                completion(["schema_version": 1, "plan_id": id, "plan_digest": digest,
+                    "import_id": id, "revision": 1, "source_revision": source,
+                    "provider_id": id, "provider_generation": wrongGeneration ? id : generation, "model": "synthetic", "recipe": recipe,
+                    "selected_files": [["path": "worker.py", "sha256": digest, "bytes": 32]],
+                    "selected_metadata": [["path": "LICENSE", "sha256": digest, "bytes": 32]],
+                    "limits": limits, "destination": "https://api.openai.com/v1/responses", "simulated": simulation,
+                    "monetary_ceiling_enforced": false, "execution_available": true, "expires_at": Date().timeIntervalSince1970 + 60], nil)
+            }
+        }
+        view.loadOptions()
+        guard !view.acceptanceSelect(scope), view.acceptanceSelect(scope, live: true) else { return false }
+        scope["provider_generation"] = id
+        guard !view.acceptanceSelect(scope, live: true) else { return false }
+        scope["provider_generation"] = generation
+        guard view.acceptanceSelect(scope, live: true) else { return false }
+        view.reviewScope()
+        guard view.acceptanceReviewed(live: true, generation: generation), !view.acceptanceReviewed,
+              !view.acceptanceReviewed(live: true, generation: id) else { return false }
+        wrongGeneration = true; guard view.acceptanceSelect(scope, live: true) else { return false }; view.reviewScope()
+        guard !view.acceptanceReviewed(live: true, generation: generation) else { return false }
+        wrongGeneration = false; wrongLimit = true; guard view.acceptanceSelect(scope, live: true) else { return false }; view.reviewScope()
+        guard !view.acceptanceReviewed(live: true, generation: generation) else { return false }
+        simulation = true; view.loadOptions()
+        guard !view.acceptanceSelect(scope, live: true) else { return false }
+        scope.removeValue(forKey: "provider_generation")
+        return view.acceptanceSelect(scope) && requests == 5
+    }
+
     static func contractSelfTest() -> Bool {
         let importID = "10000000-0000-4000-8000-000000000001", planID = "10000000-0000-4000-8000-000000000002"
         let jobID = "10000000-0000-4000-8000-000000000003", digest = String(repeating: "a", count: 64)
@@ -584,8 +634,9 @@ final class AgentPreparationView: NSStackView {
 
     /// Developer fixture choices still pass through the production selection,
     /// review and send handlers. This method does not issue a request.
-    static func acceptanceScopeValid(_ scope: [String: Any]) -> Bool {
-        guard Set(scope.keys) == ["provider_id", "model", "recipe", "selected_paths", "selected_metadata_paths"],
+    static func acceptanceScopeValid(_ scope: [String: Any], live: Bool = false) -> Bool {
+        guard Set(scope.keys) == Set(["provider_id", "model", "recipe", "selected_paths", "selected_metadata_paths"] + (live ? ["provider_generation"] : [])),
+              !live || preparationUUID(scope["provider_generation"]) != nil,
               let provider = preparationText(scope["provider_id"], maximum: 128),
               let model = preparationText(scope["model"], maximum: 128),
               [provider, model].allSatisfy({ $0.range(of: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$", options: .regularExpression) != nil }),
@@ -600,8 +651,8 @@ final class AgentPreparationView: NSStackView {
         }
     }
 
-    func acceptanceSelect(_ scope: [String: Any]) -> Bool {
-        guard Self.acceptanceScopeValid(scope),
+    func acceptanceSelect(_ scope: [String: Any], live: Bool = false) -> Bool {
+        guard Self.acceptanceScopeValid(scope, live: live),
               !blocksNavigation, saved, available?() == true,
               let provider = scope["provider_id"] as? String, let model = scope["model"] as? String,
               let recipe = scope["recipe"] as? [String: Any], PreparationRecipeReference(recipe) != nil,
@@ -610,7 +661,10 @@ final class AgentPreparationView: NSStackView {
               paths == Array(Set(paths)).sorted(), metadata == Array(Set(metadata)).sorted(),
               Set(paths).isDisjoint(with: metadata),
               let providerItem = providerPicker.itemArray.first(where: { $0.representedObject as? String == provider }),
-              providers.first(where: { $0["provider_id"] as? String == provider })?["simulated"] as? Bool == true else { return false }
+              let selectedProvider = providers.first(where: { $0["provider_id"] as? String == provider }),
+              preparationBoolean(selectedProvider["simulated"]) == !live,
+              !live || (selectedProvider["generation"] as? String == scope["provider_generation"] as? String &&
+                  preparationBoolean(selectedProvider["execution_available"]) == true) else { return false }
         providerPicker.select(providerItem); selectionChanged(providerPicker)
         guard let modelItem = modelPicker.itemArray.first(where: { $0.representedObject as? String == model }),
               let recipeItem = recipePicker.itemArray.first(where: { ($0.representedObject as? NSDictionary)?.isEqual(to: recipe) == true }),
@@ -620,15 +674,24 @@ final class AgentPreparationView: NSStackView {
         recipePicker.select(recipeItem); selectionChanged(recipePicker)
         fileControls.forEach { $0.state = paths.contains($0.title) ? .on : .off }
         metadataControls.forEach { $0.state = metadata.contains($0.identifier?.rawValue ?? "") ? .on : .off }
+        if live { transfer.stringValue = "524288"; output.stringValue = "4096"; deadline.stringValue = "180" }
         plan = nil; refreshAvailability()
         guard let selected = scopeRequest() else { return false }
-        return scope.allSatisfy { key, value in
+        return scope.filter { $0.key != "provider_generation" }.allSatisfy { key, value in
             NSDictionary(dictionary: [key: value]).isEqual(to: [key: selected[key] as Any])
         }
     }
 
-    var acceptanceReviewed: Bool {
-        currentPlan() && plan?["simulated"] as? Bool == true && sendButton.isEnabled
+    var acceptanceReviewed: Bool { acceptanceReviewed(live: false, generation: nil) }
+
+    func acceptanceReviewed(live: Bool, generation: String?) -> Bool {
+        guard currentPlan(), preparationBoolean(plan?["simulated"]) == !live, sendButton.isEnabled else { return false }
+        guard live else { return true }
+        let limits: [String: Int] = ["max_calls": 4, "max_parallel": 3, "max_transfer_bytes": 524288,
+            "max_output_tokens": 4096, "wall_seconds": 180, "max_artifact_bytes": 131072]
+        return generation != nil && plan?["provider_generation"] as? String == generation &&
+            plan?["destination"] as? String == "https://api.openai.com/v1/responses" &&
+            (plan?["limits"] as? NSDictionary)?.isEqual(to: limits) == true
     }
 
     func bind(_ next: PreparationContext?, saved: Bool) {

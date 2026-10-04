@@ -568,8 +568,9 @@ def _verify_peercerts_impl_macos_10_14(
                 # Can this ever return 'None' if there's a CFError?
                 cf_error_message = (
                     _cf_string_ref_to_str(cf_error_string_ref)
-                    or "Certificate verification failed"
-                )
+                    if cf_error_string_ref
+                    else "Certificate verification failed"
+                ) or "Certificate verification failed"
 
                 # TODO: Not sure if we need the SecTrustResultType for anything?
                 # We only care whether or not it's a success or failure for now.

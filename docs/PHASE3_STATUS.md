@@ -48,6 +48,14 @@ simulated; no resolution/build commands ran during this scoped handoff review.
 Final family native/installed, live-provider and signed artifact acceptance
 remain open. Completed A0 common contracts do not close those goals.
 
+A1 and A2 are complete on the recorded Developer ID signed `a8ec7b6` app.
+Separate callable, dynamic MCP, mixed-directory and both ONNX native cases pass,
+with source-free installed calls/relocation, maximum workloads, 203 packaged
+common guards and all ten signed recipe lifecycle races. The independent verifier
+rehashed the complete 5,000-file app and checked actual entitlement scopes.
+See [A1/A2 acceptance](A1_A2_ACCEPTANCE.md); public activation and final combined
+release checks remain open.
+
 **Phase 3 is in progress. Public automatic preparation remains disabled.**
 A completed goal or passing checkpoint establishes its stated scope on its
 recorded source and artifact. Public release acceptance requires the applicable
@@ -55,7 +63,7 @@ combined installed artifact and the independent whole-phase adversarial review.
 
 The tables below track **104 subgoals**: 71 acceptance subgoals, 24 required
 cross-family verification subgoals and nine shared delivery subgoals. Of these,
-16 are complete, 47 have verified checkpoint evidence, 34 are open, three are
+30 are complete, 36 have verified checkpoint evidence, 33 are open, one is
 in progress and four have separate capability gates. These counts describe the
 evidence ledger; they are not a release-completion percentage. Additional A6
 capabilities require their own acceptance before they can be advertised.
@@ -73,8 +81,8 @@ being fixed; **Separate gate** covers additional capability work.
 | --- | --- | --- | --- |
 | A0: contracts and authority | Complete | All 11 common contract criteria pass: immutable identities, static inspection, scoped authority, durable jobs, cancellation/recovery, privacy and confinement. | No open common-contract work for this composition. Repeat applicable guards after producer/runtime changes and on the final signed release. |
 | A0R: recipe extensibility | Complete | All five declarative recipe criteria pass on the recorded 509b807 host/native composition, including independent installed calls and ten lifecycle cases. | Repeat applicable checks on final signed delivery; additional executable workers retain a separate gate. |
-| A1: automatic Python/MCP | In progress | Callable and existing-MCP preparation, dependencies, SDK probes, attachment and installed calls have checkpoint evidence. | Separate callable and existing-MCP cases on the final native, installed and relocated artifact. |
-| A2: automatic ONNX | In progress | Exact supported detector, real inference, native intake, tensor controls and limits have checkpoint evidence. | Repeat inference, maximum workloads, negative eligibility and lifecycle under current confinement on the final artifact. |
+| A1: automatic Python/MCP | Complete | Separate signed callable, dynamic MCP and mixed-directory native/probe/attachment/installed flows pass with current common guards. | Repeat applicable checks after public-admission/producer integration and on final signed delivery. |
+| A2: automatic ONNX | Complete | Both signed capture paths pass exact CPU inference, contracts, max workloads, negative eligibility, installed calls and source-free confinement. | Repeat applicable checks after public-admission/producer integration and on final signed delivery. |
 | A3: native CLI | In progress | Command contracts, immutable builder, measured verification, resource cleanup and ownership repairs have checkpoint evidence. | Final native directory-to-installed flow, topology/recovery/resource checks and individual capability enablement. |
 | A4: local text generation | In progress | Pinned CPU runtime, actual generation, shared queue, cancellation, native preparation, parity and immutable recipes through 1.0.7 have checkpoint evidence. | Repeat confined inference, workloads and signed installed acceptance on the final combined artifact. |
 | A5: integrated agent | In progress | Scoped request review, parallel proposals, locked/unlocked derivation, provider setup backend/native controls, API compatibility, recipe discovery, native resolution handoff and actual local probes have checkpoint evidence. | Complete a live provider/model run and final native installed flow. |
@@ -101,20 +109,20 @@ being fixed; **Separate gate** covers additional capability work.
 | A0R.04 | A0R | Generated fields, explicit recipe selection and compatible defaults | Complete | None for the recorded development composition. Original four lifecycle controls, 16 native form checks, four manager fences and independent generated fields pass. |
 | A0R.05 | A0R | Enable/disable/revoke/remove/deprecate, restart retention and lifecycle races | Complete | None for the recorded development composition. Ten lifecycle cases and eight exact restart checks pass; owners/reservations settle, and installed package/receipt survive recipe removal. |
 | A0R.06 | A0R | Additional executable preparation workers | Separate gate | Capability and descendant-ownership acceptance before enabling this extension kind. |
-| A1.01 | A1: automatic Python/MCP | Ordinary callable directory to resolved interface and private dependency closure | Verified checkpoint | Recheck current common confinement on the final host. |
-| A1.02 | A1 | Declared foreground MCP server, including dynamic discovery | Verified checkpoint | Separate final installed/native case remains required. |
-| A1.03 | A1 | Separate acceptance evidence for existing MCP and callable applications | Open | Keep two independently passing native/API cases on the final artifact; a callable result cannot close existing-MCP acceptance. |
-| A1.04 | A1 | Mixed directory containing Python, images and other payloads | Verified checkpoint | Final combined-host recheck after common probe integration. |
-| A1.05 | A1 | Native questions, build, real SDK probe and matching-revision attachment | Verified checkpoint | Recheck the newest integrated source. |
-| A1.06 | A1 | Installation, HTTP/stdio calls, original source removal and restart | Verified checkpoint | Final signed and relocated artifact acceptance. |
-| A1.07 | A1 | Restricted probes and cancellation/revision/crash/resource behavior | In progress | Common guard checkpoint independently cleared and integrated; full combined installed acceptance remains. |
-| A2.01 | A2: automatic ONNX | Exact supported weights, license, runtime and CPU eligibility | Verified checkpoint | Recheck final artifact identities; different exports remain unsupported. |
-| A2.02 | A2 | Captured model and folder plus model through native preparation | Verified checkpoint | Recheck the newest combined host. |
-| A2.03 | A2 | Actual inference, complete tool schemas and controlled tensor cases | Verified checkpoint | Earlier host passed actual inference. Repeat through the newly integrated common confinement path. |
-| A2.04 | A2 | Reject incompatible weights, tensor layouts and class definitions | Verified checkpoint | Repeat explicit negative eligibility controls on the final artifact. |
-| A2.05 | A2 | Maximum image bytes/pixels, deadlines, concurrency and measured memory | Verified checkpoint | Recheck advertised 1 MiB / 1,048,576-pixel limits under the new restricted probe. |
-| A2.06 | A2 | Attachment, install, HTTP/stdio calls, source removal and relocation | Verified checkpoint | Final signed artifact and separate confined relocation/max-workload probes. |
-| A2.07 | A2 | Full lifecycle and confinement integration | In progress | Common guards integrated; relocation and maximum-workload harnesses now use them. Actual inference and combined race acceptance remain. |
+| A1.01 | A1: automatic Python/MCP | Ordinary callable directory to resolved interface and private dependency closure | Complete | Complete on signed a8ec7b6 app: ordinary callable directory, private locked closure and real SDK probe. Repeat applicable checks on final delivery. |
+| A1.02 | A1 | Declared foreground MCP server, including dynamic discovery | Complete | Separate dynamic foreground MCP case passes discovery, both full tool contracts and installed calls. Repeat applicable checks on final delivery. |
+| A1.03 | A1 | Separate acceptance evidence for existing MCP and callable applications | Complete | Independent callable and dynamic MCP native cases both pass; exact receipts are in A1/A2 acceptance. Repeat applicable checks on final delivery. |
+| A1.04 | A1 | Mixed directory containing Python, images and other payloads | Complete | Signed mixed Python, PNG and unknown-binary directory passes preparation, attachment, source removal and installed calls. Repeat applicable checks on final delivery. |
+| A1.05 | A1 | Native questions, build, real SDK probe and matching-revision attachment | Complete | Actual generated questions/review/start/poll match revision-2 attachment and real SDK proof. Repeat applicable checks on final delivery. |
+| A1.06 | A1 | Installation, HTTP/stdio calls, original source removal and restart | Complete | Signed bundle preserved; HTTP/stdio, original source removal, restart and confined sealed relocation pass. Repeat applicable checks on final delivery. |
+| A1.07 | A1 | Restricted probes and cancellation/revision/crash/resource behavior | Complete | 203 signed packaged common guards and all ten signed recipe lifecycle races pass; owned work joins. Repeat applicable checks on final delivery. |
+| A2.01 | A2: automatic ONNX | Exact supported weights, license, runtime and CPU eligibility | Complete | Exact CPU weights/runtime/notices verified; original 10,701,557-byte model is unchanged. Repeat applicable checks on final delivery. |
+| A2.02 | A2 | Captured model and folder plus model through native preparation | Complete | Signed native captured-model and ordinary-folder-plus-model cases both pass. Repeat applicable checks on final delivery. |
+| A2.03 | A2 | Actual inference, complete tool schemas and controlled tensor cases | Complete | Real inference/full SDK schemas pass; six controlled tensors and three blank images pass. Repeat applicable checks on final delivery. |
+| A2.04 | A2 | Reject incompatible weights, tensor layouts and class definitions | Complete | Same-length wrong weights deny preparation; 30 locked detector controls include incompatible layouts/classes/providers. Repeat applicable checks on final delivery. |
+| A2.05 | A2 | Maximum image bytes/pixels, deadlines, concurrency and measured memory | Complete | 1 MiB input and 1,048,576-pixel envelope pass measured confined max probes, busy/deadline/boundary controls. Repeat applicable checks on final delivery. |
+| A2.06 | A2 | Attachment, install, HTTP/stdio calls, source removal and relocation | Complete | Matching revisions 2/3, install, HTTP/stdio, source/capture-state removal, restart and confined relocation pass. Repeat applicable checks on final delivery. |
+| A2.07 | A2 | Full lifecycle and confinement integration | Complete | Current common confinement, zero remaining ownership and signed lifecycle/common guard rechecks pass. Repeat applicable checks on final delivery. |
 | A3.01 | A3: native CLI | Static executable eligibility and bounded JSON/argv/interface questions | Verified checkpoint | Final packaged/native questions recheck. |
 | A3.02 | A3 | Bounded input/output, exit mapping and declared effects | Verified checkpoint | Final actual-command contract and oversized/error-output cases. |
 | A3.03 | A3 | Default family and recipe registration from exact helper inventory | Verified checkpoint | 102 independent checks passed; final artifact recheck. |

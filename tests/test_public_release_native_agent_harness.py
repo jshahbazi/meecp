@@ -190,11 +190,77 @@ def test_textgen_keys_bind_actual_current_producer_to_literal_policy(driver, mon
         assert driver.textgen_keys() == (ENGINE, TASK)
 
 
-def test_candidate_policy_literal_matches_reviewed_root_blob():
+def test_historical_policy_literal_and_current_agent_delta():
     assert hashlib.sha256(ROOT_POLICY_JSON.encode()).hexdigest() == (
         "c8fa615def941e66e85a68ac0e7cc46dd7caf1797918fc03fdd5277ac2326522")
     from mcpme.preparation_release_policy import POLICY_PATH
-    assert (Path(__file__).resolve().parents[1] / POLICY_PATH).read_bytes() == ROOT_POLICY_JSON.encode()
+    historical = json.loads(ROOT_POLICY_JSON)
+    expected = copy.deepcopy(historical)
+    expected["policy_id"] = "phase3-live-agent-acceptance-candidate-v1"
+    unlocked = {"id": "agent-unlocked-python-adapter-v1", "version": "1.0.0",
+                "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"}
+    expected["preparation"]["families"].append(unlocked)
+    expected["preparation"]["recipe_component_sets"].append([unlocked])
+    expected["agent"] = {
+        "components": [{"id": "agent-unlocked-python-adapter-v1", "version": "1.0.0",
+                         "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"}],
+        "providers": [{"adapter_id": "openai-responses-v1",
+                        "adapter_digest": "f651b36ab4b3d4fe6479457e5a31f129b1339c41536e02bfb53cbbf4025cebc1",
+                        "models": ["gpt-6.1-sol"]}],
+        "unlocked_resolution": True,
+    }
+    policy_path = Path(__file__).resolve().parents[1] / POLICY_PATH
+    assert json.loads(policy_path.read_bytes()) == expected
+    assert hashlib.sha256(policy_path.read_bytes()).hexdigest() == (
+        "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375")
+
+
+def test_lifecycle_policy_guard_accepts_historical_and_current_bytes(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))
+    lifecycle = importlib.import_module("verify_phase3_recipe_lifecycle")
+    management = importlib.import_module("verify_phase3_public_management")
+    host = tmp_path / "host"
+    policy_path = host / management.POLICY_PATH
+    policy_path.parent.mkdir(parents=True)
+    for raw, expected_scope, expected in ((ROOT_POLICY_JSON.encode(), "closed", "c8fa615def941e66e85a68ac0e7cc46dd7caf1797918fc03fdd5277ac2326522"),
+                          ((Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes(), "selected_model_accepted", "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375")):
+        policy_path.write_bytes(raw)
+        scope, observed = lifecycle.verify_lifecycle_policy(host)
+        assert observed == expected and scope == expected_scope
+
+
+@pytest.mark.parametrize("mutation", ["malformed", "extra_family", "extra_closure", "command", "agent_model", "policy_id"])
+def test_lifecycle_policy_guard_rejects_mutated_current_bytes(tmp_path, monkeypatch, mutation):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))
+    lifecycle = importlib.import_module("verify_phase3_recipe_lifecycle")
+    management = importlib.import_module("verify_phase3_public_management")
+    host = tmp_path / "host"
+    policy_path = host / management.POLICY_PATH
+    policy_path.parent.mkdir(parents=True)
+    current_raw = (Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes()
+    current = json.loads(current_raw)
+    if mutation == "malformed":
+        raw = b"{\"schema_version\":1} trailing"
+    else:
+        if mutation == "extra_family":
+            current["preparation"]["families"].append({"id": management.PYTHON[0],
+                "version": management.PYTHON[1], "digest": management.PYTHON[2]})
+        elif mutation == "extra_closure":
+            current["preparation"]["recipe_component_sets"].append([{"id": management.PYTHON[0],
+                "version": management.PYTHON[1], "digest": management.PYTHON[2]}])
+        elif mutation == "command":
+            current["command"]["installed_platform_policy"] = "f" * 64
+        elif mutation == "agent_model":
+            current["agent"]["providers"][0]["models"].append("gpt-6.1-sol-extra")
+        else:
+            current["policy_id"] = "unexpected-policy"
+        baseline = (json.dumps(json.loads(current_raw), indent=2) + "\n").encode()
+        assert baseline == current_raw
+        raw = (json.dumps(current, indent=2) + "\n").encode()
+    policy_path.write_bytes(raw)
+    monkeypatch.setattr(management, "typed_policy_scope", lambda _host: pytest.fail("typed validation reached"))
+    with pytest.raises(lifecycle.onboarding.AcceptanceError, match="lifecycle_policy_not_reviewed"):
+        lifecycle.verify_lifecycle_policy(host)
 
 
 def capabilities(driver):

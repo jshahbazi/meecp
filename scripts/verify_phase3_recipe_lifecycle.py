@@ -1,9 +1,10 @@
 """Exercise independent recipe races through native forms and a sealed host.
 
 Private inherited pipes select trusted scheduling barriers in the development
-runner factory. Actual policy, routes, native owners, verifier reports and
-attachment transactions remain unchanged. The production CLI stays disabled.
-Only bounded metadata and hashes leave the isolated workspace.
+runner factory. The lifecycle cases run against the reviewed public family and
+retain explicit closed-policy checks as a separate historical control. Actual
+policy, routes, native owners, verifier reports and attachment transactions
+remain unchanged. Only bounded metadata and hashes leave the isolated workspace.
 """
 from __future__ import annotations
 
@@ -24,10 +25,16 @@ import time
 import uuid
 
 import verify_phase3_native_onboarding as onboarding
+import verify_phase3_public_management as management
+import verify_phase3_public_native as public_native
 from verify_phase3_primitives import _check_module_origins, _host_imports, _host_paths
 
 CASES = ("disabled_queued", "revoked_verification", "revoked_attachment", "updated_active",
          "canceled_native_owner", "crashed_native_owner", "stale_revision", "stale_source", "capability_blocker", "native_management")
+LIFECYCLE_POLICY_SHA256 = frozenset({
+    "c8fa615def941e66e85a68ac0e7cc46dd7caf1797918fc03fdd5277ac2326522",
+    "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375",
+})
 BARRIERS = {"disabled_queued": "scheduler_before_snapshot", "stale_source": "scheduler_before_snapshot",
     "revoked_verification": "actual_verifier_return_before_publication",
     "updated_active": "actual_verifier_return_before_publication", "stale_revision": "actual_verifier_return_before_publication",
@@ -78,6 +85,14 @@ def native_management_fixture(base, state, recipes, forms=()):
 def verify_sealed_host_payload(host):
     """Reject a changed or expanded payload before importing target modules."""
     return onboarding.verify_host_payload(host)
+
+
+def verify_lifecycle_policy(host):
+    """Bind lifecycle coverage to one reviewed policy byte image."""
+    policy = host / management.POLICY_PATH
+    observed = digest(policy)
+    require(observed in LIFECYCLE_POLICY_SHA256, "lifecycle_policy_not_reviewed")
+    return management.typed_policy_scope(management.active_policy(host)), observed
 
 
 async def join_owned(task):
@@ -297,6 +312,10 @@ class ReceiptHold:
 
 
 class LifecycleHarness(onboarding.Harness):
+    async def active_defaults(self):
+        """Use the ordinary public launcher for the reviewed active family."""
+        return await public_native.PublicPythonHarness.defaults(self)
+
     async def start_reviewed(self, state, environment, home):
         gate = Barrier()
         try:
@@ -769,7 +788,9 @@ async def verify(host_path, native_path, report, cases=CASES):
             barrier_factory_sha256=hashlib.sha256(BARRIER_HOST.encode()).hexdigest())
         harness = LifecycleHarness(root, host, native, lease)
         try:
-            report["production_defaults_disabled"] = await harness.defaults()
+            _check_module_origins(host)
+            report["typed_policy_scope"], report["policy_sha256"] = verify_lifecycle_policy(host)
+            report["active_policy_defaults"] = await harness.active_defaults()
             for case in cases:
                 report["active_case"] = case
                 if case == "capability_blocker":
@@ -810,7 +831,8 @@ def main():
         "limits": ["development_barriers_only", "other_host_helper_crash_boundaries_unverified",
             "mismatched_native_receipt_unverified",
             "source_copy_mutation_races_unverified", "hard_aggregate_process_memory_unverified",
-            "signed_final_bundle_unverified", "public_execution_disabled"]}
+            "signed_final_bundle_unverified", "closed_historical_defaults_unverified",
+            "private_barriers_and_factory_scope_unverified"]}
     try:
         asyncio.run(verify(args.host.resolve(strict=True), args.native.resolve(strict=True), report, args.case or CASES))
     except (Exception, KeyboardInterrupt) as error:

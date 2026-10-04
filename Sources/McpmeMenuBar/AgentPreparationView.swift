@@ -189,11 +189,92 @@ extension AgentPreparationView {
 }
 
 func runAgentPreparationContractSelfTest() -> Bool {
-    AgentProviderSettingsView.contractSelfTest() && AgentPreparationView.providerOwnershipSelfTest() &&
-        AgentPreparationView.recipeChoiceSelfTest() && AgentPreparationView.recipeRefreshOwnershipSelfTest() && AgentPreparationView.contractSelfTest()
+    AgentProviderSettingsView.contractSelfTest() && AgentProviderSettingsView.duplicateProviderTitlesSelfTest() &&
+        AgentPreparationView.providerOwnershipSelfTest() && AgentPreparationView.recipeChoiceSelfTest() &&
+        AgentPreparationView.recipeRefreshOwnershipSelfTest() && AgentPreparationView.duplicatePickerTitlesSelfTest() && AgentPreparationView.contractSelfTest()
 }
 
 extension AgentPreparationView {
+    static func duplicatePickerTitlesSelfTest() -> Bool {
+        let view = AgentPreparationView(); view.available = { true }
+        guard let context = PreparationContext(importID: UUID().uuidString.lowercased(), revision: 1, sourceRevision: "sha256:" + String(repeating: "a", count: 64)) else { return false }
+        view.bind(context, saved: true)
+        func recipe(_ id: String) -> [String: Any] { ["id": id, "version": "1.0.0", "digest": String(repeating: "b", count: 64)] }
+        let builtin = recipe("mcpme.agent-unlocked-python-adapter"), alias = recipe("mcpme.alias-two")
+        var recipes = [recipe("mcpme.alias-one"), alias, recipe("mcpme.alias-three"), builtin]
+        let providerIDs = (0..<4).map { _ in UUID().uuidString.lowercased() }
+        var providers: [[String: Any]] = providerIDs.enumerated().map { ["provider_id": $0.element, "name": $0.offset == 3 ? "Choose a provider…" : "Duplicate profile",
+            "generation": UUID().uuidString.lowercased(), "models": ["test-model", "other-model"]] }
+        var recommend = true, compatible = true, truncated = false, calls = 0
+        view.request = { path, method, body, completion in
+            calls += 1
+            guard path == "v1/agent-preparations/plans", method == "POST", body?.count == 2, let current = view.context else { completion(nil, "invalid_test_request"); return }
+            completion(["schema_version": 1, "import_id": current.importID, "revision": current.revision, "source_revision": current.sourceRevision,
+                "providers": providers, "files": [["path": "worker.py", "size": 40, "sha256": String(repeating: "c", count: 64)]],
+                "recipes": recipes, "recipes_truncated": truncated,
+                "recipe_choices": recipes.map { ["recipe": $0, "label": "Python app needing dependency resolution", "compatibility": compatible ? "compatible" : "unresolved",
+                    "recommended": recommend && NSDictionary(dictionary: $0).isEqual(to: builtin)] }], nil)
+        }
+        func selectedRecipe(_ recipe: [String: Any]) -> Bool {
+            (view.recipePicker.selectedItem?.representedObject as? NSDictionary)?.isEqual(to: recipe) == true
+        }
+        func exactItems() -> Bool {
+            let displayed = view.recipePicker.itemArray.compactMap { $0.representedObject as? [String: Any] }
+            return view.recipePicker.numberOfItems == recipes.count + 1 && Set(view.recipePicker.itemTitles).count == recipes.count + 1 &&
+                displayed.count == recipes.count && recipes.allSatisfy { reference in
+                    displayed.filter { NSDictionary(dictionary: $0).isEqual(to: reference) }.count == 1
+                }
+        }
+        view.loadOptions()
+        guard exactItems(), selectedRecipe(builtin), view.recipePicker.itemTitles.dropFirst().allSatisfy({ $0.contains("mcpme.") }),
+              view.providerPicker.numberOfItems == 5, Set(view.providerPicker.itemTitles).count == 5,
+              Set(view.providerPicker.itemArray.compactMap { $0.representedObject as? String }) == Set(providerIDs),
+              view.providerPicker.itemTitles[4] == "Choose a provider… · " + providerIDs[3], view.modelPicker.selectedItem?.representedObject == nil else { return false }
+        view.recipePicker.selectItem(at: 2); view.selectionChanged(view.recipePicker)
+        view.providerPicker.selectItem(at: 4); view.selectionChanged(view.providerPicker)
+        view.modelPicker.selectItem(withTitle: "test-model"); view.selectionChanged(view.modelPicker)
+        recipes.reverse(); providers.reverse(); view.loadOptions()
+        guard exactItems(), selectedRecipe(alias), view.providerPicker.selectedItem?.representedObject as? String == providerIDs[3],
+              view.modelPicker.selectedItem?.representedObject as? String == "test-model" else { return false }
+        providers[0]["models"] = ["other-model"]; view.loadOptions()
+        guard view.providerPicker.selectedItem?.representedObject as? String == providerIDs[3], view.modelPicker.selectedItem?.representedObject == nil else { return false }
+        providers[0]["models"] = ["test-model", "other-model"]; view.loadOptions()
+        guard view.modelPicker.selectedItem?.representedObject == nil else { return false }
+        // A renamed alias version requires a new explicit exact selection.
+        recipes = recipes.map { value in
+            guard value["id"] as? String == alias["id"] as? String else { return value }
+            var changed = value; changed["version"] = "1.0.1"; changed["digest"] = String(repeating: "d", count: 64); return changed
+        }
+        for _ in 0..<3 { view.loadOptions(); guard exactItems(), view.recipePicker.selectedItem?.representedObject == nil, view.requiresExplicitRecipeChoice else { return false } }
+        recipes.append(alias); view.loadOptions()
+        guard exactItems(), view.recipePicker.selectedItem?.representedObject == nil, view.requiresExplicitRecipeChoice else { return false }
+        // Provider and model disappearance cannot silently replace a choice.
+        providers.removeAll { $0["provider_id"] as? String == providerIDs[3] }
+        view.loadOptions()
+        guard view.providerPicker.selectedItem?.representedObject == nil, view.modelPicker.selectedItem?.representedObject == nil, !view.reviewButton.isEnabled else { return false }
+        view.loadOptions(); guard view.providerPicker.selectedItem?.representedObject == nil else { return false }
+        // Ambiguous aliases retain all distinguishable items without a default.
+        recommend = false; compatible = false
+        guard let ambiguous = PreparationContext(importID: context.importID, revision: 2, sourceRevision: context.sourceRevision) else { return false }
+        view.bind(ambiguous, saved: true); view.loadOptions()
+        guard exactItems(), view.recipePicker.selectedItem?.representedObject == nil, !view.reviewButton.isEnabled else { return false }
+        view.recipePicker.selectItem(at: recipes.count); view.selectionChanged(view.recipePicker)
+        view.providerPicker.selectItem(at: 1); view.selectionChanged(view.providerPicker)
+        view.modelPicker.selectItem(withTitle: "test-model"); view.selectionChanged(view.modelPicker); view.fileControls[0].performClick(nil)
+        guard selectedRecipe(alias), view.scopeRequest() == nil, !view.reviewButton.isEnabled else { return false }
+        compatible = true; recommend = true; truncated = true
+        guard let incomplete = PreparationContext(importID: context.importID, revision: 3, sourceRevision: context.sourceRevision) else { return false }
+        view.bind(incomplete, saved: true)
+        view.loadOptions()
+        guard exactItems(), view.recipePicker.selectedItem?.representedObject == nil, view.status.stringValue.contains("Manage enabled recipes") else { return false }
+        // Preserve all 128 accepted records, including more than two aliases
+        // with the same guide label/version and the recommended exact builtin.
+        truncated = false; recipes = (0..<127).map { recipe("mcpme.alias-" + String($0)) } + [builtin]
+        view.loadOptions()
+        guard exactItems(), view.recipePicker.numberOfItems == 129, selectedRecipe(builtin), calls == 13 else { return false }
+        recipes.append(recipe("mcpme.too-many")); view.loadOptions()
+        return view.options == nil && view.errorCode == "agent_options_invalid" && !view.reviewButton.isEnabled && !view.sendButton.isEnabled && calls == 14
+    }
     static func recipeRefreshOwnershipSelfTest() -> Bool {
         let view = AgentPreparationView(); view.available = { true }
         guard let context = PreparationContext(importID: UUID().uuidString.lowercased(), revision: 1, sourceRevision: "sha256:" + String(repeating: "a", count: 64)) else { return false }
@@ -507,14 +588,20 @@ final class AgentPreparationView: NSStackView {
         modelPicker.removeAllItems(); modelProvider = providerPicker.selectedItem?.representedObject as? String
         modelPicker.addItem(withTitle: "Choose a model…")
         if let provider = providers.first(where: { $0["provider_id"] as? String == modelProvider }) {
-            for model in provider["models"] as? [String] ?? [] {
-                modelPicker.addItem(withTitle: model); modelPicker.lastItem?.representedObject = model
+            let models = provider["models"] as? [String] ?? []
+            guard let titles = agentPickerTitles(models, identities: models, reserved: ["Choose a model…"]) else { options = nil; fail("agent_options_invalid"); return }
+            for (model, title) in zip(models, titles) {
+                let item = NSMenuItem(title: title, action: nil, keyEquivalent: ""); item.representedObject = model
+                modelPicker.menu?.addItem(item)
             }
         }
     }
     @objc func loadOptions() {
         guard available?() == true, !blocksNavigation, saved, let context, let request else { return }
         invalidateJobResponses()
+        let previousProvider = providerPicker.selectedItem?.representedObject as? String
+        let previousModel = modelPicker.selectedItem?.representedObject as? String
+        let previouslyLoadedProviders = providerPicker.numberOfItems > 0
         plan = nil; options = nil
         busy = true; refreshAvailability(); let expected = epoch
         request("v1/agent-preparations/plans", "POST", ["import_id": context.importID, "revision": context.revision]) { [weak self] object, code in
@@ -526,7 +613,8 @@ final class AgentPreparationView: NSStackView {
                   let providers = object["providers"] as? [[String: Any]], providers.count <= 16,
                   let records = object["files"] as? [[String: Any]], records.count <= 256,
                   let recipes = object["recipes"] as? [[String: Any]], recipes.count <= 128 else { self.fail(code ?? "agent_options_invalid"); return }
-            guard providers.allSatisfy({ preparationText($0["provider_id"], maximum: 128) != nil && ($0["generation"] == nil || $0["generation"] is NSNull || preparationUUID($0["generation"]) != nil) && ($0["name"] == nil || preparationText($0["name"], maximum: 80) != nil) && ($0["models"] as? [String]).map { $0.count <= 16 && $0.allSatisfy { preparationText($0, maximum: 128) != nil } } == true }),
+            guard providers.allSatisfy({ preparationText($0["provider_id"], maximum: 128) != nil && ($0["generation"] == nil || $0["generation"] is NSNull || preparationUUID($0["generation"]) != nil) && ($0["name"] == nil || preparationText($0["name"], maximum: 80) != nil) && ($0["models"] as? [String]).map { $0.count <= 16 && Set($0).count == $0.count && $0.allSatisfy { preparationText($0, maximum: 128) != nil } } == true }),
+                  Set(providers.compactMap { $0["provider_id"] as? String }).count == providers.count,
                   records.allSatisfy({ preparationText($0["path"], maximum: 256) != nil && preparationDigest($0["sha256"]) != nil && (1...16384).contains(preparationInteger($0["size"]) ?? 0) }),
                   recipes.allSatisfy({ preparationText($0["id"], maximum: 128) != nil && preparationText($0["version"], maximum: 128) != nil && preparationDigest($0["digest"]) != nil }) else { self.fail("agent_options_invalid"); return }
             var choices: [AgentRecipeChoice] = []
@@ -539,18 +627,35 @@ final class AgentPreparationView: NSStackView {
             guard object["recipes_truncated"] == nil || preparationBoolean(object["recipes_truncated"]) != nil else { self.fail("agent_options_invalid"); return }
             self.options = object; self.plan = nil; self.providerPicker.removeAllItems(); self.recipePicker.removeAllItems()
             self.recipePicker.addItem(withTitle: "Choose a preparation path…")
-            for value in providers {
+            self.providerPicker.addItem(withTitle: "Choose a provider…")
+            let providerIDs = providers.map { $0["provider_id"] as! String }
+            let providerBases = providers.map { self.providerSettings.providerNames[$0["provider_id"] as! String] ?? preparationText($0["name"], maximum: 80) ?? ($0["provider_id"] as! String) }
+            guard let providerTitles = agentPickerTitles(providerBases, identities: providerIDs, reserved: ["Choose a provider…"]) else { self.options = nil; self.fail("agent_options_invalid"); return }
+            for (value, title) in zip(providers, providerTitles) {
                 let id = value["provider_id"] as! String
-                self.providerPicker.addItem(withTitle: self.providerSettings.providerNames[id] ?? preparationText(value["name"], maximum: 80) ?? id)
-                self.providerPicker.lastItem?.representedObject = id
+                let item = NSMenuItem(title: title, action: nil, keyEquivalent: ""); item.representedObject = id
+                self.providerPicker.menu?.addItem(item)
             }
-            for value in recipes {
+            if let previousProvider, let index = providerIDs.firstIndex(of: previousProvider) { self.providerPicker.selectItem(at: index + 1) }
+            else if !previouslyLoadedProviders, !providers.isEmpty { self.providerPicker.selectItem(at: 1) }
+            let recipeBases = recipes.map { value -> String in
                 let id = value["id"] as! String
                 let label = choices.first(where: { NSDictionary(dictionary: $0.recipe).isEqual(to: value) })?.label ??
                     ["mcpme.agent-python-adapter": "Python app with an existing dependency lock",
                      "mcpme.agent-unlocked-python-adapter": "Python app needing dependency resolution"][id] ?? id
-                self.recipePicker.addItem(withTitle: label + " · " + (value["version"] as! String)); self.recipePicker.lastItem?.representedObject = value
+                return label + " · " + (value["version"] as! String)
             }
+            let recipeIDCounts = Dictionary(grouping: recipes, by: { $0["id"] as! String })
+            let recipeIdentities = recipes.map { value -> String in
+                let id = value["id"] as! String
+                return recipeIDCounts[id]!.count == 1 ? id : id + " @ " + (value["version"] as! String) + " · " + (value["digest"] as! String)
+            }
+            guard let recipeTitles = agentPickerTitles(recipeBases, identities: recipeIdentities, reserved: ["Choose a preparation path…"]) else { self.options = nil; self.fail("agent_options_invalid"); return }
+            for (value, title) in zip(recipes, recipeTitles) {
+                let item = NSMenuItem(title: title, action: nil, keyEquivalent: ""); item.representedObject = value
+                self.recipePicker.menu?.addItem(item)
+            }
+            guard self.providerPicker.numberOfItems == providers.count + 1, self.recipePicker.numberOfItems == recipes.count + 1 else { self.options = nil; self.fail("agent_options_invalid"); return }
             if let preferred = self.preferredRecipe {
                 if let index = recipes.firstIndex(where: { NSDictionary(dictionary: $0).isEqual(to: preferred) }) { self.recipePicker.selectItem(at: index + 1) }
                 else { self.preferredRecipe = nil; self.requiresExplicitRecipeChoice = true }
@@ -558,6 +663,8 @@ final class AgentPreparationView: NSStackView {
                 self.recipePicker.selectItem(at: index + 1)
             }
             self.reloadModels()
+            if self.providerPicker.selectedItem?.representedObject as? String == previousProvider, let previousModel,
+               let index = self.modelPicker.itemArray.firstIndex(where: { $0.representedObject as? String == previousModel }) { self.modelPicker.selectItem(at: index) }
             self.fileControls.forEach { self.files.removeArrangedSubview($0); $0.removeFromSuperview() }; self.fileControls = []
             self.metadataControls.forEach { self.files.removeArrangedSubview($0); $0.removeFromSuperview() }; self.metadataControls = []
             for value in records {

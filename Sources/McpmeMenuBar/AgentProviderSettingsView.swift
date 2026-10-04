@@ -1,4 +1,20 @@
 import AppKit
+
+/// Preserve exact represented identities even when human titles collide.
+func agentPickerTitles(_ bases: [String], identities: [String], reserved: Set<String> = []) -> [String]? {
+    guard bases.count == identities.count, bases.count <= 128, Set(identities).count == identities.count else { return nil }
+    var disambiguate: Set<Int> = []
+    for _ in 0...bases.count {
+        let titles = bases.indices.map { disambiguate.contains($0) ? bases[$0] + " · " + identities[$0] : bases[$0] }
+        let groups = Dictionary(grouping: bases.indices, by: { titles[$0] })
+        let collisions = Set(groups.filter { $0.value.count > 1 || reserved.contains($0.key) }.flatMap(\.value))
+        if collisions.isEmpty { return titles }
+        let additions = collisions.subtracting(disambiguate)
+        guard !additions.isEmpty else { return nil }
+        disambiguate.formUnion(additions)
+    }
+    return nil
+}
 import Foundation
 
 private let agentProviderAdapter = "openai-responses-v1"
@@ -172,10 +188,13 @@ final class AgentProviderSettingsView: NSStackView {
                   parsed.filter({ !$0.removed }).count <= 16 else { self.fail("agent_provider_response_invalid"); return }
             let previous = self.selected?.id
             self.records = parsed; self.loaded = true; self.needsRefresh = false; self.picker.removeAllItems()
-            for record in parsed where !record.removed {
-                self.picker.addItem(withTitle: record.name + (record.credentialAvailable ? "" : " · Key unavailable"))
-                self.picker.lastItem?.representedObject = record.id
+            let active = parsed.filter { !$0.removed }
+            guard let titles = agentPickerTitles(active.map { $0.name + ($0.credentialAvailable ? "" : " · Key unavailable") }, identities: active.map(\.id)) else { self.fail("agent_provider_response_invalid"); return }
+            for (record, title) in zip(active, titles) {
+                let item = NSMenuItem(title: title, action: nil, keyEquivalent: ""); item.representedObject = record.id
+                self.picker.menu?.addItem(item)
             }
+            guard self.picker.numberOfItems == active.count else { self.fail("agent_provider_response_invalid"); return }
             if let previous, let index = self.picker.itemArray.firstIndex(where: { $0.representedObject as? String == previous }) { self.picker.selectItem(at: index) }
             self.status.stringValue = self.providerNames.isEmpty ? "No provider is configured. Choose Add Provider." : "Provider settings loaded. Source transfer requires a separate review; agent execution remains disabled."
             self.refreshAvailability(); self.onRegistryChange?()
@@ -254,6 +273,42 @@ final class AgentProviderSettingsView: NSStackView {
 }
 
 extension AgentProviderSettingsView {
+    static func duplicateProviderTitlesSelfTest() -> Bool {
+        let view = AgentProviderSettingsView(); view.available = { true }
+        let ids = (0..<5).map { _ in UUID().uuidString.lowercased() }
+        var rows: [[String: Any]] = ids.enumerated().map { index, id in
+            ["provider_id": id, "adapter_id": agentProviderAdapter,
+             "name": index == 3 ? "Choose a provider…" : index == 4 ? "Duplicate profile · " + ids[0] : "Duplicate profile",
+             "models": ["test-model"], "configuration": [:], "generation": UUID().uuidString.lowercased(), "credential_generation": UUID().uuidString.lowercased(),
+             "credential_status": "configured", "status": "active", "destination": agentProviderDestination, "execution_available": false]
+        }
+        let adapter: [String: Any] = ["adapter_id": agentProviderAdapter, "name": "OpenAI Responses", "destination": agentProviderDestination,
+            "configuration_schema": ["type": "object", "properties": [:], "additionalProperties": false],
+            "credential_fields": [["id": "api_key", "label": "API key", "required": true, "max_bytes": 4096]], "model_selection": "explicit_ids"]
+        var requests = 0, edited: String?
+        view.request = { path, method, body, completion in
+            requests += 1
+            if path == "v1/agent-providers", method == "GET", body == nil {
+                completion(["schema_version": 1, "adapters": [adapter], "providers": rows, "live_execution_enabled": false], nil); return
+            }
+            guard method == "POST", let index = rows.firstIndex(where: { path == "v1/agent-providers/" + ($0["provider_id"] as! String) }),
+                  body?["expected_generation"] as? String == rows[index]["generation"] as? String,
+                  (body?["credentials"] as? [String: Any])?.isEmpty == true else { completion(nil, "invalid_test_request"); return }
+            edited = rows[index]["provider_id"] as? String; rows[index]["generation"] = UUID().uuidString.lowercased()
+            completion(["schema_version": 1, "provider": rows[index]], nil)
+        }
+        view.loadProviders()
+        guard view.picker.numberOfItems == 5, Set(view.picker.itemTitles).count == 5,
+              Set(view.picker.itemArray.compactMap { $0.representedObject as? String }) == Set(ids),
+              view.picker.itemTitles[3] == "Choose a provider…", view.picker.itemTitles[0].contains(ids[0]) else { return false }
+        view.picker.selectItem(at: 2); view.selectionChanged()
+        rows.reverse(); view.loadProviders()
+        guard view.selected?.id == ids[2], view.picker.numberOfItems == 5, Set(view.picker.itemTitles).count == 5 else { return false }
+        view.editButton.performClick(nil); view.saveButton.performClick(nil)
+        guard edited == ids[2], view.errorCode == nil, view.keyField.stringValue.isEmpty else { return false }
+        view.loadProviders()
+        return view.selected?.id == ids[2] && view.picker.numberOfItems == 5 && Set(view.picker.itemTitles).count == 5 && requests == 4
+    }
     /// Actual AppKit actions with a synthetic owner transport, never a provider.
     static func contractSelfTest() -> Bool {
         let id = UUID().uuidString.lowercased()

@@ -25,6 +25,29 @@ import verify_phase3_native_onnx as native_onnx
 
 PYTHON_CASES = ("callable", "dynamic_mcp")
 
+NATIVE_STAGES = frozenset({"connection", "source_selection", "initial_draft", "initial_form",
+    "resolution_review", "resolution_start", "resolution_poll", "resolution_recovery",
+    "generated_answers", "preparation_review", "preparation_start", "preparation_poll", "attached"})
+NATIVE_ERROR_CODES = frozenset({"request_failed", "host_unavailable", "native_acceptance_scope_stale",
+    "native_acceptance_route_limit", "invalid_release_policy", "source_changed", "source_identity_mismatch",
+    "stale_revision", "stale_import_revision", "preparation_disabled", "resolution_disabled",
+    "preparation_not_admitted", "resolution_not_admitted", "preparation_probe_failed",
+    "dependency_network_unavailable", "preparation_failed", "resolution_failed"})
+
+
+def native_failure_diagnostic(receipt, returncode):
+    """Retain only closed diagnostic vocabulary when joined cleanup removes state."""
+    stage = receipt.get("stage")
+    result = {"stage": stage if isinstance(stage, str) and stage in NATIVE_STAGES else "unclassified",
+        "native_exit_success": returncode == 0}
+    for key in ("passed", "native_directory_selection"):
+        if type(receipt.get(key)) is bool:
+            result[key] = receipt[key]
+    if "error_code" in receipt:
+        code = receipt["error_code"]
+        result["error_code"] = code if isinstance(code, str) and code in NATIVE_ERROR_CODES else "native_error_unclassified"
+    return result
+
 RESOLVED = ("resolved-python-v1", "1.0.1",
     "3c24410b46415cb83b9d945ebf0049f552e9f7493943164f311939a79b49000e")
 ONNX = ("onnxruntime-cpu-v1", "1.0.0",
@@ -86,8 +109,10 @@ class PublicPythonHarness(common.Harness):
             environment, home, timeout=330)
         common.require(output.is_file(), "native_receipt_missing")
         receipt = common.private_json(output, 256 * 1024)
-        common.require(code == 0 and receipt.get("passed") is True
-            and receipt.get("native_directory_selection") is True, "public_native_directory_failed")
+        if not (code == 0 and receipt.get("passed") is True and receipt.get("native_directory_selection") is True):
+            failure = common.AcceptanceError("public_native_directory_failed")
+            failure.native_diagnostic = native_failure_diagnostic(receipt, code)
+            raise failure
         observed = await self.cli(state, environment, home, "imports", "inspect", receipt["draft_id"], "--json")
         revision = receipt.get("source_selection_revision")
         common.require(type(revision) is int and revision >= receipt["initial_revision"]
@@ -244,6 +269,8 @@ def main():
             and re.fullmatch(r"[a-z][a-z0-9_]{0,127}", code) else "acceptance_failed"}
         if nested:
             report["diagnostic"]["nested_types"] = nested
+        if isinstance(error, common.AcceptanceError) and hasattr(error, "native_diagnostic"):
+            report["diagnostic"]["native"] = error.native_diagnostic
     if args.output:
         try:
             common.write_private_json(args.output.absolute(), report)

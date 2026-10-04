@@ -191,10 +191,78 @@ extension AgentPreparationView {
 func runAgentPreparationContractSelfTest() -> Bool {
     AgentProviderSettingsView.contractSelfTest() && AgentProviderSettingsView.duplicateProviderTitlesSelfTest() &&
         AgentPreparationView.providerOwnershipSelfTest() && AgentPreparationView.recipeChoiceSelfTest() &&
-        AgentPreparationView.recipeRefreshOwnershipSelfTest() && AgentPreparationView.duplicatePickerTitlesSelfTest() && AgentPreparationView.contractSelfTest()
+        AgentPreparationView.recipeRefreshOwnershipSelfTest() && AgentPreparationView.duplicatePickerTitlesSelfTest() &&
+        AgentPreparationView.proposalHandoffSelfTest() && PreparationWorkspaceView.agentProposalReviewSelfTest() && AgentPreparationView.contractSelfTest()
 }
 
 extension AgentPreparationView {
+    static func proposalHandoffSelfTest() -> Bool {
+        let context = PreparationTestData.context, digest = PreparationTestData.recipeDigest
+        func row(_ state: String = "succeeded", settled: Bool = true, proposal: Bool = true) -> [String: Any] {
+            ["schema_version": 1, "job_id": PreparationTestData.jobID, "plan_id": PreparationTestData.planID,
+             "import_id": context.importID, "revision": context.revision, "source_revision": context.sourceRevision,
+             "state": state, "local_io_settled": settled, "proposal_digest": proposal ? digest as Any : NSNull(),
+             "candidate": NSNull(), "verification": NSNull(), "installed": false, "error_code": NSNull()]
+        }
+        let ordinary = PreparationWorkspaceView(), view = AgentPreparationView()
+        ordinary.available = { true }; ordinary.bind(context, saved: true, eligible: true)
+        view.available = { !ordinary.busy && !ordinary.hasActiveJob }; view.bind(context, saved: true)
+        var routes: [String] = [], transfers = 0, reviews = 0
+        var pendingForm = PreparationTestData.resolutionForm(); pendingForm["fields"] = []
+        pendingForm["blockers"] = ["dependency_resolution_required"]
+        ordinary.request = { path, method, body, complete in
+            routes.append(path)
+            guard method == "POST" else { complete(nil, "invalid_test_request"); return }
+            if path == "v1/preparations/form", Set(body?.keys.map { $0 } ?? []) == ["import_id", "revision"] {
+                complete(pendingForm, nil)
+            } else if path == "v1/resolutions/plan" { complete(PreparationTestData.resolutionPlan(), nil) }
+            else if path == "v1/resolutions/start" { complete(PreparationTestData.resolutionJob(), nil) }
+            else { complete(nil, "invalid_test_request") }
+        }
+        view.request = { _, _, _, complete in transfers += 1; complete(nil, "invalid_test_request") }
+        view.onReviewPreparation = { expected in reviews += 1; return ordinary.reviewAgentProposal(expected) }
+        view.job = AgentPreparationJob(row()); view.showJob()
+        guard reviews == 0, routes.isEmpty, transfers == 0, view.adoptButton.isEnabled,
+              view.adoptButton.title == "Review Preparation", view.status.stringValue.contains("preparation review") else { return false }
+        view.adoptButton.performClick(nil)
+        guard reviews == 1, routes == ["v1/preparations/form"], transfers == 0,
+              ordinary.form?.resolutionRequired == true, ordinary.resolutionJob == nil,
+              ordinary.review == nil, ordinary.resolutionReview == nil, ordinary.job == nil else { return false }
+        ordinary.reviewResolution()
+        guard routes == ["v1/preparations/form", "v1/resolutions/plan"], ordinary.resolutionJob == nil,
+              ordinary.resolutionReview?.canStart() == true else { return false }
+        ordinary.startResolution(); view.refreshAvailability()
+        guard routes == ["v1/preparations/form", "v1/resolutions/plan", "v1/resolutions/start"], ordinary.hasActiveJob,
+              !view.adoptButton.isEnabled, transfers == 0 else { return false }
+        view.adoptCandidate(); guard reviews == 1 else { return false }
+        // Direct selectors have the same guards as disabled buttons.
+        let denied = AgentPreparationView(); var deniedReviews = 0
+        denied.available = { true }; denied.bind(context, saved: true)
+        denied.onReviewPreparation = { _ in deniedReviews += 1; return true }
+        denied.request = { _, _, _, complete in transfers += 1; complete(nil, "invalid_test_request") }
+        for state in ["analyzing", "canceled", "failed", "interrupted", "adopted"] {
+            denied.job = AgentPreparationJob(row(state)); denied.refreshAvailability(); denied.adoptCandidate()
+            guard !denied.adoptButton.isEnabled, deniedReviews == 0 else { return false }
+        }
+        for value in [row(settled: false), row(proposal: false)] {
+            denied.job = AgentPreparationJob(value); denied.refreshAvailability(); denied.adoptCandidate()
+            guard !denied.adoptButton.isEnabled, deniedReviews == 0 else { return false }
+        }
+        denied.job = AgentPreparationJob(row()); denied.available = { false }; denied.adoptCandidate()
+        guard deniedReviews == 0 else { return false }
+        denied.available = { true }; denied.bind(context, saved: false); denied.job = AgentPreparationJob(row()); denied.adoptCandidate()
+        guard deniedReviews == 0 else { return false }
+        for other in [PreparationContext(importID: UUID().uuidString.lowercased(), revision: 1, sourceRevision: context.sourceRevision),
+                      PreparationContext(importID: context.importID, revision: 2, sourceRevision: context.sourceRevision),
+                      PreparationContext(importID: context.importID, revision: 1, sourceRevision: "changed-source")] {
+            denied.bind(other, saved: true); denied.job = AgentPreparationJob(row()); denied.refreshAvailability(); denied.adoptCandidate()
+            guard !denied.adoptButton.isEnabled, deniedReviews == 0 else { return false }
+        }
+        denied.bind(context, saved: true); denied.job = AgentPreparationJob(row()); denied.onReviewPreparation = nil
+        denied.refreshAvailability(); guard !denied.adoptButton.isEnabled else { return false }
+        denied.onReviewPreparation = { _ in false }; denied.adoptCandidate()
+        return deniedReviews == 0 && transfers == 0 && denied.errorCode == "agent_preparation_review_unavailable"
+    }
     static func duplicatePickerTitlesSelfTest() -> Bool {
         let view = AgentPreparationView(); view.available = { true }
         guard let context = PreparationContext(importID: UUID().uuidString.lowercased(), revision: 1, sourceRevision: "sha256:" + String(repeating: "a", count: 64)) else { return false }
@@ -431,6 +499,7 @@ final class AgentPreparationView: NSStackView {
     var request: PreparationRequest?
     var available: (() -> Bool)?
     var onUpdatedDraft: (([String: Any]) -> Bool)?
+    var onReviewPreparation: ((PreparationContext) -> Bool)?
     var onStateChange: (() -> Void)?
     private var context: PreparationContext?
     private var saved = false
@@ -541,7 +610,11 @@ final class AgentPreparationView: NSStackView {
         sendButton?.isEnabled = online && !blocksNavigation && currentPlan()
         cancelButton?.isEnabled = online && !busy && job?.active == true && job?.state != "cancel_requested"
         retryButton?.isEnabled = online && !busy && (pendingStart != nil || job != nil)
-        adoptButton?.isEnabled = editable && job?.state == "succeeded" && job?.settled == true && job?.candidateDigest != nil && job?.context == context
+        let pendingProposal = job?.state == "succeeded" && job?.candidateDigest == nil && job?.proposalDigest != nil
+        adoptButton?.title = pendingProposal ? "Review Preparation" : "Use Candidate in Preparation"
+        adoptButton?.setAccessibilityLabel(adoptButton.title)
+        adoptButton?.isEnabled = editable && job?.state == "succeeded" && job?.settled == true && job?.proposalDigest != nil && job?.context == context &&
+            (job?.candidateDigest != nil || onReviewPreparation != nil)
         for control in [providerPicker, modelPicker, recipePicker, transfer, output, deadline] as [NSControl] { control.isEnabled = editable }
         fileControls.forEach { $0.isEnabled = editable }
         metadataControls.forEach { $0.isEnabled = editable }
@@ -800,7 +873,9 @@ final class AgentPreparationView: NSStackView {
     }
     private func showJob() {
         status.stringValue = job?.errorCode?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Analysis: " + (job?.state ?? "unknown")
-        if job?.state == "succeeded", job?.candidateDigest == nil { status.stringValue = "The proposal needs further review. No executable candidate was admitted." }
+        if job?.state == "succeeded", job?.candidateDigest == nil, job?.proposalDigest != nil {
+            status.stringValue = "The proposal is ready for preparation review. Review the remaining questions and dependency scope before building."
+        }
         refreshAvailability(); onStateChange?()
     }
     @objc func retryStatus() { if pendingStart != nil { sendPending() } else { poll(force: true) } }
@@ -825,8 +900,15 @@ final class AgentPreparationView: NSStackView {
         }
     }
     @objc func adoptCandidate() {
-        guard !blocksNavigation, let job, job.context == context, job.state == "succeeded", job.settled,
-              let digest = job.proposalDigest, job.candidateDigest != nil, let request else { return }
+        guard available?() == true, saved, !blocksNavigation, let job, job.context == context, job.state == "succeeded", job.settled,
+              let digest = job.proposalDigest else { return }
+        if job.candidateDigest == nil {
+            guard onReviewPreparation?(job.context) == true else { fail("agent_preparation_review_unavailable"); return }
+            errorCode = nil
+            status.stringValue = "Review the normal preparation questions and dependency scope before building."
+            refreshAvailability(); onStateChange?(); return
+        }
+        guard let request else { return }
         invalidateJobResponses()
         busy = true; refreshAvailability()
         request("v1/agent-preparations/start", "POST", ["action": "adopt-candidate", "job_id": job.id, "proposal_digest": digest]) { [weak self] object, code in

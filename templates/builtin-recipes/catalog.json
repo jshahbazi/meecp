@@ -25,10 +25,10 @@
       "version": "1.0.5"
     },
     {
-      "digest": "84cf4753aa429fe80304527ec8781b7e76c9db15a902970a63e18bd41c716e75",
-      "directory": "native-command-v1",
+      "digest": "4c8244519199d76224efa11ace14c8edc5f14d2218c85ecf31a4de16913b3c79",
+      "directory": "native-command-v1-0-1",
       "recipe_id": "mcpme.native-command",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "digest": "ed6413e202c9f9e8de682c324b2e46695c9c59e1bb44d15db6a5f423dce3cc04",

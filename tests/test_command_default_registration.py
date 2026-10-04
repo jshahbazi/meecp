@@ -6,7 +6,7 @@ import hashlib
 import pytest
 
 from mcpme.command_execution_v2 import CommandExecutionError
-from mcpme.preparation_command import COMPONENT_ID
+from mcpme.preparation_command import COMPONENT_ID, VERSION
 from mcpme import preparation_command_registration as registration
 from mcpme.preparation_contracts import canonical_bytes
 from mcpme.supervisor import Supervisor
@@ -122,15 +122,39 @@ async def test_default_command_recipe_lifecycle_survives_cold_restart(tmp_path, 
     state = tmp_path.resolve() / "state"
     host = Supervisor(state, reaper)
     try:
-        before = getattr(host.recipes, action)("mcpme.native-command", "1.0.0")
+        before = getattr(host.recipes, action)("mcpme.native-command", VERSION)
     finally:
         await host.close()
     restarted = Supervisor(state, reaper)
     try:
-        assert restarted.recipes.inspect("mcpme.native-command", "1.0.0") == before
+        assert restarted.recipes.inspect("mcpme.native-command", VERSION) == before
         metadata = next(item for item in restarted.builtin_recipe_metadata["recipes"]
                         if item["recipe_id"] == "mcpme.native-command")
         assert metadata["ready"] is False and metadata["execution_available"] is False
         assert restarted.commands.admission is None and restarted.preparation_runner.enabled is False
     finally:
         await restarted.close()
+
+
+@pytest.mark.parametrize("action", ["disable", "revoke", "remove", "deprecate"])
+async def test_previous_command_recipe_opt_out_is_preserved_on_upgrade(tmp_path, packaged, action):
+    from pathlib import Path
+    from mcpme.imports import ImportStore
+    from mcpme.recipes import RecipeStore
+    _, reaper, _ = packaged
+    state = tmp_path.resolve() / "state"
+    legacy = Path(__file__).resolve().parents[1] / "templates/builtin-recipes/native-command-v1"
+    with ImportStore(state) as imports:
+        recipes = RecipeStore(imports)
+        recipes.add(legacy)
+        before = getattr(recipes, action)("mcpme.native-command", "1.0.0")
+    host = Supervisor(state, reaper)
+    try:
+        assert host.recipes.inspect("mcpme.native-command", "1.0.0") == before
+        metadata = next(item for item in host.builtin_recipe_metadata["recipes"]
+            if item["recipe_id"] == "mcpme.native-command")
+        assert metadata["version"] == VERSION and not metadata["ready"]
+        assert "builtin_recipe_lifecycle_preserved" in metadata["blockers"]
+        assert not metadata["execution_available"] and not host.preparation_runner.enabled
+    finally:
+        await host.close()

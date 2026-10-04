@@ -151,7 +151,13 @@ class Resident:
 
 class Supervisor(UpgradeHost):
     def __init__(self, state_dir: Path, reaper: Path, *, preparation_runner_factory=None, resolution_runner_factory=None,
-                 command_admission=None, agent_preparation_factory=None):
+                 command_admission=None, command_resource_admission=None, agent_preparation_factory=None):
+        if command_resource_admission is not None:
+            from .host_command import HostCommandAdmission
+            from .preparation_command_owner import CommandPreparationResourceAdmission
+            if (type(command_admission) is not HostCommandAdmission
+                    or type(command_resource_admission) is not CommandPreparationResourceAdmission):
+                raise PreparationError("command_preparation_not_admitted")
         self.root = ensure_private_directory(state_dir.absolute())
         self.lock_fd = os.open(self.root / "supervisor.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         try:
@@ -239,12 +245,19 @@ class Supervisor(UpgradeHost):
             self.resolution_reservations.update(self.resolution_reservation_values())
             self.preparation_reservation_root = ensure_private_directory(self.root / "preparation-reservations")
             self.load_preparation_reservations()
+            runner_admissions = {}
             if preparation_runner_factory is None:
                 from .preparation_runner import PreparationRunner
                 preparation_runner_factory = PreparationRunner
+                runner_admissions = {"command_admission": command_admission,
+                    "command_resource_admission": command_resource_admission}
+            elif command_resource_admission is not None:
+                runner_admissions = {"command_admission": command_admission,
+                    "command_resource_admission": command_resource_admission}
             self.preparation_runner = preparation_runner_factory(
                 self.preparations, self.reaper.parent.parent, self.reaper,
-                reserve_resources=self.reserve_preparation, release_resources=self.release_preparation, enabled=False)
+                reserve_resources=self.reserve_preparation, release_resources=self.release_preparation,
+                enabled=False, **runner_admissions)
             if resolution_runner_factory is None:
                 from .preparation_resolution_runner import OwnedResolutionRunner
                 resolution_runner_factory = OwnedResolutionRunner

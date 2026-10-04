@@ -161,6 +161,9 @@ class PublicCommandHarness(command.CommandHarness):
         try:
             caps = await self.cli(state, environment, home, "capabilities", "--json")
             execution = caps.get("preparation_execution", {})
+            require(caps.get("package_schema_versions") == [1, 2]
+                and caps.get("profiles") == ["mcp-stdio", "mcp-http", "model-service", "host-command"],
+                "public_command_install_capability_inactive")
             require(caps["automatic_preparation"] is True and caps["recipe_execution"] is True
                 and list(COMPONENT) in execution.get("families", [])
                 and [list(COMPONENT)] in execution.get("recipe_component_sets", []), "public_command_capability_inactive")
@@ -187,6 +190,7 @@ class PublicCommandHarness(command.CommandHarness):
                 "public_command_review_created_job")
             self.source_check(source, original, remove=True)
             self.public_report["public_review"] = {"exact_family_and_singleton_closure": True,
+                "installed_schema_two_and_command_profile_advertised": True,
                 "generated_form_execution_available": True, "review_execution_available": True,
                 "review_created_jobs": False, "recipe_digest": recipe["digest"], "plan_digest": review["plan_digest"]}
             return True

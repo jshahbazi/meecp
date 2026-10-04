@@ -23,7 +23,7 @@ def main() -> int:
         '/usr/bin/swiftc', '-O', '-swift-version', '5', '-parse-as-library',
         '-target', 'arm64-apple-macos14.0', '-framework', 'AppKit', '-framework', 'Foundation',
         str(ROOT / 'BonsaiPlayground.swift'), str(ROOT / 'Conversation.swift'),
-        str(ROOT / 'SystemPromptEditor.swift'), '-o', str(binary),
+        str(ROOT / 'SystemPromptEditor.swift'), str(ROOT / 'ModelProfiles.swift'), '-o', str(binary),
     ], check=True)
     info = {
         'CFBundleName': 'Bonsai Playground',
@@ -31,8 +31,8 @@ def main() -> int:
         'CFBundleIdentifier': 'dev.mcpme.bonsai-playground',
         'CFBundleExecutable': 'BonsaiPlayground',
         'CFBundlePackageType': 'APPL',
-        'CFBundleVersion': '2',
-        'CFBundleShortVersionString': '0.2.0',
+        'CFBundleVersion': '3',
+        'CFBundleShortVersionString': '0.3.0',
         'LSMinimumSystemVersion': '14.0',
         'NSHighResolutionCapable': True,
         'NSPrincipalClass': 'NSApplication',

@@ -2,11 +2,11 @@ import AppKit
 import Darwin
 import Foundation
 
-private let defaultModelPath = "/Users/johnshahbazian/development/mcpme/models/bonsai-1.7b/Ternary-Bonsai-1.7B-Q2_0_g64.gguf"
 private let defaultRuntimePath = "/opt/homebrew/bin/llama-completion"
 
 private struct GenerationSettings {
-    var model = defaultModelPath
+    var profile = ModelProfile.bonsai
+    var model = ModelProfile.bonsai.defaultModelPath
     var runtime = defaultRuntimePath
     var system = "Be helpful, concise, and accurate."
     var temperature = 0.2
@@ -15,7 +15,7 @@ private struct GenerationSettings {
     var seed = 42
 
     func render(_ prompt: String, conversation: Conversation = Conversation()) -> String {
-        conversation.render(system: system, prompt: prompt)
+        profile.render(system: system, prompt: prompt, conversation: conversation)
     }
 }
 
@@ -36,6 +36,7 @@ private struct GenerationResult {
         case "timeout": return "The model took too long and was stopped."
         case "busy": return "Wait for the current response or press Stop."
         case "context_full": return "Conversation reached the context limit. Increase Context in Settings or start a New Chat."
+        case "empty_result": return "The model finished without an answer. Try another prompt or change the settings."
         case .some: return "The model could not complete this prompt."
         case .none:
             if let speed = tokensPerSecond {
@@ -90,6 +91,9 @@ private final class ModelRunner {
         var status: Int32 = 0
         var stopped = false
         var failure: String?
+        var outputPrefix = ""
+        var profile = ModelProfile.bonsai
+        var hasVisibleText = false
 
         init(onText: @escaping (String) -> Void,
              onComplete: @escaping (GenerationResult) -> Void) {
@@ -113,6 +117,8 @@ private final class ModelRunner {
                 return
             }
             let job = Job(onText: onText, onComplete: onComplete)
+            job.outputPrefix = settings.profile.assistantOutputPrefix
+            job.profile = settings.profile
             let model = (settings.model as NSString).expandingTildeInPath
             let runtime = (settings.runtime as NSString).expandingTildeInPath
             var directory: ObjCBool = false
@@ -134,7 +140,7 @@ private final class ModelRunner {
                 "--no-context-shift", "--no-escape",
                 "--color", "off", "--seed", String(settings.seed), "--temp", String(settings.temperature),
                 "--top-k", "40", "--top-p", "0.95", "--min-p", "0.0"
-            ]
+            ] + settings.profile.runtimeArguments
             job.process.standardInput = job.input
             job.process.standardOutput = job.output
             job.process.standardError = job.errors
@@ -236,15 +242,25 @@ private final class ModelRunner {
         job.tail += text
         let visible: String
         if final {
-            visible = job.tail.replacingOccurrences(of: "\\s+\\[end of text\\]\\s*\\z",
-                                                     with: "", options: .regularExpression)
+            visible = job.profile.cleanCompletionTail(job.tail.replacingOccurrences(
+                of: "\\s+\\[end of text\\]\\s*\\z", with: "", options: .regularExpression))
             job.tail = ""
         } else if job.tail.count > 80 {
             let boundary = job.tail.index(job.tail.endIndex, offsetBy: -80)
             visible = String(job.tail[..<boundary])
             job.tail = String(job.tail[boundary...])
         } else { return }
-        if !visible.isEmpty { DispatchQueue.main.async { job.onText(visible) } }
+        if !visible.isEmpty {
+            if final && !job.hasVisibleText && visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return
+            }
+            if !visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                job.hasVisibleText = true
+            }
+            let chunk = job.outputPrefix + visible
+            job.outputPrefix = ""
+            DispatchQueue.main.async { job.onText(chunk) }
+        }
     }
 
     private func finishIfReady(_ job: Job) {
@@ -266,7 +282,8 @@ private final class ModelRunner {
         else { speed = nil }
         let contextFull = diagnostics.range(of: "prompt is too long", options: .caseInsensitive) != nil
             || diagnostics.range(of: "context full", options: .caseInsensitive) != nil
-        let failure = job.failure ?? (contextFull ? "context_full" : (job.status == 0 ? nil : "process_failed"))
+        let failure = job.failure ?? (contextFull ? "context_full"
+            : (job.status != 0 ? "process_failed" : (job.hasVisibleText ? nil : "empty_result")))
         let result = GenerationResult(elapsed: Date().timeIntervalSince(job.started),
                                       tokensPerSecond: speed, failure: failure, stopped: job.stopped)
         job.stderr.removeAll(keepingCapacity: false)
@@ -288,13 +305,22 @@ private final class DraftTextView: NSTextView {
 }
 
 private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+    private struct ChatSession {
+        let conversation: Conversation
+        let transcript: NSAttributedString
+        let draft: String
+        let modelPath: String
+        let maximumOutput: String
+    }
+
     private let runner = ModelRunner()
     private var window: NSWindow!
     private var promptView: NSTextView!
     private var responseView: NSTextView!
     private let status = NSTextField(labelWithString: "Ready. Follow-ups include this conversation.")
     private let systemEditor = SystemPromptEditor(text: "Be helpful, concise, and accurate.")
-    private let modelField = NSTextField(string: defaultModelPath)
+    private let modelField = NSTextField(string: ModelProfile.bonsai.defaultModelPath)
+    private let modelSelector = NSPopUpButton(frame: .zero, pullsDown: false)
     private let runtimeField = NSTextField(string: defaultRuntimePath)
     private let seedField = NSTextField(string: "42")
     private let temperature = NSSlider(value: 0.2, minValue: 0, maxValue: 1, target: nil, action: nil)
@@ -314,19 +340,26 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
     private var conversation = Conversation()
     private var pendingPrompt = ""
     private var pendingResponse = ""
+    private var selectedProfile = ModelProfile.bonsai
+    private var sessions: [ModelProfile: ChatSession] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMenus()
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 920, height: 760),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
-        window.title = "Bonsai Playground — Chat"
+        window.title = "Bonsai Playground — Models"
         window.isReleasedWhenClosed = false
         window.isRestorable = false
         window.contentMinSize = NSSize(width: 760, height: 620)
         let content = window.contentView!
-        let explanation = NSTextField(labelWithString: "Try Bonsai locally. Prompts and responses stay in memory.")
+        let explanation = NSTextField(labelWithString: "Try compact models locally. Each model keeps its own chat in memory.")
         explanation.textColor = .secondaryLabelColor
+        modelSelector.addItems(withTitles: ModelProfile.allCases.map { $0.displayName })
+        modelSelector.target = self
+        modelSelector.action = #selector(selectModel)
+        modelSelector.toolTip = "MiniCPM5-2B-Claude-Fable5-1-Thinking-Agentic, IQ2_XXS"
+        let modelSelection = row([label("Model"), modelSelector])
         let conversationLabel = label("Conversation")
         let responseScroll = textArea(editable: false)
         responseView = responseScroll.documentView as? NSTextView
@@ -359,7 +392,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         status.textColor = .secondaryLabelColor
         status.font = .systemFont(ofSize: 12)
         composer.addArrangedSubview(status)
-        for view in [explanation, conversationLabel, responseScroll, composer] {
+        for view in [explanation, modelSelection, conversationLabel, responseScroll, composer] {
             view.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(view)
             view.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18).isActive = true
@@ -367,7 +400,8 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         }
         NSLayoutConstraint.activate([
             explanation.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
-            conversationLabel.topAnchor.constraint(equalTo: explanation.bottomAnchor, constant: 12),
+            modelSelection.topAnchor.constraint(equalTo: explanation.bottomAnchor, constant: 10),
+            conversationLabel.topAnchor.constraint(equalTo: modelSelection.bottomAnchor, constant: 10),
             responseScroll.topAnchor.constraint(equalTo: conversationLabel.bottomAnchor, constant: 6),
             responseScroll.bottomAnchor.constraint(equalTo: composer.topAnchor, constant: -14),
             responseScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 100),
@@ -444,7 +478,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
                                      label("Seed"), seedField]))
         let modelBrowse = NSButton(title: "Choose…", target: self, action: #selector(chooseModel))
         let runtimeBrowse = NSButton(title: "Choose…", target: self, action: #selector(chooseRuntime))
-        let modelRow = row([label("Model"), modelField, modelBrowse])
+        let modelRow = row([label("Model file"), modelField, modelBrowse])
         let runtimeRow = row([label("Runtime"), runtimeField, runtimeBrowse])
         panel.addArrangedSubview(modelRow)
         panel.addArrangedSubview(runtimeRow)
@@ -482,6 +516,26 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
     @objc private func chooseModel() { chooseFile(for: modelField) }
     @objc private func chooseRuntime() { chooseFile(for: runtimeField) }
 
+    @objc private func selectModel() {
+        guard !generating, ModelProfile.allCases.indices.contains(modelSelector.indexOfSelectedItem) else { return }
+        let profile = ModelProfile.allCases[modelSelector.indexOfSelectedItem]
+        guard profile != selectedProfile else { return }
+        sessions[selectedProfile] = ChatSession(conversation: conversation,
+            transcript: NSAttributedString(attributedString: responseView.attributedString()),
+            draft: promptView.string, modelPath: modelField.stringValue,
+            maximumOutput: maximumOutput.titleOfSelectedItem ?? "512")
+        selectedProfile = profile
+        let session = sessions[profile]
+        conversation = session?.conversation ?? Conversation()
+        responseView.textStorage?.setAttributedString(session?.transcript ?? NSAttributedString(string: ""))
+        replaceDraft(session?.draft ?? "")
+        promptView.undoManager?.removeAllActions()
+        modelField.stringValue = session?.modelPath ?? profile.defaultModelPath
+        maximumOutput.selectItem(withTitle: session?.maximumOutput ?? String(profile.defaultMaximumOutput))
+        status.stringValue = "Ready. " + profile.speakerName + " chat selected."
+        window.makeFirstResponder(promptView)
+    }
+
     private func chooseFile(for field: NSTextField) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
@@ -506,6 +560,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
             return
         }
         var settings = GenerationSettings()
+        settings.profile = selectedProfile
         settings.model = modelField.stringValue
         settings.runtime = runtimeField.stringValue
         settings.system = systemEditor.string
@@ -516,7 +571,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         pendingPrompt = prompt
         pendingResponse = ""
         appendTranscript("You", body: prompt)
-        appendTranscript("Bonsai", body: "")
+        appendTranscript(selectedProfile.speakerName, body: "")
         replaceDraft("")
         setGenerating(true)
         started = Date()
@@ -560,6 +615,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         send.isEnabled = !value
         clear.isEnabled = !value
         stop.isEnabled = value
+        modelSelector.isEnabled = !value
         promptView.isEditable = !value
         systemEditor.isEditable = !value
         for control in settingsControls { control.isEnabled = !value }
@@ -690,6 +746,37 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         setGenerating(false)
         checks["generation_restores_system_editor"] = systemEditor.isEditable
         checks["system_edit_keeps_window_size"] = window.frame.size == frame.size
+        conversation.append(user: "synthetic bonsai user", assistant: "synthetic bonsai answer")
+        responseView.string = "synthetic bonsai transcript"
+        replaceDraft("synthetic bonsai draft")
+        modelSelector.selectItem(at: 1)
+        selectModel()
+        checks["selector_switches_model_path_and_budget"] = selectedProfile == .minicpm
+            && modelField.stringValue == ModelProfile.minicpm.defaultModelPath
+            && maximumOutput.titleOfSelectedItem == "2048"
+        checks["models_start_with_separate_chats"] = conversation.isEmpty
+            && responseView.string.isEmpty && promptView.string.isEmpty
+        conversation.append(user: "synthetic minicpm user", assistant: "synthetic minicpm answer")
+        responseView.string = "synthetic minicpm transcript"
+        replaceDraft("synthetic minicpm draft")
+        modelSelector.selectItem(at: 0)
+        selectModel()
+        checks["switch_restores_bonsai_chat"] = selectedProfile == .bonsai
+            && conversation.turns.first?.assistant == "synthetic bonsai answer"
+            && responseView.string == "synthetic bonsai transcript" && promptView.string == "synthetic bonsai draft"
+        clearPrompt()
+        modelSelector.selectItem(at: 1)
+        selectModel()
+        checks["new_chat_preserves_other_model_chat"] = conversation.turns.first?.assistant == "synthetic minicpm answer"
+            && responseView.string == "synthetic minicpm transcript" && promptView.string == "synthetic minicpm draft"
+        modelSelector.selectItem(at: 0)
+        selectModel()
+        checks["new_chat_stays_reset_after_model_switch"] = conversation.isEmpty
+            && responseView.string.isEmpty && promptView.string.isEmpty
+        setGenerating(true)
+        checks["generation_disables_model_switch"] = !modelSelector.isEnabled
+        setGenerating(false)
+        checks["generation_restores_model_switch"] = modelSelector.isEnabled
         return checks
     }
 
@@ -744,6 +831,12 @@ private enum SmokeTest {
         settings.context = 2048
         settings.maximumOutput = 64
         let arguments = CommandLine.arguments
+        if let index = arguments.firstIndex(of: "--profile"), index + 1 < arguments.count,
+           let profile = ModelProfile(rawValue: arguments[index + 1]) {
+            settings.profile = profile
+            settings.model = profile.defaultModelPath
+            settings.maximumOutput = profile == .minicpm ? profile.defaultMaximumOutput : 64
+        }
         for (flag, apply) in [
             ("--model", { (value: String) in settings.model = value }),
             ("--runtime", { (value: String) in settings.runtime = value })
@@ -762,8 +855,10 @@ private enum SmokeTest {
             answer = ""
             runner.start(prompt: prompt, settings: settings, conversation: conversation,
                          onText: { answer += $0 }, onComplete: { result in
+                let finalAnswer = settings.profile == .minicpm
+                    ? (answer.components(separatedBy: "</think>").last ?? "") : answer
                 let passed = result.failure == nil && !result.stopped
-                    && answer.trimmingCharacters(in: .whitespacesAndNewlines) == (turn == 0 ? "42" : "43")
+                    && finalAnswer.trimmingCharacters(in: .whitespacesAndNewlines) == (turn == 0 ? "42" : "43")
                 if passed && turn == 0 {
                     conversation.append(user: prompt, assistant: answer)
                     turn = 1
@@ -773,6 +868,12 @@ private enum SmokeTest {
                 var metadata: [String: Any] = ["pass": passed, "turns_checked": turn + 1,
                     "elapsed_seconds": result.elapsed,
                     "failure": result.failure ?? (passed ? "none" : "answer_mismatch")]
+                if settings.profile == .minicpm {
+                    metadata["thinking_closed"] = answer.contains("</think>")
+                    metadata["response_characters"] = answer.count
+                    metadata["expected_integer_present"] = answer.contains(turn == 0 ? "42" : "43")
+                    metadata["final_is_integer"] = Int(finalAnswer.trimmingCharacters(in: .whitespacesAndNewlines)) != nil
+                }
                 if let speed = result.tokensPerSecond { metadata["tokens_per_second"] = speed }
                 if let data = try? JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]),
                    let text = String(data: data, encoding: .utf8) { print(text) }
@@ -789,7 +890,7 @@ private enum BonsaiPlayground {
     static func main() {
         signal(SIGPIPE, SIG_IGN)
         if CommandLine.arguments.contains("--conversation-self-test") {
-            let checks = ConversationChecks.run()
+            let checks = ConversationChecks.run().merging(ModelProfileChecks.run()) { first, _ in first }
             if let data = try? JSONSerialization.data(withJSONObject: checks, options: [.sortedKeys]),
                let text = String(data: data, encoding: .utf8) { print(text) }
             exit(checks.values.allSatisfy { $0 } ? 0 : 1)

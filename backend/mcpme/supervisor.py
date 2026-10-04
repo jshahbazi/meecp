@@ -151,7 +151,7 @@ class Resident:
 
 class Supervisor(UpgradeHost):
     def __init__(self, state_dir: Path, reaper: Path, *, preparation_runner_factory=None, resolution_runner_factory=None,
-                 command_admission=None):
+                 command_admission=None, agent_preparation_factory=None):
         self.root = ensure_private_directory(state_dir.absolute())
         self.lock_fd = os.open(self.root / "supervisor.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         try:
@@ -250,6 +250,9 @@ class Supervisor(UpgradeHost):
             self.secrets = SecretStore(self.root)
             self.downloads = DownloadManager(self.root)
             self.upgrades = UpgradeStore(self.root)
+            from .preparation_agent_host import AgentPreparationHost
+            factory = agent_preparation_factory or AgentPreparationHost
+            self.agent_preparations = factory(self.preparations, self.root / "agent-preparations")
         except BaseException:
             if hasattr(self, "imports"):
                 self.imports.close()
@@ -1985,7 +1988,7 @@ class Supervisor(UpgradeHost):
                         with contextlib.suppress(Exception, asyncio.CancelledError):
                             await _await_ownership(task)
                 failures = []
-                for runner in (self.preparation_runner, self.capture_runner, self.resolution_runner):
+                for runner in (self.agent_preparations, self.preparation_runner, self.capture_runner, self.resolution_runner):
                     try:
                         await runner.close()
                     except (OwnershipLost, ArtifactError, PreparationError) as error:
@@ -2407,17 +2410,18 @@ def management_app(host: Supervisor, token: str, port: int):
         Route("/v1/migrations/{transfer_id}/rollback", dispatch, methods=["POST"]),
         Route("/v1/migrations/{transfer_id}/recover", dispatch, methods=["POST"]),
         Route("/v1/slots/{slot_id}/{action}", dispatch, methods=["POST"])])
-    return LocalPolicy(app, token=token, port=port, authenticate=authenticate)
+    from .preparation_agent_host import agent_preparation_routes
+    return agent_preparation_routes(LocalPolicy(app, token=token, port=port, authenticate=authenticate), host.agent_preparations)
 
 
-async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None, *, preparation_runner_factory=None, resolution_runner_factory=None):
+async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None, *, preparation_runner_factory=None, resolution_runner_factory=None, agent_preparation_factory=None):
     if platform.system() != "Darwin" or platform.machine() != "arm64" or int(platform.mac_ver()[0].split(".")[0]) < 26:
         raise HostError("unsupported_platform")
     # Trusted development acceptance may inject an explicitly enabled runner.
     # The CLI and ordinary native launch supply no factory; production remains
     # disabled by Supervisor's default. No payload or environment selects one.
     host = Supervisor(state_dir, reaper, preparation_runner_factory=preparation_runner_factory,
-                      resolution_runner_factory=resolution_runner_factory)
+                      resolution_runner_factory=resolution_runner_factory, agent_preparation_factory=agent_preparation_factory)
     listener = bind_listener()
     token = secrets.token_urlsafe(32)
     port = listener.getsockname()[1]

@@ -61,4 +61,21 @@ For directory/document source selection, `SelectionSnapshotMetadata` records exa
 
 The repaired packet passed 150 focused tests in 9.01 seconds and the actual AppKit handler checker. The existing Swift suite again passed 18 with 3 opt-in skips. All four independently authored controls passed on the repaired source: source mutation denied at revision 1/no selection, exactly four adoption workers, settled canceled UI/adoption disabled after a delayed GET, and shutdown with planning finished/no residual worker. Durable tests also cover mixed analysis/adoption capacity; restored source bytes and mtime still fail the ctime fence; file/root replacement, mode changes, unknown files/directories and FIFO substitution fail; and mutation during full validation cannot become a new baseline.
 
-The repaired actual Python pipeline passed in 23.34 seconds with the same source-only/provider-simulated scope and joined ownership. Receipt `/private/tmp/mcpme-agent-pipeline-receipt-v3.json` (1139 bytes, mode 0600), SHA-256 `b77d6b1b274b719e55bf66410f1828153cb3ef0be68d820f2b2832f04af4abe1`, records the exact before/after immutable private host checks and leaves `a5_scope_complete=false`. Earlier receipt versions remain preserved. Different-author final replacement review and root shared registration are still pending.
+The repaired actual Python pipeline passed in 23.34 seconds with the same source-only/provider-simulated scope and joined ownership. Receipt `/private/tmp/mcpme-agent-pipeline-receipt-v3.json` (1139 bytes, mode 0600), SHA-256 `b77d6b1b274b719e55bf66410f1828153cb3ef0be68d820f2b2832f04af4abe1`, records the exact before/after immutable private host checks and leaves `a5_scope_complete=false`. Earlier receipt versions remain preserved.
+
+Different-author replacement review cleared `06f253f6`: 150 focused checks,
+the exact reproduced race controls and actual copied-source AppKit handlers
+passed. The reviewer independently reran the source-only pipeline in 23.37
+seconds, including real private building, SDK verification, attachment at
+revision 2 and relocation after source/attachment removal. All 4,782 frozen
+host hashes matched before and after execution. Provider calls remained four
+simulated and zero live. Review receipt SHA-256:
+`8aad8dd8bf7b5d8ffbb19ed6209a2298fe827fd93990b0583bb194447ff7c4c0`.
+The repaired source is integrated as `86ff1a5`.
+
+Root's applied owner-route/native registration passed 96 backend checks,
+native release compilation and three UI self-tests. An additional integrated
+route regression covers unauthenticated rejection, old scoped grants on all
+four agent routes, Host/Origin denial and empty default providers. Independent
+parent-navigation review, packaged native socket acceptance, generated adapters
+and live-provider acceptance remain open.

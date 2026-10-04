@@ -119,7 +119,7 @@ private struct Project: Equatable {
 }
 
 private func managementRequestTimeout(_ path: String, method: String) -> TimeInterval {
-    let preparesFiles = path == "v1/imports" || path == "v1/preparations/plan-form" ||
+    let preparesFiles = path == "v1/imports" || path == "v1/preparations/plan-form" || path == "v1/agent-preparations/plans" || path == "v1/agent-preparations/start" ||
         ["/plan", "/attach", "/engine"].contains { path.hasSuffix($0) }
     return method == "POST" && preparesFiles ? 300 : 30
 }
@@ -451,6 +451,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private var recipesWindow: NSWindow?
     private let recipesView = PreparationRecipesView()
     private let preparationView = PreparationWorkspaceView()
+    private let agentPreparationView = AgentPreparationView()
     private let stateDirectory: URL = {
         if let configured = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"], configured.hasPrefix("/") {
             return URL(fileURLWithPath: configured, isDirectory: true)
@@ -559,7 +560,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private func resetHostRequestState() {
         pollInFlight = false; importsPollInFlight = false; downloadsPolling = false
         setupRequest = false; detailRequests = []; pendingAppRequests = []
-        preparationView.invalidate(); recipesView.invalidate()
+        preparationView.invalidate(); recipesView.invalidate(); agentPreparationView.invalidate()
     }
 
     private func startHost() {
@@ -675,7 +676,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             self.hostAvailable = true
             self.projects = parsed.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }; self.operations = operations.compactMap(Operation.init)
             self.hostMessage = "\(parsed.filter { $0.state == "ready" }.count) ready / \(parsed.count) installed"
-            self.rebuildMenu(); self.refreshWindow(); self.pollTrackedOperations(); self.pollImports(); self.pollDownloads(); self.preparationView.poll(); self.artifactCaptureView.poll()
+            self.rebuildMenu(); self.refreshWindow(); self.pollTrackedOperations(); self.pollImports(); self.pollDownloads(); self.preparationView.poll(); self.artifactCaptureView.poll(); self.agentPreparationView.poll()
             if Date().timeIntervalSince(self.lastDetailRefresh) >= 6 {
                 var selected: Set<String> = []
                 if self.dashboard.isVisible, let id = self.dashboard.selectedID { selected.insert(id) }
@@ -941,7 +942,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
 
         artifactCaptureView.available = { [weak self] in
             guard let self else { return false }
-            return !uiPreviewMode && self.connection() != nil && self.hostAvailable && !self.setupRequest && !self.stopping && !self.quitting
+            return !uiPreviewMode && self.connection() != nil && self.hostAvailable && !self.setupRequest && !self.stopping && !self.quitting && (!self.agentPreparationView.blocksNavigation || self.artifactCaptureView.blocksNavigation)
         }
         artifactCaptureView.request = { [weak self] path, method, body, completion in self?.request(path, method: method, body: body, completion: completion) }
         artifactCaptureView.beforeCapture = { [weak self] completion in self?.saveDraftBeforeNavigation(completion: completion) }
@@ -999,7 +1000,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let recipes = button("Manage Recipes…", action: #selector(showPreparationRecipes))
         preparationView.available = { [weak self] in
             guard let self else { return false }
-            return !uiPreviewMode && self.connection() != nil && self.hostAvailable && !self.setupRequest && !self.stopping && !self.quitting
+            return !uiPreviewMode && self.connection() != nil && self.hostAvailable && !self.setupRequest && !self.stopping && !self.quitting && (!self.agentPreparationView.blocksNavigation || self.preparationView.hasActiveJob)
         }
         preparationView.request = { [weak self] path, method, body, completion in self?.request(path, method: method, body: body, completion: completion) }
         preparationView.onUpdatedDraft = { [weak self] object in
@@ -1009,9 +1010,21 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         }
         preparationView.onStateChange = { [weak self] in self?.refreshWindow() }
         preparationView.onAttached = { [weak self] in self?.pollImports() }
-        recipesView.onRegistryChange = { [weak self] in self?.preparationView.registryChanged() }
+        agentPreparationView.available = { [weak self] in
+            guard let self else { return false }
+            return !uiPreviewMode && self.connection() != nil && self.hostAvailable && !self.setupRequest && !self.stopping && !self.quitting &&
+                (self.agentPreparationView.blocksNavigation || !self.preparationView.busy && !self.preparationView.hasActiveJob && !self.artifactCaptureView.blocksNavigation)
+        }
+        agentPreparationView.request = preparationView.request
+        agentPreparationView.onUpdatedDraft = { [weak self] object in
+            guard let self, !self.draftDirty, !self.setupRequest, let current = self.currentDraft, let updated = ImportDraft(object),
+                  updated.id == current.id, updated.revision == current.revision + 1, updated.sourceRevision == current.sourceRevision else { return false }
+            self.displayDraft(updated); self.preparationView.refreshAvailability(); return true
+        }
+        agentPreparationView.onStateChange = { [weak self] in self?.refreshWindow() }
+        recipesView.onRegistryChange = { [weak self] in self?.preparationView.registryChanged(); self?.agentPreparationView.registryChanged() }
         let prepareCard = workspaceCard("2. Prepare the app", subtitle: "Answer the detected questions and review the preparation plan. You can also export instructions for your coding agent.",
-                                        views: [recipes, preparationView, handoff, handoffReturn, modelControls])
+                                        views: [recipes, preparationView, workspaceCard("Agent assistance", subtitle: "Review the exact captured files and configured provider before transfer. Candidate selection requires ordinary preparation review.", views: [agentPreparationView]), handoff, handoffReturn, modelControls])
         configurationView.onChange = { [weak self] in self?.setupChanged() }
         configurationView.onCreateSecret = { [weak self] name in self?.createSecret(name) }
         let configureCard = workspaceCard("Configure the prepared app", subtitle: "Choose nonsecret settings and saved secret references before reviewing the exact plan.", views: [configurationView])
@@ -1067,6 +1080,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         }
         preparationView.bind(preparationContext, saved: !draftDirty, eligible: currentDraft?.editable == true && currentDraft?.packagePath == nil)
         preparationView.refreshAvailability()
+        let agentContext = currentDraft.flatMap { draft -> PreparationContext? in
+            guard draft.editable, draft.packagePath == nil, ["local_folder", "application_directory"].contains(draft.sourceKind) else { return nil }
+            return preparationContext
+        }
+        agentPreparationView.bind(agentContext, saved: !draftDirty); agentPreparationView.refreshAvailability()
         refreshActionButtons()
         if let id = pendingInstalledSelection, projects.contains(where: { $0.id == id }), management != nil {
             pendingInstalledSelection = nil; management?.select(id: id)
@@ -1076,7 +1094,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let operation = setupOperation.flatMap { id in operations.first { $0.id == id } }
         let active = operation.map { $0.active || $0.status == "recovery_required" } ?? (setupOperation != nil)
         let enabled = process?.isRunning == true && connection() != nil && !stopping && !quitting && !setupRequest && !active
-        let editable = enabled && (currentDraft?.editable ?? true) && !preparationView.busy && !preparationView.hasActiveJob && !artifactCaptureView.blocksNavigation
+        let editable = enabled && (currentDraft?.editable ?? true) && !preparationView.busy && !preparationView.hasActiveJob && !artifactCaptureView.blocksNavigation && !agentPreparationView.blocksNavigation
         chooseButton?.isEnabled = intakeEnabled; newDraftButton?.isEnabled = intakeEnabled
         starterButton?.isEnabled = intakeEnabled && bundledStarterPackage != nil
         starterLabel?.stringValue = bundledStarterPackage == nil ? "The included app is unavailable in this copy of mcpme." :
@@ -1092,7 +1110,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         copyInstructionsButton?.isEnabled = editable && currentDraft != nil
         exportDraftButton?.isEnabled = editable && currentDraft != nil
         attachButton?.isEnabled = editable && currentDraft != nil
-        cancelDraftButton?.isEnabled = enabled && currentDraft?.editable == true && !preparationView.busy && !artifactCaptureView.blocksNavigation
+        cancelDraftButton?.isEnabled = enabled && currentDraft?.editable == true && !preparationView.busy && !artifactCaptureView.blocksNavigation && !agentPreparationView.blocksNavigation
         reviewButton?.isEnabled = editable && (currentDraft?.packagePath != nil || currentDraft == nil && !(pathField?.stringValue.isEmpty ?? true))
         installButton?.isEnabled = enabled && setupPlan != nil && setupOperation == nil && !draftDirty
         planDetailsButton?.isEnabled = setupPlan != nil
@@ -1135,7 +1153,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private var intakeEnabled: Bool {
-        !uiPreviewMode && !setupRequest && !stopping && !quitting && !artifactCaptureView.blocksNavigation && connection() != nil
+        !uiPreviewMode && !setupRequest && !stopping && !quitting && !artifactCaptureView.blocksNavigation && !agentPreparationView.blocksNavigation && connection() != nil
     }
 
     private var bundledStarterPackage: URL? {
@@ -2621,6 +2639,13 @@ if CommandLine.arguments.dropFirst().first == "--management-ui-self-test" {
     _ = NSApplication.shared
     let passed = managementViewSelfTest() && setupControlsSelfTest() && McpmeApp.recoveryControlsSelfTest() && McpmeApp.onboardingControlsSelfTest() && preparationFormsSelfTest() && ArtifactCaptureView.selfTest() && McpmeApp.captureAdoptionSelfTest()
     print(passed ? "management_ui_contracts_passed" : "management_ui_contracts_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--agent-preparation-ui-self-test" {
+    _ = NSApplication.shared
+    let passed = runAgentPreparationContractSelfTest()
+    print(passed ? "agent_preparation_ui_contracts_passed" : "agent_preparation_ui_contracts_failed")
     exit(passed ? 0 : 1)
 }
 

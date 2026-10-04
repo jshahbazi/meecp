@@ -1,10 +1,11 @@
 # Phase 3 goals and subgoals
 
 Snapshot: October 3, 2026. Integration branch:
-`codex/phase3-llm-integration`, integrated source checkpoint `55781f0`.
+`codex/phase3-llm-integration`, integrated source checkpoint `86ff1a5`.
 Common probe and restricted text-generation guards have cleared independent
-checkpoint review and are integrated. Agent setup and positive CLI verification
-remain in isolated worktrees. Final combined artifact acceptance is still open.
+checkpoint review and are integrated. The repaired agent host checkpoint is
+integrated; shared native registration remains under review. Positive CLI
+verification remains in an isolated worktree. Final artifact acceptance is open.
 
 **Phase 3 is in progress. Public automatic preparation remains disabled.**
 A passing checkpoint establishes its stated scope on its recorded source or
@@ -67,11 +68,11 @@ being fixed; **Separate gate** covers additional capability work.
 | A4 | Restricted engine/adapter probes and current host-owned bindings | Verified checkpoint | Independent 111-case policy/verifier run passed; integrated as 55781f0. Actual inference awaits the next recipe/host. Wildcard-listener containment is unproved. |
 | A4 | Immutable recipe upgrade with preserved lifecycle choices | In progress | Mint the coherent next version; retain all published 1.0.5 and earlier bytes. |
 | A5: integrated agent | Concrete provider transport and parallel task coordinator | Verified checkpoint | OpenAI Responses transport has simulated tests; live provider/model acceptance remains open. |
-| A5 | Review exact source transfer, provider/model, recipe and usage limits | In review | Frozen checkpoint 14ef656a has 14 source hashes independently matched; full review and integration pending. |
-| A5 | Durable jobs, cancellation, restart and stale-result rejection | In repair | Independent review reproduced delayed native status overwriting cancellation, adoption exceeding the pending-worker cap, and a planning-worker handoff escaping shutdown's join. Repairs and re-review are running. |
-| A5 | Host-validated candidate adoption through ordinary preparation | In repair | Independent review reproduced source mutation after worker validation publishing a stale selection revision. Preserve the validated source identity through the short commit; then recheck the race. Later building already rejects the changed bytes. |
-| A5 | Native agent controls and owner-only shared routes | In progress | Controls compile and button tests pass; repair the delayed-response race and integrate the shared registration patch after clearance. |
-| A5 | Unfamiliar supported Python source through proposal, build, SDK probe and attachment | In review | Actual private build, SDK probe, attachment and relocation passed with simulated transport on checkpoint 14ef656a. Four review repairs and live-provider acceptance remain open. |
+| A5 | Review exact source transfer, provider/model, recipe and usage limits | Verified checkpoint | Repaired checkpoint 06f253f6 cleared independent review with all 15 hashes matched; integrated as 86ff1a5. Final artifact acceptance remains. |
+| A5 | Durable jobs, cancellation, restart and stale-result rejection | Verified checkpoint | All four reproduced source, cancellation, pending-cap and worker-handoff defects passed independent re-review. Final combined lifecycle checks remain. |
+| A5 | Host-validated candidate adoption through ordinary preparation | Verified checkpoint | Original validated source metadata is retained through the short commit; actual mutation control denies selection. Generated source is still blocked. |
+| A5 | Native agent controls and owner-only shared routes | In review | Applied registration passed 96 backend checks, native compilation and three UI self-tests. Independent parent-navigation review remains. |
+| A5 | Unfamiliar supported Python source through proposal, build, SDK probe and attachment | Verified checkpoint | Independent actual private build, SDK probe, attachment and relocation passed with four simulated provider calls and zero live calls. Live-provider and generated-adapter acceptance remain open. |
 | A5 | Live backend, selected credentials and model compatibility | Open | Requires a selected configured provider; no credential discovery or live dispatch has occurred. |
 | A5 | Generated adapter source and unsupported interfaces | Open | Proposed source is blocked; a controlled derivation component is not implemented. |
 | A5 | Integrated installed/native path and final adversarial acceptance | Open | Complete after source integration and concrete live acceptance. |
@@ -96,8 +97,8 @@ being fixed; **Separate gate** covers additional capability work.
 
 ## Current critical path
 
-1. Finish and independently recheck the agent host/native repairs; integrate
-   that checkpoint with the independently cleared common and LLM guards.
+1. Finish independent agent native-registration and positive CLI reviews;
+   integrate the cleared checkpoints with the common and LLM guards.
 2. Integrate them, mint the next immutable text-generation recipe and run the
    full combined regression suite.
 3. Build one coherent artifact and rerun Python/MCP, ONNX and local LLM native,

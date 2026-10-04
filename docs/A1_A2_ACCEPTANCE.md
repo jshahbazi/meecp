@@ -46,7 +46,6 @@ The signed A1 probe initially exposed hardened-runtime rejection of upstream nat
 | `mcpme-a1a2-signed-recipe-lifecycle-flow-bb5b5fe-v1.json` | `26db8bfebc4be24b981807e2915410c554c912a11374dfb7d7ce31fc2f1d24c7` |
 | `mcpme-a1a2-signed-recipe-lifecycle-composition-bb5b5fe-v1.json` | `38add8575e844162ed2ba199d2c7f711ea797fbcb65f7e4658bef510019a611d` |
 | `mcpme-a1a2-independent-review-v2.json` | `bd3fbdfdb196ec9a91974cc9b89b8966a4e1b0fe9bcbd78d031d26bcb270b3ab` |
-
 | `mcpme-a1a2-doc-review-v1.json` | `75f3557bd36f0009c73fdc9a399d9a00191c925e0210e47abdf850018a4d2535` |
 
 These mode-0600 receipts record bounded status, identities, counters and measurements. Raw test output remains in memory. Earlier failed signing/probe trials, their exact frozen app, and every original recipe/component remain preserved. Applicable common and family checks must follow any later producer, runtime or public-admission change.

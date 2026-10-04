@@ -2309,12 +2309,19 @@ private func nativeSelfTest() -> Bool {
     return true
 }
 
+private func nativeRecipeCanonicalPath(_ path: String) -> String? {
+    guard path.hasPrefix("/"), path.utf8.count <= 4096, !path.contains("\0"),
+          let resolved = realpath(path, nil) else { return nil }
+    defer { free(resolved) }
+    return String(validatingUTF8: resolved)
+}
+
 private struct NativeRecipeDirectoryIdentity: Equatable {
     let device: UInt64
     let inode: UInt64
 
     init?(_ url: URL) {
-        guard url.isFileURL, url.path.hasPrefix("/"), url.resolvingSymlinksInPath().path == url.path else { return nil }
+        guard url.isFileURL, nativeRecipeCanonicalPath(url.path) == url.path else { return nil }
         let fd = open(url.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
         guard fd >= 0 else { return nil }; defer { close(fd) }
         var opened = stat(), named = stat()
@@ -2343,7 +2350,7 @@ private struct NativeRecipeFileIdentity: Equatable {
              "changed_seconds": Int(info.st_ctimespec.tv_sec), "changed_nanoseconds": Int(info.st_ctimespec.tv_nsec)]
         }
         let value = identity(before)
-        guard value == identity(after), value == identity(named), url.resolvingSymlinksInPath().path == url.path else { return nil }
+        guard value == identity(after), value == identity(named), nativeRecipeCanonicalPath(url.path) == url.path else { return nil }
         values = value
     }
 
@@ -2421,7 +2428,8 @@ private struct NativeRecipeAcceptanceContext {
     }
 
     static func contractSelfTest() -> Bool {
-        let workspace = FileManager.default.temporaryDirectory.appendingPathComponent("mcpme-native-onboarding-" + UUID().uuidString).resolvingSymlinksInPath()
+        guard let temporary = nativeRecipeCanonicalPath(FileManager.default.temporaryDirectory.path) else { return false }
+        let workspace = URL(fileURLWithPath: temporary).appendingPathComponent("mcpme-native-onboarding-" + UUID().uuidString)
         let root = workspace.appendingPathComponent("context-test"), state = root.appendingPathComponent("state")
         defer { try? FileManager.default.removeItem(at: workspace) }
         do {

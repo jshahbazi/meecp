@@ -2820,7 +2820,9 @@ extension McpmeApp {
             // The private fixture supplies the NSOpenPanel selection, not clicks.
             app.beginImport(context.source)
             guard awaitCondition(30, { !app.setupRequest && app.currentDraft != nil }), let imported = app.currentDraft,
-                  imported.editable, imported.sourceKind == "application_directory", imported.packagePath == nil,
+                  imported.editable,
+                  (context.publicPython ? ["local_folder", "application_directory"].contains(imported.sourceKind) : imported.sourceKind == "application_directory"),
+                  imported.packagePath == nil,
                   imported.sourcePath == context.source.path else { return report(false) }
             draftID = imported.id; receipt["draft_id"] = imported.id
             receipt["native_directory_selection"] = true; receipt["initial_revision"] = imported.revision

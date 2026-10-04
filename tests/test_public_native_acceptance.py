@@ -94,3 +94,30 @@ async def test_native_folder_intake_binds_original_revision_without_cli_creating
         origin, candidates, receipt, path = await obj.native_preparation(base, state, {}, base, source, "callable", None)
         assert origin == {**observed, "revision": 2} and candidates[0]["candidate_id"] == receipt["candidate_id"]
     assert ("imports", "create") not in calls
+
+
+@pytest.mark.parametrize("stage", ["source_selection", "synthetic_sensitive_value", {}, None])
+def test_failure_diagnostic_uses_closed_vocabulary_and_no_payload(stage):
+    value = driver.native_failure_diagnostic({"stage": stage, "error_code": "synthetic_sensitive_value",
+        "passed": False, "native_directory_selection": "synthetic_sensitive_value",
+        "routes": ["synthetic_sensitive_value"], "response": "synthetic_sensitive_value"}, 1)
+    assert value == {"stage": "source_selection" if stage == "source_selection" else "unclassified",
+        "error_code": "native_error_unclassified", "passed": False, "native_exit_success": False}
+
+
+async def test_native_failure_survives_joined_case_cleanup(tmp_path):
+    base = tmp_path.resolve(); state = base / "state"; source = base / "source"
+    state.mkdir(mode=0o700); source.mkdir(mode=0o700)
+    driver.common.write_private_json(state / "manager-connection.json", {"synthetic": True})
+    obj = object.__new__(driver.PublicPythonHarness); obj.native = base / "unused-native"
+    async def native(argv, *args, **kwargs):
+        fixture = driver.common.private_json(Path(argv[2]))
+        driver.common.write_private_json(Path(fixture["output_path"]), {"passed": False,
+            "stage": "source_selection", "error_code": "request_failed", "response": "synthetic_sensitive_value"})
+        return 1, b"synthetic_sensitive_value"
+    obj.run = native
+    with pytest.raises(driver.common.AcceptanceError) as raised:
+        await obj.native_preparation(base, state, base, {}, source, "callable", None)
+    (base / "native-receipt.json").unlink()
+    assert raised.value.native_diagnostic == {"stage": "source_selection", "error_code": "request_failed",
+        "passed": False, "native_exit_success": False}

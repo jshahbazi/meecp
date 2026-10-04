@@ -75,7 +75,9 @@ def _acl_api():
         api = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
         signatures = {
             "acl_get_fd_np": ([ctypes.c_int, ctypes.c_int], ctypes.c_void_p),
+            "acl_valid_fd_np": ([ctypes.c_int, ctypes.c_int, ctypes.c_void_p], ctypes.c_int),
             "acl_valid": ([ctypes.c_void_p], ctypes.c_int),
+            "acl_dup": ([ctypes.c_void_p], ctypes.c_void_p),
             "acl_get_entry": ([ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)], ctypes.c_int),
             "acl_size": ([ctypes.c_void_p], ctypes.c_ssize_t),
             "acl_copy_ext": ([ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ssize_t], ctypes.c_ssize_t),
@@ -102,7 +104,6 @@ def _acl_identity(fd):
         if ctypes.get_errno() == errno.ENOENT: return None
         _deny()
     try:
-        if api.acl_valid(acl) != 0: _deny()
         for index in range(129):
             entry = ctypes.c_void_p()
             ctypes.set_errno(0)
@@ -113,6 +114,20 @@ def _acl_identity(fd):
         if not 0 < size <= 4096: _deny()
         buffer = ctypes.create_string_buffer(size)
         if api.acl_copy_ext(buffer, acl, size) != size: _deny()
+        # Preserve the original ordered bytes. acl_valid may reorder its ACL;
+        # it may inspect only a distinct working copy, never our identity input.
+        duplicate = api.acl_dup(acl)
+        if not duplicate or duplicate == acl: _deny()
+        try:
+            ctypes.set_errno(0)
+            result = api.acl_valid_fd_np(fd, 0x100, duplicate)
+            if result != 0:
+                # Darwin exposes this API but some releases return ENOTSUP.
+                # Only that exact result uses the generic copy validator.
+                if (result != -1 or ctypes.get_errno() != errno.ENOTSUP
+                        or api.acl_valid(duplicate) != 0): _deny()
+        finally:
+            if api.acl_free(duplicate) != 0: _deny()
         return hashlib.sha256(buffer.raw).digest()
     finally:
         if api.acl_free(acl) != 0: _deny()

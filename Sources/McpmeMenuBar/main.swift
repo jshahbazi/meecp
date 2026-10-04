@@ -371,6 +371,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     // Assigned only by the explicit native acceptance command. The normal app
     // continues to require its own live host Process and matching connection.
     private var nativeAcceptanceConnection: ManagerConnection?
+    private var nativeAcceptanceScope: (() -> Bool)?
+    private var nativeAcceptanceRoute: ((String, String) -> Bool)?
     private var generation: UInt64 = 0
     private var quitting = false
     private var installing = false
@@ -624,6 +626,9 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private func request(_ path: String, method: String = "GET", body: [String: Any]? = nil,
                          completion: @escaping ([String: Any]?, String?) -> Void) {
         let process = self.process
+        guard nativeAcceptanceScope?() != false, nativeAcceptanceRoute?(path, method) != false else {
+            completion(nil, "native_acceptance_scope_stale"); return
+        }
         guard !uiPreviewMode, !quitting, !stopping, process?.isRunning == true || nativeAcceptanceConnection != nil, let connection = connection() else {
             completion(nil, "host_unavailable"); return
         }
@@ -648,6 +653,9 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             DispatchQueue.main.async {
                 guard let self = self, self.generation == expectedGeneration, self.process === process,
                       process?.isRunning == true || self.nativeAcceptanceConnection?.pid == connection.pid else { return }
+                guard self.nativeAcceptanceScope?() != false else {
+                    completion(nil, "native_acceptance_scope_stale"); return
+                }
                 completion(object, object == nil ? code : nil)
             }
         }
@@ -2378,10 +2386,11 @@ private struct NativeRecipeAcceptanceContext {
         NativeRecipeDirectoryIdentity(url) != nil
     }
 
-    init?(fixture: URL) {
+    init?(fixture: URL, agent: Bool = false) {
         guard let fixtureIdentity = NativeRecipeFileIdentity(fixture),
               Self.privateDirectory(fixture.deletingLastPathComponent()), let object = PrivateFile.read(fixture, limit: 262144),
-              Set(object.keys) == ["schema_version", "state_dir", "output_path", "fixture_nonce", "recipes", "forms"],
+              Set(object.keys) == (agent ? ["schema_version", "state_dir", "output_path", "fixture_nonce", "draft_id", "agent_scope", "answers_by_label"] :
+                  ["schema_version", "state_dir", "output_path", "fixture_nonce", "recipes", "forms"]),
               preparationInteger(object["schema_version"]) == 1,
               let nonce = preparationUUID(object["fixture_nonce"]),
               let statePath = preparationText(object["state_dir"], maximum: 4096), statePath.hasPrefix("/"),
@@ -2389,14 +2398,22 @@ private struct NativeRecipeAcceptanceContext {
         let state = URL(fileURLWithPath: statePath), output = URL(fileURLWithPath: outputPath)
         let root = fixture.deletingLastPathComponent()
         let workspace = root.deletingLastPathComponent()
+        var outputInfo = stat()
         guard workspace.lastPathComponent.hasPrefix("mcpme-native-onboarding-"), let workspaceIdentity = NativeRecipeDirectoryIdentity(workspace),
               let rootIdentity = NativeRecipeDirectoryIdentity(root),
               state.path == root.appendingPathComponent("state").path, let stateIdentity = NativeRecipeDirectoryIdentity(state),
               output.deletingLastPathComponent().path == root.path, output.lastPathComponent.count <= 128,
-              output.path != fixture.path, !FileManager.default.fileExists(atPath: output.path),
-              let recipes = object["recipes"] as? [[String: Any]], recipes.count <= 8,
-              let forms = object["forms"] as? [[String: Any]], forms.count <= 16, !recipes.isEmpty || !forms.isEmpty else { return nil }
-        let marker = state.appendingPathComponent("native-recipes-" + nonce + ".json")
+              output.path != fixture.path, lstat(output.path, &outputInfo) != 0, errno == ENOENT else { return nil }
+        if agent {
+            guard preparationUUID(object["draft_id"]) != nil,
+                  let scope = object["agent_scope"] as? [String: Any],
+                  AgentPreparationView.acceptanceScopeValid(scope),
+                  let answers = object["answers_by_label"] as? [String: Any], answers.count <= 256 else { return nil }
+        } else {
+            guard let recipes = object["recipes"] as? [[String: Any]], recipes.count <= 8,
+                  let forms = object["forms"] as? [[String: Any]], forms.count <= 16, !recipes.isEmpty || !forms.isEmpty else { return nil }
+        }
+        let marker = state.appendingPathComponent((agent ? "native-agent-" : "native-recipes-") + nonce + ".json")
         guard let markerIdentity = NativeRecipeFileIdentity(marker), let proof = PrivateFile.read(marker, limit: 8192),
               Set(proof.keys) == ["schema_version", "fixture_nonce", "expires_at", "manager_file"],
               preparationInteger(proof["schema_version"]) == 1, preparationUUID(proof["fixture_nonce"]) == nonce,
@@ -2420,11 +2437,18 @@ private struct NativeRecipeAcceptanceContext {
 
     func claim() -> Bool {
         guard current() else { return false }
-        let path = state.appendingPathComponent("native-recipes-" + nonce + ".claimed")
+        let path = marker.deletingPathExtension().appendingPathExtension("claimed")
         let fd = open(path.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
         guard fd >= 0 else { return false }; defer { close(fd) }
         let bytes = Array("claimed\n".utf8)
         return bytes.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) == $0.count } && fsync(fd) == 0 && current()
+    }
+
+    func report(_ data: Data) -> Bool {
+        guard current(), data.count <= 262144 else { return false }
+        let fd = open(output.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else { return false }; defer { close(fd) }
+        return data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) == $0.count } && fsync(fd) == 0 && current()
     }
 
     static func contractSelfTest() -> Bool {
@@ -2622,10 +2646,12 @@ extension McpmeApp {
 
     /// Runs the native form actions against an already launched, owner-only
     /// host. Backend execution remains governed by that host's factory gates.
-    fileprivate static func preparationNativeAcceptance(fixture: URL) -> Bool {
-        guard fixture.isFileURL, let data = try? Data(contentsOf: fixture), data.count <= 262144,
+    fileprivate static func preparationNativeAcceptance(fixture: URL, agent: Bool = false) -> Bool {
+        let agentContext = agent ? NativeRecipeAcceptanceContext(fixture: fixture, agent: true) : nil
+        guard !agent || agentContext != nil,
+              fixture.isFileURL, let data = try? Data(contentsOf: fixture), data.count <= 262144,
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              Set(object.keys).isSubset(of: ["state_dir", "draft_id", "output_path", "answers_by_label", "candidate_id", "recipe_id", "capture_model_path", "capture_license_path", "capture_format"]),
+              agent || Set(object.keys).isSubset(of: ["state_dir", "draft_id", "output_path", "answers_by_label", "candidate_id", "recipe_id", "capture_model_path", "capture_license_path", "capture_format"]),
               let state = preparationText(object["state_dir"], maximum: 4096), state.hasPrefix("/"),
               object["draft_id"] == nil || preparationUUID(object["draft_id"]) != nil,
               let output = preparationText(object["output_path"], maximum: 4096), output.hasPrefix("/"),
@@ -2649,34 +2675,65 @@ extension McpmeApp {
         if let draftID { receipt["draft_id"] = draftID }
         func report(_ passed: Bool) -> Bool {
             receipt["passed"] = passed; receipt["stage"] = stage; receipt["routes"] = routes
-            if let code = app.artifactCaptureView.errorCode ?? app.artifactCaptureView.job?.error ?? app.preparationView.job?.error ?? app.preparationView.resolutionJob?.error { receipt["error_code"] = code }
-            guard let result = try? JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]),
-                  result.count <= 262144,
+            if let code = app.agentPreparationView.errorCode ?? app.artifactCaptureView.errorCode ?? app.artifactCaptureView.job?.error ?? app.preparationView.job?.error ?? app.preparationView.resolutionJob?.error { receipt["error_code"] = code }
+            guard let result = try? JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]), result.count <= 262144 else { return false }
+            if let agentContext { return agentContext.report(result) && passed }
+            guard
                   (try? result.write(to: URL(fileURLWithPath: output), options: .atomic)) != nil,
                   (try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: output)) != nil else { return false }
             return passed
         }
+        var tracedStage: String?
         func awaitCondition(_ seconds: Double = 330, _ condition: () -> Bool) -> Bool {
+            if agent && tracedStage != stage {
+                // Fixed stage codes only, consumed in RAM by the developer
+                // harness. No source, model, provider or request values.
+                print("native_agent_stage=" + stage); fflush(stdout); tracedStage = stage
+            }
             let deadline = Date().addingTimeInterval(seconds)
             while !condition(), Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
             return condition()
         }
+        if let agentContext, !agentContext.claim() { return false }
         guard let connectionObject = PrivateFile.read(app.stateDirectory.appendingPathComponent("manager-connection.json")),
               let connection = ManagerConnection(connectionObject) else { return report(false) }
         app.nativeAcceptanceConnection = connection; app.hostAvailable = true
+        if let agentContext {
+            app.nativeAcceptanceScope = { agentContext.current() }
+            app.nativeAcceptanceRoute = { path, method in
+                if method == "POST" {
+                    return ["v1/agent-preparations/plans", "v1/agent-preparations/start", "v1/preparations/form",
+                        "v1/preparations/plan-form", "v1/preparations/start", "v1/resolutions/plan", "v1/resolutions/start"].contains(path)
+                }
+                guard method == "GET" else { return false }
+                return path == "v1/imports/" + (draftID ?? "") || ["v1/imports", "v1/resolutions", "v1/preparations"].contains(path) ||
+                    ["v1/agent-preparations/jobs/", "v1/preparations/", "v1/resolutions/"].contains { prefix in
+                        path.hasPrefix(prefix) && preparationUUID(String(path.dropFirst(prefix.count))) != nil
+                    }
+            }
+        }
         let view = app.preparationView
+        var requestsSent = 0
         let acceptedRequest: PreparationRequest = { path, method, body, complete in
+            guard agentContext?.current() ?? true else { complete(nil, "native_agent_context_stale"); return }
+            guard requestsSent < 8192 else { complete(nil, "native_acceptance_route_limit"); return }
+            requestsSent += 1
             let route = method + " " + path
             guard routes.contains(route) || routes.count < 512 else { complete(nil, "native_acceptance_route_limit"); return }
             if !routes.contains(route) { routes.append(route) }
             pending += 1
-            app.request(path, method: method, body: body) { object, code in pending -= 1; complete(object, code) }
+            app.request(path, method: method, body: body) { object, code in
+                pending -= 1
+                guard agentContext?.current() ?? true else { complete(nil, "native_agent_context_stale"); return }
+                complete(object, code)
+            }
         }
         view.request = acceptedRequest; app.artifactCaptureView.request = acceptedRequest
+        app.agentPreparationView.request = acceptedRequest
         func fetchDraft() -> ImportDraft? {
             guard let draftID else { return nil }
             var completed = false, received: ImportDraft?
-            app.request("v1/imports/" + draftID) { object, _ in received = object.flatMap(ImportDraft.init); completed = true }
+            acceptedRequest("v1/imports/" + draftID, "GET", nil) { object, _ in received = object.flatMap(ImportDraft.init); completed = true }
             guard awaitCondition(330, { completed }) else { return nil }; return received
         }
         if captured {
@@ -2712,7 +2769,37 @@ extension McpmeApp {
         stage = "initial_draft"
         guard let draft = fetchDraft(), draft.editable, draft.packagePath == nil else { return report(false) }
         app.displayDraft(draft)
-        stage = "initial_form"; view.refreshForm()
+        if agent {
+            let agentView = app.agentPreparationView
+            stage = "agent_options"; agentView.loadOptions()
+            guard awaitCondition(30, { pending == 0 && !agentView.busy }),
+                  let scope = object["agent_scope"] as? [String: Any], agentView.acceptanceSelect(scope) else { return report(false) }
+            stage = "agent_review"; agentView.reviewScope()
+            guard awaitCondition(60, { pending == 0 && !agentView.busy }), agentView.acceptanceReviewed else { return report(false) }
+            stage = "agent_start"; agentView.startAnalysis()
+            guard awaitCondition(60, { pending == 0 && !agentView.busy }), agentView.job != nil else { return report(false) }
+            stage = "agent_poll"
+            let deadline = Date().addingTimeInterval(210)
+            while agentView.job?.active == true, Date() < deadline {
+                agentView.poll()
+                guard awaitCondition(30, { pending == 0 && !agentView.busy }) else { return report(false) }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            }
+            guard let proposal = agentView.job, proposal.state == "succeeded", proposal.settled,
+                  proposal.candidateDigest == nil, let digest = proposal.proposalDigest,
+                  proposal.context == PreparationContext(importID: draft.id, revision: draft.revision, sourceRevision: draft.sourceRevision ?? ""),
+                  app.currentDraft?.revision == draft.revision, view.job == nil, view.resolutionJob == nil else { return report(false) }
+            receipt["agent_job_id"] = proposal.id; receipt["proposal_digest"] = digest
+            receipt["agent_revision"] = proposal.context.revision; receipt["simulated_provider"] = true
+            stage = "agent_handoff"; agentView.adoptCandidate()
+            guard awaitCondition(60, { pending == 0 && !view.busy }), agentView.errorCode == nil,
+                  let form = view.form, form.importID == proposal.context.importID,
+                  form.revision == proposal.context.revision, form.sourceRevision == proposal.context.sourceRevision, form.resolutionRequired,
+                  form.resolutionDigest == nil, view.job == nil, view.resolutionJob == nil else { return report(false) }
+            receipt["pending_proposal_handoff"] = true
+        } else {
+            stage = "initial_form"; view.refreshForm()
+        }
         guard awaitCondition(330, { pending == 0 && !view.busy }), view.form != nil else { return report(false) }
         if object["candidate_id"] != nil || object["recipe_id"] != nil {
             guard view.acceptanceSelect(candidateID: object["candidate_id"] as? String, recipeID: object["recipe_id"] as? String),
@@ -2766,7 +2853,7 @@ extension McpmeApp {
         receipt["preparation_job_id"] = job.id; receipt["preparation_state"] = job.state; receipt["preparation_progress"] = job.progress
         receipt["attached_revision"] = final.revision; receipt["source_revision"] = final.sourceRevision
         receipt["attached_package_digest"] = expectedPackageDigest
-        stage = "attached"; return report(true)
+        stage = "attached"; return report(agentContext?.current() ?? true)
     }
 
     fileprivate static func captureAdoptionSelfTest() -> Bool {
@@ -2998,11 +3085,11 @@ if CommandLine.arguments.dropFirst().first == "--preparation-ui-self-test" {
     exit(passed ? 0 : 1)
 }
 
-if CommandLine.arguments.dropFirst().first == "--preparation-native-acceptance" {
+if ["--preparation-native-acceptance", "--agent-native-acceptance"].contains(CommandLine.arguments.dropFirst().first ?? "") {
     _ = NSApplication.shared
     let arguments = Array(CommandLine.arguments.dropFirst())
     guard arguments.count == 2, arguments[1].hasPrefix("/") else { exit(2) }
-    let passed = McpmeApp.preparationNativeAcceptance(fixture: URL(fileURLWithPath: arguments[1]))
+    let passed = McpmeApp.preparationNativeAcceptance(fixture: URL(fileURLWithPath: arguments[1]), agent: arguments[0] == "--agent-native-acceptance")
     print(passed ? "preparation_native_acceptance_passed" : "preparation_native_acceptance_failed")
     exit(passed ? 0 : 1)
 }

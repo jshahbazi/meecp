@@ -582,6 +582,55 @@ final class AgentPreparationView: NSStackView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    /// Developer fixture choices still pass through the production selection,
+    /// review and send handlers. This method does not issue a request.
+    static func acceptanceScopeValid(_ scope: [String: Any]) -> Bool {
+        guard Set(scope.keys) == ["provider_id", "model", "recipe", "selected_paths", "selected_metadata_paths"],
+              let provider = preparationText(scope["provider_id"], maximum: 128),
+              let model = preparationText(scope["model"], maximum: 128),
+              [provider, model].allSatisfy({ $0.range(of: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$", options: .regularExpression) != nil }),
+              let recipe = scope["recipe"] as? [String: Any], PreparationRecipeReference(recipe) != nil,
+              let paths = scope["selected_paths"] as? [String], (1...32).contains(paths.count),
+              let metadata = scope["selected_metadata_paths"] as? [String], metadata.count <= 32,
+              paths == Array(Set(paths)).sorted(), metadata == Array(Set(metadata)).sorted(),
+              Set(paths).isDisjoint(with: metadata) else { return false }
+        return (paths + metadata).allSatisfy { path in
+            preparationText(path, maximum: 256) != nil && !path.hasPrefix("/") &&
+                !path.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0.isEmpty || $0 == "." || $0 == ".." })
+        }
+    }
+
+    func acceptanceSelect(_ scope: [String: Any]) -> Bool {
+        guard Self.acceptanceScopeValid(scope),
+              !blocksNavigation, saved, available?() == true,
+              let provider = scope["provider_id"] as? String, let model = scope["model"] as? String,
+              let recipe = scope["recipe"] as? [String: Any], PreparationRecipeReference(recipe) != nil,
+              let paths = scope["selected_paths"] as? [String], (1...32).contains(paths.count),
+              let metadata = scope["selected_metadata_paths"] as? [String], metadata.count <= 32,
+              paths == Array(Set(paths)).sorted(), metadata == Array(Set(metadata)).sorted(),
+              Set(paths).isDisjoint(with: metadata),
+              let providerItem = providerPicker.itemArray.first(where: { $0.representedObject as? String == provider }),
+              providers.first(where: { $0["provider_id"] as? String == provider })?["simulated"] as? Bool == true else { return false }
+        providerPicker.select(providerItem); selectionChanged(providerPicker)
+        guard let modelItem = modelPicker.itemArray.first(where: { $0.representedObject as? String == model }),
+              let recipeItem = recipePicker.itemArray.first(where: { ($0.representedObject as? NSDictionary)?.isEqual(to: recipe) == true }),
+              paths.allSatisfy({ path in fileControls.contains { $0.title == path } }),
+              metadata.allSatisfy({ path in metadataControls.contains { $0.identifier?.rawValue == path } }) else { return false }
+        modelPicker.select(modelItem); selectionChanged(modelPicker)
+        recipePicker.select(recipeItem); selectionChanged(recipePicker)
+        fileControls.forEach { $0.state = paths.contains($0.title) ? .on : .off }
+        metadataControls.forEach { $0.state = metadata.contains($0.identifier?.rawValue ?? "") ? .on : .off }
+        plan = nil; refreshAvailability()
+        guard let selected = scopeRequest() else { return false }
+        return scope.allSatisfy { key, value in
+            NSDictionary(dictionary: [key: value]).isEqual(to: [key: selected[key] as Any])
+        }
+    }
+
+    var acceptanceReviewed: Bool {
+        currentPlan() && plan?["simulated"] as? Bool == true && sendButton.isEnabled
+    }
+
     func bind(_ next: PreparationContext?, saved: Bool) {
         if next != context || saved != self.saved {
             let contextChanged = next != context

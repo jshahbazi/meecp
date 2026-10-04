@@ -2,6 +2,8 @@
 
 This is a private fork of [truststore 0.10.4](https://github.com/sethmlarson/truststore/tree/v0.10.4), licensed under the retained MIT [LICENSE](LICENSE). `upstream.json` records the exact official wheel URL, SHA-256, byte count, and original source hashes. The wheel was verified before extraction. It is source in the host's immutable artifact closure, rather than a runtime download.
 
+The macOS trust adapter keeps the `CFErrorRef` returned by `SecTrustEvaluateWithError` under explicit ownership until all failure diagnostics finish, then releases it independently of the copied description.
+
 The fork has three changes:
 
 1. `_macos.py` calls `SecTrustSetNetworkFetchAllowed(trust, False)` before evaluation and checks the returned OSStatus. An inability to apply the restriction rejects the handshake.

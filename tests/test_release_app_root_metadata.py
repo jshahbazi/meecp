@@ -216,7 +216,7 @@ def test_acl_inspection_failures_never_become_absence(artifact, monkeypatch, fai
     set_acl(app, "everyone allow readattr")
     real = artifact_module._acl_api()
     fake = SimpleNamespace(**{name: getattr(real, name) for name in (
-        "acl_get_fd_np", "acl_valid", "acl_get_entry", "acl_size", "acl_copy_ext", "acl_free")})
+        "acl_get_fd_np", "acl_valid_fd_np", "acl_valid", "acl_dup", "acl_get_entry", "acl_size", "acl_copy_ext", "acl_free")})
     if failure in {"unreadable", "unsupported"}:
         def unavailable(*args):
             ctypes.set_errno(errno.EACCES if failure == "unreadable" else errno.ENOTSUP)
@@ -224,7 +224,11 @@ def test_acl_inspection_failures_never_become_absence(artifact, monkeypatch, fai
         fake.acl_get_fd_np = unavailable
     elif failure == "oversized": fake.acl_size = lambda _: 4097
     elif failure == "copy-error": fake.acl_copy_ext = lambda *args: -1
-    elif failure == "invalid": fake.acl_valid = lambda _: -1
+    elif failure == "invalid":
+        def invalid(*args):
+            ctypes.set_errno(errno.EINVAL)
+            return -1
+        fake.acl_valid_fd_np = invalid
     else: fake.acl_get_entry = lambda *args: 0
     monkeypatch.setattr(artifact_module, "_acl_api", lambda: fake)
     try:
@@ -294,3 +298,98 @@ def test_root_group_stat_fixture_revokes_without_other_metadata_change(artifact,
     monkeypatch.setattr(Path, "lstat", lstat)
     monkeypatch.setattr(artifact_module, "_acl_identity", acl)
     with pytest.raises(PreparationError): proof.check_current(full=True)
+
+
+def ordered_acl(path, reverse=False):
+    set_acl(path)
+    entries = ["everyone allow readattr", "everyone deny add_file"]
+    if reverse: entries.reverse()
+    for index, entry in enumerate(entries):
+        result = NATIVE_RUN(["/bin/chmod", "+a#", str(index), entry, str(path)], capture_output=True, timeout=5)
+        assert result.returncode == 0
+
+
+@pytest.mark.parametrize("boundary", ["shared", "command"])
+def test_real_root_acl_entry_order_is_bound(packaged, monkeypatch, boundary):
+    ordered_acl(packaged.app)
+    proof = shared_proof(packaged, monkeypatch)
+    original = proof._app_root_metadata.acl
+    def reorder(*args, **kwargs): ordered_acl(packaged.app, reverse=True)
+    try:
+        for _ in range(5): proof.check_current(full=True)
+        if boundary == "command":
+            monkeypatch.setattr(command, "_signature", reorder)
+            with pytest.raises(PreparationError, match="^command_release_not_admitted$"):
+                command.command_release_admission(policy(), packaged.host, artifact=proof)
+        else:
+            reorder()
+            changed = artifact_module._acl_identity(proof._app_root_metadata.fd)
+            assert changed != original
+            with pytest.raises(PreparationError): proof.check_current()
+    finally: set_acl(packaged.app)
+
+
+@pytest.mark.parametrize("mode", ["fd-valid", "copy-mutates", "fd-error", "copy-invalid", "duplicate-null", "duplicate-alias", "free-error"])
+def test_acl_validation_copy_never_becomes_identity_and_is_freed(artifact, monkeypatch, mode):
+    import ctypes
+    import errno
+    import hashlib
+    from types import SimpleNamespace
+    app, *_ = artifact
+    ordered_acl(app)
+    fd = os.open(app, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    api = artifact_module._acl_api()
+    original = api.acl_get_fd_np(fd, 0x100)
+    size = api.acl_size(original)
+    buffer = ctypes.create_string_buffer(size)
+    assert api.acl_copy_ext(buffer, original, size) == size
+    expected = hashlib.sha256(buffer.raw).digest()
+    api.acl_free(original)
+    fake = SimpleNamespace(**{name: getattr(api, name) for name in (
+        "acl_get_fd_np", "acl_valid_fd_np", "acl_valid", "acl_dup", "acl_get_entry", "acl_size", "acl_copy_ext", "acl_free")})
+    acquired, duplicated, freed, generic = [], [], [], []
+    def acquire(*args):
+        value = api.acl_get_fd_np(*args)
+        acquired.append(value)
+        return value
+    def duplicate(value):
+        if mode == "duplicate-null": return None
+        if mode == "duplicate-alias": return value
+        result = api.acl_dup(value)
+        duplicated.append(result)
+        return result
+    def validate_fd(selected, kind, value):
+        assert selected == fd and kind == 0x100 and value == duplicated[0]
+        if mode == "fd-valid": return 0
+        ctypes.set_errno(errno.EACCES if mode == "fd-error" else errno.ENOTSUP)
+        return -1
+    def validate(value):
+        generic.append(value)
+        assert value == duplicated[0] and value != acquired[0]
+        if mode == "copy-invalid": return -1
+        if mode == "copy-mutates":
+            # Model the documented reordering/mutation permission by deleting
+            # an entry from only the disposable validation copy.
+            entry = ctypes.c_void_p()
+            assert api.acl_get_entry(value, 0, ctypes.byref(entry)) == 0
+            api.acl_delete_entry.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+            api.acl_delete_entry.restype = ctypes.c_int
+            assert api.acl_delete_entry(value, entry) == 0
+        return api.acl_valid(value)
+    def free(value):
+        freed.append(value)
+        result = api.acl_free(value)
+        return -1 if mode == "free-error" and value in duplicated else result
+    fake.acl_get_fd_np, fake.acl_dup, fake.acl_valid_fd_np = acquire, duplicate, validate_fd
+    fake.acl_valid, fake.acl_free = validate, free
+    monkeypatch.setattr(artifact_module, "_acl_api", lambda: fake)
+    try:
+        if mode in {"fd-valid", "copy-mutates"}:
+            assert artifact_module._acl_identity(fd) == expected
+        else:
+            with pytest.raises(PreparationError): artifact_module._acl_identity(fd)
+        assert freed == [*duplicated, *acquired]
+        if mode in {"fd-valid", "fd-error", "duplicate-null", "duplicate-alias"}: assert not generic
+    finally:
+        os.close(fd)
+        set_acl(app)

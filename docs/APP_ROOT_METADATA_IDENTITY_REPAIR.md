@@ -29,7 +29,12 @@ the proof's lifetime and closed when its metadata owner is released. Each
 comparison checks its descriptor and path identity before and after reading
 the ACL through Darwin libc. The SDK's canonical big-endian `acl_copy_ext`
 representation preserves ordered entries, raw UUID qualifiers and flags;
-inspection is limited to 128 entries and 4096 bytes. There are no subprocesses
+validation uses a distinct `acl_dup` working copy. `acl_valid_fd_np` validates
+that copy against the held descriptor without reordering it. The current
+Darwin runtime returns ENOTSUP for this API even for valid ACLs; only this exact
+error falls back to `acl_valid` on the copy. That generic API may reorder its
+copy, so it never receives the original ACL used for identity. Other validation
+errors deny. Inspection is limited to 128 entries and 4096 bytes. There are no subprocesses
 or account-name lookups at current-authority checks. An absent ACL is the
 Darwin `acl_get_fd_np` ENOENT result on the held live descriptor; unreadable,
 unsupported, invalid, oversized or failed inspections deny admission.

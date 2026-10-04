@@ -48,12 +48,16 @@ async def test_owner_questions_and_review_bind_exact_selection_without_execution
             for route in ("form", "plan-form"):
                 response = await client.post("/v1/preparations/" + route, json=query,
                     headers={"Authorization": "Bearer " + scoped})
-                assert response.status_code == 403 and response.json()["error"]["code"] == "grant_scope"
+                if route == "form":
+                    assert response.status_code == 200 and response.json()["source_revision"] == draft["source"]["revision"]
+                else:
+                    assert response.status_code == 400 and response.json()["error"]["code"] == "invalid_preparation_request"
             response = await client.post("/v1/preparations/form", json=query)
             assert response.status_code == 200
             form = response.json()
             body = request_body(form, **{"Expected test result": {"value": 2}, "Memory budget (MiB)": 192})
-            reviewed = await client.post("/v1/preparations/plan-form", json=body)
+            reviewed = await client.post("/v1/preparations/plan-form", json=body,
+                headers={"Authorization": "Bearer " + scoped})
             assert reviewed.status_code == 200
             review = reviewed.json()
             assert review["revision"] == review["draft"]["revision"] == 2
@@ -78,6 +82,8 @@ async def test_owner_questions_and_review_bind_exact_selection_without_execution
             identical = (await client.post("/v1/preparations/plan-form", json=request_body(refreshed))).json()
             assert identical["revision"] == 2
             assert not marker.exists() and host.preparations.list() == []
+            denied = await client.post("/v1/preparations/start", json={}, headers={"Authorization": "Bearer " + scoped})
+            assert denied.status_code == 403 and denied.json()["error"]["code"] == "grant_scope"
             assert not host.registry.list_slots() and not host.registry.list_operations()
             if os.environ.get("MCPME_FORM_FIXTURE"):
                 Path(os.environ["MCPME_FORM_FIXTURE"]).write_text(json.dumps({"form": form, "review": review}))

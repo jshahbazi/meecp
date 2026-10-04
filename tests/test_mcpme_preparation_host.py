@@ -88,10 +88,15 @@ async def test_owner_execution_dispatch_keeps_exact_plan_identity_and_scoped_bou
                                     ("plan", plan_body), ("start", {}), (str(uuid.uuid4()) + "/cancel", {}),
                                     (str(uuid.uuid4()) + "/recover", {})):
                     assert (await client.post("/v1/preparations/" + route, json=body)).status_code == 401
-                    rejected = await client.post("/v1/preparations/" + route, json=body,
+                    response = await client.post("/v1/preparations/" + route, json=body,
                                                  headers={"Authorization": "Bearer " + token})
-                    assert rejected.status_code == 403 and rejected.json()["error"]["code"] == "grant_scope"
-            assert runner.calls == []
+                    if route == "inspect-source" or route == "plan" and mode == "prepare":
+                        assert response.status_code == 200
+                    else:
+                        assert response.status_code == 403 and response.json()["error"]["code"] == "grant_scope"
+            assert sum(call[0] == "plan" for call in runner.calls) == 1
+            assert {call[0] for call in runner.calls} <= {"recover", "plan"}
+            assert host.preparations.list() == [] and not host.registry.list_slots()
             for route, body in (("start", {}), ("inspect-source", {"import_id": draft["draft_id"]}),
                                 ("plan", {**plan_body, "extra": True})):
                 rejected = await client.post("/v1/preparations/" + route, json=body, headers=headers)

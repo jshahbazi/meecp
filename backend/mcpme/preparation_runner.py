@@ -44,7 +44,8 @@ RUNNER_FILES = ("preparation_runner.py", "preparation_builder.py", "preparation_
                 "preparation_components.py", "preparation_processes.py", "preparations.py",
                 "preparation_authority.py", "preparation_contracts.py", "processes.py", "ownership_receipts.py",
                 "imports.py", "preparation_application_source.py", "private.py", "recipes.py", "contracts.py", "preparation_inputs.py",
-                "preparation_resolved_python.py", "preparation_resolution.py", "preparation_admission.py", "preparation_release_policy.py", "preparation_release_artifact.py")
+                "preparation_resolved_python.py", "preparation_resolution.py", "preparation_admission.py", "preparation_release_policy.py", "preparation_release_artifact.py",
+                "management_workflow_grants.py", "grants.py")
 VERIFIER_FILES = ("preparation_verifier.py", "preparation_probe_confinement.py", "process_graph_accounting_v1.py",
                   "preparation_processes.py", "preparation_contracts.py",
                   "contracts.py", "processes.py", "ownership_receipts.py")
@@ -515,10 +516,10 @@ class PreparationRunner:
         return await asyncio.to_thread(self.store.execution_plan, import_id, revision, descriptor, selected, runner_digest=runner,
             verifier_digest=verifier, runtime_digest=toolchain.identity, expires_in=expires_in)
 
-    async def start(self, plan_id, plan_digest, idempotency_key):
+    async def start(self, plan_id, plan_digest, idempotency_key, *, grant_id=None):
         if self._closed or not self.enabled:
             raise PreparationError("preparation_runner_unavailable")
-        task = asyncio.create_task(self._start(plan_id, plan_digest, idempotency_key))
+        task = asyncio.create_task(self._start(plan_id, plan_digest, idempotency_key, grant_id=grant_id))
         self._admissions.add(task)
         try:
             return await asyncio.shield(task)
@@ -530,13 +531,14 @@ class PreparationRunner:
             finally:
                 self._admissions.discard(task)
 
-    async def _start(self, plan_id, plan_digest, idempotency_key):
+    async def _start(self, plan_id, plan_digest, idempotency_key, *, grant_id=None):
         await self.recover()
         async with self._control:
             self._admission_active = True
             try:
                 self._validate_start_admission(plan_id)
-                job = await asyncio.to_thread(self.store.authorize_start, plan_id, plan_digest, idempotency_key)
+                job = await asyncio.to_thread(self.store.authorize_start, plan_id, plan_digest, idempotency_key,
+                    **({"grant_id": grant_id} if grant_id is not None else {}))
                 identifier = job["job_id"]
                 job = self.store.get(identifier)
                 if identifier not in self.tasks and job["state"] == "queued":

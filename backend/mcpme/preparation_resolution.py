@@ -173,6 +173,8 @@ class ResolutionStore:
         self.imports, self.db = imports, imports._connection
         self._binding_owner = object()
         with imports._transaction():
+            from .management_workflow_grants import init_job_authority
+            init_job_authority(self)
             self.db.execute("CREATE TABLE IF NOT EXISTS resolution_plans (plan_id TEXT PRIMARY KEY, data TEXT NOT NULL)")
             self.db.execute("""CREATE TABLE IF NOT EXISTS resolution_jobs (
                 job_id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE NOT NULL, data TEXT NOT NULL)""")
@@ -298,7 +300,7 @@ class ResolutionStore:
             raise PreparationError("source_identity_mismatch")
         return draft
 
-    def authorize_start(self, plan_id, plan_digest, idempotency_key):
+    def authorize_start(self, plan_id, plan_digest, idempotency_key, *, grant_id=None):
         try:
             if str(uuid.UUID(idempotency_key)) != idempotency_key:
                 raise ValueError()
@@ -313,6 +315,14 @@ class ResolutionStore:
                 checked_plan = json.loads(checked_plan_bytes)
             self.require_public_request(ResolutionRequestV1.model_validate(checked_plan["request"]), checked_plan["candidate"])
         with self.imports._transaction():
+            from .management_workflow_grants import start_authority, existing_start
+            authority_plan = None
+            if grant_id is not None:
+                authority_plan_row = self.db.execute("SELECT data FROM resolution_plans WHERE plan_id=?", (plan_id,)).fetchone()
+                if authority_plan_row is None:
+                    raise PreparationError("resolution_plan_not_found")
+                authority_plan = json.loads(authority_plan_row[0])
+            authority = start_authority(self, "resolution", authority_plan, idempotency_key, grant_id)
             previous = self.db.execute("SELECT data FROM resolution_jobs WHERE idempotency_key=?", (idempotency_key,)).fetchone()
             if previous:
                 job = json.loads(previous["data"])
@@ -321,6 +331,7 @@ class ResolutionStore:
                 if self.public_admission is not None and (job["request"] != checked_plan["request"]
                         or job["candidate"] != checked_plan["candidate"]):
                     raise PreparationError("resolution_plan_mismatch")
+                existing_start(self, "resolution", job, authority)
                 return job
             row = self.db.execute("SELECT data FROM resolution_plans WHERE plan_id=?", (plan_id,)).fetchone()
             if row is None:
@@ -335,16 +346,24 @@ class ResolutionStore:
             self._current(ResolutionRequestV1.model_validate(plan["request"]))
             if self.db.execute("SELECT count(*) FROM resolution_jobs").fetchone()[0] >= MAX_RESOLUTIONS:
                 raise PreparationError("resolution_limit")
-            job = {**plan, "job_id": str(uuid.uuid4()), "state": "queued", "stage": "queued", "workspace": None,
+            job = {**plan, "schema_version": 2, "management_authority": authority,
+                   "job_id": str(uuid.uuid4()), "state": "queued", "stage": "queued", "workspace": None,
                    "ownership": [], "ownership_settled": True, "reservation_retained": False,
                    "error_code": None, "result": None, "result_digest": None, "updated_at": time.time(),
                    "progress": {key: 0 for key in PROGRESS_LIMITS}}
             self.db.execute("INSERT INTO resolution_jobs VALUES (?,?,?)", (job["job_id"], idempotency_key, canonical_bytes(job).decode()))
+            from .management_workflow_grants import record_job_authority
+            record_job_authority(self, "resolution", job)
+            ledger = getattr(self, "management_execution_grants", None)
+            if ledger is not None:
+                ledger.bind_job("resolution", job)
             return job
 
     def check_authority(self, job_id):
         with self.imports._lock:
             job = self._get(job_id)
+            from .management_workflow_grants import check_job_authority
+            check_job_authority(self, "resolution", job)
             if job["state"] in TERMINAL or job["state"] == "cancel_requested":
                 raise PreparationError("resolution_canceled")
             # The plan must still be current while queued for resource admission.

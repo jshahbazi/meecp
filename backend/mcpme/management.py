@@ -32,6 +32,9 @@ PATH_SCHEMA = {"type": "string", "minLength": 1, "maxLength": 4096}
 REVISION_SCHEMA = {"type": "integer", "minimum": 1}
 NAME_SCHEMA = {"type": "string", "minLength": 1, "maxLength": 256}
 INTENT_SCHEMA = {"type": "string", "maxLength": 16384}
+DIGEST_SCHEMA = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+RECIPE_ID_SCHEMA = {"type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$", "maxLength": 128}
+VERSION_SCHEMA = {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[A-Za-z0-9.-]+)?$", "maxLength": 64}
 START_POLICY_SCHEMA = {"type": "string", "enum": ["manual", "host"]}
 DOCUMENT_ROLE_SCHEMA = {"type": "string", "enum": ["instructions", "reference"]}
 LABELS_SCHEMA = {"type": "array", "maxItems": 128, "uniqueItems": True,
@@ -80,6 +83,24 @@ SAFE_ERROR_CODES = frozenset({
     "runtime_identity_mismatch", "runtime_start_failed", "session_limit", "session_termination_failed",
     "session_termination_unverified", "slot_stopped", "unsupported_mcp_capabilities", "unsupported_platform",
     "unsupported_start_policy",
+    "invalid_recipe_request", "invalid_recipe_identity", "recipe_not_found", "recipe_disabled",
+    "recipe_revoked", "recipe_removed", "recipe_changed", "recipe_digest_mismatch", "recipe_evidence_stale",
+    "recipe_in_use", "recipe_limit", "recipe_conflict", "recipe_size_limit", "unsafe_recipe_path",
+    "unsafe_recipe_file", "invalid_recipe_schema", "invalid_recipe_lock", "recipe_metadata_required",
+    "recipe_manifest_hash_mismatch", "recipe_artifact_tree_mismatch", "recipe_artifact_hash_mismatch",
+    "recipe_license_required", "recipe_component_unavailable", "recipe_component_digest_mismatch",
+    "recipe_dependency_cycle", "recipe_incompatible", "invalid_preparation_request", "preparation_not_found",
+    "invalid_preparation_identity", "preparation_runner_unavailable", "preparation_plan_not_found",
+    "preparation_plan_mismatch", "preparation_plan_consumed", "preparation_authority_expired",
+    "preparation_canceled", "preparation_in_progress", "preparation_key_conflict", "preparation_limit",
+    "invalid_preparation_policy", "preparation_policy_mismatch", "preparation_descriptor_required",
+    "preparation_form_stale", "preparation_selection_required", "invalid_resolution_request",
+    "invalid_resolution_policy", "resolution_runner_unavailable", "resolution_plan_not_found",
+    "resolution_plan_mismatch", "resolution_authority_expired", "resolution_canceled",
+    "resolution_idempotency_conflict", "resolution_not_found", "invalid_resolution_identity",
+    "grant_scope_changed", "management_execution_authority_invalid", "management_execution_revoked",
+    "management_execution_expired", "recipe_unavailable", "recipe_version_collision", "invalid_preparation_form",
+    "preparation_form_mismatch", "preparation_answer_invalid", "preparation_candidate_unavailable",
 })
 
 
@@ -104,6 +125,44 @@ def operations() -> dict[str, Operation]:
             inputSchema=input_schema or schema()), method, route, body)
 
     add("mcpme_capabilities", "Read supported host operations and preparation templates.", "GET", "/v1/capabilities")
+    add("mcpme_list_recipes", "Read registered immutable recipe versions and state.", "GET", "/v1/recipes")
+    add("mcpme_get_recipe_schema", "Read the versioned recipe manifest and lock schemas.", "GET", "/v1/recipes/schema")
+    recipe_identity = {"recipe_id": RECIPE_ID_SCHEMA, "version": VERSION_SCHEMA}
+    add("mcpme_get_recipe", "Inspect a registered recipe version and its static compatibility evidence.",
+        "POST", "/v1/recipes/inspect", schema(recipe_identity, ("recipe_id", "version")), lambda args: args)
+    add("mcpme_register_recipe", "Register the exact bundle allowed by an owner-issued recipe management grant; never execute bundle code.",
+        "POST", "/v1/recipes", schema({"path": PATH_SCHEMA}, ("path",)), lambda args: args)
+    for action in ("enable", "disable", "deprecate", "revoke", "remove"):
+        add("mcpme_" + action + "_recipe", f"{action.capitalize()} the exact recipe version allowed by a recipe management grant.",
+            "POST", "/v1/recipes/" + action, schema(recipe_identity, ("recipe_id", "version")), lambda args: args)
+    draft_revision = {"import_id": UUID_SCHEMA, "revision": REVISION_SCHEMA}
+    recipe_reference = schema({"id": RECIPE_ID_SCHEMA, "version": VERSION_SCHEMA, "digest": DIGEST_SCHEMA},
+                              ("id", "version", "digest"))
+    add("mcpme_inspect_preparation_source", "Inspect the exact draft source without executing it.",
+        "POST", "/v1/preparations/inspect-source", schema(draft_revision, ("import_id", "revision")), lambda args: args)
+    add("mcpme_get_preparation_form", "Read focused questions for the exact current candidate and recipe.",
+        "POST", "/v1/preparations/form", schema({**draft_revision, "candidate_id": DIGEST_SCHEMA,
+            "recipe": recipe_reference, "resolution_digest": DIGEST_SCHEMA}, ("import_id", "revision")), lambda args: args)
+    add("mcpme_plan_preparation", "Review an exact descriptor and optional bounded execution policy without starting a job.",
+        "POST", "/v1/preparations/plan", schema({**draft_revision, "descriptor": {"type": "object"},
+            "execution_policy": {"type": "object"}}, ("import_id", "revision", "descriptor")), lambda args: args)
+    add("mcpme_plan_preparation_form", "Bind exact form answers to a draft revision and review its preparation plan; no execution.",
+        "POST", "/v1/preparations/plan-form", schema({**draft_revision, "candidate_id": DIGEST_SCHEMA,
+            "recipe": recipe_reference, "form_digest": DIGEST_SCHEMA, "answers": {"type": "object"},
+            "execution_policy": {"type": "object"}, "resolution_digest": DIGEST_SCHEMA},
+            ("import_id", "revision", "candidate_id", "recipe", "form_digest", "answers")), lambda args: args)
+    add("mcpme_plan_resolution", "Review locked dependency/interface resolution for an exact candidate without starting work.",
+        "POST", "/v1/resolutions/plan", schema({**draft_revision, "candidate_id": DIGEST_SCHEMA,
+            "policy": {"type": "object"}}, ("import_id", "revision", "candidate_id", "policy")), lambda args: args)
+    for noun, collection in (("preparation", "preparations"), ("resolution", "resolutions")):
+        add("mcpme_start_" + noun, f"Start only the exact {noun} plan and attempt bound to an owner-issued execution grant.",
+            "POST", "/v1/" + collection + "/start", schema({"plan_id": UUID_SCHEMA, "plan_digest": DIGEST_SCHEMA,
+                "idempotency_key": UUID_SCHEMA}, ("plan_id", "plan_digest", "idempotency_key")), lambda args: args)
+        add("mcpme_list_" + collection, f"Read visible {noun} jobs without adopting or restarting work.", "GET", "/v1/" + collection)
+        add("mcpme_get_" + noun, f"Read one visible {noun} job and bounded progress.", "GET", "/v1/" + collection + "/{job_id}",
+            schema({"job_id": UUID_SCHEMA}, ("job_id",)))
+        add("mcpme_cancel_" + noun, f"Cancel only the exact {noun} job bound to this execution grant; owned work must settle.",
+            "POST", "/v1/" + collection + "/{job_id}/cancel", schema({"job_id": UUID_SCHEMA}, ("job_id",)), lambda _: {})
     add("mcpme_list_imports", "List resumable import draft summaries.", "GET", "/v1/imports")
     add("mcpme_create_import", "Snapshot selected local source into a resumable draft without executing it.",
         "POST", "/v1/imports", schema({"source": PATH_SCHEMA, "name": NAME_SCHEMA, "intent": INTENT_SCHEMA,

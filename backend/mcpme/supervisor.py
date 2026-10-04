@@ -79,13 +79,15 @@ def capabilities(host=None) -> dict:
             "limits": {"slots": 16, "request_bytes": DEFAULT_REQUEST_BYTES,
                        "max_request_bytes": MAX_REQUEST_BYTES, "idle_seconds": 300},
             "installation": "prepared_local_packages_and_imports", "management_credentials": "owner_and_scoped_grants",
-            "management_grant_modes": ["read", "prepare", "lifecycle", "install"], "management_mcp": "scoped_stdio",
+            "management_grant_modes": ["read", "prepare", "lifecycle", "install",
+                                       "recipe-management", "preparation-execution", "resolution-execution"],
+            "management_mcp": "scoped_stdio", "preparation_job_schema_versions": [1, 2], "resolution_job_schema_versions": [1, 2],
             "import_schema_versions": [1], "import_sources": ["local_folder", "markdown", "text", "prepared_package", "artifact_collection", "captured_artifact_collection"],
             "preparation_templates": ["python-function-v1", "existing-mcp-v1", "jevk5-llamacpp-v1"],
             "preparation_descriptor_schema_versions": [1], "recipe_bundle_schema_versions": [1],
             "recipe_management": "local_static_declarative", "recipe_execution": False,
             "automatic_preparation": False,
-            "preparation_resolution": {"schema_versions": [1], "credentials": "owner_only", "execution": False,
+            "preparation_resolution": {"schema_versions": [1], "credentials": "owner_and_exact_execution_grants", "execution": False,
                                        "operations": ["resolve_dependencies", "discover_interface"]},
             "configuration": {"schema_versions": [1], "types": ["string", "integer", "boolean"],
                               "delivery": "private_inherited_descriptor", "mutable_installed_settings": True,
@@ -311,6 +313,8 @@ class Supervisor(UpgradeHost):
                           AgentPythonAdapterFamily(self.agent_adapter_derivations),
                           AgentUnlockedPythonFamily(self.agent_unlocked_inputs, self.resolutions),
                           *((command_family,) if command_family is not None else ())))
+            from .management_workflow_grants import WorkflowGrantStore
+            self.workflow_grants = WorkflowGrantStore(self.preparations, self.resolutions, self.recipes)
             from .preparation_forms import PreparationForms
             self.preparation_forms = PreparationForms(self.preparations, preferred_recipes=tuple(
                 record["recipe"] for record in self.builtin_recipe_metadata["recipes"] if record["ready"]),
@@ -701,13 +705,13 @@ class Supervisor(UpgradeHost):
             "downloads": [], "execution_policy": policy.model_dump(), "blockers": blockers,
             "draft": self.import_preparation_views([current])[0]}
 
-    async def static_work(self, function, *args):
+    async def static_work(self, function, *args, **kwargs):
         """Keep bounded file work owned until its thread has actually settled."""
         if self.closing:
             raise HostError("host_closing", 409)
         if len(self.static_tasks) >= 4:
             raise HostError("static_work_busy", 429)
-        task = asyncio.create_task(asyncio.to_thread(function, *args))
+        task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
         self.static_tasks.add(task)
         def completed(result):
             self.static_tasks.discard(result)
@@ -2183,27 +2187,38 @@ def management_app(host: Supervisor, token: str, port: int):
         try:
             return host.grants.authenticate(authorization[7:])
         except GrantError as error:
+            if error.code != "unauthorized":
+                raise AuthenticationError(error.code) from None
+        try:
+            return host.workflow_grants.authenticate(authorization[7:])
+        except GrantError as error:
             raise AuthenticationError(error.code) from None
 
     async def dispatch(request: Request):
         try:
             route = request.url.path
             grant_id = request.scope["mcpme.principal"].get("grant_id")
+            workflow_grant = request.scope["mcpme.principal"].get("workflow_grant") is True
             payload = None
             if request.method != "GET":
                 payload = load_json(await request.body())
                 if not isinstance(payload, dict):
                     raise HostError("invalid_request")
             if grant_id is not None:
-                if (route.startswith(("/v1/recipes", "/v1/preparations", "/v1/resolutions", "/v1/downloads", "/v1/secrets", "/v1/upgrade", "/v1/artifact-captures", "/v1/artifacts"))
+                if (route.startswith(("/v1/downloads", "/v1/secrets", "/v1/upgrade", "/v1/artifact-captures", "/v1/artifacts"))
                         or route.startswith("/v1/operations/") and request.method != "GET"):
-                    # Existing metadata/attachment grants retain their scope.
-                    # This foundation introduces no scoped execution authority.
+                    # Workflow execution grants do not confer owner-only
+                    # acquisition, secret-store or installation administration.
                     raise GrantError("grant_scope", 403)
-                host.grants.authorize_route(grant_id, request.method, route, payload)
+                grants = host.workflow_grants if workflow_grant else host.grants
+                grants.authorize_route(grant_id, request.method, route, payload)
             if request.method == "GET":
                 if route == "/v1/capabilities":
                     result = capabilities(host)
+                elif route == "/v1/recipes/schema":
+                    from .preparation_contracts import RecipeManifest, RecipeLock
+                    result = {"schema_version": 1, "manifest": RecipeManifest.model_json_schema(),
+                              "lock": RecipeLock.model_json_schema()}
                 elif route == "/v1/recipes":
                     result = {"recipes": host.recipes.list_summaries()}
                 elif route == "/v1/downloads":
@@ -2223,12 +2238,16 @@ def management_app(host: Supervisor, token: str, port: int):
                 elif route == "/v1/resolutions":
                     await host.recover_resolutions()
                     result = {"resolutions": await host.capture_work(host.resolutions.list_summaries)}
+                    if workflow_grant:
+                        result["resolutions"] = host.workflow_grants.filter_jobs(grant_id, result["resolutions"])
                 elif route.startswith("/v1/resolutions/"):
                     await host.recover_resolutions()
                     result = await host.capture_work(host.resolutions.get, request.path_params["job_id"])
                 elif route == "/v1/preparations":
                     await host.recover_preparations()
                     result = {"preparations": host.preparations.list_summaries()}
+                    if workflow_grant:
+                        result["preparations"] = host.workflow_grants.filter_jobs(grant_id, result["preparations"])
                 elif route.startswith("/v1/preparations/"):
                     await host.recover_preparations()
                     result = host.preparations.get(request.path_params["job_id"])
@@ -2245,9 +2264,12 @@ def management_app(host: Supervisor, token: str, port: int):
                     if grant_id is not None:
                         result["slots"] = host.grants.filter_slots(grant_id, result["slots"])
                 elif route == "/v1/grants":
-                    result = host.grants.list()
+                    legacy, workflow = host.grants.list(), host.workflow_grants.list()
+                    result = {"grants": sorted(legacy["grants"] + workflow["grants"],
+                        key=lambda item: item["created_at"], reverse=True)[:100], "total": legacy["total"] + workflow["total"]}
                 elif route.startswith("/v1/grants/"):
-                    result = host.grants.inspect(request.path_params["grant_id"])
+                    identifier = request.path_params["grant_id"]
+                    result = (host.workflow_grants if host.workflow_grants.contains(identifier) else host.grants).inspect(identifier)
                 elif route.startswith("/v1/plans/"):
                     result = await asyncio.to_thread(host.inspect_plan, request.path_params["plan_id"])
                 elif route.startswith("/v1/upgrade/plans/"):
@@ -2327,7 +2349,8 @@ def management_app(host: Supervisor, token: str, port: int):
                 elif route == "/v1/resolutions/start":
                     if set(payload) != {"plan_id", "plan_digest", "idempotency_key"}:
                         raise HostError("invalid_resolution_request")
-                    result = await host.resolution_runner.start(payload["plan_id"], payload["plan_digest"], payload["idempotency_key"])
+                    result = await host.resolution_runner.start(payload["plan_id"], payload["plan_digest"], payload["idempotency_key"],
+                        **({"grant_id": grant_id} if workflow_grant else {}))
                 elif route.startswith("/v1/resolutions/"):
                     if payload:
                         raise HostError("invalid_resolution_request")
@@ -2341,13 +2364,16 @@ def management_app(host: Supervisor, token: str, port: int):
                 elif route == "/v1/recipes":
                     if set(payload) != {"path"} or not isinstance(payload["path"], str) or not Path(payload["path"]).is_absolute():
                         raise HostError("invalid_recipe_request")
-                    result = await host.static_work(host.recipes.add, Path(payload["path"]))
+                    result = await host.static_work(host.recipes.add, Path(payload["path"]),
+                        **({"admit": lambda record: host.workflow_grants.recipe_admit(grant_id, "register", record)} if workflow_grant else {}))
                 elif route.startswith("/v1/recipes/"):
                     action = request.path_params["action"]
                     if (action not in {"inspect", "enable", "disable", "revoke", "remove", "deprecate"}
                             or set(payload) != {"recipe_id", "version"}):
                         raise HostError("invalid_recipe_request")
-                    result = await host.static_work(getattr(host.recipes, action), payload["recipe_id"], payload["version"])
+                    result = await host.static_work(getattr(host.recipes, action), payload["recipe_id"], payload["version"],
+                        **({"admit": lambda record: host.workflow_grants.recipe_admit(grant_id, action, record)}
+                           if workflow_grant and action != "inspect" else {}))
                 elif route == "/v1/preparations/form":
                     if ({"import_id", "revision"} - set(payload) or
                             set(payload) - {"import_id", "revision", "candidate_id", "recipe", "resolution_digest"}):
@@ -2383,7 +2409,8 @@ def management_app(host: Supervisor, token: str, port: int):
                     if set(payload) != {"plan_id", "plan_digest", "idempotency_key"}:
                         raise HostError("invalid_preparation_request")
                     await host.recover_preparations()
-                    result = await host.preparation_runner.start(payload["plan_id"], payload["plan_digest"], payload["idempotency_key"])
+                    result = await host.preparation_runner.start(payload["plan_id"], payload["plan_digest"], payload["idempotency_key"],
+                        **({"grant_id": grant_id} if workflow_grant else {}))
                 elif route.endswith("/cancel") and "job_id" in request.path_params:
                     if payload:
                         raise HostError("invalid_preparation_request")
@@ -2396,6 +2423,10 @@ def management_app(host: Supervisor, token: str, port: int):
                     await host.recover_preparations()
                     result = host.preparations.get(request.path_params["job_id"])
                 elif route == "/v1/grants":
+                    from .management_workflow_grants import MODES
+                    if payload.get("mode") in MODES:
+                        result = await host.static_work(host.workflow_grants.issue, payload)
+                        return JSONResponse({"api_version": 1, **result})
                     plan = None
                     if payload.get("mode") == "install":
                         plan_id = payload.get("plan_id")
@@ -2407,7 +2438,16 @@ def management_app(host: Supervisor, token: str, port: int):
                             host.imports.validate_binding(plan["import_id"], plan["import_revision"], plan["import_digest"])
                     result = host.grants.issue(payload, plan=plan)
                 elif route.endswith("/revoke") and "grant_id" in request.path_params and not payload:
-                    result = host.grants.revoke(request.path_params["grant_id"])
+                    identifier = request.path_params["grant_id"]
+                    if host.workflow_grants.contains(identifier):
+                        result = host.workflow_grants.revoke(identifier)
+                        cleanup = host.workflow_grants.cleanup_job(identifier)
+                        if cleanup is not None:
+                            kind, job_id = cleanup
+                            runner = host.preparation_runner if kind == "preparation" else host.resolution_runner
+                            await runner.cancel(job_id)
+                    else:
+                        result = host.grants.revoke(identifier)
                 elif request.method == "PATCH" and "slot_id" in request.path_params:
                     result = await host.update_settings(request.path_params["slot_id"], payload)
                 elif route == "/v1/imports":
@@ -2497,6 +2537,7 @@ def management_app(host: Supervisor, token: str, port: int):
         Route("/v1/secrets/{secret_id}", dispatch),
         Route("/v1/secrets/{secret_id}/revoke", dispatch, methods=["POST"]),
         Route("/v1/recipes", dispatch, methods=["GET", "POST"]),
+        Route("/v1/recipes/schema", dispatch),
         Route("/v1/recipes/{action}", dispatch, methods=["POST"]),
         Route("/v1/preparations", dispatch),
         Route("/v1/preparations/form", dispatch, methods=["POST"]),

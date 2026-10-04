@@ -29,9 +29,13 @@ from test_preparation_resolution import source, request, policy
 def seeded(imports, resolutions):
     recipes = RecipeStore(imports)
     result = seed_builtin_recipes(recipes)
-    assert all(item["ready"] for item in result["recipes"]), result
+    # This fixture consumes only the resolved Python component. Frozen recipes
+    # for unrelated families can correctly become unavailable while backend
+    # changes await a new centrally reviewed producer version.
+    required = next(item for item in result["recipes"] if item["recipe_id"] == "mcpme.resolved-python")
+    assert required["ready"], required
     store = PreparationStore(imports, recipes, resolutions=resolutions)
-    forms = PreparationForms(store, preferred_recipes=[item["recipe"] for item in result["recipes"]])
+    forms = PreparationForms(store, preferred_recipes=[required["recipe"]])
     return store, forms
 
 

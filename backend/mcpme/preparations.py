@@ -403,7 +403,7 @@ class PreparationStore(PreparationAuthority):
         return extend_package_contract(base, command=command, licenses=licenses, source_artifacts=source_artifacts)
 
     def reserve(self, import_id, revision, descriptor, policy: ExecutionPolicy, *, idempotency_key: str,
-                authorization=None):
+                authorization=None, management_grant_id=None):
         """Host-only admission shared by legacy fixtures and scoped managed starts."""
         try:
             if str(uuid.UUID(idempotency_key)) != idempotency_key:
@@ -443,11 +443,17 @@ class PreparationStore(PreparationAuthority):
             artifact_digest = bound_inputs.captured_collection.digest
         with self.imports._transaction():
             draft = self._recheck_descriptor(value, observed)
+            from .management_workflow_grants import start_authority, existing_start
+            if management_grant_id is not None and authorization is None:
+                raise PreparationError("preparation_authority_required")
+            authority = start_authority(self, "preparation", authorization, idempotency_key, management_grant_id)
             row = self.db.execute("SELECT input_digest,data FROM preparation_jobs WHERE idempotency_key=?", (idempotency_key,)).fetchone()
             if row is not None:
                 if row["input_digest"] != identity:
                     raise PreparationError("preparation_key_conflict")
-                return json.loads(row["data"])
+                job = json.loads(row["data"])
+                existing_start(self, "preparation", job, authority)
+                return job
             if authorization is not None:
                 self._check_start_authority(authorization, value, observed, policy)
             if self.db.execute("SELECT count(*) FROM preparation_jobs").fetchone()[0] >= MAX_JOBS:
@@ -464,7 +470,8 @@ class PreparationStore(PreparationAuthority):
                 runner_digest=RUNNER_IDENTITY if authorization is None else authorization["runner_digest"],
                 verifier_digest=VERIFIER_IDENTITY if authorization is None else authorization["verifier_digest"])
             now = time.time()
-            job = {"schema_version": 1, "job_id": job_id, "binding": binding.model_dump(), "state": "queued",
+            job = {"schema_version": 2, "management_authority": authority,
+                   "job_id": job_id, "binding": binding.model_dump(), "state": "queued",
                    "created_at": now, "updated_at": now, "error_code": None, "reservation_retained": True,
                    "ownership_settled": True, "expected_package_digest": None, "receipt_digest": None,
                    "dependency_lock_digest": value.dependencies.lock_sha256 if value.schema_version == 1 else None,
@@ -477,6 +484,11 @@ class PreparationStore(PreparationAuthority):
                 self._record_start_authority(job, authorization, value, policy)
             self.db.execute("INSERT INTO preparation_jobs VALUES (?,?,?,?)", (job_id, idempotency_key, identity,
                 json.dumps(job, sort_keys=True, separators=(",", ":"))))
+            from .management_workflow_grants import record_job_authority
+            record_job_authority(self, "preparation", job)
+            ledger = getattr(self, "management_execution_grants", None)
+            if ledger is not None:
+                ledger.bind_job("preparation", job)
             return job
 
     def _current_inputs(self, job):

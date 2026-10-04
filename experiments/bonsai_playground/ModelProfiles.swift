@@ -5,9 +5,10 @@ enum ModelProfile: String, CaseIterable {
     case minicpm
     case minicpmQ4 = "minicpm-q4"
     case qwen35 = "qwen35"
+    case qwen35Full = "qwen35-full"
 
     // Keep the failed IQ2 profile available only for reproducible CLI checks.
-    static let selectableProfiles: [ModelProfile] = [.bonsai, .minicpmQ4, .qwen35]
+    static let selectableProfiles: [ModelProfile] = [.bonsai, .minicpmQ4, .qwen35, .qwen35Full]
 
     var displayName: String {
         switch self {
@@ -15,6 +16,7 @@ enum ModelProfile: String, CaseIterable {
         case .minicpm: return "MiniCPM5 2B Fable Agentic · IQ2_XXS"
         case .minicpmQ4: return "MiniCPM5 2B Fable Agentic · Q4_K_M"
         case .qwen35: return "Qwen3.5 2B Reasoning · Q4_K_M"
+        case .qwen35Full: return "Qwen3.5 2B Reasoning · BF16"
         }
     }
 
@@ -22,7 +24,7 @@ enum ModelProfile: String, CaseIterable {
         switch self {
         case .bonsai: return "Bonsai"
         case .minicpm, .minicpmQ4: return "MiniCPM5"
-        case .qwen35: return "Qwen3.5"
+        case .qwen35, .qwen35Full: return "Qwen3.5"
         }
     }
 
@@ -36,12 +38,14 @@ enum ModelProfile: String, CaseIterable {
             return "/Users/johnshahbazian/development/mcpme/models/minicpm5-2b-agentic/MiniCPM5-2B-Claude-Fable5-1-Thinking-Agentic.i1-Q4_K_M.gguf"
         case .qwen35:
             return "/Users/johnshahbazian/development/mcpme/models/qwen3.5-2b/Qwen3.5-2B-Q4_K_M.gguf"
+        case .qwen35Full:
+            return "/Users/johnshahbazian/development/mcpme/models/qwen3.5-2b/Qwen3.5-2B-BF16.gguf"
         }
     }
 
     var defaultMaximumOutput: Int { self == .bonsai ? 512 : 2048 }
 
-    /// MiniCPM's generated output continues a thinking block opened in its prompt.
+    /// Thinking profiles continue a block opened in their generation prompt.
     var assistantOutputPrefix: String { self == .bonsai ? "" : "<think>\n" }
 
     var runtimeArguments: [String] { self == .bonsai ? [] : ["--special"] }
@@ -60,7 +64,9 @@ enum ModelProfile: String, CaseIterable {
 
     func render(system: String, prompt: String, conversation: Conversation) -> String {
         if self == .bonsai { return conversation.render(system: system, prompt: prompt) }
-        if self == .qwen35 { return renderQwen(system: system, prompt: prompt, conversation: conversation) }
+        if self == .qwen35 || self == .qwen35Full {
+            return renderQwen(system: system, prompt: prompt, conversation: conversation)
+        }
         var messages = "<s><|im_start|>system\n\(system)<|im_end|>\n"
         for turn in conversation.turns {
             messages += "<|im_start|>user\n\(turn.user)<|im_end|>\n"
@@ -189,7 +195,15 @@ enum ModelProfileChecks {
         checks["qwen_thinking_template_uses_final_history"] = qwen == qwenExpected && !qwen.contains("<s>")
         checks["qwen_final_answer_requires_closed_thinking"] = ModelProfile.qwen35.finalAnswer("<think>Reason</think>42") == "42"
             && ModelProfile.qwen35.finalAnswer("<think>Unfinished").isEmpty
-        checks["broken_iq2_is_excluded_from_selector"] = ModelProfile.selectableProfiles == [.bonsai, .minicpmQ4, .qwen35]
+        checks["qwen_bf16_uses_same_thinking_protocol"] = ModelProfile.qwen35Full.render(
+            system: "  Be concise.\n", prompt: " What value? ", conversation: conversation) == qwen
+            && ModelProfile.qwen35Full.assistantOutputPrefix == ModelProfile.qwen35.assistantOutputPrefix
+            && ModelProfile.qwen35Full.runtimeArguments == ModelProfile.qwen35.runtimeArguments
+            && ModelProfile.qwen35Full.defaultMaximumOutput == ModelProfile.qwen35.defaultMaximumOutput
+        checks["qwen_bf16_is_distinct_from_q4"] = ModelProfile.qwen35Full.rawValue == "qwen35-full"
+            && ModelProfile.qwen35Full.defaultModelPath.hasSuffix("/qwen3.5-2b/Qwen3.5-2B-BF16.gguf")
+            && ModelProfile.qwen35Full.defaultModelPath != ModelProfile.qwen35.defaultModelPath
+        checks["broken_iq2_is_excluded_from_selector"] = ModelProfile.selectableProfiles == [.bonsai, .minicpmQ4, .qwen35, .qwen35Full]
         return checks
     }
 }

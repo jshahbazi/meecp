@@ -48,3 +48,15 @@ Controlled runtime comparison: the MiniCPM IQ2 artifact failed the same greeting
 - Local model path: `models/qwen3.5-2b/Qwen3.5-2B-Q4_K_M.gguf`.
 - Runtime probes passed the greeting and `42` follow-up using the same local runtime. The GGUF reports Qwen3.5 architecture; its native chat template emits no BOS token and opens active reasoning with `<think>`.
 - License: Apache-2.0; see [licenses/Qwen3.5-2B-LICENSE](licenses/Qwen3.5-2B-LICENSE), the primary official license copy.
+
+### Full precision reasoning variant
+
+- Repository and immutable revision: [unsloth/Qwen3.5-2B-GGUF](https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/tree/f6d5376be1edb4d416d56da11e5397a961aca8ae), `f6d5376be1edb4d416d56da11e5397a961aca8ae`.
+- Base model: [Qwen/Qwen3.5-2B](https://huggingface.co/Qwen/Qwen3.5-2B/tree/15852e8c16360a2fea060d615a32b45270f8a8fc), immutable revision `15852e8c16360a2fea060d615a32b45270f8a8fc`.
+- File: `Qwen3.5-2B-BF16.gguf`.
+- Download: https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-BF16.gguf
+- Size: `3775709216` bytes.
+- SHA-256: `dc11be2ca4519954a3e4b013ef59497b5522209987d67891851113eda89619f1`.
+- Local model path: `models/qwen3.5-2b/Qwen3.5-2B-BF16.gguf`.
+- License: Apache-2.0; see [licenses/Qwen3.5-2B-LICENSE](licenses/Qwen3.5-2B-LICENSE).
+- Validation: SHA-256 and byte count match the pinned artifact. With the existing Metal runtime and native Qwen template, the application's two-turn arithmetic check passed. The native GUI greeting passed at temperature 0.2. The temperature-zero greeting exhausted 2048 output tokens without closing its thinking block; see [local verification](README.md#local-verification).

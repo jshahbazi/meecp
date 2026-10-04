@@ -358,7 +358,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         modelSelector.addItems(withTitles: ModelProfile.selectableProfiles.map { $0.displayName })
         modelSelector.target = self
         modelSelector.action = #selector(selectModel)
-        modelSelector.toolTip = "Bonsai, MiniCPM5-2B-Claude-Fable5-1-Thinking-Agentic, and Qwen3.5-2B"
+        modelSelector.toolTip = "Bonsai, MiniCPM5-2B-Claude-Fable5-1-Thinking-Agentic, and Qwen3.5-2B in Q4_K_M or full-precision BF16"
         let modelSelection = row([label("Model"), modelSelector])
         let conversationLabel = label("Conversation")
         let responseScroll = textArea(editable: false)
@@ -781,6 +781,15 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         selectModel()
         checks["qwen_selector_uses_reasoning_model"] = selectedProfile == .qwen35
             && modelField.stringValue == ModelProfile.qwen35.defaultModelPath && conversation.isEmpty
+        conversation.append(user: "synthetic qwen user", assistant: "synthetic qwen answer")
+        modelSelector.selectItem(at: ModelProfile.selectableProfiles.firstIndex(of: .qwen35Full)!)
+        selectModel()
+        checks["full_qwen_selector_uses_full_precision_model"] = selectedProfile == .qwen35Full
+            && modelField.stringValue == ModelProfile.qwen35Full.defaultModelPath
+            && maximumOutput.titleOfSelectedItem == "2048" && conversation.isEmpty
+        modelSelector.selectItem(at: ModelProfile.selectableProfiles.firstIndex(of: .qwen35)!)
+        selectModel()
+        checks["full_qwen_keeps_q4_history_separate"] = conversation.turns.first?.assistant == "synthetic qwen answer"
         return checks
     }
 

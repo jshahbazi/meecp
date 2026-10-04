@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "policy_id": "phase3-initial-families-v1",
+  "policy_id": "phase3-live-agent-acceptance-candidate-v1",
   "preparation": {
     "families": [
       {
@@ -27,6 +27,11 @@
         "id": "service-text-generate-v1",
         "version": "1.0.0",
         "digest": "bc540561a87cba329d1d62d837596d6318a2d740fc4f6cf49b3eab95a9145d75"
+      },
+      {
+        "id": "agent-unlocked-python-adapter-v1",
+        "version": "1.0.0",
+        "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"
       }
     ],
     "recipe_component_sets": [
@@ -91,12 +96,38 @@
           "version": "1.0.0",
           "digest": "bc540561a87cba329d1d62d837596d6318a2d740fc4f6cf49b3eab95a9145d75"
         }
+      ],
+      [
+        {
+          "id": "agent-unlocked-python-adapter-v1",
+          "version": "1.0.0",
+          "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"
+        }
       ]
     ],
     "resolution_candidate_kinds": [
       "python-callable",
       "python-mcp"
     ]
+  },
+  "agent": {
+    "components": [
+      {
+        "id": "agent-unlocked-python-adapter-v1",
+        "version": "1.0.0",
+        "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"
+      }
+    ],
+    "providers": [
+      {
+        "adapter_id": "openai-responses-v1",
+        "adapter_digest": "f651b36ab4b3d4fe6479457e5a31f129b1339c41536e02bfb53cbbf4025cebc1",
+        "models": [
+          "gpt-6.1-sol"
+        ]
+      }
+    ],
+    "unlocked_resolution": true
   },
   "command": {
     "component": [
@@ -106,10 +137,5 @@
     ],
     "installed_platform_policy": "3898759c85d08268db02963c0e822e2bd3c9657d337e1e5c5708e0bb0738c83b",
     "resource_platform_policy": "03a5e27b4931b1eaa705f0a4be373bc202ac7dd3bb4d71a438c2eb6ffeae1b8a"
-  },
-  "agent": {
-    "components": [],
-    "providers": [],
-    "unlocked_resolution": false
   }
 }

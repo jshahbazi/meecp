@@ -54,24 +54,31 @@ def active_candidate(policy, model, adapter_digest):
     return selected
 
 
-def read_selected_credential(path):
+def read_selected_credential(path, *, on_read_attempt=None, on_read_complete=None):
     """Only explicit operator input, after candidate/ordinary startup checks."""
     common.require(path.is_absolute() and path.resolve(strict=True) == path, "live_agent_credential_file_invalid")
     before = path.lstat()
     common.require(stat.S_ISREG(before.st_mode) and stat.S_IMODE(before.st_mode) == 0o600
-        and before.st_uid == os.getuid() and before.st_nlink == 1 and 1 <= before.st_size <= 4096,
+        and before.st_uid == os.getuid() and before.st_nlink == 1 and 1 <= before.st_size <= 4098,
         "live_agent_credential_file_invalid")
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         common.require(credential_identity(os.fstat(fd)) == credential_identity(before), "live_agent_credential_file_changed")
-        value = os.read(fd, 4097)
+        if on_read_attempt is not None:
+            on_read_attempt()
+        value = os.read(fd, 4099)
+        if on_read_complete is not None:
+            on_read_complete()
         after = os.fstat(fd)
         common.require(credential_identity(after) == credential_identity(before)
             and credential_identity(path.lstat()) == credential_identity(before) and len(value) == before.st_size,
             "live_agent_credential_file_changed")
     finally:
         os.close(fd)
-    common.require(all(33 <= byte <= 126 for byte in value), "live_agent_credential_file_invalid")
+    # Permit one conventional file terminator, retaining raw identity/size above.
+    value = value[:-2] if value.endswith(b"\r\n") else value[:-1] if value.endswith(b"\n") else value
+    common.require(1 <= len(value) <= 4096 and all(33 <= byte <= 126 for byte in value),
+        "live_agent_credential_file_invalid")
     return value.decode("ascii"), before
 
 
@@ -107,8 +114,10 @@ class LiveHarness(native_common.Harness):
         providers = await self.get(state, "/v1/agent-providers")
         common.require(providers["providers"] == [] and providers["live_execution_enabled"] is True
             and all(count == 0 for count in native_common.job_counts(state).values()), "live_agent_defaults_invalid")
-        key, identity = read_selected_credential(self.credential_file)
-        self.report["credential_read"] = True
+        key, identity = read_selected_credential(self.credential_file,
+            on_read_attempt=lambda: self.report.update(credential_read_attempted=True),
+            on_read_complete=lambda: self.report.update(credential_read=True))
+        self.report["credential_accepted"] = True
         try:
             response = await self.manager(state, "/v1/agent-providers", {"schema_version": 1,
                 "adapter_id": "openai-responses-v1", "name": "Explicit live acceptance",
@@ -270,7 +279,7 @@ class LiveHarness(native_common.Harness):
 
 
 def prepare_review(policy, model):
-    """Use current trusted contracts; the returned policy is only a proposal.
+    """Review a closed-base proposal or the exact already-admitted selection.
 
     No credential argument exists: even an explicitly selected credential is not
     needed until the separately reviewed, signed live executor is available.
@@ -284,21 +293,26 @@ def prepare_review(policy, model):
         raise ValueError("live_agent_model_required")
     parsed = ReleasePolicy.model_validate(policy)
     parsed.admissions()
-    if parsed.agent.model_dump() != {"components": [], "providers": [], "unlocked_resolution": False}:
-        raise ValueError("live_agent_base_must_be_closed")
     if sum(guide.component.model_dump() == UNLOCKED for guide in builtin_analysis_guides()) != 1:
         raise ValueError("live_agent_guide_mismatch")
-    candidate = copy.deepcopy(policy)
-    candidate["policy_id"] = "phase3-live-agent-acceptance-candidate-v1"
-    preparation = candidate["preparation"]
-    if UNLOCKED not in preparation["families"]:
-        preparation["families"].append(copy.deepcopy(UNLOCKED))
-    if [UNLOCKED] not in preparation["recipe_component_sets"]:
-        preparation["recipe_component_sets"].append([copy.deepcopy(UNLOCKED)])
     adapter = OpenAIResponsesAdapter()
-    candidate["agent"] = {"components": [copy.deepcopy(UNLOCKED)], "providers": [{
-        "adapter_id": adapter.adapter_id, "adapter_digest": adapter.digest, "models": [model]}],
-        "unlocked_resolution": True}
+    candidate = copy.deepcopy(policy)
+    closed = parsed.agent.model_dump() == {"components": [], "providers": [], "unlocked_resolution": False}
+    if closed:
+        candidate["policy_id"] = "phase3-live-agent-acceptance-candidate-v1"
+        preparation = candidate["preparation"]
+        if UNLOCKED not in preparation["families"]:
+            preparation["families"].append(copy.deepcopy(UNLOCKED))
+        if [UNLOCKED] not in preparation["recipe_component_sets"]:
+            preparation["recipe_component_sets"].append([copy.deepcopy(UNLOCKED)])
+        candidate["agent"] = {"components": [copy.deepcopy(UNLOCKED)], "providers": [{
+            "adapter_id": adapter.adapter_id, "adapter_digest": adapter.digest, "models": [model]}],
+            "unlocked_resolution": True}
+    else:
+        try:
+            active_candidate(candidate, model, adapter.digest)
+        except common.AcceptanceError:
+            raise ValueError("live_agent_existing_authority_mismatch") from None
     validated = ReleasePolicy.model_validate(candidate)
     _, admission, _ = validated.admissions()
     if not admission.permits(adapter.adapter_id, adapter.digest, model):
@@ -306,7 +320,8 @@ def prepare_review(policy, model):
     AgentLimitsV1.model_validate(LIMITS)
     return {"schema_version": 1, "scope": "live_agent_review_preparation_only",
         "dispatch_authorized": False, "live_provider_calls": 0, "credential_reads": 0,
-        "live_acceptance_verified": False, "candidate_policy": validated.model_dump(mode="json"),
+        "live_acceptance_verified": False, "candidate_policy": candidate,
+        "candidate_policy_changed": candidate != policy,
         "destination": adapter.destination, "limits": dict(LIMITS),
         "maximum_reserved_output_tokens": LIMITS["max_calls"] * LIMITS["max_output_tokens"],
         "required_before_dispatch": ["explicit_account_credential_selection", "reviewed_live_native_driver",
@@ -387,7 +402,8 @@ def main():
         fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         os.umask(0o077); logging.disable(logging.CRITICAL)
         report = {"schema_version": 1, "verified": False, "scope": "signed_candidate_live_agent_acceptance",
-            "cases": {}, "credential_read": False, "live_dispatch_attempted": False,
+            "cases": {}, "credential_read_attempted": False, "credential_read": False,
+            "credential_accepted": False, "live_dispatch_attempted": False,
             "simulated_provider": False, "automatic_retries": 0, "public_release_accepted": False,
             "scope_limits": ["explicit_candidate_policy_only", "physical_clicks_unverified",
                 "provider_remote_work_settlement_unclaimed", "model_quality_unclaimed"]}

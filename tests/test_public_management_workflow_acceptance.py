@@ -1,5 +1,6 @@
 """Metadata/transport controls for the public driver; no released-host workloads."""
 import importlib
+import copy
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -38,6 +39,9 @@ async def test_every_start_uses_ordinary_cli_even_if_enabled_requested(driver, h
 def policy(driver, tmp_path):
     source = Path(__file__).resolve().parents[1] / "templates/release-policies/phase3-v1.json"
     value = json.loads(source.read_bytes())
+    # Historical closed-agent controls use an explicit fixture, independently
+    # of whether the current distribution admits the reviewed selected model.
+    value["agent"] = {"components": [], "providers": [], "unlocked_resolution": False}
     target = tmp_path / driver.POLICY_PATH
     target.parent.mkdir(parents=True)
     def write(): target.write_text(json.dumps(value))
@@ -45,8 +49,62 @@ def policy(driver, tmp_path):
     return SimpleNamespace(host=tmp_path, value=value, path=target, write=write)
 
 
-def test_actual_current_policy_has_exact_python_closure_and_closed_agent(driver, policy):
+def test_explicit_closed_policy_has_exact_python_closure(driver, policy):
     assert driver.active_policy(policy.host) == policy.path.read_bytes()
+    assert driver.typed_policy_scope(policy.path.read_bytes()) == "closed"
+
+
+def test_actual_current_policy_has_exact_python_closure_and_reviewed_agent(driver, tmp_path, monkeypatch):
+    from mcpme.preparation_agent_providers import OpenAIResponsesAdapter
+    from mcpme.preparation_release_policy import ReleasePolicy
+    source = Path(__file__).resolve().parents[1] / "templates/release-policies/phase3-v1.json"
+    data = source.read_bytes(); value = json.loads(data)
+    target = tmp_path / driver.POLICY_PATH
+    target.parent.mkdir(parents=True); target.write_bytes(data)
+    monkeypatch.setattr(OpenAIResponsesAdapter, "backend", lambda *_: pytest.fail("provider constructed"))
+    assert driver.active_policy(tmp_path) == data
+    public, agent, command = ReleasePolicy.model_validate(value).admissions()
+    assert driver.typed_policy_scope(data) == "selected_model_accepted"
+    assert agent.providers == frozenset({("openai-responses-v1", OpenAIResponsesAdapter().digest,
+        driver.REVIEWED_AGENT_MODEL)}) and agent.components <= public.families
+    assert source.read_bytes() == target.read_bytes() == data
+    # Policy inspection creates no host, state, job, credential or dispatcher.
+    assert sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*") if path.is_file()) == [driver.POLICY_PATH]
+
+
+@pytest.mark.parametrize("fault", ["model", "extra-model", "adapter", "digest", "extra-provider",
+    "component", "extra-component", "locked", "missing-family", "missing-closure", "extra-agent-field"])
+def test_selected_policy_rejects_any_unreviewed_agent_authority(driver, tmp_path, fault):
+    source = Path(__file__).resolve().parents[1] / "templates/release-policies/phase3-v1.json"
+    value = json.loads(source.read_bytes())
+    selected = value["agent"]
+    if fault == "model": selected["providers"][0]["models"] = ["another-model"]
+    elif fault == "extra-model": selected["providers"][0]["models"].append("another-model")
+    elif fault == "adapter": selected["providers"][0]["adapter_id"] = "another-adapter"
+    elif fault == "digest": selected["providers"][0]["adapter_digest"] = "0" * 64
+    elif fault == "extra-provider": selected["providers"].append(copy.deepcopy(selected["providers"][0]))
+    elif fault == "component": selected["components"][0]["digest"] = "0" * 64
+    elif fault == "extra-component": selected["components"].append(copy.deepcopy(selected["components"][0]))
+    elif fault == "locked": selected["unlocked_resolution"] = False
+    elif fault == "missing-family": value["preparation"]["families"].remove(driver.live.UNLOCKED)
+    elif fault == "missing-closure": value["preparation"]["recipe_component_sets"].remove([driver.live.UNLOCKED])
+    else: selected["allow_extra"] = True
+    target = tmp_path / driver.POLICY_PATH
+    target.parent.mkdir(parents=True); target.write_text(json.dumps(value)); before = target.read_bytes()
+    with pytest.raises(driver.common.AcceptanceError): driver.active_policy(tmp_path)
+    with pytest.raises((driver.common.AcceptanceError, ValueError)): driver.typed_policy_scope(before)
+    assert target.read_bytes() == before and source.read_bytes() != before
+
+
+def test_typed_policy_requires_current_adapter_without_constructing_provider(driver, monkeypatch):
+    from mcpme.preparation_agent_providers import OpenAIResponsesAdapter
+    source = Path(__file__).resolve().parents[1] / "templates/release-policies/phase3-v1.json"
+    before = source.read_bytes()
+    monkeypatch.setattr(OpenAIResponsesAdapter, "digest", property(lambda _: "0" * 64))
+    monkeypatch.setattr(OpenAIResponsesAdapter, "backend", lambda *_: pytest.fail("provider constructed"))
+    with pytest.raises(driver.common.AcceptanceError, match="^management_adapter_not_reviewed$"):
+        driver.typed_policy_scope(before)
+    assert source.read_bytes() == before
 
 
 @pytest.mark.parametrize("fault", ["schema", "unknown", "closure", "digest", "family", "agent-extra", "agent-none",
@@ -105,6 +163,67 @@ def test_export_pins_actual_shipped_command_state_and_credential(driver, tmp_pat
     if fault is None: assert driver.validate_export(value, launcher, state, credential) == configuration
     else:
         with pytest.raises(driver.common.AcceptanceError): driver.validate_export(value, launcher, state, credential)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("app_name", ["Synthetic.app", "Relocated app.app"])
+async def test_actual_bundled_export_reaches_exact_native_sdk_entrypoint(driver, tmp_path, monkeypatch, app_name):
+    """Use production export/credential parsing; stop before opening transport."""
+    from contextlib import asynccontextmanager
+    import uuid
+    import mcp.client.stdio as transport
+    from mcpme import __main__ as cli
+    from mcpme.private import write_private_json
+
+    app = tmp_path / app_name
+    host = app / "Contents/Resources/host"
+    module = host / "backend/mcpme/__main__.py"
+    native = app / "Contents/MacOS/mcpme"
+    launcher = host / "bin/mcpme"
+    for path in (module, native, launcher):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("Synthetic location fixture.\n")
+    monkeypatch.setattr(cli, "__file__", str(module))
+    state = tmp_path / "state"
+    credentials = tmp_path / "credentials"
+    credentials.mkdir(mode=0o700)
+    credential = credentials / "scoped.json"
+    token = "s" * 43
+    grant_id = str(uuid.uuid4())
+    write_private_json(credential, {"schema_version": 1, "grant_id": grant_id, "token": token})
+    args = cli.parser().parse_args(["--state-dir", str(state), "--credential-file", str(credential),
+        "management", "export", "--json"])
+    exported = await cli.execute(args)
+    expected = {"command": str(native), "args": ["--state-dir", str(state), "--credential-file",
+        str(credential), "management", "connect"]}
+    assert exported["grant_id"] == grant_id
+    assert driver.validate_export(exported, native, state, credential) == expected
+    assert token not in json.dumps(exported)
+    with pytest.raises(driver.common.AcceptanceError, match="^management_export_binding_changed$"):
+        driver.validate_export(exported, launcher, state, credential)
+
+    harness = driver.ManagementHarness(tmp_path, host, native, {"safe_to_remove": True},
+        report={"public_cli_starts": 0, "sdk_sessions_exited": 0, "cases": {}})
+    exports = []
+    async def actual_export(*arguments):
+        exports.append(arguments)
+        return await cli.execute(args)
+    monkeypatch.setattr(harness, "cli", actual_export)
+    transports = []
+    class StopBeforeTransport(Exception):
+        pass
+    @asynccontextmanager
+    async def guarded_transport(parameters, **kwargs):
+        transports.append(parameters)
+        assert parameters.command == str(native) and parameters.args == expected["args"]
+        raise StopBeforeTransport()
+        yield
+    monkeypatch.setattr(transport, "stdio_client", guarded_transport)
+    with pytest.raises(StopBeforeTransport):
+        async with harness.sdk(state, {"PATH": "/usr/bin:/bin"}, tmp_path, credential):
+            pytest.fail("guarded fixture opened a session")
+    assert len(exports) == len(transports) == 1 and not harness.children
+    assert harness.report["sdk_sessions_exited"] == 0
 
 
 @pytest.mark.asyncio
@@ -257,8 +376,8 @@ async def test_closed_release_fails_before_signature_or_start_without_input_muta
 async def test_actual_silent_sdk_child_times_out_and_original_transport_handle_joins(driver, harness, tmp_path, monkeypatch, stage):
     import asyncio
     import mcp.client.stdio as transport
-    launcher = harness.launcher
-    launcher.parent.mkdir(parents=True)
+    launcher = harness.native
+    launcher.parent.mkdir(parents=True, exist_ok=True)
     code = ("#!" + sys.executable + "\nimport json,sys\n"
         "for line in sys.stdin:\n"
         " request=json.loads(line)\n"
@@ -303,8 +422,8 @@ async def test_actual_silent_sdk_child_times_out_and_original_transport_handle_j
 async def test_actual_early_exit_is_not_reclassified_as_a_fired_sdk_timeout(driver, harness, tmp_path, monkeypatch):
     import asyncio
     import mcp.client.stdio as transport
-    launcher = harness.launcher
-    launcher.parent.mkdir(parents=True)
+    launcher = harness.native
+    launcher.parent.mkdir(parents=True, exist_ok=True)
     launcher.write_text("#!" + sys.executable + "\nraise SystemExit(0)\n")
     launcher.chmod(0o700)
     owned = []

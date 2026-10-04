@@ -233,7 +233,7 @@ async def test_actual_host_sigkill_recovery_requires_native_publication(tmp_path
     # only the held child Popen handle is killed, never discovered target PIDs.
     family, draft, descriptor = selected(digest(native[1]), native[2].read_bytes())
     value = descriptor.model_dump(exclude_none=True)
-    value["components"][0]["input"]["fixed_args"] = ["hang"]
+    value["components"][0]["input"]["fixed_args"] = ["ready-hang"]
     value["components"][0]["input"]["deadline_ms"] = 3000
     descriptor = parse_component_descriptor(value)
     package = family.prepare(descriptor, draft, None, tmp_path / "candidate", None, lambda: None, acquire_wheels=None, job_id="fixture")
@@ -248,14 +248,22 @@ from mcpme.preparation_command_owner import CommandPreparationOwner
 class Store:
  def get(self,job): return {"binding":{"import_id":"fixture","revision":1}}
  def check_authority(self,job): pass
- def register_command_ownership(self,job,metadata): pass
+ def register_command_ownership(self,job,metadata): self.metadata=metadata.copy()
+ def command_ownership(self,job): return [self.metadata]
 async def main():
  descriptor=parse_component_descriptor(json.loads(sys.stdin.buffer.readline()))
  owner=CommandPreparationOwner(HostCommandAdmission(Path(sys.argv[1]),sys.argv[2]),Store(),"fixture",Path(sys.argv[3]),validate_package(Path(sys.argv[4])),descriptor,attempt_id="a"*32,check=lambda:None,deadline=time.monotonic()+10)
  handle=await owner.session(owner.package)
+ launched=asyncio.Event()
+ original_read=os.read
+ def observed(fd,size):
+  value=original_read(fd,size)
+  if value and any(p.stdout and not p.stdout.closed and p.stdout.fileno()==fd for p in owner.executor._native.values()): launched.set()
+  return value
+ os.read=observed
  task=asyncio.create_task(owner.invoke(handle,"run",{"ok":True},1))
- while not owner.executor._native: await asyncio.sleep(.001)
- await asyncio.sleep(.05)
+ await asyncio.wait_for(launched.wait(),5)
+ os.read=original_read
  os.write(1,b"R")
  await task
 asyncio.run(main())

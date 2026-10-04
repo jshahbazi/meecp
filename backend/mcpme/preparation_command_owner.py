@@ -7,11 +7,13 @@ Recovery never creates missing files, adopts PIDs, or executes package code.
 from __future__ import annotations
 
 import asyncio
+import copy
 from dataclasses import dataclass, replace
 import fcntl
 import os
 from pathlib import Path
 import secrets
+import stat
 import time
 
 from jsonschema import Draft202012Validator
@@ -20,7 +22,7 @@ from .command_execution_v2 import (CommandExecutionError, CommandExecutorV2, Com
     _digest, _hex, _join, validate_command_journal, verify_command_completion)
 from . import command_resource_execution_v1 as resource_execution
 from .command_resource_policy_v1 import ResourcePolicyV1
-from .contracts import validate_package
+from .contracts import LOCK_NAME, MANIFEST_NAME, MAX_ARTIFACTS, validate_package
 from .gateway import MAX_MESSAGE_BYTES, encode
 from .host_command import CommandSession, HostCommandAdmission
 from .policy import load_json
@@ -40,6 +42,45 @@ class CommandPreparationResourceAdmission:
         if (not isinstance(self.helper, Path) or not _hex(self.helper_sha256)
                 or not _hex(self.platform_policy) or type(self.policy) is not ResourcePolicyV1):
             raise PreparationError("command_preparation_not_admitted")
+
+
+@dataclass(frozen=True)
+class _CommandLaunchIdentity:
+    """One pre-validation metadata baseline, never replacement byte authority."""
+    records: tuple
+
+    @staticmethod
+    def _identity(path, full):
+        try:
+            value = path.lstat()
+        except OSError:
+            raise PreparationError("preparation_package_mutated") from None
+        basic = (value.st_dev, value.st_ino, value.st_mode, value.st_uid)
+        return basic + ((value.st_nlink, value.st_size, value.st_mtime_ns, value.st_ctime_ns) if full else ())
+
+    @classmethod
+    def capture(cls, package, helpers):
+        files = {package.root / artifact.path for artifact in package.lock.artifacts}
+        files.update((package.root / MANIFEST_NAME, package.root / LOCK_NAME, *helpers))
+        directories = {package.root}
+        for path in tuple(files):
+            directories.update(path.parents)
+        if len(files) > MAX_ARTIFACTS + 4 or len(directories) > MAX_ARTIFACTS * 2 + 1024:
+            raise PreparationError("preparation_package_mutated")
+        records = []
+        for path in sorted(files | directories):
+            full = path in files or path == package.root or package.root in path.parents
+            identity = cls._identity(path, full)
+            if (path in files and (not stat.S_ISREG(identity[2]) or identity[4] != 1)
+                    or path in directories and not stat.S_ISDIR(identity[2])):
+                raise PreparationError("preparation_package_mutated")
+            records.append((path, full, identity))
+        return cls(tuple(records))
+
+    def check(self):
+        for path, full, identity in self.records:
+            if self._identity(path, full) != identity:
+                raise PreparationError("preparation_package_mutated")
 
 
 def command_owner_paths(workspace, metadata):
@@ -149,6 +190,10 @@ class CommandPreparationOwner:
         if resource_admission is not None and type(resource_admission) is not CommandPreparationResourceAdmission:
             raise PreparationError("command_preparation_not_admitted")
         self.resource_admission = resource_admission
+        self._descriptor_baseline = descriptor.model_copy(deep=True)
+        self._binding_baseline = copy.deepcopy(store.get(job_id)["binding"])
+        helpers = (admission.helper,) + ((resource_admission.helper,) if resource_admission is not None else ())
+        self._launch_identity = _CommandLaunchIdentity.capture(package, helpers)
         self.resource_reports = []
         self.intents = {"version": 1, "entries": []}
         measured = resource_admission is not None
@@ -158,9 +203,11 @@ class CommandPreparationOwner:
             self.resource_policy = replace(resource_admission.policy,
                 footprint_bytes=min(resource_admission.policy.footprint_bytes, descriptor.resources.memory_mb * 1024**2))
             self.executor = resource_execution.CommandResourceExecutorV1(resource_admission.helper,
-                resource_admission.helper_sha256, state, expected_platform_policy=resource_admission.platform_policy, admit=self.admit)
+                resource_admission.helper_sha256, state, expected_platform_policy=resource_admission.platform_policy,
+                admit=self.admit, before_native_create=self.native_admit)
         else:
-            self.executor = CommandExecutorV2(admission.helper, admission.helper_sha256, state, admit=self.admit)
+            self.executor = CommandExecutorV2(admission.helper, admission.helper_sha256, state,
+                admit=self.admit, before_native_create=self.native_admit)
         metadata = {"schema_version": 1, "kind": "command-v3", "instance_id": secrets.token_hex(16),
             "attempt_id": attempt_id, "job_binding_digest": contract_digest("preparation-command-job-binding-v1", store.get(job_id)["binding"]),
             "candidate_digest": package.digest, "fixture_digest": contract_digest("preparation-command-fixtures-v1",
@@ -171,6 +218,7 @@ class CommandPreparationOwner:
                 resource_policy_digest=self.resource_policy.digest)
         metadata["journal_identity"] = contract_digest("preparation-command-journal-v1", metadata)
         self.metadata = metadata
+        self._metadata_baseline = copy.deepcopy(metadata)
         try:
             write_private_json(state / "owner.json", metadata)
             write_private_json(state / "invocations.json", self.intents)
@@ -194,7 +242,9 @@ class CommandPreparationOwner:
     def _verify_package(self):
         if not self._authority_current():
             return False
+        self._launch_identity.check()
         current = validate_package(self.package.root)
+        self._launch_identity.check()
         return (self.descriptor.digest == self.descriptor_digest
             and contract_digest("preparation-command-job-binding-v1", self.store.get(self.job_id)["binding"])
                 == self.metadata["job_binding_digest"]
@@ -209,7 +259,21 @@ class CommandPreparationOwner:
             verified = await asyncio.shield(task)
         finally:
             await _join(asyncio.gather(task, return_exceptions=True))
+        self._launch_identity.check()
         return verified and self._authority_current()
+
+    def native_admit(self, spec):
+        """Synchronous metadata/authority fence at the actual native creation."""
+        ticket = self.live.get(spec.authority_digest)
+        if (ticket is None or ticket[3] is not spec or ticket[1].closed
+                or ticket[1] not in self.sessions.values() or time.monotonic() >= ticket[2]
+                or not self._authority_current() or self.descriptor != self._descriptor_baseline
+                or self.metadata != self._metadata_baseline
+                or self.store.get(self.job_id)["binding"] != self._binding_baseline
+                or self.store.command_ownership(self.job_id) != [self._metadata_baseline]):
+            return False
+        self._launch_identity.check()
+        return True
 
     async def admit(self, spec):
         ticket = self.live.get(spec.authority_digest)
@@ -254,7 +318,7 @@ class CommandPreparationOwner:
             (package.root / declaration.cwd).resolve(), package.digest, tuple(declaration.args),
             deadline_ms=contract.deadline_ms, input_limit=contract.input_bytes, output_limit=contract.output_bytes,
             authority_digest=authority, **extra)
-        self.live[authority] = (spec.digest, session, deadline)
+        self.live[authority] = (spec.digest, session, deadline, spec)
         try:
             self.intents["entries"].append({"instance": instance, "spec": spec.digest, "authority": authority})
             write_private_json(self.executor.state / "invocations.json", self.intents)

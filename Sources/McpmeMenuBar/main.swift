@@ -371,6 +371,10 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     // Assigned only by the explicit native acceptance command. The normal app
     // continues to require its own live host Process and matching connection.
     private var nativeAcceptanceConnection: ManagerConnection?
+    // Only the scoped development driver assigns these fences. They also guard
+    // the ordinary source-selection handler used by that driver.
+    private var nativeAcceptanceScope: (() -> Bool)?
+    private var nativeAcceptanceRoute: ((String, String) -> Bool)?
     private var generation: UInt64 = 0
     private var quitting = false
     private var installing = false
@@ -624,6 +628,9 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private func request(_ path: String, method: String = "GET", body: [String: Any]? = nil,
                          completion: @escaping ([String: Any]?, String?) -> Void) {
         let process = self.process
+        guard nativeAcceptanceScope?() != false, nativeAcceptanceRoute?(path, method) != false else {
+            completion(nil, "native_acceptance_scope_stale"); return
+        }
         guard !uiPreviewMode, !quitting, !stopping, process?.isRunning == true || nativeAcceptanceConnection != nil, let connection = connection() else {
             completion(nil, "host_unavailable"); return
         }
@@ -648,6 +655,9 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             DispatchQueue.main.async {
                 guard let self = self, self.generation == expectedGeneration, self.process === process,
                       process?.isRunning == true || self.nativeAcceptanceConnection?.pid == connection.pid else { return }
+                guard self.nativeAcceptanceScope?() != false else {
+                    completion(nil, "native_acceptance_scope_stale"); return
+                }
                 completion(object, object == nil ? code : nil)
             }
         }
@@ -2359,6 +2369,87 @@ private struct NativeRecipeFileIdentity: Equatable {
     }
 }
 
+private struct NativeDirectoryAcceptanceContext {
+    let fixture: URL
+    let state: URL
+    let output: URL
+    let source: URL
+    let nonce: String
+    let marker: URL
+    let expiry: Int
+    let fixtureIdentity: NativeRecipeFileIdentity
+    let markerIdentity: NativeRecipeFileIdentity
+    let managerIdentity: NativeRecipeFileIdentity
+    let rootIdentity: NativeRecipeDirectoryIdentity
+    let stateIdentity: NativeRecipeDirectoryIdentity
+    let workspaceIdentity: NativeRecipeDirectoryIdentity
+    let sourceIdentity: NativeRecipeDirectoryIdentity
+    let object: [String: Any]
+
+    init?(fixture: URL) {
+        guard let fixtureIdentity = NativeRecipeFileIdentity(fixture),
+              let object = PrivateFile.read(fixture, limit: 262144),
+              Set(object.keys) == ["schema_version", "state_dir", "output_path", "source_directory", "fixture_nonce", "answers_by_label"],
+              preparationInteger(object["schema_version"]) == 1,
+              let nonce = preparationUUID(object["fixture_nonce"]),
+              let statePath = preparationText(object["state_dir"], maximum: 4096),
+              let outputPath = preparationText(object["output_path"], maximum: 4096),
+              let sourcePath = preparationText(object["source_directory"], maximum: 4096),
+              let answers = object["answers_by_label"] as? [String: Any], answers.count <= 256,
+              preparationJSON(answers, maximum: 262144) != nil else { return nil }
+        let state = URL(fileURLWithPath: statePath), output = URL(fileURLWithPath: outputPath), source = URL(fileURLWithPath: sourcePath)
+        let root = fixture.deletingLastPathComponent(), workspace = root.deletingLastPathComponent()
+        var outputInfo = stat()
+        guard workspace.lastPathComponent.hasPrefix("mcpme-native-onboarding-"),
+              let workspaceIdentity = NativeRecipeDirectoryIdentity(workspace), let rootIdentity = NativeRecipeDirectoryIdentity(root),
+              state.path == root.appendingPathComponent("state").path, let stateIdentity = NativeRecipeDirectoryIdentity(state),
+              source.deletingLastPathComponent().path == root.path, source.path != state.path,
+              let sourceIdentity = NativeRecipeDirectoryIdentity(source),
+              output.deletingLastPathComponent().path == root.path, output.lastPathComponent.count <= 128,
+              output.path != fixture.path, lstat(output.path, &outputInfo) != 0, errno == ENOENT else { return nil }
+        let marker = state.appendingPathComponent("native-directory-" + nonce + ".json")
+        guard let markerIdentity = NativeRecipeFileIdentity(marker), let proof = PrivateFile.read(marker, limit: 8192),
+              Set(proof.keys) == ["schema_version", "fixture_nonce", "expires_at", "manager_file", "source_directory"],
+              preparationInteger(proof["schema_version"]) == 1, preparationUUID(proof["fixture_nonce"]) == nonce,
+              let expiry = preparationInteger(proof["expires_at"]), expiry > Int(Date().timeIntervalSince1970), expiry <= Int(Date().timeIntervalSince1970) + 300,
+              let expectedManager = proof["manager_file"] as? [String: Any],
+              let managerIdentity = NativeRecipeFileIdentity(state.appendingPathComponent("manager-connection.json")),
+              managerIdentity.matches(expectedManager), let expectedSource = proof["source_directory"] as? [String: Any],
+              Set(expectedSource.keys) == ["device", "inode"],
+              preparationInteger(expectedSource["device"]) == Int(sourceIdentity.device),
+              preparationInteger(expectedSource["inode"]) == Int(sourceIdentity.inode),
+              NativeRecipeFileIdentity(fixture) == fixtureIdentity, NativeRecipeFileIdentity(marker) == markerIdentity else { return nil }
+        self.fixture = fixture; self.state = state; self.output = output; self.source = source; self.nonce = nonce
+        self.marker = marker; self.expiry = expiry; self.fixtureIdentity = fixtureIdentity; self.markerIdentity = markerIdentity
+        self.managerIdentity = managerIdentity; self.rootIdentity = rootIdentity; self.stateIdentity = stateIdentity
+        self.workspaceIdentity = workspaceIdentity; self.sourceIdentity = sourceIdentity; self.object = object
+    }
+
+    func current() -> Bool {
+        Int(Date().timeIntervalSince1970) < expiry && NativeRecipeDirectoryIdentity(state) == stateIdentity &&
+            NativeRecipeDirectoryIdentity(fixture.deletingLastPathComponent()) == rootIdentity &&
+            NativeRecipeDirectoryIdentity(fixture.deletingLastPathComponent().deletingLastPathComponent()) == workspaceIdentity &&
+            NativeRecipeDirectoryIdentity(source) == sourceIdentity && NativeRecipeFileIdentity(fixture) == fixtureIdentity &&
+            NativeRecipeFileIdentity(marker) == markerIdentity && NativeRecipeFileIdentity(state.appendingPathComponent("manager-connection.json")) == managerIdentity
+    }
+
+    func claim() -> Bool {
+        guard current() else { return false }
+        let path = state.appendingPathComponent("native-directory-" + nonce + ".claimed")
+        let fd = open(path.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else { return false }; defer { close(fd) }
+        let bytes = Array("claimed\n".utf8)
+        return bytes.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) == $0.count } && fsync(fd) == 0 && current()
+    }
+
+    func report(_ receipt: [String: Any]) -> Bool {
+        guard current(), let data = try? JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]), data.count <= 262144 else { return false }
+        let fd = open(output.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else { return false }; defer { close(fd) }
+        return data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) == $0.count } && fsync(fd) == 0 && current()
+    }
+}
+
 private struct NativeRecipeAcceptanceContext {
     let fixture: URL
     let state: URL
@@ -2622,10 +2713,12 @@ extension McpmeApp {
 
     /// Runs the native form actions against an already launched, owner-only
     /// host. Backend execution remains governed by that host's factory gates.
-    fileprivate static func preparationNativeAcceptance(fixture: URL) -> Bool {
-        guard fixture.isFileURL, let data = try? Data(contentsOf: fixture), data.count <= 262144,
+    fileprivate static func preparationNativeAcceptance(fixture: URL, directoryContext: NativeDirectoryAcceptanceContext? = nil) -> Bool {
+        guard directoryContext?.current() != false, fixture.isFileURL, let data = try? Data(contentsOf: fixture), data.count <= 262144,
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              Set(object.keys).isSubset(of: ["state_dir", "draft_id", "output_path", "answers_by_label", "candidate_id", "recipe_id", "capture_model_path", "capture_license_path", "capture_format"]),
+              Set(object.keys).isSubset(of: directoryContext == nil
+                ? ["state_dir", "draft_id", "output_path", "answers_by_label", "candidate_id", "recipe_id", "capture_model_path", "capture_license_path", "capture_format"]
+                : ["schema_version", "state_dir", "output_path", "source_directory", "fixture_nonce", "answers_by_label"]),
               let state = preparationText(object["state_dir"], maximum: 4096), state.hasPrefix("/"),
               object["draft_id"] == nil || preparationUUID(object["draft_id"]) != nil,
               let output = preparationText(object["output_path"], maximum: 4096), output.hasPrefix("/"),
@@ -2634,11 +2727,15 @@ extension McpmeApp {
               preparationJSON(answers, maximum: 262144) != nil,
               object["candidate_id"] == nil || preparationDigest(object["candidate_id"]) != nil,
               object["recipe_id"] == nil || preparationText(object["recipe_id"], maximum: 128) != nil else { return false }
+        if let context = directoryContext {
+            guard context.current(), state == context.state.path, output == context.output.path,
+                  object["source_directory"] as? String == context.source.path else { return false }
+        }
         let captured = object["capture_model_path"] != nil || object["capture_license_path"] != nil
         let modelPath = preparationText(object["capture_model_path"], maximum: 4096)
         let licensePath = preparationText(object["capture_license_path"], maximum: 4096)
         let modelFormat = object["capture_format"] as? String ?? "onnx"
-        guard captured ? modelPath?.hasPrefix("/") == true && licensePath?.hasPrefix("/") == true && ["onnx", "gguf"].contains(modelFormat) : object["draft_id"] != nil && object["capture_format"] == nil else { return false }
+        guard captured ? modelPath?.hasPrefix("/") == true && licensePath?.hasPrefix("/") == true && ["onnx", "gguf"].contains(modelFormat) : (object["draft_id"] != nil || directoryContext != nil) && object["capture_format"] == nil else { return false }
         var draftID = preparationUUID(object["draft_id"])
         let prior = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"]
         setenv("MCPME_STATE_DIR", state, 1)
@@ -2650,6 +2747,7 @@ extension McpmeApp {
         func report(_ passed: Bool) -> Bool {
             receipt["passed"] = passed; receipt["stage"] = stage; receipt["routes"] = routes
             if let code = app.artifactCaptureView.errorCode ?? app.artifactCaptureView.job?.error ?? app.preparationView.job?.error ?? app.preparationView.resolutionJob?.error { receipt["error_code"] = code }
+            if let context = directoryContext { return context.report(receipt) && passed }
             guard let result = try? JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]),
                   result.count <= 262144,
                   (try? result.write(to: URL(fileURLWithPath: output), options: .atomic)) != nil,
@@ -2657,13 +2755,46 @@ extension McpmeApp {
             return passed
         }
         func awaitCondition(_ seconds: Double = 330, _ condition: () -> Bool) -> Bool {
-            let deadline = Date().addingTimeInterval(seconds)
-            while !condition(), Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
-            return condition()
+            let deadline = Date().addingTimeInterval(directoryContext == nil ? seconds : min(seconds, 30))
+            while !condition(), Date() < deadline, directoryContext?.current() != false { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+            return directoryContext?.current() != false && condition()
         }
         guard let connectionObject = PrivateFile.read(app.stateDirectory.appendingPathComponent("manager-connection.json")),
               let connection = ManagerConnection(connectionObject) else { return report(false) }
         app.nativeAcceptanceConnection = connection; app.hostAvailable = true
+        if let context = directoryContext {
+            var scopedRequests = 0
+            app.nativeAcceptanceScope = { context.current() }
+            app.nativeAcceptanceRoute = { path, method in
+                let parts = path.split(separator: "/")
+                let allowed = path == "v1/imports" && ["GET", "POST"].contains(method) ||
+                    path == "v1/preparations" && method == "GET" ||
+                    path == "v1/secrets" && method == "GET" ||
+                    parts.count == 3 && parts[0] == "v1" && parts[1] == "imports" && preparationUUID(String(parts[2])) != nil && method == "GET" ||
+                    parts.count == 4 && parts[0] == "v1" && parts[1] == "imports" && preparationUUID(String(parts[2])) != nil && parts[3] == "revise" && method == "POST" ||
+                    ["v1/preparations/form", "v1/preparations/plan-form", "v1/preparations/start"].contains(path) && method == "POST" ||
+                    parts.count == 3 && parts[0] == "v1" && parts[1] == "preparations" && preparationUUID(String(parts[2])) != nil && method == "GET"
+                guard allowed, context.current(), scopedRequests < 512 else { return false }
+                scopedRequests += 1
+                let route = method + " " + path
+                if !routes.contains(route) { routes.append(route) }
+                return true
+            }
+            stage = "source_selection"
+            // beginImport is the exact handler invoked by Choose Files and drop.
+            // The private fixture supplies the NSOpenPanel selection, not clicks.
+            app.beginImport(context.source)
+            guard awaitCondition(30, { !app.setupRequest && app.currentDraft != nil }), let imported = app.currentDraft,
+                  imported.editable, imported.sourceKind == "application_directory", imported.packagePath == nil,
+                  imported.sourcePath == context.source.path else { return report(false) }
+            draftID = imported.id; receipt["draft_id"] = imported.id
+            receipt["native_directory_selection"] = true; receipt["initial_revision"] = imported.revision
+            app.intentField?.string = "Expose the selected bounded JSON command."
+            app.startCheck?.state = .on; app.policyField?.selectItem(at: 1); app.setupChanged()
+            var saved: Bool?
+            app.saveCurrentDraft { saved = $0 }
+            guard awaitCondition(30, { saved != nil }), saved == true else { return report(false) }
+        }
         let view = app.preparationView
         let acceptedRequest: PreparationRequest = { path, method, body, complete in
             let route = method + " " + path
@@ -2750,7 +2881,7 @@ extension McpmeApp {
         stage = "preparation_start"; view.startPreparation()
         guard awaitCondition(330, { pending == 0 && !view.busy }), view.job != nil else { return report(false) }
         stage = "preparation_poll"
-        let deadline = Date().addingTimeInterval(660)
+        let deadline = Date().addingTimeInterval(directoryContext == nil ? 660 : 90)
         while view.job?.active == true, Date() < deadline {
             view.poll(); guard awaitCondition(330, { pending == 0 && !view.busy }) else { return report(false) }
             RunLoop.main.run(until: Date().addingTimeInterval(0.1))
@@ -2766,7 +2897,7 @@ extension McpmeApp {
         receipt["preparation_job_id"] = job.id; receipt["preparation_state"] = job.state; receipt["preparation_progress"] = job.progress
         receipt["attached_revision"] = final.revision; receipt["source_revision"] = final.sourceRevision
         receipt["attached_package_digest"] = expectedPackageDigest
-        stage = "attached"; return report(true)
+        stage = "attached"; return report(directoryContext?.current() != false)
     }
 
     fileprivate static func captureAdoptionSelfTest() -> Bool {
@@ -3004,6 +3135,15 @@ if CommandLine.arguments.dropFirst().first == "--preparation-native-acceptance" 
     guard arguments.count == 2, arguments[1].hasPrefix("/") else { exit(2) }
     let passed = McpmeApp.preparationNativeAcceptance(fixture: URL(fileURLWithPath: arguments[1]))
     print(passed ? "preparation_native_acceptance_passed" : "preparation_native_acceptance_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--directory-native-acceptance" {
+    _ = NSApplication.shared
+    let arguments = Array(CommandLine.arguments.dropFirst())
+    let context = arguments.count == 2 ? NativeDirectoryAcceptanceContext(fixture: URL(fileURLWithPath: arguments[1])) : nil
+    let passed = context.map { $0.claim() && McpmeApp.preparationNativeAcceptance(fixture: $0.fixture, directoryContext: $0) } ?? false
+    print(passed ? "directory_native_acceptance_passed" : "directory_native_acceptance_failed")
     exit(passed ? 0 : 1)
 }
 

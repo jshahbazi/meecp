@@ -9,15 +9,16 @@ integrated; shared native registration has cleared independent checkpoint review
 CLI repair `753bc17` and locked generated adapters `33fe6e0`, including the
 independently cleared selection repair `fe7d6d2`, are integrated. The new immutable
 CLI recipe is 1.0.1. Root's actual confined locked-adapter pipeline passed.
-Independent request-only review then found missing recipe guidance and reviewed
-lock metadata in provider requests. The separate repair checkpoint `d9d4ee5`
-has 139 passing focused checks, a passing Swift build and native review self-test;
-its actual request-only pipeline and independent review remain in progress.
-The unlocked-directory pipeline passed real private dependency resolution,
-build, SDK probe, attachment, source/state removal and relocated SDK verification
-with four simulated provider calls and zero live calls. Review then found a
-resolver-lock metadata race; that separate implementation is being repaired
-before its immutable freeze and integration. Final artifact acceptance
+Independent request-only review found missing recipe guidance and reviewed lock
+metadata, then reproduced rejection of advertised binary identity-only choices.
+Repair `9de90fc` independently passed 147 focused checks, a release Swift build,
+the native agent self-test and the actual request-only confined pipeline. It is
+integrated through `5d87e93`; all published locked component and recipe bytes are
+preserved. The separately frozen unlocked checkpoint `f10e13a` repairs resolver
+metadata continuity and has passing actual private resolution, build, SDK probe,
+attachment and relocation evidence. Its independent review and request-only
+integration remain active. All provider evidence uses simulated calls; there are
+zero live calls. Final artifact acceptance
 is open. This table tracks implementation and acceptance separately; no entire
 A0–A5 release gate is closed.
 
@@ -85,8 +86,8 @@ being fixed; **Separate gate** covers additional capability work.
 | A4 | Measured engine/adapter memory, capacity denial and JevK5 parity | Verified checkpoint | Final combined workload and parity run. |
 | A4 | Restricted engine/adapter probes and current host-owned bindings | Verified checkpoint | Independent 111-case policy/verifier run passed; integrated as 55781f0. Earlier 68a7533 inference passed; current confined inference awaits the next recipe/host. Wildcard-listener containment is unproved. |
 | A4 | Immutable recipe upgrade with preserved lifecycle choices | In progress | Mint the coherent next version; retain all published 1.0.5 and earlier bytes. |
-| A5: integrated agent | Concrete provider transport and parallel task coordinator | In review | Separate repair d9d4ee5 adds closed component-bound role guidance, explicitly reviewed metadata and native disclosure controls. Its 139 focused checks, Swift build and native self-test pass; request-only actual pipeline, independent review, integration and live acceptance remain. |
-| A5 | Integrate parallel subtask outputs into one reviewed proposal | In review | Repair orders interface/dependencies before fixtures and adapter while preserving independent parallel tasks. Encoded-request-only simulated controls produce an admissible locked candidate without an external lock hash; independent review and actual pipeline remain. |
+| A5: integrated agent | Concrete provider transport and parallel task coordinator | Verified checkpoint | Repair 9de90fc independently passed 147 focused checks, release Swift/native self-test and an actual request-only confined pipeline; integrated through 5d87e93. Reviewed binary identities transfer no content. Live provider and final installed acceptance remain. |
+| A5 | Integrate parallel subtask outputs into one reviewed proposal | Verified checkpoint | Interface/dependencies run in parallel; fixtures consume the agreed interface and adapter consumes all proposals. Encoded-request-only composition reached actual build, SDK probe and attachment without a hidden lock hash. Unlocked request-only integration and live compatibility remain. |
 | A5 | Review exact source transfer, provider/model, recipe and usage limits | Verified checkpoint | Repaired checkpoint 06f253f6 cleared independent review with all 15 hashes matched; integrated as 86ff1a5. Final artifact acceptance remains. |
 | A5 | Durable jobs, cancellation, restart and stale-result rejection | Verified checkpoint | All four reproduced source, cancellation, pending-cap and worker-handoff defects passed independent re-review. Final combined lifecycle checks remain. |
 | A5 | Host-validated candidate adoption through ordinary preparation | Verified checkpoint | Original-source and integrated locked-adapter adoption retain validated metadata through the short commit and deny actual mutation. Unlocked resolver-proof continuity is a separate active repair; final combined controls remain. |
@@ -95,7 +96,7 @@ being fixed; **Separate gate** covers additional capability work.
 | A5 | Live backend, selected credentials and model compatibility | Open | Requires a selected configured provider; no credential discovery or live dispatch has occurred. |
 | A5 | Governed adapter derivation and licensed derived artifacts | Verified checkpoint | Selection repair fe7d6d2 cleared 172 independent checks; both mutation controls deny selection at revision 1. Locked component/bundle and all legacy hashes remain unchanged. Integrated; final artifact and new request-contract acceptance remain. |
 | A5 | Locked unfamiliar Python directory to generated adapter and app | Verified checkpoint | Root's independent actual private build, confined SDK, matching attachment, source/state removal and confined relocation passed on the exact frozen source composition. Four simulated calls, zero live calls; provider fixtures still need replacement with the reviewed request-only contract and live acceptance. |
-| A5 | Unlocked unfamiliar directories needing a generated adapter | In repair | Actual source-only v3 passed private uv resolution, build, SDK probe, attachment, source/state removal and independent relocated SDK verification in 26.935 seconds, including an unknown binary asset. Review found that changing the original resolver lock after full validation could survive selection; same-baseline metadata fencing is being repaired. Final freeze, independent review, request-guide integration and native/installed acceptance remain. |
+| A5 | Unlocked unfamiliar directories needing a generated adapter | In review | Frozen f10e13a repairs the reproduced original resolver-lock race. Actual v4 passed private uv resolution, build, confined SDK, revision-2 attachment, source/state removal and relocated confined SDK verification in 24.144 seconds, including an unknown binary asset. Independent review, root/request-guide integration and native/installed acceptance remain. |
 | A5 | Final packaged/native generated-adapter flow | Open | Complete after request-contract repair, locked/unlocked derivation integration and final artifact review. |
 | A5 | Integrated installed/native path and final adversarial acceptance | Open | Complete after source integration and concrete live acceptance. |
 | A6: broader modular coverage | Host component/recipe extension seams | Verified checkpoint | Each new capability needs its own implementation and evidence. |
@@ -157,12 +158,10 @@ until the final combined families and artifact have the applicable evidence.
 
 ## Current critical path
 
-1. Independently review the provider-request repair with closed recipe guidance,
-   explicitly reviewed metadata facts and task dependencies, including its
-   actual request-only proposal pipeline without hidden fixture inputs.
-2. Repair and independently verify unlocked resolver metadata continuity, freeze
-   governed adapter/dependency derivation and integrate it with the request
-   repair. CLI recipe 1.0.1 is minted;
+1. Finish independent review of the frozen unlocked checkpoint and integrate
+   it with the independently cleared provider-request repair. Run the combined
+   actual unlocked request-only pipeline without hidden fixture dependencies.
+2. Freeze the complete source composition. CLI recipe 1.0.1 is minted;
    mint the coherent next text-generation version after backend freeze and run
    the full combined regression suite.
 3. Build one coherent artifact and rerun Python/MCP, ONNX and local LLM native,

@@ -5,16 +5,19 @@ import asyncio
 import time
 
 import pytest
-from pydantic import ValidationError
 
 from mcpme.preparation_agent_coordinator import AgentCoordinator
 from mcpme.preparation_contracts import PreparationError
 from test_preparation_agent import backend, request_for, response, role_of, store
 
 
-def test_unverified_cli_backend_is_not_selectable():
-    with pytest.raises(ValidationError):
-        request_for(provider={"backend": "codex-cli-v1", "model": "any-model", "credential_ref": "cli-session"})
+def test_unverified_cli_backend_is_not_selectable(store):
+    # Backend availability belongs to trusted host registration. A syntactically
+    # valid extension identifier cannot choose another registered implementation.
+    request, _ = request_for(provider={"backend": "codex-cli-v1", "model": "any-model", "credential_ref": "cli-session"})
+    coordinator = AgentCoordinator(store, backend(lambda _: None), lambda _: None)
+    with pytest.raises(PreparationError, match="agent_provider_mismatch"):
+        coordinator.create(request)
 
 
 async def test_late_adapter_response_after_cancellation_cannot_publish(store):

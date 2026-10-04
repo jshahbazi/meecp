@@ -71,9 +71,14 @@ class AnalysisGuideV1(StrictModel):
 
 
 class ProviderV1(StrictModel):
-    backend: Literal["openai-responses-v1"]
+    # Selection is admitted by the host's trusted registry, not by source data.
+    backend: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")]
     model: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")]
     credential_ref: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")]
+    provider_id: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")] | None = None
+    configuration_generation: Identity | None = None
+    adapter_digest: Digest | None = None
+    destination: Annotated[str, Field(min_length=1, max_length=256)] | None = None
 
 
 class AgentLimitsV1(StrictModel):

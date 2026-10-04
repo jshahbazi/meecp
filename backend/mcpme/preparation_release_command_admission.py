@@ -22,7 +22,7 @@ from .host_command import HostCommandAdmission, HostCommands
 from .preparation_builder import _opened
 from .preparation_command_owner import CommandPreparationResourceAdmission
 from .preparation_contracts import PreparationError, canonical_bytes, contract_digest, load_contract
-from .preparation_release_artifact import CERTIFICATE_SHA1, TEAM_ID, ReleaseArtifactProof, load_artifact_json
+from .preparation_release_artifact import CERTIFICATE_SHA1, TEAM_ID, ReleaseArtifactProof, _identity_matches, load_artifact_json
 from .processes import _await_ownership
 from .recipes import _read
 
@@ -179,8 +179,10 @@ def command_release_admission(policy: CommandReleasePolicyV1 | None, host_root: 
         baseline = {path: _identity(path, full=path in all_files or path == app or app in path.parents)
             for path in all_files | all_directories}
         def current():
+            artifact._check_app_root_metadata()
             if (host_root.resolve(strict=True) != host_root or any(
-                    _identity(path, full=path in all_files or path == app or app in path.parents) != identity
+                    not _identity_matches(path, identity, path in all_files or path == app or app in path.parents,
+                        app_root=app)
                     for path, identity in baseline.items())):
                 _deny()
         build_data = _read(host_root / "build.json", 8 * 1024**2)

@@ -15,6 +15,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import plistlib
 import re
 import shutil
 import sqlite3
@@ -145,6 +146,63 @@ def write_private_json(path, value):
         stream.write(data)
         stream.flush()
         os.fsync(stream.fileno())
+
+
+def native_app_root(native):
+    candidate = native.parent.parent.parent
+    return candidate if native.parent.name == "MacOS" and native.parent.parent.name == "Contents" \
+        and candidate.suffix == ".app" else None
+
+
+def verify_native_app_signature(native):
+    app = native_app_root(native)
+    if app is None:
+        return False
+    try:
+        info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+        receipt = json.loads((app / "Contents/Resources/app-build.json").read_bytes())
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        raise AcceptanceError("native_app_metadata_invalid") from None
+    require(isinstance(info, dict) and isinstance(receipt, dict), "native_app_metadata_invalid")
+    require(info.get("CFBundleIdentifier") == "com.jshahbazi.mcpme"
+        and info.get("CFBundleExecutable") == native.name
+        and receipt.get("signing") in {"ad_hoc", "developer_id"}, "native_app_identity_mismatch")
+    arguments = ["/usr/bin/codesign", "--verify", "--strict", "--deep"]
+    if receipt["signing"] == "developer_id":
+        arguments.extend(["-R", "=anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"])
+    try:
+        result = subprocess.run([*arguments, str(app)], capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        raise AcceptanceError("native_app_signature_invalid") from None
+    require(result.returncode == 0, "native_app_signature_invalid")
+    return True
+
+
+def relocate_host_and_native(root, host_path, native_path, report):
+    app = native_app_root(native_path)
+    if app is not None:
+        require(host_path == app / "Contents/Resources/host", "native_app_host_pair_mismatch")
+        verify_native_app_signature(native_path)
+        relocated = root / "relocated mcpme.app"
+
+        def copy_plain(source, destination):
+            # Preserve signed bytes and modes without inheriting file flags.
+            shutil.copyfile(source, destination)
+            os.chmod(destination, stat.S_IMODE(os.stat(source).st_mode))
+            return destination
+
+        shutil.copytree(app, relocated, symlinks=True, copy_function=copy_plain)
+        host = relocated / "Contents/Resources/host"
+        native = relocated / "Contents/MacOS" / native_path.name
+        verify_native_app_signature(native)
+        report.update({"native_bundle_preserved": True, "native_app_signature_verified": True})
+        return host, native
+    host, native = root / "relocated host", root / "McpmeMenuBar"
+    shutil.copytree(host_path, host, symlinks=True)
+    shutil.copyfile(native_path, native)
+    native.chmod(0o700)
+    report["native_bundle_preserved"] = False
+    return host, native
 
 
 def preparation_ownership_count(state, job_id=None):
@@ -668,11 +726,7 @@ async def verify(host_path, native_path, report, *, harness_factory=Harness, cas
     require(native_path.is_absolute() and native_path.resolve() == native_path and native_path.is_file()
         and os.access(native_path, os.X_OK), "native_acceptance_binary_required")
     with isolated_workspace(report) as (root, lease):
-        host, native = root / "relocated host", root / "McpmeMenuBar"
-        shutil.copytree(host_path, host, symlinks=True)
-        # Keep the compiled bytes without inheriting source-volume file flags.
-        shutil.copyfile(native_path, native)
-        native.chmod(0o700)
+        host, native = relocate_host_and_native(root, host_path, native_path, report)
         _host_paths(host)
         build = verify_host_payload(host)
         artifacts = build["artifact_sha256"]
@@ -700,6 +754,8 @@ async def verify(host_path, native_path, report, *, harness_factory=Harness, cas
                 raise
             finally:
                 report["owned_children_joined"] = not harness.children
+        if report.get("native_bundle_preserved"):
+            verify_native_app_signature(native)
         report["verified"] = report["owned_children_joined"] and all(item["passed"] for item in report["cases"].values())
         stage("complete", "none")
 

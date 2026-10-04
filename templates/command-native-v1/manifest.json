@@ -1,0 +1,41 @@
+{
+  "archive": {
+    "bytes": 24938,
+    "format": "tar-gzip",
+    "sha256": "30539c050891beec398a8ecb69b959092f6897c2b495dc66b73e9cfb3de9b2cd"
+  },
+  "artifacts": {
+    "bin/mcpme-command-reap": {
+      "mode": 448,
+      "sha256": "9dab276553fec8f2039fa6d7a3ce5cc8b7aeebc01f9df730027320e72f0e6513",
+      "size": 70752
+    },
+    "bin/mcpme-command-resource-reap": {
+      "mode": 448,
+      "sha256": "c2ecbc7942981430d6f1bad26809c2e42c409d75aafdc19fc6426faf52110bb5",
+      "size": 71504
+    }
+  },
+  "component": {
+    "digest": "a216f2ed58294410850afc4bd63f9b9b63c945464a1f10d1b735bd8de26cd607",
+    "id": "host-command-json-v1",
+    "version": "1.0.1"
+  },
+  "license_sha256": "581dcf167cf2fd0f557cb99f829e2b7e4f5901fa53beebd5dfced3746df505b4",
+  "profile": "command-native-v1",
+  "provenance_sha256": "37102757941a9ce2e840e266ea8b97b984e189cdc2fc64ddeeb139f8922bd708",
+  "schema_version": 1,
+  "signing": {
+    "certificate_sha1": "EFE6CD2666B9106E68724C38ADD1C405267A2F94",
+    "entitlements": "empty",
+    "hardened_runtime": true,
+    "secure_timestamp": true,
+    "team_id": "S5BT2PRN5B"
+  },
+  "sources": {
+    "scripts/mcpme-command-reap.c": "b99f87541598427df51a39486d384a5855813ea3decac55a1d091cafb5e17933",
+    "scripts/mcpme-command-resource-reap.c": "09b455941c0a2890e2bdbd2ca91b6d8e47538a4e5f1a4115e7885412df89c400",
+    "scripts/mcpme-command-resource-v1.h": "a30d8a2acbdc15d704ed3d2480cad749d78f2647a98171c55b930ae0a9072c55"
+  },
+  "version": "1.0.0"
+}

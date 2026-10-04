@@ -1,12 +1,90 @@
 {
   "schema_version": 1,
-  "policy_id": "phase3-closed-v1",
+  "policy_id": "phase3-initial-families-v1",
   "preparation": {
-    "families": [],
-    "recipe_component_sets": [],
-    "resolution_candidate_kinds": []
+    "families": [
+      {
+        "id": "resolved-python-v1",
+        "version": "1.0.1",
+        "digest": "3c24410b46415cb83b9d945ebf0049f552e9f7493943164f311939a79b49000e"
+      },
+      {
+        "id": "yolo11-coco-detect-v1",
+        "version": "1.0.0",
+        "digest": "b48bde76ca30787de2e41a6b984c0c80a79b3a4b6ec75637f3147ccfadec3e99"
+      },
+      {
+        "id": "host-command-json-v1",
+        "version": "1.0.1",
+        "digest": "a216f2ed58294410850afc4bd63f9b9b63c945464a1f10d1b735bd8de26cd607"
+      },
+      {
+        "id": "text-generate-v1",
+        "version": "1.0.10",
+        "digest": "77d9b9b834c13f05816626736ee8546c14ee617bef0f8e89353f61496bf9b6db"
+      }
+    ],
+    "recipe_component_sets": [
+      [
+        {
+          "id": "python-function-v1",
+          "version": "1.0.0",
+          "digest": "b28f98582aeff09e344b4a7049af7fdadbaf19436dc6724638ab64b6a9139d4e"
+        }
+      ],
+      [
+        {
+          "id": "resolved-python-v1",
+          "version": "1.0.1",
+          "digest": "3c24410b46415cb83b9d945ebf0049f552e9f7493943164f311939a79b49000e"
+        }
+      ],
+      [
+        {
+          "id": "onnxruntime-cpu-v1",
+          "version": "1.0.0",
+          "digest": "ec982f8489de85afd79d6aa715431082e1bba29be48ca06eef457dbcc362d8dc"
+        },
+        {
+          "id": "yolo11-coco-detect-v1",
+          "version": "1.0.0",
+          "digest": "b48bde76ca30787de2e41a6b984c0c80a79b3a4b6ec75637f3147ccfadec3e99"
+        }
+      ],
+      [
+        {
+          "id": "host-command-json-v1",
+          "version": "1.0.1",
+          "digest": "a216f2ed58294410850afc4bd63f9b9b63c945464a1f10d1b735bd8de26cd607"
+        }
+      ],
+      [
+        {
+          "id": "llamacpp-cpu-v1",
+          "version": "1.0.10",
+          "digest": "a3d3f000365e1a485a6bdaa3daa21363df54321656c4aaba1c42920e36cc9ca7"
+        },
+        {
+          "id": "text-generate-v1",
+          "version": "1.0.10",
+          "digest": "77d9b9b834c13f05816626736ee8546c14ee617bef0f8e89353f61496bf9b6db"
+        }
+      ]
+    ],
+    "resolution_candidate_kinds": [
+      "python-callable",
+      "python-mcp"
+    ]
   },
-  "command": null,
+  "command": {
+    "component": [
+      "host-command-json-v1",
+      "1.0.1",
+      "a216f2ed58294410850afc4bd63f9b9b63c945464a1f10d1b735bd8de26cd607"
+    ],
+    "installed_platform_policy": "3898759c85d08268db02963c0e822e2bd3c9657d337e1e5c5708e0bb0738c83b",
+    "resource_platform_policy": "03a5e27b4931b1eaa705f0a4be373bc202ac7dd3bb4d71a438c2eb6ffeae1b8a"
+  },
   "agent": {
     "components": [],
     "providers": [],

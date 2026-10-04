@@ -119,7 +119,7 @@ async def test_private_fault_results_never_attest_public_fault_authority(module,
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", [None, "capability", "closure", "form", "recipe", "review", "job"])
+@pytest.mark.parametrize("failure", [None, "schema", "profile", "capability", "closure", "form", "recipe", "review", "job"])
 async def test_public_defaults_require_admitted_form_review_and_no_job(module, release_input, monkeypatch, failure):
     root = release_input.app.parent / "workspace"; root.mkdir(mode=0o700)
     report = {}
@@ -136,6 +136,8 @@ async def test_public_defaults_require_admitted_form_review_and_no_job(module, r
         calls.append(args)
         if args[0] == "capabilities":
             return {"automatic_preparation": failure != "capability", "recipe_execution": True,
+                "package_schema_versions": [1] if failure == "schema" else [1, 2],
+                "profiles": ["mcp-stdio", "mcp-http", "model-service"] + ([] if failure == "profile" else ["host-command"]),
                 "preparation_execution": {"families": [list(module.COMPONENT)],
                     "recipe_component_sets": [] if failure == "closure" else [[list(module.COMPONENT)]]}}
         if args[0] == "imports": return {"draft_id": "synthetic", "revision": 1, "source": {"kind": "application_directory"}}
@@ -158,6 +160,7 @@ async def test_public_defaults_require_admitted_form_review_and_no_job(module, r
     if failure is None:
         assert await harness.defaults() is True
         assert report["public_review"]["review_created_jobs"] is False
+        assert report["public_review"]["installed_schema_two_and_command_profile_advertised"] is True
         assert routes == ["/v1/preparations/form", "/v1/preparations/plan-form"]
     else:
         with pytest.raises(module.common.AcceptanceError): await harness.defaults()

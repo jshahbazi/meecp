@@ -1017,7 +1017,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         }
         agentPreparationView.request = { [weak self] path, method, body, completion in
             guard let self else { completion(nil, "manager_request_failed"); return }
-            self.refreshActionButtons()
+            self.refreshWindow()
             self.request(path, method: method, body: body, completion: completion)
         }
         agentPreparationView.onUpdatedDraft = { [weak self] object in

@@ -1,0 +1,84 @@
+--- a/backend/mcpme/recipes.py
++++ b/backend/mcpme/recipes.py
+@@ -46,10 +46,11 @@
+              "existing-mcp-v1": root / "templates/prepare.py"}
+     from .preparation_resolved_python import component_catalog
+     from .preparation_agent_adapter import component_catalog as agent_adapter_components
++    from .preparation_agent_unlocked import component_catalog as agent_unlocked_components
+     from .preparation_onnx import builtin_onnx_components
+     from .preparation_textgen import builtin_textgen_components
+     from .preparation_command import component_catalog as command_components
+-    return {**component_catalog(), **agent_adapter_components(), **builtin_onnx_components(), **builtin_textgen_components(), **command_components(), **{name + "@1.0.0": {"digest": hashlib.sha256(path.read_bytes()).hexdigest(),
++    return {**component_catalog(), **agent_adapter_components(), **agent_unlocked_components(), **builtin_onnx_components(), **builtin_textgen_components(), **command_components(), **{name + "@1.0.0": {"digest": hashlib.sha256(path.read_bytes()).hexdigest(),
+                               "input_schema": {"type": "object", "additionalProperties": False},
+                               "dependencies": []} for name, path in paths.items()}}
+
+--- a/backend/mcpme/supervisor.py
++++ b/backend/mcpme/supervisor.py
+@@ -204,8 +204,11 @@
+         self.upgrade_cancels = {}
+         try:
+             self.imports = ImportStore(self.root)
+-            self.resolutions = ResolutionStore(self.imports)
+             self.recipes = RecipeStore(self.imports)
++            from .preparation_agent_unlocked_store import AgentUnlockedInputStore
++            from .preparation_agent_unlocked_resolution import AgentUnlockedResolutionStore
++            self.agent_unlocked_inputs = AgentUnlockedInputStore(self.imports, self.recipes)
++            self.resolutions = AgentUnlockedResolutionStore(self.imports, self.agent_unlocked_inputs)
+             from .preparation_builtin_recipes import seed_builtin_recipes
+             self.builtin_recipe_metadata = seed_builtin_recipes(self.recipes)
+             self.grants = GrantStore(self.registry)
+@@ -222,6 +225,7 @@
+                 raise HostError("invalid_artifact_storage_policy") from None
+             self.captures = ArtifactCaptureStore(self.imports, self.artifacts, storage_policy=storage_policy)
+             from .preparation_agent_adapter import AgentPythonAdapterFamily
++            from .preparation_agent_unlocked import AgentUnlockedPythonFamily
+             from .preparation_agent_adapter_store import AgentAdapterDerivationStore
+             self.agent_adapter_derivations = AgentAdapterDerivationStore(self.imports, self.recipes)
+             from .preparation_onnx import OnnxPreparationFamily
+@@ -231,6 +235,7 @@
+             self.preparations = PreparationStore(self.imports, self.recipes, resolutions=self.resolutions,
+                 families=(OnnxPreparationFamily(self.captures), TextGenerationFamily(self.captures),
+                           AgentPythonAdapterFamily(self.agent_adapter_derivations),
++                          AgentUnlockedPythonFamily(self.agent_unlocked_inputs, self.resolutions),
+                           *((command_family,) if command_family is not None else ())))
+             from .preparation_forms import PreparationForms
+             self.preparation_forms = PreparationForms(self.preparations, preferred_recipes=tuple(
+@@ -259,8 +264,8 @@
+                 reserve_resources=self.reserve_preparation, release_resources=self.release_preparation,
+                 enabled=False, **runner_admissions)
+             if resolution_runner_factory is None:
+-                from .preparation_resolution_runner import OwnedResolutionRunner
+-                resolution_runner_factory = OwnedResolutionRunner
++                from .preparation_agent_unlocked_resolution import OwnedAgentUnlockedResolutionRunner
++                resolution_runner_factory = OwnedAgentUnlockedResolutionRunner
+             self.resolution_runner = resolution_runner_factory(
+                 self.resolutions, self.reaper.parent.parent, self.reaper,
+                 reserve_resources=self.reserve_resolution, release_resources=self.release_resolution, enabled=False)
+--- a/backend/mcpme/preparation_forms.py
++++ b/backend/mcpme/preparation_forms.py
+@@ -301,7 +301,8 @@
+     def accepts(self, candidate, recipe):
+         from .preparation_resolved_python import ResolvedPythonComponent
+         reference = ResolvedPythonComponent().reference
+-        return (candidate.get("_resolved_path", False) and len(recipe["manifest"]["steps"]) == 1
++        return (candidate["kind"] in {"python-callable", "python-mcp"}
++            and candidate.get("_resolved_path", False) and len(recipe["manifest"]["steps"]) == 1
+             and tuple(recipe["manifest"]["steps"][0].get(key) for key in ("component", "version", "digest"))
+                 == reference.key)
+
+--- a/templates/builtin-recipes/catalog.json
++++ b/templates/builtin-recipes/catalog.json
+@@ -35,6 +35,12 @@
+       "directory": "agent-python-adapter-v1-0-0",
+       "recipe_id": "mcpme.agent-python-adapter",
+       "version": "1.0.0"
++    },
++    {
++      "digest": "a7103a35adbf5d55a9ea369a48614517d34e0c0d69a9b9f2498dd079f9eddea3",
++      "directory": "agent-unlocked-python-adapter-v1-0-0",
++      "recipe_id": "mcpme.agent-unlocked-python-adapter",
++      "version": "1.0.0"
+     }
+   ],
+   "schema_version": 1

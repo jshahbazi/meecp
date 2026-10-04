@@ -30,8 +30,17 @@ owner secrets, create unrelated imports, or install an app.
 The first case builds, independently probes, seals and attaches a real package,
 then verifies that an exact repeated request after restart returns the same
 job. The second source deliberately sleeps during the real probe. Revocation
-requires an observed verifying job, a nonempty owned-child journal and a held
-resource reservation. Owner revocation must cancel that job, settle ownership,
+requires an observed verifying job, a nonempty owned-child journal, a held
+resource reservation and positive entry evidence from the synthetic probe.
+At function entry the fixture sets one unique bounded thread name through the
+fixed Darwin API. The read-only observer follows the original live manager
+handle to the exact packaged reaper and exact candidate interpreter, captures
+their process start identities, and rechecks the complete chain before accepting
+the marker. It then rereads the job, journal and reservation and repeats the
+observation. A pending journal entry cannot satisfy this check. Discovered PIDs
+never authorize signals or adoption; the core and driver join their original
+handles. The marker adds no file-write or network privilege to the probe.
+Owner revocation must cancel that job, settle ownership,
 remove its reservation and publish zero attachments. A retained copy of the
 original credential must remain denied after restart. Original plan bytes,
 authority kind and grant/job association stay bound throughout both cases.
@@ -41,6 +50,16 @@ hashes, counts, state and fixed error codes; it contains no credential, source,
 prompt, response, options or exception text. The driver joins its original host
 and CLI handles; the official SDK owns and terminates its stdio facade process.
 Unknown cleanup retains the private workspace for reconciliation.
+
+SDK request reads have a 30-second deadline, initialization, discovery and tool
+calls have 20-second deadlines, and each session has a 900-second deadline.
+Only an explicitly fired deadline maps to the fixed timeout diagnostic, including
+when SDK teardown masks the primary error. Unit controls use actual owned silent
+stdio children for initialization, discovery and session expiry and verify that
+the original transport handle is joined. An early-exiting child retains its
+transport failure classification. Separate actual process-chain controls verify
+the Darwin reader and unique marker; their Python guardian wrappers are a
+synthetic unit fixture and do not establish signed public-host execution.
 
 The receipt records one observed held-to-absent reservation transition and its
 continued absence after duplicate revoke and restart. A release callback count

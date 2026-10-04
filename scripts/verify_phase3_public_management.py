@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ctypes
+import errno
 from contextlib import asynccontextmanager
+from datetime import timedelta
 import hashlib
 import json
 import logging
@@ -19,6 +22,7 @@ import shutil
 import sqlite3
 import stat
 import subprocess
+import sys
 import uuid
 
 import verify_phase3_native_onboarding as common
@@ -29,6 +33,96 @@ PYTHON = ("python-function-v1", "1.0.0", "b28f98582aeff09e344b4a7049af7fdadbaf19
 RESOLVED = ("resolved-python-v1", "1.0.1", "3c24410b46415cb83b9d945ebf0049f552e9f7493943164f311939a79b49000e")
 POLICY_PATH = "templates/release-policies/phase3-v1.json"
 TERMINAL = {"succeeded", "failed", "canceled", "interrupted"}
+SDK_READ_SECONDS = 30
+SDK_STEP_SECONDS = 20
+SDK_SESSION_SECONDS = 900
+
+
+class _BsdInfo(ctypes.Structure):
+    # Exact Darwin macOS 26 SDK proc_bsdinfo layout (sys/proc_info.h).
+    _fields_ = [(name, ctypes.c_uint32) for name in ("flags", "status", "xstatus", "pid", "ppid", "uid",
+        "gid", "ruid", "rgid", "svuid", "svgid", "reserved")] + [("comm", ctypes.c_char * 16),
+        ("name", ctypes.c_char * 32)] + [(name, ctypes.c_uint32) for name in ("nfiles", "pgid", "jobc", "tdev", "tpgid")] \
+        + [("nice", ctypes.c_int32), ("start_sec", ctypes.c_uint64), ("start_usec", ctypes.c_uint64)]
+
+
+class _ThreadInfo(ctypes.Structure):
+    _fields_ = [("user_time", ctypes.c_uint64), ("system_time", ctypes.c_uint64)] \
+        + [(name, ctypes.c_int32) for name in ("cpu_usage", "policy", "run_state", "flags", "sleep_time",
+            "curpri", "priority", "maxpriority")] + [("name", ctypes.c_char * 64)]
+
+
+class DarwinProcessReader:
+    """Bounded read-only observation; discovered PIDs never become signal handles."""
+    def __init__(self):
+        require(sys.platform == "darwin" and os.uname().machine == "arm64" and os.uname().release.startswith("25.")
+            and ctypes.sizeof(_BsdInfo) == 136 and ctypes.sizeof(_ThreadInfo) == 112, "management_probe_observation_unavailable")
+        self.api = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        self.api.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        self.api.proc_pidinfo.restype = ctypes.c_int
+        self.api.proc_pidpath.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+        self.api.proc_pidpath.restype = ctypes.c_int
+        self.api.proc_listpids.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_int]
+        self.api.proc_listpids.restype = ctypes.c_int
+
+    def identity(self, pid):
+        require(type(pid) is int and pid > 1, "management_probe_observation_unavailable")
+        data = _BsdInfo(); ctypes.set_errno(0)
+        result = self.api.proc_pidinfo(pid, 3, 0, ctypes.byref(data), ctypes.sizeof(data))
+        if result == 0 and ctypes.get_errno() == errno.ESRCH:
+            return None
+        require(result == ctypes.sizeof(data) and data.pid == pid and data.uid == os.getuid()
+            and data.start_sec > 0, "management_probe_observation_unavailable")
+        return (data.pid, data.ppid, data.uid, data.start_sec, data.start_usec)
+
+    def path(self, pid):
+        data = ctypes.create_string_buffer(4096)
+        result = self.api.proc_pidpath(pid, data, len(data))
+        require(0 < result < len(data), "management_probe_observation_unavailable")
+        return os.fsdecode(data.value)
+
+    def children(self, pid):
+        data = (ctypes.c_int * 128)()
+        result = self.api.proc_listpids(6, pid, data, ctypes.sizeof(data))  # PROC_PPID_ONLY; byte count.
+        require(0 <= result < ctypes.sizeof(data) and result % ctypes.sizeof(ctypes.c_int) == 0,
+            "management_probe_observation_unavailable")
+        values = list(data[:result // ctypes.sizeof(ctypes.c_int)])
+        require(all(value > 1 for value in values) and len(values) == len(set(values)), "management_probe_observation_unavailable")
+        return values
+
+    def tagged(self, pid, marker):
+        data = (ctypes.c_uint64 * 256)()
+        result = self.api.proc_pidinfo(pid, 6, 0, data, ctypes.sizeof(data))  # PROC_PIDLISTTHREADS.
+        require(0 < result < ctypes.sizeof(data) and result % 8 == 0, "management_probe_observation_unavailable")
+        for identifier in data[:result // 8]:
+            thread = _ThreadInfo()
+            result = self.api.proc_pidinfo(pid, 5, identifier, ctypes.byref(thread), ctypes.sizeof(thread))
+            require(result == ctypes.sizeof(thread), "management_probe_observation_unavailable")
+            if thread.name == marker.encode("ascii"):
+                return True
+        return False
+
+
+def probe_entry(reader, manager, manager_identity, reaper, interpreter, marker):
+    require(re.fullmatch(r"mcpme-probe-[0-9a-f]{32}", marker), "management_probe_marker_invalid")
+    require(manager.poll() is None and reader.identity(manager.pid) == manager_identity,
+        "management_original_manager_changed")
+    for wrapper_pid in reader.children(manager.pid):
+        wrapper = reader.identity(wrapper_pid)
+        if wrapper is None or wrapper[1] != manager.pid or reader.path(wrapper_pid) != str(reaper):
+            continue
+        for pid in reader.children(wrapper_pid):
+            before = reader.identity(pid)
+            if before is None or before[1] != wrapper_pid or reader.path(pid) != str(interpreter):
+                continue
+            if not reader.tagged(pid, marker):
+                continue
+            require(reader.identity(pid) == before and reader.identity(wrapper_pid) == wrapper
+                and reader.path(pid) == str(interpreter) and reader.path(wrapper_pid) == str(reaper)
+                and reader.identity(manager.pid) == manager_identity and manager.poll() is None,
+                "management_probe_identity_changed")
+            return {"probe": before, "reaper": wrapper}
+    return None
 
 
 def active_policy(host):
@@ -188,18 +282,48 @@ class ManagementHarness(common.Harness):
         from mcp.client.stdio import stdio_client
         exported = await self.cli(state, environment, home, "--credential-file", credential, "management", "export", "--json")
         configuration = validate_export(exported, self.launcher, state, credential)
-        with open(os.devnull, "w") as errors:
-            async with stdio_client(StdioServerParameters(**configuration, env=environment, cwd=str(home)), errlog=errors) as (read, write):
-                async with ClientSession(read, write) as session:
-                    initialized = await session.initialize()
-                    require(initialized.protocolVersion == "2025-11-25"
-                        and set(initialized.capabilities.model_dump(exclude_none=True)) == {"tools"}, "management_sdk_contract_changed")
-                    yield session
-            self.report["sdk_sessions_exited"] += 1
+        timed_out = False
+        lifetime = asyncio.timeout(SDK_SESSION_SECONDS)
+        try:
+            async with lifetime:
+                with open(os.devnull, "w") as errors:
+                    async with stdio_client(StdioServerParameters(**configuration, env=environment, cwd=str(home)), errlog=errors) as (read, write):
+                        async with ClientSession(read, write, read_timeout_seconds=timedelta(seconds=SDK_READ_SECONDS)) as session:
+                            try:
+                                async with asyncio.timeout(SDK_STEP_SECONDS):
+                                    initialized = await session.initialize()
+                            except TimeoutError:
+                                timed_out = True
+                                raise common.AcceptanceError("management_sdk_timeout") from None
+                            require(initialized.protocolVersion == "2025-11-25"
+                                and set(initialized.capabilities.model_dump(exclude_none=True)) == {"tools"}, "management_sdk_contract_changed")
+                            try:
+                                yield session
+                            except common.AcceptanceError as error:
+                                timed_out = error.code == "management_sdk_timeout"
+                                raise
+                    self.report["sdk_sessions_exited"] += 1
+        except BaseException:
+            # AnyIO teardown can mask a body deadline with BrokenResourceError.
+            # Preserve only an explicitly fired timer, never classify a generic
+            # transport failure as a timeout.
+            if timed_out or lifetime.expired():
+                raise common.AcceptanceError("management_sdk_timeout") from None
+            raise
+
+    async def discovery(self, session):
+        try:
+            async with asyncio.timeout(SDK_STEP_SECONDS):
+                return await session.list_tools()
+        except TimeoutError:
+            raise common.AcceptanceError("management_sdk_timeout") from None
 
     async def invoke(self, session, name, arguments=None, *, error=None):
-        async with asyncio.timeout(30):
-            result = await session.call_tool(name, arguments or {})
+        try:
+            async with asyncio.timeout(SDK_STEP_SECONDS):
+                result = await session.call_tool(name, arguments or {})
+        except TimeoutError:
+            raise common.AcceptanceError("management_sdk_timeout") from None
         value = result.structuredContent
         require(type(value) is dict, "management_result_invalid")
         if error is not None:
@@ -212,7 +336,7 @@ class ManagementHarness(common.Harness):
         return value
 
     async def review(self, session, source):
-        listed = await session.list_tools()
+        listed = await self.discovery(session)
         names = {item.name for item in listed.tools}
         require(len(names) == len(listed.tools) == 40 and not any("authorize" in name or "secret" in name for name in names)
             and all(item.inputSchema.get("additionalProperties") is False for item in listed.tools), "management_tools_changed")
@@ -242,7 +366,7 @@ class ManagementHarness(common.Harness):
         await self.invoke(session, "mcpme_apply_install", {"plan_id": str(uuid.uuid4())}, error="grant_scope")
         return draft, plan
 
-    async def wait_job(self, state, environment, home, identifier, *, owned=False):
+    async def wait_job(self, state, environment, home, identifier, *, owned=False, observation=None):
         async with asyncio.timeout(600):
             while True:
                 job = await self.cli(state, environment, home, "preparations", "get", identifier, "--json")
@@ -250,7 +374,24 @@ class ManagementHarness(common.Harness):
                     require(job["state"] not in TERMINAL, "management_slow_worker_not_observed")
                     if job["state"] == "verifying" and common.preparation_ownership_count(state, identifier) > 0:
                         require((state / "preparation-reservations" / (identifier + ".json")).is_file(), "management_reservation_missing")
-                        return job
+                        require(observation is not None, "management_probe_observation_required")
+                        reader, manager, manager_identity, marker = observation
+                        expected = state / "preparations" / identifier
+                        require(job["workspace"] == str(expected), "management_probe_workspace_changed")
+                        witness = probe_entry(reader, manager, manager_identity, self.reaper,
+                            expected / "candidate/python/bin/python3.12", marker)
+                        if witness is not None:
+                            # Re-read durable stage/ownership/reservation after
+                            # observing a real entry; pending launch alone fails.
+                            current = await self.cli(state, environment, home, "preparations", "get", identifier, "--json")
+                            require(current["state"] == "verifying" and current["workspace"] == job["workspace"]
+                                and common.preparation_ownership_count(state, identifier) > 0
+                                and (state / "preparation-reservations" / (identifier + ".json")).is_file()
+                                and probe_entry(reader, manager, manager_identity, self.reaper,
+                                    expected / "candidate/python/bin/python3.12", marker) == witness,
+                                "management_probe_identity_changed")
+                            self.report["probe_entry_witness"] = {key: list(value) for key, value in witness.items()}
+                            return current
                 elif job["state"] in TERMINAL:
                     return job
                 await asyncio.sleep(.1)
@@ -272,14 +413,22 @@ class ManagementHarness(common.Harness):
     async def case(self, label, *, revoke):
         base, state, home, environment = self.new_case(label)
         source = base / "source"; source.mkdir(mode=0o700)
+        marker = "mcpme-probe-" + uuid.uuid4().hex
         for name in ("pyproject.toml", "uv.lock"):
             shutil.copyfile(self.host / name, source / name)
         (source / "LICENSE").write_text("Synthetic fixture dedicated to the public domain under CC0.\n")
         (source / "worker.py").write_text("def double(n: int) -> dict[str, int]:\n"
-            + ("    import time\n    time.sleep(120)\n" if revoke else "") + "    return {'value': n * 2}\n")
+            + ("    import ctypes, time\n    api = ctypes.CDLL('/usr/lib/libSystem.B.dylib')\n"
+                "    api.pthread_setname_np.argtypes = [ctypes.c_char_p]\n    api.pthread_setname_np.restype = ctypes.c_int\n"
+                "    if api.pthread_setname_np(" + repr(marker.encode("ascii")) + ") != 0:\n"
+                "        raise RuntimeError('synthetic_probe_marker_failed')\n    time.sleep(120)\n" if revoke else "")
+            + "    return {'value': n * 2}\n")
         before = signed.snapshot(source)
         child = await self.start(state, environment, home)
         try:
+            reader = DarwinProcessReader() if revoke else None
+            manager_identity = reader.identity(child.pid) if revoke else None
+            require(not revoke or manager_identity is not None, "management_original_manager_changed")
             prepare = await self.cli(state, environment, home, "authorize", "--prepare", "--json")
             async with self.sdk(state, environment, home, Path(prepare["credential_file"])) as session:
                 draft, plan = await self.review(session, source)
@@ -305,13 +454,17 @@ class ManagementHarness(common.Harness):
                 require(first["job_id"] == duplicate["job_id"], "management_attempt_duplicated")
                 require([item["job_id"] for item in (await self.invoke(session, "mcpme_list_preparations"))["preparations"]]
                     == [first["job_id"]], "management_job_scope_changed")
-                active = await self.wait_job(state, environment, home, first["job_id"], owned=revoke)
+                active = await self.wait_job(state, environment, home, first["job_id"], owned=revoke,
+                    observation=(reader, child, manager_identity, marker) if revoke else None)
                 captured = binding_snapshot(state, grant, active)
                 if revoke:
                     await self.cli(state, environment, home, "grants", "revoke", grant["grant_id"], "--json")
                     await self.invoke(session, "mcpme_capabilities", error="grant_revoked")
                 final = await self.wait_job(state, environment, home, first["job_id"])
                 await self.settled(state, environment, home, final, draft, canceled=revoke)
+                if revoke:
+                    require(all(reader.identity(value[0]) != tuple(value)
+                        for value in self.report["probe_entry_witness"].values()), "management_observed_process_still_live")
             require(binding_snapshot(state, grant, final) == captured, "management_binding_changed_after_settle")
             await self.shutdown(child, state)
             child = await self.start(state, environment, home)

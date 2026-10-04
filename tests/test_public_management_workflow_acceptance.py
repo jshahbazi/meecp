@@ -250,3 +250,166 @@ async def test_closed_release_fails_before_signature_or_start_without_input_muta
     report = {}
     with pytest.raises(driver.common.AcceptanceError): await driver.verify(host, native, report, source_root=tmp_path)
     assert report["original_signed_app_preserved"] and report["source_tree_preserved"] and driver.signed.snapshot(app) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["initialize", "discovery", "lifetime"])
+async def test_actual_silent_sdk_child_times_out_and_original_transport_handle_joins(driver, harness, tmp_path, monkeypatch, stage):
+    import asyncio
+    import mcp.client.stdio as transport
+    launcher = harness.launcher
+    launcher.parent.mkdir(parents=True)
+    code = ("#!" + sys.executable + "\nimport json,sys\n"
+        "for line in sys.stdin:\n"
+        " request=json.loads(line)\n"
+        + (" if request.get('method')=='initialize':\n"
+            "  print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':{'protocolVersion':'2025-11-25',"
+            "'capabilities':{'tools':{}},'serverInfo':{'name':'synthetic','version':'1'}}}),flush=True)\n"
+            if stage != "initialize" else ""))
+    compile(code, "silent-fixture", "exec")
+    launcher.write_text(code); launcher.chmod(0o700)
+    import subprocess
+    preflight = subprocess.run([sys.executable, "-I", "-B", str(launcher)],
+        input=b'{"jsonrpc":"2.0","id":1,"method":"initialize"}\n', capture_output=True, timeout=5)
+    assert preflight.returncode == 0
+    if stage != "initialize": assert json.loads(preflight.stdout)["result"]["protocolVersion"] == "2025-11-25"
+    owned = []
+    create = transport._create_platform_compatible_process
+    async def capture(**kwargs):
+        process = await create(**kwargs); owned.append(process); return process
+    monkeypatch.setattr(transport, "_create_platform_compatible_process", capture)
+    monkeypatch.setattr(driver, "SDK_READ_SECONDS", 3)
+    monkeypatch.setattr(driver, "SDK_STEP_SECONDS", .5)
+    monkeypatch.setattr(driver, "SDK_SESSION_SECONDS", 1.5)
+    state, credential = tmp_path / "state", tmp_path / "credential"
+    async def cli(*args):
+        return {"configuration": {"mcpServers": {"mcpme-management": {"command": str(launcher),
+            "args": ["--state-dir", str(state), "--credential-file", str(credential), "management", "connect"]}}}}
+    monkeypatch.setattr(harness, "cli", cli)
+    caught = None
+    try:
+        async with asyncio.timeout(5):
+            async with harness.sdk(state, {"PATH": "/usr/bin:/bin"}, tmp_path, credential) as session:
+                if stage == "discovery": await harness.discovery(session)
+                elif stage == "lifetime": await asyncio.sleep(60)
+                else: pytest.fail("silent initializer admitted a session")
+    except BaseException as error:
+        caught, _ = driver.common.bounded_failure(error)
+    assert isinstance(caught, driver.common.AcceptanceError) and caught.code == "management_sdk_timeout"
+    assert len(owned) == 1 and owned[0].returncode is not None and not harness.children
+
+
+@pytest.mark.asyncio
+async def test_actual_early_exit_is_not_reclassified_as_a_fired_sdk_timeout(driver, harness, tmp_path, monkeypatch):
+    import asyncio
+    import mcp.client.stdio as transport
+    launcher = harness.launcher
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("#!" + sys.executable + "\nraise SystemExit(0)\n")
+    launcher.chmod(0o700)
+    owned = []
+    create = transport._create_platform_compatible_process
+    async def capture(**kwargs):
+        process = await create(**kwargs); owned.append(process); return process
+    monkeypatch.setattr(transport, "_create_platform_compatible_process", capture)
+    monkeypatch.setattr(driver, "SDK_READ_SECONDS", 5)
+    monkeypatch.setattr(driver, "SDK_STEP_SECONDS", 3)
+    monkeypatch.setattr(driver, "SDK_SESSION_SECONDS", 8)
+    state, credential = tmp_path / "state", tmp_path / "credential"
+    async def cli(*args):
+        return {"configuration": {"mcpServers": {"mcpme-management": {"command": str(launcher),
+            "args": ["--state-dir", str(state), "--credential-file", str(credential), "management", "connect"]}}}}
+    monkeypatch.setattr(harness, "cli", cli)
+    caught = None
+    try:
+        async with asyncio.timeout(10):
+            async with harness.sdk(state, {"PATH": "/usr/bin:/bin"}, tmp_path, credential):
+                pytest.fail("early-exiting facade admitted a session")
+    except BaseException as error:
+        caught, _ = driver.common.bounded_failure(error)
+    assert caught is not None
+    assert not isinstance(caught, driver.common.AcceptanceError) or caught.code != "management_sdk_timeout"
+    assert len(owned) == 1 and owned[0].returncode == 0 and not harness.children
+
+
+@pytest.mark.asyncio
+async def test_pending_prelaunch_journal_never_counts_as_a_started_probe(driver, harness, tmp_path, monkeypatch):
+    import uuid
+    identifier = str(uuid.uuid4())
+    reservation = tmp_path / "preparation-reservations" / (identifier + ".json")
+    reservation.parent.mkdir(); reservation.write_text("{}"); reservation.chmod(0o600)
+    calls = []
+    async def cli(*args):
+        calls.append(args)
+        return {"job_id": identifier, "state": "verifying" if len(calls) == 1 else "canceled",
+            "workspace": str(tmp_path / "preparations" / identifier)}
+    scans = []
+    def pending(*args): scans.append(args); return None
+    monkeypatch.setattr(harness, "cli", cli)
+    monkeypatch.setattr(driver.common, "preparation_ownership_count", lambda *args: 1)
+    monkeypatch.setattr(driver, "probe_entry", pending)
+    with pytest.raises(driver.common.AcceptanceError, match="^management_slow_worker_not_observed$"):
+        await harness.wait_job(tmp_path, {}, tmp_path, identifier, owned=True,
+            observation=(object(), object(), (1, 2, 3, 4, 5), "mcpme-probe-" + "a" * 32))
+    assert len(scans) == 1 and "probe_entry_witness" not in harness.report
+
+
+@pytest.mark.asyncio
+async def test_actual_owned_process_chain_entry_marker_and_original_handles_join(driver, harness, tmp_path):
+    import asyncio
+    import subprocess
+    import uuid
+    marker = "mcpme-probe-" + uuid.uuid4().hex
+    probe = ("import ctypes,sys\napi=ctypes.CDLL('/usr/lib/libSystem.B.dylib')\n"
+        "api.pthread_setname_np.argtypes=[ctypes.c_char_p]\napi.pthread_setname_np.restype=ctypes.c_int\n"
+        "assert api.pthread_setname_np(" + repr(marker.encode()) + ")==0\nsys.stdin.buffer.read()\n")
+    def guardian(child):
+        return ("import subprocess,sys\np=subprocess.Popen([sys.executable,'-I','-B','-c'," + repr(child)
+            + "],stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
+            "try:sys.stdin.buffer.read()\nfinally:p.stdin.close();p.wait(10)\n")
+    manager = subprocess.Popen([sys.executable, "-I", "-B", "-c", guardian(guardian(probe))],
+        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=tmp_path,
+        env={"PATH": "/usr/bin:/bin"})
+    harness.children.add(manager)
+    reader = driver.DarwinProcessReader()
+    witness = None
+    try:
+        identity = reader.identity(manager.pid)
+        executable = Path(reader.path(manager.pid))
+        async with asyncio.timeout(5):
+            while witness is None:
+                witness = driver.probe_entry(reader, manager, identity, executable, executable, marker)
+                await asyncio.sleep(.02)
+        assert witness["probe"][1] == witness["reaper"][0] and witness["reaper"][1] == manager.pid
+        assert driver.probe_entry(reader, manager, identity, executable, executable, "mcpme-probe-" + "0" * 32) is None
+        assert driver.probe_entry(reader, manager, identity, tmp_path / "wrong-reaper", executable, marker) is None
+        assert driver.probe_entry(reader, manager, identity, executable, tmp_path / "wrong-interpreter", marker) is None
+        with pytest.raises(driver.common.AcceptanceError):
+            driver.probe_entry(reader, manager, (*identity[:-1], identity[-1] + 1), executable, executable, marker)
+    finally:
+        manager.stdin.close()
+        await asyncio.to_thread(manager.wait, 10)
+        await harness.stop(manager)
+    assert manager.returncode == 0 and not harness.children
+    assert all(reader.identity(value[0]) != value for value in witness.values())
+
+
+@pytest.mark.parametrize("fault", ["probe-start", "wrapper-start", "manager-start", "probe-path", "wrapper-path"])
+def test_marker_scan_rechecks_full_start_and_path_chain(driver, fault):
+    manager = SimpleNamespace(pid=10, poll=lambda: None)
+    baseline = (10, 1, 1, 1, 1)
+    identities = {10: baseline, 20: (20, 10, 1, 2, 1), 30: (30, 20, 1, 3, 1)}
+    paths = {20: "/fixture/reaper", 30: "/fixture/interpreter"}
+    class Reader:
+        changed = False
+        def identity(self, pid):
+            original = identities[pid]
+            target = {"probe-start": 30, "wrapper-start": 20, "manager-start": 10}.get(fault)
+            return (*original[:-1], original[-1] + 1) if self.changed and pid == target else original
+        def path(self, pid):
+            target = {"probe-path": 30, "wrapper-path": 20}.get(fault)
+            return "/fixture/replaced" if self.changed and pid == target else paths[pid]
+        def children(self, pid): return {10: [20], 20: [30]}[pid]
+        def tagged(self, pid, marker): self.changed = True; return True
+    with pytest.raises(driver.common.AcceptanceError, match="^management_probe_identity_changed$"):
+        driver.probe_entry(Reader(), manager, baseline, Path(paths[20]), Path(paths[30]), "mcpme-probe-" + "a" * 32)

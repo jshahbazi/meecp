@@ -22,7 +22,8 @@ def main() -> int:
     subprocess.run([
         '/usr/bin/swiftc', '-O', '-swift-version', '5', '-parse-as-library',
         '-target', 'arm64-apple-macos14.0', '-framework', 'AppKit', '-framework', 'Foundation',
-        str(ROOT / 'BonsaiPlayground.swift'), '-o', str(binary),
+        str(ROOT / 'BonsaiPlayground.swift'), str(ROOT / 'Conversation.swift'),
+        str(ROOT / 'SystemPromptEditor.swift'), '-o', str(binary),
     ], check=True)
     info = {
         'CFBundleName': 'Bonsai Playground',
@@ -30,8 +31,8 @@ def main() -> int:
         'CFBundleIdentifier': 'dev.mcpme.bonsai-playground',
         'CFBundleExecutable': 'BonsaiPlayground',
         'CFBundlePackageType': 'APPL',
-        'CFBundleVersion': '1',
-        'CFBundleShortVersionString': '0.1.0',
+        'CFBundleVersion': '2',
+        'CFBundleShortVersionString': '0.2.0',
         'LSMinimumSystemVersion': '14.0',
         'NSHighResolutionCapable': True,
         'NSPrincipalClass': 'NSApplication',
@@ -41,7 +42,7 @@ def main() -> int:
     subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', str(app)], check=True)
     print(str(app))
     if args.open:
-        subprocess.run(['/usr/bin/open', str(app)], check=True)
+        subprocess.run(['/usr/bin/open', '-n', str(app)], check=True)
     return 0
 
 

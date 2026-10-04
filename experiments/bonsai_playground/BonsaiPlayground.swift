@@ -14,10 +14,8 @@ private struct GenerationSettings {
     var maximumOutput = 512
     var seed = 42
 
-    func render(_ prompt: String) -> String {
-        "<|im_start|>system\n" + system + "<|im_end|>\n"
-            + "<|im_start|>user\n" + prompt + "<|im_end|>\n"
-            + "<|im_start|>assistant\n<think>\n\n</think>\n\n"
+    func render(_ prompt: String, conversation: Conversation = Conversation()) -> String {
+        conversation.render(system: system, prompt: prompt)
     }
 }
 
@@ -37,6 +35,7 @@ private struct GenerationResult {
         case "process_failed": return "The model could not complete this prompt. Check the settings."
         case "timeout": return "The model took too long and was stopped."
         case "busy": return "Wait for the current response or press Stop."
+        case "context_full": return "Conversation reached the context limit. Increase Context in Settings or start a New Chat."
         case .some: return "The model could not complete this prompt."
         case .none:
             if let speed = tokensPerSecond {
@@ -102,7 +101,7 @@ private final class ModelRunner {
     private let queue = DispatchQueue(label: "BonsaiPlayground.model")
     private var active: Job?
 
-    func start(prompt: String, settings: GenerationSettings,
+    func start(prompt: String, settings: GenerationSettings, conversation: Conversation = Conversation(),
                onText: @escaping (String) -> Void,
                onComplete: @escaping (GenerationResult) -> Void) {
         queue.async {
@@ -132,6 +131,7 @@ private final class ModelRunner {
                 "-m", model, "-f", "/dev/stdin", "-c", String(settings.context),
                 "-n", String(settings.maximumOutput), "-ngl", "99", "-fa", "on", "-t", "6",
                 "--no-conversation", "--no-jinja", "--no-display-prompt", "--simple-io",
+                "--no-context-shift", "--no-escape",
                 "--color", "off", "--seed", String(settings.seed), "--temp", String(settings.temperature),
                 "--top-k", "40", "--top-p", "0.95", "--min-p", "0.0"
             ]
@@ -155,7 +155,7 @@ private final class ModelRunner {
             }
             self.drain(job.output.fileHandleForReading, job: job, isOutput: true)
             self.drain(job.errors.fileHandleForReading, job: job, isOutput: false)
-            let rendered = Data(settings.render(prompt).utf8)
+            let rendered = Data(settings.render(prompt, conversation: conversation).utf8)
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     try job.input.fileHandleForWriting.write(contentsOf: rendered)
@@ -264,7 +264,9 @@ private final class ModelRunner {
         let speed: Double?
         if let ms = milliseconds, let count = steps, ms > 0 { speed = count * 1000 / ms }
         else { speed = nil }
-        let failure = job.failure ?? (job.status == 0 ? nil : "process_failed")
+        let contextFull = diagnostics.range(of: "prompt is too long", options: .caseInsensitive) != nil
+            || diagnostics.range(of: "context full", options: .caseInsensitive) != nil
+        let failure = job.failure ?? (contextFull ? "context_full" : (job.status == 0 ? nil : "process_failed"))
         let result = GenerationResult(elapsed: Date().timeIntervalSince(job.started),
                                       tokensPerSecond: speed, failure: failure, stopped: job.stopped)
         job.stderr.removeAll(keepingCapacity: false)
@@ -272,13 +274,26 @@ private final class ModelRunner {
     }
 }
 
-private final class ApplicationDelegate: NSObject, NSApplicationDelegate {
+// The document grows inside its clip view; it must not supply a preferred
+// height to the surrounding window or stack view.
+private final class BoundedScrollView: NSScrollView {
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    }
+}
+
+private final class DraftTextView: NSTextView {
+    private let edits = UndoManager()
+    override var undoManager: UndoManager? { edits }
+}
+
+private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private let runner = ModelRunner()
     private var window: NSWindow!
     private var promptView: NSTextView!
     private var responseView: NSTextView!
-    private let status = NSTextField(labelWithString: "Ready. Each Send starts an independent prompt.")
-    private let systemField = NSTextField(string: "Be helpful, concise, and accurate.")
+    private let status = NSTextField(labelWithString: "Ready. Follow-ups include this conversation.")
+    private let systemEditor = SystemPromptEditor(text: "Be helpful, concise, and accurate.")
     private let modelField = NSTextField(string: defaultModelPath)
     private let runtimeField = NSTextField(string: defaultRuntimePath)
     private let seedField = NSTextField(string: "42")
@@ -288,7 +303,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private let maximumOutput = NSPopUpButton(frame: .zero, pullsDown: false)
     private let send = NSButton(title: "Send", target: nil, action: nil)
     private let stop = NSButton(title: "Stop", target: nil, action: nil)
-    private let clear = NSButton(title: "Clear", target: nil, action: nil)
+    private let clear = NSButton(title: "New Chat", target: nil, action: nil)
     private let settingsToggle = NSButton(checkboxWithTitle: "Show settings", target: nil, action: nil)
     private var settingsPanel: NSStackView!
     private var settingsControls: [NSControl] = []
@@ -296,68 +311,74 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private var quitting = false
     private var timer: Timer?
     private var started = Date()
+    private var conversation = Conversation()
+    private var pendingPrompt = ""
+    private var pendingResponse = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMenus()
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 920, height: 760),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
-        window.title = "Bonsai Playground"
+        window.title = "Bonsai Playground — Chat"
         window.isReleasedWhenClosed = false
         window.isRestorable = false
         window.contentMinSize = NSSize(width: 760, height: 620)
-        let root = NSStackView()
-        root.orientation = .vertical
-        root.alignment = .leading
-        root.spacing = 10
-        root.detachesHiddenViews = true
-        root.translatesAutoresizingMaskIntoConstraints = false
         let content = window.contentView!
-        content.addSubview(root)
-        NSLayoutConstraint.activate([
-            root.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
-            root.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
-            root.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
-            root.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -18)
-        ])
         let explanation = NSTextField(labelWithString: "Try Bonsai locally. Prompts and responses stay in memory.")
         explanation.textColor = .secondaryLabelColor
-        root.addArrangedSubview(explanation)
-        root.addArrangedSubview(label("Prompt"))
+        let conversationLabel = label("Conversation")
+        let responseScroll = textArea(editable: false)
+        responseView = responseScroll.documentView as? NSTextView
+        let composer = NSStackView()
+        composer.orientation = .vertical
+        composer.alignment = .leading
+        composer.spacing = 8
+        composer.detachesHiddenViews = true
+        settingsToggle.target = self; settingsToggle.action = #selector(toggleSettings)
+        composer.addArrangedSubview(settingsToggle)
+        settingsPanel = makeSettings()
+        composer.addArrangedSubview(settingsPanel)
+        settingsPanel.widthAnchor.constraint(equalTo: composer.widthAnchor).isActive = true
+        settingsPanel.isHidden = true
+        composer.addArrangedSubview(label("Message"))
         let promptScroll = textArea(editable: true)
         promptView = promptScroll.documentView as? NSTextView
-        root.addArrangedSubview(promptScroll)
-        promptScroll.heightAnchor.constraint(equalToConstant: 150).isActive = true
-        promptScroll.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
+        composer.addArrangedSubview(promptScroll)
+        promptScroll.heightAnchor.constraint(equalToConstant: 120).isActive = true
+        promptScroll.widthAnchor.constraint(equalTo: composer.widthAnchor).isActive = true
         send.target = self; send.action = #selector(sendPrompt)
         send.bezelStyle = .rounded; send.keyEquivalent = "\r"; send.keyEquivalentModifierMask = [.command]
         stop.target = self; stop.action = #selector(stopGeneration)
         stop.bezelStyle = .rounded; stop.keyEquivalent = "\u{1b}"; stop.keyEquivalentModifierMask = []
         stop.isEnabled = false
         clear.target = self; clear.action = #selector(clearPrompt)
-        clear.bezelStyle = .rounded; clear.keyEquivalent = "k"; clear.keyEquivalentModifierMask = [.command]
+        clear.bezelStyle = .rounded; clear.keyEquivalent = "n"; clear.keyEquivalentModifierMask = [.command]
         let buttons = row([send, stop, clear])
-        root.addArrangedSubview(buttons)
-        settingsToggle.target = self; settingsToggle.action = #selector(toggleSettings)
-        root.addArrangedSubview(settingsToggle)
-        settingsPanel = makeSettings()
-        root.addArrangedSubview(settingsPanel)
-        settingsPanel.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
-        settingsPanel.isHidden = true
-        root.addArrangedSubview(label("Response"))
-        let responseScroll = textArea(editable: false)
-        responseView = responseScroll.documentView as? NSTextView
-        root.addArrangedSubview(responseScroll)
-        responseScroll.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
-        responseScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
-        responseScroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+        composer.addArrangedSubview(buttons)
         status.textColor = .secondaryLabelColor
         status.font = .systemFont(ofSize: 12)
-        root.addArrangedSubview(status)
+        composer.addArrangedSubview(status)
+        for view in [explanation, conversationLabel, responseScroll, composer] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview(view)
+            view.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18).isActive = true
+            view.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18).isActive = true
+        }
+        NSLayoutConstraint.activate([
+            explanation.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
+            conversationLabel.topAnchor.constraint(equalTo: explanation.bottomAnchor, constant: 12),
+            responseScroll.topAnchor.constraint(equalTo: conversationLabel.bottomAnchor, constant: 6),
+            responseScroll.bottomAnchor.constraint(equalTo: composer.topAnchor, constant: -14),
+            responseScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 100),
+            composer.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -18)
+        ])
         window.center()
-        window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(promptView)
-        NSApplication.shared.activate(ignoringOtherApps: true)
+        if !CommandLine.arguments.contains("--ui-self-test") {
+            window.makeKeyAndOrderFront(nil)
+            NSApplication.shared.activate(ignoringOtherApps: true)
+        }
     }
 
     private func label(_ title: String) -> NSTextField {
@@ -375,10 +396,12 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func textArea(editable: Bool) -> NSScrollView {
-        let scroll = NSScrollView()
+        let scroll = BoundedScrollView()
         scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = false
         scroll.borderType = .bezelBorder
-        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 800, height: 180))
+        let frame = NSRect(x: 0, y: 0, width: 800, height: 120)
+        let text: NSTextView = editable ? DraftTextView(frame: frame) : NSTextView(frame: frame)
         text.isEditable = editable
         text.isSelectable = true
         text.isRichText = false
@@ -389,6 +412,8 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         text.isAutomaticSpellingCorrectionEnabled = false
         text.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
         text.textContainerInset = NSSize(width: 10, height: 10)
+        text.minSize = .zero
+        text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         text.isVerticallyResizable = true
         text.isHorizontallyResizable = false
         text.autoresizingMask = [.width]
@@ -403,7 +428,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         panel.orientation = .vertical
         panel.alignment = .leading
         panel.spacing = 8
-        let systemRow = row([label("System"), systemField])
+        let systemRow = row([label("System"), systemEditor])
         panel.addArrangedSubview(systemRow)
         systemRow.widthAnchor.constraint(equalTo: panel.widthAnchor).isActive = true
         temperature.target = self; temperature.action = #selector(updateTemperature)
@@ -425,14 +450,14 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         panel.addArrangedSubview(runtimeRow)
         modelRow.widthAnchor.constraint(equalTo: panel.widthAnchor).isActive = true
         runtimeRow.widthAnchor.constraint(equalTo: panel.widthAnchor).isActive = true
-        systemField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        systemEditor.setContentHuggingPriority(.defaultLow, for: .horizontal)
         modelField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         runtimeField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         for field in [modelField, runtimeField] {
             field.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
             field.lineBreakMode = .byTruncatingMiddle
         }
-        settingsControls = [systemField, modelField, runtimeField, seedField, temperature,
+        settingsControls = [modelField, runtimeField, seedField, temperature,
                             context, maximumOutput, modelBrowse, runtimeBrowse]
         return panel
     }
@@ -483,12 +508,16 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         var settings = GenerationSettings()
         settings.model = modelField.stringValue
         settings.runtime = runtimeField.stringValue
-        settings.system = systemField.stringValue
+        settings.system = systemEditor.string
         settings.temperature = temperature.doubleValue
         settings.context = Int(context.titleOfSelectedItem ?? "2048") ?? 2048
         settings.maximumOutput = Int(maximumOutput.titleOfSelectedItem ?? "512") ?? 512
         settings.seed = seed
-        responseView.string = ""
+        pendingPrompt = prompt
+        pendingResponse = ""
+        appendTranscript("You", body: prompt)
+        appendTranscript("Bonsai", body: "")
+        replaceDraft("")
         setGenerating(true)
         started = Date()
         status.stringValue = "Starting…"
@@ -496,14 +525,12 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             guard let self = self else { return }
             self.status.stringValue = String(format: "Generating · %.1f s", Date().timeIntervalSince(self.started))
         }
-        runner.start(prompt: prompt, settings: settings, onText: { [weak self] text in
+        runner.start(prompt: prompt, settings: settings, conversation: conversation, onText: { [weak self] text in
             guard let self = self else { return }
             let scroll = self.responseView.enclosingScrollView!
             let atBottom = scroll.contentView.bounds.maxY >= self.responseView.bounds.maxY - 24
-            self.responseView.textStorage?.append(NSAttributedString(string: text, attributes: [
-                .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
-                .foregroundColor: NSColor.textColor
-            ]))
+            self.pendingResponse += text
+            self.responseView.textStorage?.append(NSAttributedString(string: text, attributes: self.bodyAttributes))
             if atBottom {
                 self.responseView.scrollRangeToVisible(NSRange(location: self.responseView.string.utf16.count, length: 0))
             }
@@ -512,9 +539,18 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             self.timer?.invalidate(); self.timer = nil
             self.setGenerating(false)
             self.status.stringValue = result.message
+            if (result.failure == nil || result.stopped) && !self.pendingResponse.isEmpty {
+                self.conversation.append(user: self.pendingPrompt, assistant: self.pendingResponse)
+            } else {
+                self.replaceDraft(self.pendingPrompt)
+            }
             if result.failure != nil && !result.stopped {
                 self.responseView.textStorage?.append(NSAttributedString(string: "\n\n" + result.message))
             }
+            self.responseView.textStorage?.append(NSAttributedString(string: "\n\n", attributes: self.bodyAttributes))
+            self.pendingPrompt = ""
+            self.pendingResponse = ""
+            self.window.makeFirstResponder(self.promptView)
             if self.quitting { NSApplication.shared.reply(toApplicationShouldTerminate: true) }
         })
     }
@@ -524,6 +560,8 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         send.isEnabled = !value
         clear.isEnabled = !value
         stop.isEnabled = value
+        promptView.isEditable = !value
+        systemEditor.isEditable = !value
         for control in settingsControls { control.isEnabled = !value }
     }
 
@@ -533,10 +571,126 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func clearPrompt() {
         guard !generating else { return }
-        promptView.string = ""
+        replaceDraft("")
+        promptView.undoManager?.removeAllActions()
+        conversation.reset()
         responseView.string = ""
-        status.stringValue = "Ready. Each Send starts an independent prompt."
+        status.stringValue = "New chat. Conversation reset."
         window.makeFirstResponder(promptView)
+    }
+
+    private var bodyAttributes: [NSAttributedString.Key: Any] {
+        [.font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular), .foregroundColor: NSColor.textColor]
+    }
+
+    private func appendTranscript(_ speaker: String, body: String) {
+        responseView.textStorage?.append(NSAttributedString(string: speaker + "\n", attributes: [
+            .font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.labelColor
+        ]))
+        if !body.isEmpty {
+            responseView.textStorage?.append(NSAttributedString(string: body + "\n\n", attributes: bodyAttributes))
+        }
+        responseView.scrollRangeToVisible(NSRange(location: responseView.string.utf16.count, length: 0))
+    }
+
+    private func replaceDraft(_ text: String) {
+        promptView.insertText(text, replacementRange: NSRange(location: 0, length: promptView.string.utf16.count))
+    }
+
+    private var activeUndoManager: UndoManager? {
+        if let editor = window.firstResponder as? NSTextView, editor.isEditable { return editor.undoManager }
+        return promptView.undoManager
+    }
+
+    @objc private func undoEdit(_ sender: Any?) { activeUndoManager?.undo() }
+    @objc private func redoEdit(_ sender: Any?) { activeUndoManager?.redo() }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(undoEdit(_:)) { return !generating && activeUndoManager?.canUndo == true }
+        if menuItem.action == #selector(redoEdit(_:)) { return !generating && activeUndoManager?.canRedo == true }
+        return true
+    }
+
+    // Exercise the actual controls in an undisplayed window. No system input,
+    // clipboard changes, model calls, or conversation text leave this process.
+    func uiChecks() -> [String: Bool] {
+        let frame = window.frame
+        let scroll = responseView.enclosingScrollView!
+        window.contentView?.layoutSubtreeIfNeeded()
+        let scrollHeight = scroll.bounds.height
+        var checks: [String: Bool] = [:]
+        promptView.insertText("synthetic draft", replacementRange: NSRange(location: 0, length: 0))
+        checks["draft_registers_undo"] = promptView.undoManager?.canUndo == true
+        undoEdit(nil)
+        checks["undo_restores_draft"] = promptView.string.isEmpty
+        redoEdit(nil)
+        checks["redo_restores_draft"] = promptView.string == "synthetic draft"
+        let editMenu = NSApplication.shared.mainMenu?.item(at: 1)?.submenu
+        checks["undo_shortcut"] = editMenu?.item(at: 0)?.keyEquivalent == "z"
+            && editMenu?.item(at: 0)?.keyEquivalentModifierMask == [.command]
+        checks["redo_shortcut"] = editMenu?.item(at: 1)?.keyEquivalent == "z"
+            && editMenu?.item(at: 1)?.keyEquivalentModifierMask == [.command, .shift]
+        let longText = Array(repeating: "Synthetic long line for checking scrolling.", count: 500).joined(separator: "\n")
+        replaceDraft(longText)
+        responseView.textStorage?.append(NSAttributedString(string: longText, attributes: bodyAttributes))
+        promptView.layoutManager?.ensureLayout(for: promptView.textContainer!)
+        responseView.layoutManager?.ensureLayout(for: responseView.textContainer!)
+        promptView.sizeToFit()
+        responseView.sizeToFit()
+        window.contentView?.layoutSubtreeIfNeeded()
+        checks["long_text_keeps_window_size"] = window.frame.size == frame.size
+        checks["long_text_keeps_transcript_height"] = abs(scroll.bounds.height - scrollHeight) < 1
+        checks["composer_height_bounded"] = abs(promptView.enclosingScrollView!.bounds.height - 120) < 1
+        checks["composer_document_scrolls"] = promptView.bounds.height > promptView.enclosingScrollView!.contentView.bounds.height
+        checks["transcript_document_scrolls"] = responseView.bounds.height > scroll.contentView.bounds.height
+        conversation.append(user: "synthetic user", assistant: "synthetic answer")
+        clearPrompt()
+        checks["new_chat_resets_history"] = conversation.isEmpty && responseView.string.isEmpty && promptView.string.isEmpty
+        checks["new_chat_resets_undo"] = promptView.undoManager?.canUndo == false && promptView.undoManager?.canRedo == false
+
+        settingsPanel.isHidden = false
+        func systemHeight(_ text: String) -> CGFloat {
+            systemEditor.string = text
+            window.contentView?.layoutSubtreeIfNeeded()
+            systemEditor.refreshHeight()
+            window.contentView?.layoutSubtreeIfNeeded()
+            return systemEditor.bounds.height
+        }
+        let oneLine = systemHeight("synthetic one")
+        let twoLines = systemHeight("synthetic one\nsynthetic two")
+        let threeLines = systemHeight("synthetic one\nsynthetic two\nsynthetic three")
+        let fourLines = systemHeight("synthetic one\nsynthetic two\nsynthetic three\nsynthetic four")
+        checks["system_grows_to_three_lines"] = oneLine < twoLines && twoLines < threeLines
+        checks["system_height_capped_at_three_lines"] = abs(fourLines - threeLines) < 1
+        checks["system_document_scrolls"] = systemEditor.textView.bounds.height > systemEditor.contentView.bounds.height
+        let wrappedHeight = systemHeight(Array(repeating: "synthetic wrapping text", count: 100).joined(separator: " "))
+        checks["system_wrapping_keeps_height_bounded"] = abs(wrappedHeight - threeLines) < 1
+        checks["system_empty_shrinks_to_one_line"] = abs(systemHeight("") - oneLine) < 1
+        let systemUndo = systemEditor.textView.undoManager!
+        systemUndo.removeAllActions()
+        // These synchronous checks have no input event boundaries. Give each
+        // synthetic edit its own group, as separate keyboard events would.
+        systemUndo.groupsByEvent = false
+        window.makeFirstResponder(systemEditor.textView)
+        systemUndo.beginUndoGrouping()
+        systemEditor.textView.insertText("synthetic edit", replacementRange: NSRange(location: 0, length: 0))
+        systemUndo.endUndoGrouping()
+        systemEditor.textView.breakUndoCoalescing()
+        systemUndo.beginUndoGrouping()
+        systemEditor.textView.insertNewline(nil)
+        systemUndo.endUndoGrouping()
+        checks["system_enter_inserts_newline"] = systemEditor.string == "synthetic edit\n"
+        undoEdit(nil)
+        checks["system_undo_uses_active_editor"] = systemEditor.string == "synthetic edit" && promptView.string.isEmpty
+        redoEdit(nil)
+        checks["system_redo_uses_active_editor"] = systemEditor.string == "synthetic edit\n" && promptView.string.isEmpty
+        systemUndo.groupsByEvent = true
+        setGenerating(true)
+        checks["generation_disables_system_editor"] = !systemEditor.isEditable
+        setGenerating(false)
+        checks["generation_restores_system_editor"] = systemEditor.isEditable
+        checks["system_edit_keeps_window_size"] = window.frame.size == frame.size
+        return checks
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -560,7 +714,12 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(appItem)
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")
-        for (title, action, key) in [("Undo", "undo:", "z"), ("Cut", "cut:", "x"),
+        let undo = editMenu.addItem(withTitle: "Undo", action: #selector(undoEdit(_:)), keyEquivalent: "z")
+        undo.target = self; undo.keyEquivalentModifierMask = [.command]
+        let redo = editMenu.addItem(withTitle: "Redo", action: #selector(redoEdit(_:)), keyEquivalent: "z")
+        redo.target = self; redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(.separator())
+        for (title, action, key) in [("Cut", "cut:", "x"),
                                      ("Copy", "copy:", "c"), ("Paste", "paste:", "v"),
                                      ("Select All", "selectAll:", "a")] {
             editMenu.addItem(withTitle: title, action: Selector(action), keyEquivalent: key)
@@ -595,17 +754,32 @@ private enum SmokeTest {
         }
         let runner = ModelRunner()
         var answer = ""
-        runner.start(prompt: "Compute 17 + 25. Reply with only the integer.", settings: settings,
-                     onText: { answer += $0 }, onComplete: { result in
-            let passed = result.failure == nil && !result.stopped
-                && answer.trimmingCharacters(in: .whitespacesAndNewlines) == "42"
-            var metadata: [String: Any] = ["pass": passed, "elapsed_seconds": result.elapsed,
-                                           "failure": result.failure ?? (passed ? "none" : "answer_mismatch")]
-            if let speed = result.tokensPerSecond { metadata["tokens_per_second"] = speed }
-            if let data = try? JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]),
-               let text = String(data: data, encoding: .utf8) { print(text) }
-            exit(passed ? 0 : 1)
-        })
+        var conversation = Conversation()
+        var turn = 0
+        func runTurn() {
+            let prompt = turn == 0 ? "Compute 17 + 25. Reply with only the integer."
+                : "Add one to your last answer. Reply with only the integer."
+            answer = ""
+            runner.start(prompt: prompt, settings: settings, conversation: conversation,
+                         onText: { answer += $0 }, onComplete: { result in
+                let passed = result.failure == nil && !result.stopped
+                    && answer.trimmingCharacters(in: .whitespacesAndNewlines) == (turn == 0 ? "42" : "43")
+                if passed && turn == 0 {
+                    conversation.append(user: prompt, assistant: answer)
+                    turn = 1
+                    runTurn()
+                    return
+                }
+                var metadata: [String: Any] = ["pass": passed, "turns_checked": turn + 1,
+                    "elapsed_seconds": result.elapsed,
+                    "failure": result.failure ?? (passed ? "none" : "answer_mismatch")]
+                if let speed = result.tokensPerSecond { metadata["tokens_per_second"] = speed }
+                if let data = try? JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]),
+                   let text = String(data: data, encoding: .utf8) { print(text) }
+                exit(passed ? 0 : 1)
+            })
+        }
+        runTurn()
         dispatchMain()
     }
 }
@@ -614,11 +788,25 @@ private enum SmokeTest {
 private enum BonsaiPlayground {
     static func main() {
         signal(SIGPIPE, SIG_IGN)
+        if CommandLine.arguments.contains("--conversation-self-test") {
+            let checks = ConversationChecks.run()
+            if let data = try? JSONSerialization.data(withJSONObject: checks, options: [.sortedKeys]),
+               let text = String(data: data, encoding: .utf8) { print(text) }
+            exit(checks.values.allSatisfy { $0 } ? 0 : 1)
+        }
         if CommandLine.arguments.contains("--smoke-test") { SmokeTest.run() }
         let app = NSApplication.shared
-        app.setActivationPolicy(.regular)
         let delegate = ApplicationDelegate()
         app.delegate = delegate
+        if CommandLine.arguments.contains("--ui-self-test") {
+            app.setActivationPolicy(.prohibited)
+            delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+            let checks = delegate.uiChecks()
+            if let data = try? JSONSerialization.data(withJSONObject: checks, options: [.sortedKeys]),
+               let text = String(data: data, encoding: .utf8) { print(text) }
+            exit(checks.values.allSatisfy { $0 } ? 0 : 1)
+        }
+        app.setActivationPolicy(.regular)
         withExtendedLifetime(delegate) { app.run() }
     }
 }

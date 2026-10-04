@@ -61,7 +61,28 @@ owners joined. Its receipt SHA-256 is
 The focused native, fixture, owner-wire, relocation and prepared-Python signing
 checks passed 57 tests. Their receipt SHA-256 is
 `1f0ff23921bc5d8e62a086a43109f79bb355e9953ca3daf70a6679cebf4bc8ba`.
-A matching newly signed composition is a subsequent acceptance step.
+
+The matching Developer ID app built from clean source
+`31b50ccd5bddb780d66d2d5f70e643704f8e13c3` subsequently passed both cases in
+122.846 seconds. Each case made four simulated provider calls, two HTTP and two
+stdio calls, and passed the relocated confined probe. The actual flow recorded
+all owned children joined, production defaults disabled, and the whole matching
+signed app preserved. Its receipt SHA-256 is
+`9a2e175a94f94adf2740c5fb40a402d4bb8e9b1e4d5f8a016a22f81825773ba5`.
+The outer preservation checks within this author-run composition
+matched all 7,557 app files, tracked source bytes, and the frozen signed runtime
+archive before and after execution, and reverified the Developer ID signature.
+That composition receipt SHA-256 is
+`806605462c5a616082751cb18fbf00a74ba9c018a397dd67c6deee575b5b96b6`.
+The outer receipt's convenience `all_children_joined` field is null because its
+wrapper used a different key; the authoritative flow's
+`owned_children_joined` field is true. Neither receipt was rewritten.
+
+The app builder's contemporaneous receipt binds the clean source and native
+binary. An initial private postbuild wrapper used the wrong executable basename
+and stopped before writing its additional receipt. A separate postbuild binding
+verified the existing signed app; this did not rebuild or change it. This final
+documentation update changes no compiled source or artifact.
 
 Physical dialog interaction, live credentials/provider selection, real external
 provider behavior, public execution, and whole-phase adversarial review remain

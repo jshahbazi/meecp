@@ -200,9 +200,12 @@ def candidate_metadata(tmp_path):
     return SimpleNamespace(root=tmp_path, manifest=manifest, lock=SimpleNamespace(artifacts=list(records.values()))), value
 
 
-def test_exact_extra_model_service_contract_is_accepted(tmp_path):
+def test_extra_model_contract_forwards_exact_signed_runtime_validation(tmp_path, monkeypatch):
     package, value = candidate_metadata(tmp_path)
+    checked = []
+    monkeypatch.setattr(textgen, "verify_signed_runtime", lambda root: checked.append(root))
     textgen.validate_model_package(package, value)
+    assert checked == [package.root]
 
 
 @pytest.mark.parametrize("change", ["graph", "model", "engine", "extra_plugin", "adapter_code", "extra_code", "capture", "launcher"])

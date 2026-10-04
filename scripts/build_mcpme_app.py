@@ -109,9 +109,17 @@ def verify_signature(path: Path, certificate_hash: str | None = None, deep: bool
 
 
 def sign_runtime(root: Path, identity: str = "-", release: bool = False,
-                 keychain: Path | None = None, *, immutable_runtime: Path | None = None) -> int:
+                 keychain: Path | None = None, *, immutable_runtime: Path | None = None,
+                 signed_runtime: Path | None = None) -> int:
     if release and immutable_runtime is not None:
         raise SystemExit("signed_textgen_preparation_not_supported")
+    if signed_runtime is not None:
+        if immutable_runtime is not None or not signed_runtime.is_relative_to(root):
+            raise ValueError("textgen_runtime_selection_conflict")
+        from signed_textgen_asset import verify_signatures
+        from mcpme.preparation_textgen_signed_runtime import verify_runtime as verify_frozen_runtime
+        frozen = verify_frozen_runtime(signed_runtime, exact=True)
+        verify_signatures(signed_runtime, frozen, certificate=identity if release else None)
     count = 0
     # Sign individual native files before the outer bundle seals their resources.
     for path in sorted(root.rglob("*"), key=lambda path: (-len(path.parts), str(path))):
@@ -125,7 +133,8 @@ def sign_runtime(root: Path, identity: str = "-", release: bool = False,
             magic = source.read(4)
         if magic not in MACHO_MAGIC:
             continue
-        preserved = immutable_runtime is not None and path.is_relative_to(immutable_runtime)
+        preserved = ((immutable_runtime is not None and path.is_relative_to(immutable_runtime))
+                     or (signed_runtime is not None and path.is_relative_to(signed_runtime)))
         if path.suffix == ".dylib" and not preserved:
             # python-build-standalone gives libpython an absolute install ID;
             # rewrite that self identity before inspecting actual imports.
@@ -139,6 +148,8 @@ def sign_runtime(root: Path, identity: str = "-", release: bool = False,
             run(*signing_arguments(identity, release, keychain), str(path))
         verify_signature(path, identity if release else None)
         count += not preserved
+    if signed_runtime is not None:
+        verify_frozen_runtime(signed_runtime, frozen, exact=True)
     return count
 
 
@@ -159,11 +170,17 @@ def refresh_postbuild_host_artifacts(host: Path, host_receipt: dict, *, expected
 
 def build(destination: Path, legacy_recovery_app: Path | None = None,
           sign_identity: str | None = None, keychain: Path | None = None,
-          version: str | None = None, textgen_engine: Path | None = None) -> Path:
+          version: str | None = None, textgen_engine: Path | None = None,
+          textgen_signed_asset: Path | None = None) -> Path:
     # Validate before invoking any tool or signing operation.
     effective_version = project_version(version)
     if textgen_engine is not None and sign_identity is not None:
         raise SystemExit("signed_textgen_preparation_not_supported")
+    if textgen_signed_asset is not None:
+        if textgen_engine is not None:
+            raise ValueError("textgen_runtime_selection_conflict")
+        from signed_textgen_asset import admit_archive
+        admit_archive(textgen_signed_asset)
     if keychain is not None and sign_identity is None:
         raise SystemExit("keychain_requires_signing_identity")
     identity = developer_identity(sign_identity, keychain) if sign_identity is not None else "-"
@@ -194,6 +211,8 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
         host_options["version"] = version
     if textgen_engine is not None:
         host_options["textgen_engine"] = textgen_engine
+    if textgen_signed_asset is not None:
+        host_options["textgen_signed_asset"] = textgen_signed_asset
     host = build_host(resources / "host", **host_options)
     starter = prepare_starter_package(resources)
     shutil.copy2(native, host / "bin/mcpme-handoff")
@@ -219,7 +238,13 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
     for name in ("model-manifest.json", "THIRD_PARTY_NOTICES.md"):
         shutil.copyfile(ROOT / name, resources / name)
     native_input_hash = sha256(native)
-    if textgen_engine is not None:
+    if textgen_signed_asset is not None:
+        from signed_textgen_asset import verify_host as verify_signed_textgen
+        frozen_profile = verify_signed_textgen(host, certificate=identity if release else None)
+        signed_files = sign_runtime(staged, identity, release, keychain,
+                                    signed_runtime=host / "preparation-toolchain/textgen-runtime")
+        verify_signed_textgen(host, certificate=identity if release else None)
+    elif textgen_engine is not None:
         from bundle_textgen_assets import verify_runtime as verify_textgen_runtime
         verify_textgen_runtime(host)
         signed_files = sign_runtime(staged, identity, release, keychain,
@@ -257,12 +282,17 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
                "app_icon_sha256": sha256(resources / "AppIcon.icns"),
                "starter_packages": [starter_receipt],
                "host_receipt_sha256": sha256(host / "build.json"), "legacy_handoff": legacy_recovery_app is not None}
+    if textgen_signed_asset is not None:
+        receipt["textgen_signed_profile"] = {"profile": frozen_profile["profile"],
+            "archive_sha256": frozen_profile["archive"]["sha256"], "preserved_without_resigning": True}
     # Add the receipt before the final signature seals Resources.
     (resources / "app-build.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     run(*signing_arguments(identity, release, keychain), str(staged))
     verify_signature(staged, identity if release else None, deep=True)
     if textgen_engine is not None:
         verify_textgen_runtime(host)
+    if textgen_signed_asset is not None:
+        verify_signed_textgen(host, certificate=identity if release else None)
     staged.rename(destination)
     # An executable signature seals Resources; keep its final digest outside that
     # seal to avoid a self-referential receipt changing the executable digest.
@@ -280,10 +310,12 @@ if __name__ == "__main__":
     parser.add_argument("--keychain", type=Path, help="Keychain containing the signing certificate")
     parser.add_argument("--version", help="Override the application version (major.minor.patch)")
     parser.add_argument("--textgen-engine", type=Path, help="Exact reviewed engine Resources directory for private CPU text preparation")
+    parser.add_argument("--textgen-signed-asset", type=Path, help="Exact immutable signed TextGen runtime archive")
     arguments = parser.parse_args()
     try:
         print(build(arguments.output.absolute(), arguments.legacy_recovery_app,
-                    arguments.sign_identity, arguments.keychain, arguments.version, arguments.textgen_engine))
+                    arguments.sign_identity, arguments.keychain, arguments.version, arguments.textgen_engine,
+                    arguments.textgen_signed_asset))
     except KeyboardInterrupt:
         raise SystemExit("app_build_interrupted") from None
     except BuildCommandError as error:

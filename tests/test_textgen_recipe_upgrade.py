@@ -40,7 +40,7 @@ def choose(monkeypatch, entry):
 
 
 @pytest.mark.parametrize("action", ["disable", "revoke", "remove", "deprecate"])
-@pytest.mark.parametrize("old_version", ["1.0.5", "1.0.6"])
+@pytest.mark.parametrize("old_version", ["1.0.5", "1.0.6", "1.0.7"])
 def test_exact_textgen_upgrade_preserves_owner_opt_out_across_restart(tmp_path, monkeypatch, action, old_version):
     components, (old, new) = versions(monkeypatch, old_version)
     state = tmp_path.resolve() / "state"
@@ -63,7 +63,7 @@ def test_exact_textgen_upgrade_preserves_owner_opt_out_across_restart(tmp_path, 
         assert not any(item["version"] == VERSION for item in restarted.list())
 
 
-@pytest.mark.parametrize("old_version", ["1.0.5", "1.0.6"])
+@pytest.mark.parametrize("old_version", ["1.0.5", "1.0.6", "1.0.7"])
 def test_enabled_historical_recipe_and_exact_snapshot_survive_upgrade(tmp_path, monkeypatch, old_version):
     components, (old, new) = versions(monkeypatch, old_version)
     with ImportStore(tmp_path.resolve() / "state") as imports:
@@ -79,7 +79,7 @@ def test_enabled_historical_recipe_and_exact_snapshot_survive_upgrade(tmp_path, 
         assert validate_bundle(Path(before["path"]))["digest"] == old_digest
 
 
-@pytest.mark.parametrize("old_version", ["1.0.5", "1.0.6"])
+@pytest.mark.parametrize("old_version", ["1.0.5", "1.0.6", "1.0.7"])
 def test_collected_old_tombstone_prevents_new_default(tmp_path, monkeypatch, old_version):
     components, (old, new) = versions(monkeypatch, old_version)
     with ImportStore(tmp_path.resolve() / "state") as imports:
@@ -101,6 +101,6 @@ def test_public_provenance_and_new_component_bindings_are_exact():
     bundle = validate_bundle(root / entry.directory)
     assert entry.version == VERSION and entry.digest == bundle["digest"]
     components = builtin_components()
-    assert len(bundle["files"]) == 7
+    assert len(bundle["files"]) == 9
     for step in bundle["manifest"]["steps"]:
         assert step["version"] == VERSION and components[step["component"] + "@" + VERSION]["digest"] == step["digest"]

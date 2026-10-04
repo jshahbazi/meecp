@@ -14,7 +14,9 @@ import stat
 
 from .contracts import Access, PackageManifest, Tool, validate_package
 from .preparation_artifacts import CapturedArtifactCollectionV1
-from .preparation_builder import _copy, _digest, _runtime, load_private_toolchain
+from .preparation_builder import _copy, _digest, load_private_toolchain
+from .preparation_textgen_signed_runtime import (ASSET_DIRECTORY, copy_runtime,
+    manifest as signed_manifest, verify_runtime as verify_signed_runtime)
 from .preparation_capture import ArtifactReferenceV1
 from .preparation_components import (ComponentReference, PreparationDescriptorV2, SourceBinding,
     SourceFileBinding, original_file_records, parse_component_descriptor, read_snapshot)
@@ -25,10 +27,10 @@ from mcpme_textgen.fixture import (MODEL_BYTES, MODEL_SHA256, LICENSE_SHA256, MO
 
 ENGINE_ID = "llamacpp-cpu-v1"
 TASK_ID = "text-generate-v1"
-VERSION = "1.0.7"
+VERSION = "1.0.8"
 MIN_MEMORY_MB = 1024
 ASSETS = ("LICENSE", "LICENSE-MODEL", "engine-closure.json", "fixtures.json", "model.json", "model-provenance.json", "launcher.c",
-          "tools.json", "pyproject.toml", "uv.lock")
+          "tools.json", "pyproject.toml", "uv.lock", "signed-runtime.json", "signed-runtime-provenance.json")
 ENGINE_SCHEMA = {"type": "object", "additionalProperties": False,
     "required": ["model_name", "license_name", "profile"], "properties": {
         "model_name": {"type": "string", "minLength": 1, "maxLength": 64},
@@ -45,7 +47,7 @@ PROCESS_GRAPH = [
 
 
 def asset_root():
-    return Path(__file__).resolve().parents[2] / "templates/text-generate-v1"
+    return Path(__file__).resolve().parents[2] / "templates" / ASSET_DIRECTORY
 
 
 def assets(root=None):
@@ -207,7 +209,12 @@ def write_textgen_recipe(destination):
         "steps": [{"component": ref.id, "version": ref.version, "digest": ref.digest} for ref in references()],
         "requirements": {"capabilities": ["declarative-composition"]}, "licenses": ["LICENSE", "LICENSE-MODEL"],
         "provenance": {"origin": "mcpme exact CPU llama.cpp and bounded text generation components", "publisher": "mcpme contributors"}})
-    files = {name: assets()[name] for name in ("LICENSE", "LICENSE-MODEL", "model.json", "model-provenance.json", "engine-closure.json")}
+    files = {name: assets()[name] for name in ("LICENSE", "LICENSE-MODEL", "model.json", "model-provenance.json", "engine-closure.json",
+                                            "signed-runtime-provenance.json")}
+    signed = signed_manifest()
+    files["runtime-profile.json"] = canonical_bytes({key: signed[key] for key in
+        ("schema_version", "profile", "archive", "signing", "provenance_sha256")} | {
+        "manifest_sha256": hashlib.sha256(assets()["signed-runtime.json"]).hexdigest()})
     files["mcpme.recipe.json"] = canonical_bytes(manifest.model_dump(exclude_none=True))
     files["mcpme.recipe.lock.json"] = canonical_bytes({"schema_version": 1,
         "manifest_sha256": hashlib.sha256(files["mcpme.recipe.json"]).hexdigest(),
@@ -385,6 +392,7 @@ def validate_model_package(package, descriptor, *, require_receipt=False):
     if (origin.get("engine_closure") != closure
             or origin.get("launcher_source_sha256") != hashlib.sha256(assets()["launcher.c"]).hexdigest()):
         raise PreparationError("textgen_launcher_identity_mismatch")
+    verify_signed_runtime(package.root)
     if require_receipt:
         from .preparation_inputs import parse_preparation_receipt
         from .preparations import RECEIPT_NAME
@@ -407,7 +415,7 @@ def prepare_textgen_bound(descriptor, draft, toolchain, output, run, check, *, c
         current = load_private_toolchain(toolchain.root.parent, check)
         if current.identity != toolchain.identity:
             raise PreparationError("preparation_toolchain_changed")
-        selected_assets = assets(current.root / "templates/text-generate-v1")
+        selected_assets = assets(current.root / "templates" / ASSET_DIRECTORY)
         if selected_assets != assets():
             raise PreparationError("textgen_template_identity_mismatch")
         runtime_records = {name.removeprefix("textgen-runtime/"): item for name, item in current.artifacts.items()
@@ -415,34 +423,26 @@ def prepare_textgen_bound(descriptor, draft, toolchain, output, run, check, *, c
         root = Path(__file__).resolve().parents[1]
         source_names = {"backend/" + path.relative_to(root).as_posix() for path in (root / "mcpme_textgen").glob("*.py")}
         source_names.update("backend/jevk5_app/" + name for name in ("__init__.py", "server.py", "contracts.py", "state.py"))
-        expected_runtime = (set(json.loads(selected_assets["engine-closure.json"])) - {"llama/llama-server"}) | source_names | {
-            "bin/textgen-engine", "bin/textgen-adapter", "origin.json"}
+        expected_runtime = set(signed_manifest()["artifacts"])
         if set(runtime_records) != expected_runtime:
             raise PreparationError("textgen_private_engine_required")
         capture_store.acquire_reference(collection.digest, ArtifactReferenceV1(kind="job", owner_id=job_id))
         output.mkdir(mode=0o700)
         work = output.parent / (output.name + "-builder")
         work.mkdir(mode=0o700)
-        for name, record in runtime_records.items():
+        runtime = copy_runtime(current.root / "textgen-runtime", output, check=check)
+        for name in source_names:
             check()
-            if name == "licenses/python-LICENSE.txt":
-                # _runtime supplies the verified private Python license once.
-                continue
-            _copy(current.root / "textgen-runtime" / name, output / name, check)
-            if _digest(output / name, check) != record["sha256"]:
-                raise PreparationError("preparation_toolchain_changed")
+            _copy(root / name.removeprefix("backend/"), output / name, check)
         # Bind copied adapter/policy code to the same trusted component identity.
         for path in (output / "backend").rglob("*.py"):
             if _digest(path, check) != _digest(root / path.relative_to(output / "backend"), check):
                 raise PreparationError("textgen_adapter_identity_mismatch")
-        for name in ("uv.lock", "pyproject.toml"):
-            (work / name).write_bytes(selected_assets[name])
         for entry in collection.entries:
             target = output / ("models/" + MODEL_FILENAME if entry.role == "model-weights" else "licenses/Qwen-LICENSE")
             _copy_capture(capture_store, collection, entry, target, check)
         if digest(tokenizer_metadata(output / "models" / MODEL_FILENAME)) != TOKENIZER_SHA256:
             raise PreparationError("textgen_tokenizer_identity_mismatch")
-        runtime = _runtime(output, work, current, run, check, work, acquire_wheels)
         (output / "licenses/LICENSE").write_bytes(selected_assets["LICENSE"])
         (output / "capture.json").write_bytes(canonical_bytes(collection.model_dump(mode="json")))
         (output / "model-provenance.json").write_bytes(selected_assets["model-provenance.json"])

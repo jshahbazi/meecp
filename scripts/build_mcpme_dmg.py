@@ -129,15 +129,27 @@ def verify_image(image: Path, workspace: Path, info: dict,
 
 def build(output: Path | None = None, app: Path | None = None,
           sign_identity: str | None = None, notary_profile: str | None = None,
-          keychain: Path | None = None, version: str | None = None, textgen_engine: Path | None = None) -> Path:
+          keychain: Path | None = None, version: str | None = None, textgen_engine: Path | None = None,
+          textgen_signed_asset: Path | None = None) -> Path:
     # Validate before credential lookup, copying, signing, or notarization.
     if version is not None:
         project_version(version)
-    if app is not None and textgen_engine is not None:
+    if app is not None and (textgen_engine is not None or textgen_signed_asset is not None):
         raise SystemExit("textgen_engine_requires_source_build")
-    if sign_identity is not None and (textgen_engine is not None or app is not None and (
-            app / "Contents/Resources/host/preparation-toolchain/textgen-runtime").exists()):
+    if sign_identity is not None and textgen_engine is not None:
         raise SystemExit("signed_textgen_preparation_not_supported")
+    if textgen_signed_asset is not None:
+        if textgen_engine is not None:
+            raise ValueError("textgen_runtime_selection_conflict")
+        from signed_textgen_asset import admit_archive
+        admit_archive(textgen_signed_asset)
+    supplied_textgen = app is not None and (app / "Contents/Resources/host/preparation-toolchain/textgen-runtime").exists()
+    if supplied_textgen and sign_identity is not None:
+        from signed_textgen_asset import verify_host
+        try:
+            verify_host(app / "Contents/Resources/host")
+        except Exception:
+            raise SystemExit("signed_textgen_preparation_not_supported") from None
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise SystemExit("Build requires Apple silicon macOS")
     if output is not None and (output.suffix != ".dmg" or output.exists() or output.is_symlink()):
@@ -147,6 +159,8 @@ def build(output: Path | None = None, app: Path | None = None,
     if notary_profile is not None and not notary_profile.strip():
         raise SystemExit("notary_profile_required")
     certificate_hash = developer_identity(sign_identity, keychain) if sign_identity is not None else None
+    if supplied_textgen and certificate_hash is not None:
+        verify_host(app / "Contents/Resources/host", certificate=certificate_hash)
     signed, notarized = certificate_hash is not None, notary_profile is not None
     scratch = ROOT / ".build"
     scratch.mkdir(exist_ok=True)
@@ -162,8 +176,13 @@ def build(output: Path | None = None, app: Path | None = None,
                 app_options["version"] = version
             if textgen_engine is not None:
                 app_options["textgen_engine"] = textgen_engine
+            if textgen_signed_asset is not None:
+                app_options["textgen_signed_asset"] = textgen_signed_asset
             build_app(source, **app_options)
         info = app_metadata(source, certificate_hash)
+        if certificate_hash is not None and (source / "Contents/Resources/host/preparation-toolchain/textgen-runtime").exists():
+            from signed_textgen_asset import verify_host
+            verify_host(source / "Contents/Resources/host", certificate=certificate_hash)
         if version is not None and info["CFBundleShortVersionString"] != version:
             raise SystemExit("supplied_app_version_mismatch")
         app_receipt = json.loads((source / "Contents/Resources/app-build.json").read_bytes())
@@ -239,11 +258,13 @@ if __name__ == "__main__":
     parser.add_argument("--keychain", type=Path, help="Keychain containing signing identity and notary profile")
     parser.add_argument("--version", help="Override the application version (major.minor.patch)")
     parser.add_argument("--textgen-engine", type=Path, help="Exact reviewed engine Resources directory; requires source build")
+    parser.add_argument("--textgen-signed-asset", type=Path, help="Exact immutable signed TextGen runtime archive; requires source build")
     arguments = parser.parse_args()
     try:
         print(build(arguments.output, arguments.app, arguments.sign_identity,
                     arguments.notary_profile, arguments.keychain,
-                    version=arguments.version, textgen_engine=arguments.textgen_engine))
+                    version=arguments.version, textgen_engine=arguments.textgen_engine,
+                    textgen_signed_asset=arguments.textgen_signed_asset))
     except KeyboardInterrupt:
         raise SystemExit("dmg_build_interrupted") from None
     except BuildCommandError as error:

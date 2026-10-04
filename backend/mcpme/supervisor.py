@@ -41,6 +41,7 @@ from .upgrade_host import UpgradeHost
 from .upgrades import UpgradeError, UpgradeStore
 from .grants import GrantError, GrantStore, plan_digest
 from .preparation_contracts import ExecutionPolicy, PreparationError
+from .preparation_admission import PublicPreparationAdmission, public_preparation_admission
 from .preparation_artifacts import ArtifactError, ArtifactStore
 from .preparation_capture import (ArtifactCaptureCoordinator, ArtifactCaptureStore,
                                   ArtifactStoragePolicyV1, AttachImportTargetV1, CapturePolicyV1)
@@ -70,8 +71,8 @@ class HostServer(uvicorn.Server):
                 signal.signal(sig, handler)
 
 
-def capabilities() -> dict:
-    return {"api_version": 1, "host_version": "0.1.0", "package_schema_versions": [1],
+def capabilities(host=None) -> dict:
+    result = {"api_version": 1, "host_version": "0.1.0", "package_schema_versions": [1],
             "profiles": ["mcp-stdio", "mcp-http", "model-service"], "protocol_versions": ["2025-11-25"], "capabilities": ["tools"],
             "start_policies": ["manual", "host"], "platform": {"os": "macos", "architecture": "arm64", "minimum_version": "26.0"},
             "slot_actions": ["start", "stop", "restart", "remove"], "slot_settings": ["start_policy"],
@@ -100,6 +101,37 @@ def capabilities() -> dict:
             "artifact_intake": {"contract_versions": [1], "credentials": "owner_only", "execution": False,
                                 "max_files": 64, "max_artifact_bytes": 32 * 1024**3},
             "unsupported": ["first_call", "reference_document_service", "integrated_preparation"]}
+    if host is None or host.closing or type(host.public_admission) is not PublicPreparationAdmission:
+        return result
+    from .preparation_runner import PreparationRunner
+    from .preparation_resolution_runner import OwnedResolutionRunner
+    admission = host.public_admission
+    runner = host.preparation_runner
+    if (type(runner) is PreparationRunner and runner.public_admission is admission
+            and runner.enabled is True and not runner._closed):
+        records = [host.recipes.inspect(item["recipe_id"], item["version"]) for item in host.recipes.list_summaries()
+            if item["state"] == "enabled" and not item["revoked"]]
+        ready = [record for record in records if runner.execution_available_for_recipe(record)]
+        if ready:
+            has_composite = any({(step["component"], step["version"], step["digest"])
+                for step in record["manifest"]["steps"]} == {component.reference.key
+                for component in getattr(family, "components", (family.component,))}
+                for record in ready for family in host.preparations.families.values())
+            result.update(recipe_execution=True, automatic_preparation=True,
+                preparation_descriptor_schema_versions=[1, 2] if has_composite else [1])
+            result["import_sources"].append("application_directory")
+            result["unsupported"].remove("integrated_preparation")
+            result["preparation_execution"] = {"admission_digest": admission.digest,
+                "families": [list(key) for key in sorted(runner.enabled_families)],
+                "recipe_component_sets": [sorted([list(key) for key in keys]) for keys in
+                    sorted(admission.recipe_component_sets, key=lambda keys: sorted(keys))]}
+    resolution = host.resolution_runner
+    if (type(resolution) is OwnedResolutionRunner and resolution.public_resolution_admission is admission
+            and host.resolutions.public_admission is admission and resolution.enabled is True
+            and not resolution._closed and admission.resolution_candidate_kinds):
+        result["preparation_resolution"].update(execution=True,
+            candidate_kinds=sorted(admission.resolution_candidate_kinds), producer_versions=["1.0.1"])
+    return result
 
 
 def bind_listener(port: int = 0) -> socket.socket:
@@ -151,7 +183,13 @@ class Resident:
 
 class Supervisor(UpgradeHost):
     def __init__(self, state_dir: Path, reaper: Path, *, preparation_runner_factory=None, resolution_runner_factory=None,
-                 command_admission=None, command_resource_admission=None, agent_preparation_factory=None):
+                 command_admission=None, command_resource_admission=None, agent_preparation_factory=None,
+                 public_admission=None):
+        if public_admission is not None and (type(public_admission) is not PublicPreparationAdmission
+                or preparation_runner_factory is not None or resolution_runner_factory is not None
+                or agent_preparation_factory is not None):
+            raise PreparationError("invalid_public_preparation_admission")
+        self.public_admission = public_admission
         if command_resource_admission is not None:
             from .host_command import HostCommandAdmission
             from .preparation_command_owner import CommandPreparationResourceAdmission
@@ -208,7 +246,9 @@ class Supervisor(UpgradeHost):
             from .preparation_agent_unlocked_store import AgentUnlockedInputStore
             from .preparation_agent_unlocked_resolution import AgentUnlockedResolutionStore
             self.agent_unlocked_inputs = AgentUnlockedInputStore(self.imports, self.recipes)
-            self.resolutions = AgentUnlockedResolutionStore(self.imports, self.agent_unlocked_inputs)
+            self.resolutions = (ResolutionStore(self.imports, public_admission=public_admission,
+                current_producer=lambda: self.resolution_runner._producer_sync()) if public_admission is not None
+                else AgentUnlockedResolutionStore(self.imports, self.agent_unlocked_inputs))
             from .preparation_builtin_recipes import seed_builtin_recipes
             self.builtin_recipe_metadata = seed_builtin_recipes(self.recipes)
             self.grants = GrantStore(self.registry)
@@ -256,19 +296,28 @@ class Supervisor(UpgradeHost):
                 preparation_runner_factory = PreparationRunner
                 runner_admissions = {"command_admission": command_admission,
                     "command_resource_admission": command_resource_admission}
+                if public_admission is not None:
+                    runner_admissions.update(public_admission=public_admission, enabled_families=public_admission.families)
             elif command_resource_admission is not None:
                 runner_admissions = {"command_admission": command_admission,
                     "command_resource_admission": command_resource_admission}
             self.preparation_runner = preparation_runner_factory(
                 self.preparations, self.reaper.parent.parent, self.reaper,
                 reserve_resources=self.reserve_preparation, release_resources=self.release_preparation,
-                enabled=False, **runner_admissions)
+                enabled=public_admission is not None and bool(public_admission.recipe_component_sets), **runner_admissions)
+            resolution_admissions = {}
             if resolution_runner_factory is None:
-                from .preparation_agent_unlocked_resolution import OwnedAgentUnlockedResolutionRunner
-                resolution_runner_factory = OwnedAgentUnlockedResolutionRunner
+                if public_admission is not None:
+                    from .preparation_resolution_runner import OwnedResolutionRunner
+                    resolution_runner_factory = OwnedResolutionRunner
+                    resolution_admissions = {"public_admission": public_admission}
+                else:
+                    from .preparation_agent_unlocked_resolution import OwnedAgentUnlockedResolutionRunner
+                    resolution_runner_factory = OwnedAgentUnlockedResolutionRunner
             self.resolution_runner = resolution_runner_factory(
                 self.resolutions, self.reaper.parent.parent, self.reaper,
-                reserve_resources=self.reserve_resolution, release_resources=self.release_resolution, enabled=False)
+                reserve_resources=self.reserve_resolution, release_resources=self.release_resolution,
+                enabled=public_admission is not None and bool(public_admission.resolution_candidate_kinds), **resolution_admissions)
             self.secrets = SecretStore(self.root)
             self.downloads = DownloadManager(self.root)
             self.upgrades = UpgradeStore(self.root)
@@ -2113,7 +2162,7 @@ def management_app(host: Supervisor, token: str, port: int):
                 host.grants.authorize_route(grant_id, request.method, route, payload)
             if request.method == "GET":
                 if route == "/v1/capabilities":
-                    result = capabilities()
+                    result = capabilities(host)
                 elif route == "/v1/recipes":
                     result = {"recipes": host.recipes.list_summaries()}
                 elif route == "/v1/downloads":
@@ -2446,9 +2495,12 @@ async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None, *,
         raise HostError("unsupported_platform")
     # Trusted development acceptance may inject an explicitly enabled runner.
     # The CLI and ordinary native launch supply no factory; production remains
-    # disabled by Supervisor's default. No payload or environment selects one.
+    # disabled by the reviewed source hook. No payload or environment selects one.
+    admission = public_preparation_admission() if all(factory is None for factory in
+        (preparation_runner_factory, resolution_runner_factory, agent_preparation_factory)) else None
     host = Supervisor(state_dir, reaper, preparation_runner_factory=preparation_runner_factory,
-                      resolution_runner_factory=resolution_runner_factory, agent_preparation_factory=agent_preparation_factory)
+                      resolution_runner_factory=resolution_runner_factory, agent_preparation_factory=agent_preparation_factory,
+                      public_admission=admission)
     listener = bind_listener()
     token = secrets.token_urlsafe(32)
     port = listener.getsockname()[1]

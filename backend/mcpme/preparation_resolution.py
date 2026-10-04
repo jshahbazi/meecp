@@ -18,6 +18,7 @@ from pydantic import Field, model_validator
 
 from .contracts import Digest, Tool
 from .preparation_components import ComponentReference
+from .preparation_admission import PublicPreparationAdmission
 from .preparation_contracts import PreparationError, SourceIdentity, UUID, canonical_bytes, check_schema, contract_digest
 from .preparation_inputs import CollectionReference, DerivedInputReference, InputContract, RuntimeReference
 from .preparation_inspection import inspect_source
@@ -162,7 +163,13 @@ def result_from_files(request, directory, tools, protocol_version, peak_memory_b
 
 
 class ResolutionStore:
-    def __init__(self, imports):
+    def __init__(self, imports, *, public_admission=None, current_producer=None):
+        if public_admission is not None and (type(public_admission) is not PublicPreparationAdmission
+                or not callable(current_producer)):
+            raise PreparationError("invalid_public_preparation_admission")
+        if public_admission is None and current_producer is not None:
+            raise PreparationError("invalid_public_preparation_admission")
+        self.public_admission, self._current_producer = public_admission, current_producer
         self.imports, self.db = imports, imports._connection
         self._binding_owner = object()
         with imports._transaction():
@@ -225,6 +232,8 @@ class ResolutionStore:
         candidate = next((item for item in inspection["candidates"] if item["candidate_id"] == candidate_id), None)
         if candidate is None or candidate["kind"] not in {"python-callable", "python-mcp"}:
             raise PreparationError("resolution_candidate_mismatch")
+        if self.public_admission is not None:
+            self.public_admission.require_candidate(candidate)
         with self.imports._lock:
             current = self.imports._get(import_id, revision)
             self.imports._mutable(current)
@@ -232,9 +241,32 @@ class ResolutionStore:
                 raise PreparationError("source_identity_mismatch")
         return draft, candidate
 
+    def require_public_request(self, request, candidate=None):
+        """Off-loop exact source/producer fence, outside write transactions."""
+        if self.public_admission is None:
+            return
+        with self.imports._lock:
+            if self.db.in_transaction:
+                raise PreparationError("resolution_prevalidation_transaction")
+        self.public_admission.require_request(request)
+        draft, original = ResolutionStore.candidate(self, request.import_id, request.revision, request.candidate_id)
+        if (draft["source"]["revision"] != request.source_revision or original["kind"] != request.candidate_kind
+                or contract_digest("preparation-resolution-candidate-v1", original) != request.candidate_digest
+                or candidate is not None and candidate != original):
+            raise PreparationError("resolution_candidate_not_admitted")
+        self.require_public_producer(request)
+
+    def require_public_producer(self, request):
+        if self.public_admission is None:
+            return
+        self.public_admission.require_request(request)
+        if self._current_producer() != request.producer:
+            raise PreparationError("resolution_implementation_changed")
+
     def plan(self, request, candidate, *, expires_in):
         if type(expires_in) is not int or not 1 <= expires_in <= 300:
             raise PreparationError("invalid_resolution_expiry")
+        self.require_public_request(request, candidate)
         value = {"schema_version": 1, "plan_id": str(uuid.uuid4()), "request": request.model_dump(mode="json"),
                  "candidate": candidate, "expires_at": time.time() + expires_in}
         value["plan_digest"] = contract_digest("preparation-resolution-plan-v1", value)
@@ -247,6 +279,8 @@ class ResolutionStore:
         return value
 
     def _current(self, request):
+        if self.public_admission is not None:
+            self.public_admission.require_request(request)
         draft = self.imports._get(request.import_id, request.revision)
         self.imports._mutable(draft)
         if draft["expires_at"] <= time.time():
@@ -261,16 +295,29 @@ class ResolutionStore:
                 raise ValueError()
         except (TypeError, ValueError, AttributeError):
             raise PreparationError("invalid_resolution_identity") from None
+        if self.public_admission is not None:
+            with self.imports._lock:
+                row = self.db.execute("SELECT data FROM resolution_plans WHERE plan_id=?", (plan_id,)).fetchone()
+                if row is None:
+                    raise PreparationError("resolution_plan_not_found")
+                checked_plan_bytes = row["data"]
+                checked_plan = json.loads(checked_plan_bytes)
+            self.require_public_request(ResolutionRequestV1.model_validate(checked_plan["request"]), checked_plan["candidate"])
         with self.imports._transaction():
             previous = self.db.execute("SELECT data FROM resolution_jobs WHERE idempotency_key=?", (idempotency_key,)).fetchone()
             if previous:
                 job = json.loads(previous["data"])
                 if job["plan_id"] != plan_id or job["plan_digest"] != plan_digest:
                     raise PreparationError("resolution_idempotency_conflict")
+                if self.public_admission is not None and (job["request"] != checked_plan["request"]
+                        or job["candidate"] != checked_plan["candidate"]):
+                    raise PreparationError("resolution_plan_mismatch")
                 return job
             row = self.db.execute("SELECT data FROM resolution_plans WHERE plan_id=?", (plan_id,)).fetchone()
             if row is None:
                 raise PreparationError("resolution_plan_not_found")
+            if self.public_admission is not None and row["data"] != checked_plan_bytes:
+                raise PreparationError("resolution_plan_mismatch")
             plan = json.loads(row["data"])
             if plan["plan_digest"] != plan_digest:
                 raise PreparationError("resolution_plan_mismatch")
@@ -354,6 +401,7 @@ class ResolutionStore:
 
     def publish(self, job_id, result):
         request = result.request
+        self.require_public_request(request)
         draft, candidate = self.candidate(request.import_id, request.revision, request.candidate_id)
         if contract_digest("preparation-resolution-candidate-v1", candidate) != request.candidate_digest:
             raise PreparationError("resolution_candidate_mismatch")
@@ -376,6 +424,10 @@ class ResolutionStore:
         # results. Their content identity does not depend on the attempt UUID.
         job = jobs[-1]
         result = ResolutionResultV1.model_validate(job["result"])
+        # A reviewed metadata revision may explicitly carry a result produced
+        # at an older revision. Callers inspect the current original candidate;
+        # producer continuity is checked here without replaying that old draft.
+        self.require_public_producer(result.request)
         if result.digest != result_digest or not job["ownership_settled"] or job["reservation_retained"] or job["ownership"]:
             raise PreparationError("resolution_result_mismatch")
         path = Path(job["workspace"]) / "derived"
@@ -442,6 +494,8 @@ class ResolutionStore:
         if canonical_bytes(self._get(proof.job_id)) != proof.job:
             raise PreparationError("resolution_result_mismatch")
         result = ResolutionResultV1.model_validate(json.loads(proof.result))
+        if self.public_admission is not None:
+            self.public_admission.require_request(result.request)
         self._accepted(proof.import_id, proof.prior_revision, proof.candidate_id, result)
         import_id, prior_revision, candidate_id = proof.import_id, proof.prior_revision, proof.candidate_id
         binding = AcceptedResolutionReferenceV1(schema_version=1, import_id=import_id, prior_revision=prior_revision,

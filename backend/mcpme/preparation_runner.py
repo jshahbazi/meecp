@@ -28,6 +28,7 @@ import mcp
 from .contracts import LOCK_NAME, MAX_LOCK_METADATA_BYTES, PackageError, _read_file, validate_package
 from .ownership_receipts import acknowledge_nonlaunch, prepare_receipt, verify_receipt
 from .preparation_acquisition import WheelAcquirer
+from .preparation_admission import PublicPreparationAdmission
 from .preparation_builder import CommandSpec, PrivateToolchain, load_private_toolchain, prepare_bound
 from .preparation_components import read_snapshot
 from .preparation_contracts import ExecutionPolicy, PreparationError, PreparationReceipt, canonical_bytes, contract_digest
@@ -43,7 +44,7 @@ RUNNER_FILES = ("preparation_runner.py", "preparation_builder.py", "preparation_
                 "preparation_components.py", "preparation_processes.py", "preparations.py",
                 "preparation_authority.py", "preparation_contracts.py", "processes.py", "ownership_receipts.py",
                 "imports.py", "preparation_application_source.py", "private.py", "recipes.py", "contracts.py", "preparation_inputs.py",
-                "preparation_resolved_python.py", "preparation_resolution.py")
+                "preparation_resolved_python.py", "preparation_resolution.py", "preparation_admission.py")
 VERIFIER_FILES = ("preparation_verifier.py", "preparation_probe_confinement.py", "process_graph_accounting_v1.py",
                   "preparation_processes.py", "preparation_contracts.py",
                   "contracts.py", "processes.py", "ownership_receipts.py")
@@ -323,10 +324,13 @@ async def _joined(task: asyncio.Task):
 class PreparationRunner:
     def __init__(self, store, host_root: Path, reaper: Path, *, reserve_resources=None,
                  release_resources=None, enabled: bool = False, enabled_families=(), command_admission=None,
-                 probe_graph_accounting: bool = False, command_resource_admission=None):
+                 probe_graph_accounting: bool = False, command_resource_admission=None, public_admission=None):
         self.store, self.host_root, self.reaper = store, host_root, reaper
         self.reserve_resources, self.release_resources = reserve_resources, release_resources
         self.enabled = enabled is True
+        if public_admission is not None and type(public_admission) is not PublicPreparationAdmission:
+            raise PreparationError("invalid_public_preparation_admission")
+        self.public_admission = public_admission
         if type(probe_graph_accounting) is not bool:
             raise PreparationError("invalid_preparation_probe_accounting")
         self.probe_graph_accounting = probe_graph_accounting
@@ -345,6 +349,8 @@ class PreparationRunner:
         self.enabled_families = frozenset(enabled_families)
         if any(key not in store.families for key in self.enabled_families):
             raise PreparationError("unknown_preparation_component")
+        if public_admission is not None and self.enabled_families != public_admission.families:
+            raise PreparationError("invalid_public_preparation_admission")
         self.tasks: dict[str, asyncio.Task] = {}
         self.attempts: dict[str, _Attempt] = {}
         self._closed = False
@@ -361,6 +367,10 @@ class PreparationRunner:
     def _require_admission(self, descriptor):
         if self._closed or not self.enabled:
             raise PreparationError("preparation_runner_unavailable")
+        if self.public_admission is not None:
+            record = self.store.recipes.inspect(descriptor.recipe.id, descriptor.recipe.version)
+            if record["digest"] != descriptor.recipe.digest or not self._recipe_admitted(record):
+                raise PreparationError("preparation_recipe_not_admitted")
         if descriptor.schema_version == 1:
             return None
         family = self.store.family_for(descriptor)
@@ -376,6 +386,8 @@ class PreparationRunner:
     def execution_available_for_recipe(self, record):
         if self._closed or not self.enabled:
             return False
+        if self.public_admission is not None and not self._recipe_admitted(record):
+            return False
         steps = record["manifest"]["steps"]
         keys = {(step["component"], step["version"], step["digest"]) for step in steps}
         matching = [family for family in self.store.families.values() if keys == {
@@ -388,6 +400,17 @@ class PreparationRunner:
         catalog = builtin_components()
         return len(keys) == 1 and all(component + "@" + version in LEGACY_COMPONENT_KEYS
             and catalog[component + "@" + version]["digest"] == digest for component, version, digest in keys)
+
+    def _recipe_admitted(self, record):
+        # Registry metadata and transitive exact references only; full bundle
+        # hashing remains in the store's off-loop descriptor binding.
+        from .recipes import RecipeError
+        try:
+            closure = self.store.recipes._component_closure(record["manifest"])
+        except RecipeError:
+            return False
+        keys = frozenset((*key.rsplit("@", 1), item["digest"]) for key, item in closure.items())
+        return keys in self.public_admission.recipe_component_sets
 
     def _validate_start_admission(self, plan_id):
         with self.store.imports._lock:
@@ -404,6 +427,9 @@ class PreparationRunner:
                                            reaper=self.reaper, dependencies=dependencies)
         runner = await calculate("preparation-runner-implementation-v1", RUNNER_FILES)
         verifier = await calculate("preparation-verifier-implementation-v1", VERIFIER_FILES)
+        if self.public_admission is not None:
+            runner = contract_digest("public-preparation-runner-v1", {
+                "implementation": runner, "admission": self.public_admission.digest})
         if family is not None:
             identities = sorted(list(component.reference.key) for component in getattr(family, "components", (family.component,)))
             runner = contract_digest("preparation-family-runner-v1", {"implementation": runner, "components": identities})

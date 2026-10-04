@@ -1,10 +1,16 @@
 # Phase 3 goals and subgoals
 
 Snapshot: October 3, 2026. Integration branch:
-`codex/phase3-llm-integration`, integrated source checkpoint `55781f0`.
+`codex/phase3-llm-integration`, local source checkpoint `e456d2d`;
+published integration checkpoint `16a8d1a`.
 Common probe and restricted text-generation guards have cleared independent
-checkpoint review and are integrated. Agent setup and positive CLI verification
-remain in isolated worktrees. Final combined artifact acceptance is still open.
+checkpoint review and are integrated. The repaired agent host checkpoint is
+integrated locally; shared native registration remains in repair. Positive CLI
+verification is implemented on the separately published `62bf5dd` checkpoint
+and awaits completion of independent review and integration. Generated agent
+adapters are being implemented in an isolated worktree. Final artifact acceptance
+is open. This table tracks implementation and acceptance separately; no entire
+A0–A5 release gate is closed.
 
 **Phase 3 is in progress. Public automatic preparation remains disabled.**
 A passing checkpoint establishes its stated scope on its recorded source or
@@ -26,8 +32,8 @@ being fixed; **Separate gate** covers additional capability work.
 | A0 | Inspect ordinary directories without executing selected source | Verified checkpoint | Final packaged static-inspection controls. |
 | A0 | Capture text, binaries, models and licenses with exact immutable identities | Verified checkpoint | Recheck final artifact intake and retention. |
 | A0 | Durable jobs, exact scopes, idempotency, deadlines and declared resource reservations | Verified checkpoint | Complete combined lifecycle and admission matrix. |
-| A0 | Cancellation, crash recovery, owned threads and native completion receipts | Verified checkpoint | Integrate and independently review the latest launch-boundary repairs. |
-| A0 | Reject old scoped grants on execution routes | Verified checkpoint | Add final integrated agent-route tests. |
+| A0 | Cancellation, crash recovery, owned threads and native completion receipts | Verified checkpoint | Current common launch-boundary repairs are independently reviewed and integrated; final combined recovery matrix remains. |
+| A0 | Reject old scoped grants on execution routes | Verified checkpoint | Applied agent routes also reject old preparation grants, wrong Host/Origin and unauthenticated calls. Final installed recheck remains. |
 | A0 | Prevent stale or canceled results from attaching | Verified checkpoint | Recheck all families and agent adoption on the combined host. |
 | A0 | Keep source, prompts, responses, credentials and raw diagnostics out of journals | Verified checkpoint | Final integrated privacy and credential scan. |
 | A0 | Managed private Python/ONNX probe confinement | Verified checkpoint | Independent 66-case source/native guard run passed; integrated as c0051b6. Actual A2 inference still needs a new run. |
@@ -40,45 +46,91 @@ being fixed; **Separate gate** covers additional capability work.
 | A0R | Additional executable preparation workers | Separate gate | Capability and descendant-ownership acceptance before enabling this extension kind. |
 | A1: automatic Python/MCP | Ordinary callable directory to resolved interface and private dependency closure | Verified checkpoint | Recheck current common confinement on the final host. |
 | A1 | Declared foreground MCP server, including dynamic discovery | Verified checkpoint | Separate final installed/native case remains required. |
+| A1 | Separate acceptance evidence for existing MCP and callable applications | Open | Keep two independently passing native/API cases on the final artifact; a callable result cannot close existing-MCP acceptance. |
 | A1 | Mixed directory containing Python, images and other payloads | Verified checkpoint | Final combined-host recheck after common probe integration. |
 | A1 | Native questions, build, real SDK probe and matching-revision attachment | Verified checkpoint | Recheck the newest integrated source. |
 | A1 | Installation, HTTP/stdio calls, original source removal and restart | Verified checkpoint | Final signed and relocated artifact acceptance. |
 | A1 | Restricted probes and cancellation/revision/crash/resource behavior | In progress | Common guard checkpoint independently cleared and integrated; full combined installed acceptance remains. |
 | A2: automatic ONNX | Exact supported weights, license, runtime and CPU eligibility | Verified checkpoint | Recheck final artifact identities; different exports remain unsupported. |
 | A2 | Captured model and folder plus model through native preparation | Verified checkpoint | Recheck the newest combined host. |
-| A2 | Actual inference, complete tool schemas and controlled tensor cases | Verified checkpoint | Actual inference through the new confined common path. |
+| A2 | Actual inference, complete tool schemas and controlled tensor cases | Verified checkpoint | Earlier host passed actual inference. Repeat through the newly integrated common confinement path. |
+| A2 | Reject incompatible weights, tensor layouts and class definitions | Verified checkpoint | Repeat explicit negative eligibility controls on the final artifact. |
 | A2 | Maximum image bytes/pixels, deadlines, concurrency and measured memory | Verified checkpoint | Recheck advertised 1 MiB / 1,048,576-pixel limits under the new restricted probe. |
 | A2 | Attachment, install, HTTP/stdio calls, source removal and relocation | Verified checkpoint | Final signed artifact and separate confined relocation/max-workload probes. |
 | A2 | Full lifecycle and confinement integration | In progress | Common guards integrated; relocation and maximum-workload harnesses now use them. Actual inference and combined race acceptance remain. |
 | A3: native CLI | Static executable eligibility and bounded JSON/argv/interface questions | Verified checkpoint | Final packaged/native questions recheck. |
+| A3 | Bounded input/output, exit mapping and declared effects | Verified checkpoint | Final actual-command contract and oversized/error-output cases. |
 | A3 | Default family and recipe registration from exact helper inventory | Verified checkpoint | 102 independent checks passed; final artifact recheck. |
-| A3 | Copy builder, notices, source closure and command adapter | Verified checkpoint | Positive verified attachment and final installation path. |
+| A3 | Copy builder, notices, source closure and command adapter | Verified checkpoint | Measured-path integration needs a new immutable command recipe; preserve published 1.0.0 bytes. |
 | A3 | Timeout/cancel, descendants, process-group cleanup and durable recovery | Verified checkpoint | Final combined installed topology/crash tests. |
-| A3 | Resource monitoring and threshold cleanup | Verified checkpoint | Format-4 evidence remains report-only; it supplies no hard aggregate or lifetime guarantee. |
-| A3 | Positive measured verification and public result admission | Open | Current command report has no admissible positive memory measurement; attachment remains blocked. |
-| A3 | Stronger aggregate-resource release condition | Open | Explicit reviewed reconciliation for the fork-capable profile, plus measured overload behavior. |
-| A3 | Native directory to attached, installed and relocated app | Open | Complete after positive verification and resource acceptance. |
+| A3 | Resource monitoring and threshold cleanup | In review | New checkpoint records the same SDK workload's observed group-plus-helper footprint, overload cleanup and cancellation/recovery controls. Independent review remains incomplete. Hard aggregate and lifetime guarantees remain false. |
+| A3 | Positive measured verification and matching attachment | In review | Author's actual measured SDK workload reaches attachment; independently verify exact report/fixture/owner bindings, integrate trusted admission and mint command recipe 1.0.1. |
+| A3 | Resource scope and fork-capable ownership acceptance | In review | Original same-user scope is documented. Review measured overload behavior and enforceable descendant cleanup; do not label sampled footprint as a hard quota or lifetime peak. |
+| A3 | Native directory to attached, installed and relocated app | Open | Author's isolated measured API path includes installed HTTP/stdio and relocation evidence. Final integrated native-directory and signed-app acceptance remain. |
+| A3 | Public CLI capability enablement | Open | Remains disabled until the independently reviewed measured path and final installed/native gates pass. |
 | A4: local text generation | Pinned CPU model, engine, tokenizer, template and runtime closure | Verified checkpoint | New immutable recipe after all backend changes freeze. |
 | A4 | Actual generation, token/output limits, one engine and bounded shared queue | Verified checkpoint | Recheck the combined artifact with restricted probes. |
 | A4 | Native captured model and folder plus model preparation | Verified checkpoint | Both cases passed on the clean 68a7533 host; recheck the next coherent host. |
 | A4 | Matching attachment, installed HTTP/stdio calls, restart and relocation | Verified checkpoint | Final signed artifact. |
 | A4 | Official SDK cancellation and reservation settlement | Verified checkpoint | Latest native cases retain ownership until inference settles; final regression. |
 | A4 | Measured engine/adapter memory, capacity denial and JevK5 parity | Verified checkpoint | Final combined workload and parity run. |
-| A4 | Restricted engine/adapter probes and current host-owned bindings | Verified checkpoint | Independent 111-case policy/verifier run passed; integrated as 55781f0. Actual inference awaits the next recipe/host. Wildcard-listener containment is unproved. |
+| A4 | Restricted engine/adapter probes and current host-owned bindings | Verified checkpoint | Independent 111-case policy/verifier run passed; integrated as 55781f0. Earlier 68a7533 inference passed; current confined inference awaits the next recipe/host. Wildcard-listener containment is unproved. |
 | A4 | Immutable recipe upgrade with preserved lifecycle choices | In progress | Mint the coherent next version; retain all published 1.0.5 and earlier bytes. |
 | A5: integrated agent | Concrete provider transport and parallel task coordinator | Verified checkpoint | OpenAI Responses transport has simulated tests; live provider/model acceptance remains open. |
-| A5 | Review exact source transfer, provider/model, recipe and usage limits | In review | Frozen checkpoint 14ef656a has 14 source hashes independently matched; full review and integration pending. |
-| A5 | Durable jobs, cancellation, restart and stale-result rejection | In repair | Independent review reproduced delayed native status overwriting cancellation, adoption exceeding the pending-worker cap, and a planning-worker handoff escaping shutdown's join. Repairs and re-review are running. |
-| A5 | Host-validated candidate adoption through ordinary preparation | In repair | Independent review reproduced source mutation after worker validation publishing a stale selection revision. Preserve the validated source identity through the short commit; then recheck the race. Later building already rejects the changed bytes. |
-| A5 | Native agent controls and owner-only shared routes | In progress | Controls compile and button tests pass; repair the delayed-response race and integrate the shared registration patch after clearance. |
-| A5 | Unfamiliar supported Python source through proposal, build, SDK probe and attachment | In review | Actual private build, SDK probe, attachment and relocation passed with simulated transport on checkpoint 14ef656a. Four review repairs and live-provider acceptance remain open. |
+| A5 | Integrate parallel subtask outputs into one reviewed proposal | Verified checkpoint | Coordinator checkpoint has simulated composition evidence; repeat through generated adapter preparation and the selected live backend. |
+| A5 | Review exact source transfer, provider/model, recipe and usage limits | Verified checkpoint | Repaired checkpoint 06f253f6 cleared independent review with all 15 hashes matched; integrated as 86ff1a5. Final artifact acceptance remains. |
+| A5 | Durable jobs, cancellation, restart and stale-result rejection | Verified checkpoint | All four reproduced source, cancellation, pending-cap and worker-handoff defects passed independent re-review. Final combined lifecycle checks remain. |
+| A5 | Host-validated candidate adoption through ordinary preparation | Verified checkpoint | Original validated source metadata is retained through the short commit; actual mutation control denies selection. Generated source is still blocked. |
+| A5 | Native agent controls and owner-only shared routes | In repair | Applied registration passed 96 backend checks and three UI self-tests. Actual parent click/direct handlers now deny navigation during analysis, but the New Draft control remains visibly enabled; repair and re-review remain. |
+| A5 | Unfamiliar supported Python source through proposal, build, SDK probe and attachment | Verified checkpoint | Independent actual private build, SDK probe, attachment and relocation passed with four simulated provider calls and zero live calls. Live-provider and generated-adapter acceptance remain open. |
 | A5 | Live backend, selected credentials and model compatibility | Open | Requires a selected configured provider; no credential discovery or live dispatch has occurred. |
-| A5 | Generated adapter source and unsupported interfaces | Open | Proposed source is blocked; a controlled derivation component is not implemented. |
+| A5 | Governed adapter derivation and licensed derived artifacts | In progress | Isolated implementation binds attempts, original source, recipe epoch and proposal roles; stores wrapper/license separately; includes cancellation, restart and retention. 57 focused checks reported; independent review and shared registration remain. |
+| A5 | Locked unfamiliar Python directory to generated adapter and app | In progress | Static eligibility, generated forms and builder seam are implemented. Actual ordinary confined build/SDK/attachment/relocation proof remains. |
+| A5 | Unlocked unfamiliar directories needing a generated adapter | Open | Governed dependency derivation remains required for the new adapter path, which currently requires a locked project. Existing typed Python preparation can use trusted resolution. |
+| A5 | Final packaged/native generated-adapter flow | Open | Complete after independent derivation review and integration. |
 | A5 | Integrated installed/native path and final adversarial acceptance | Open | Complete after source integration and concrete live acceptance. |
 | A6: broader modular coverage | Host component/recipe extension seams | Verified checkpoint | Each new capability needs its own implementation and evidence. |
 | A6 | Additional preparation providers: DeepSeek, GLM, Bedrock or local service | Separate gate | Provider-specific transport, credential, usage and compatibility acceptance. |
 | A6 | An app whose runtime calls another LLM service | Separate gate | Runtime secret/network/service contract and adapter acceptance; preparation-provider support does not supply this. |
 | A6 | Additional runtimes, model families, Metal/GPU, resident vision or GUI automation | Separate gate | Independent compatibility, authority and lifecycle gates per capability. |
+
+A6 records the modular expansion requested during the work. These additional
+capabilities do not close or expand the first Python/MCP/ONNX release gate.
+An app that calls an LLM service needs its own runtime implementation even when
+that provider can already assist with preparation.
+
+## Required cross-family verification subgoals
+
+These are concrete acceptance requirements from the original plan. Existing
+focused controls provide partial checkpoint evidence; every row remains open
+until the final combined families and artifact have the applicable evidence.
+
+| Subgoal | Status | Work remaining |
+| --- | --- | --- |
+| Source/artifact copy races and source mutation | Open | Repeat applicable family controls on the final source and artifact. |
+| Dependency resolution cancellation, changes and failures | Open | Combined locked-resolution and new agent dependency-derivation controls. |
+| Seal, probe, attachment and success-publication races | Open | Verify cancellation or revision wins without an admissible late result. |
+| Revise/cancel/expiry versus start or attach | Open | Complete all families and derived-candidate adoption. |
+| Authority expiry while queued or awaiting resource admission | Open | Final queued/admission controls with owned cleanup and retained charges. |
+| Cancellation versus spawn acknowledgement | Open | Common boundary controls pass; repeat with each integrated native family. |
+| Provider disconnect versus local tool completion | Open | Complete selected-provider and derived-preparation ownership controls. |
+| Duplicate starts and idempotent attempts | Open | Combined native/API attempts and durable restart behavior. |
+| Disk exhaustion and reservation settlement | Open | Build, acquisition, derivation, capture and publication failure controls. |
+| Symlink and ancestor replacement | Open | Existing source/launch controls pass; complete final intake/build/adoption matrix. |
+| Missing dependency/model notices | Open | Final sealed-package rejection and complete relocated notices. |
+| Tampered packages, bindings, receipts and measurement proofs | Open | Existing controls pass; include new measured CLI and adapter identities. |
+| Raw log, credential, prompt, response and source leakage | Open | Final integrated journal, diagnostics and credential scan. |
+| Unsupported capabilities and component versions | Open | Final closed inventory and fail-before-execution controls. |
+| Crash after sealing or attachment publication | Open | Final durable recovery and no-replay controls. |
+| Restart while an old worker is still running | Open | Verify retained ownership, no PID adoption and no premature reservation release. |
+| Terminal cancellation and unresolved ownership | Open | Join known work; retain reservations and require reconciliation when ownership is uncertain. |
+| Real SDK probes from an unrelated directory | Open | Use actual bundled runtime and nonsecret fixtures for every supported family. |
+| Original source/build/global runtime/network unavailable during sealed probes | Open | Repeat actual confined flows; record exact platform limitations. |
+| Deny sealed-package writes where policy permits | Open | Final private-runtime and engine controls plus post-shutdown full identity validation. |
+| Functional calls and expected outputs | Open | Actual supported-family fixtures; installation retains its own separate checks. |
+| Resource/deadline measurements and package mutation controls | Open | Final measured workloads and before/after artifact identities. Preparation attestations cannot broaden installation claims. |
+| Separate declared budgets from observed measurements | Open | Preserve sampled/foreground/aggregate distinctions; never infer hard or lifetime enforcement. |
+| Separate functional behavior from task/model quality | Open | Keep hotdog negative-model/positive-tensor evidence explicit; recognition quality needs its own fixtures and thresholds. |
 
 ## Shared delivery subgoals
 
@@ -86,24 +138,26 @@ being fixed; **Separate gate** covers additional capability work.
 | --- | --- | --- |
 | Private CPython/uv, locked wheels, offline install and full dependency notices | Verified checkpoint | Final combined artifact/toolchain closure check. |
 | Scoped artifact acquisition, verified TLS, disk limits and joined cancellation | Verified checkpoint | Final packaged acquisition/cleanup regressions. |
-| Generated native forms, review, stage polling and explicit cancellation | Verified checkpoint | Integrate agent view and recheck final native flows. |
+| Generated native forms, review, stage polling and explicit cancellation | Verified checkpoint | Agent view is applied locally; finish parent control repair and final native flows. |
 | Exact signed application and relocated payload hashes | Open | Build and validate the final combined signed candidate. Existing development hosts do not close this gate. |
 | Full combined Python and Swift regressions | Open | Last complete coherent source run: 2,540 Python passes / 12 skips and 18 Swift passes / 3 opt-in skips. New integrations need another full run. |
 | First public automatic Python/MCP/ONNX capability | Open | A0, A0R and A1–A2 must pass on the final installed/relocated artifact before enabling it. |
 | Independent CLI, local LLM and agent capability enablement | Open | Enable individually after A3–A5 acceptance. |
 | Final independent whole-phase adversarial review and repairs | Open | Review the complete integrated result; checkpoint reviews have already produced repairs. |
-| Publish verified work to the working branch | In progress | Individual checkpoint branches are pushed; combined source has pending integrations and documentation. |
+| Publish verified work to the working branch | In progress | Common/A4 guards are published on integration; A5 local registration repairs await clearance. CLI checkpoint is separately published, adapter is uncommitted implementation. |
 
 ## Current critical path
 
-1. Finish and independently recheck the agent host/native repairs; integrate
-   that checkpoint with the independently cleared common and LLM guards.
-2. Integrate them, mint the next immutable text-generation recipe and run the
-   full combined regression suite.
+1. Finish the agent parent-control repair and positive CLI independent review;
+   integrate cleared checkpoints without weakening the common launch guards.
+2. Complete governed agent adapter and dependency derivation, independently
+   review and integrate them. Mint coherent immutable command/text-generation
+   recipes and run the full combined regression suite.
 3. Build one coherent artifact and rerun Python/MCP, ONNX and local LLM native,
    installed, restricted-probe and relocation acceptance.
-4. Close the CLI positive-measurement/resource path and the agent live/generated
-   adapter path. These remain concrete work, rather than table-only gates.
+4. Close final CLI resource/native acceptance and the selected live agent
+   backend path. Live provider acceptance still needs configured provider/model
+   selection.
 5. Validate the signed candidate, complete independent whole-phase adversarial
    review, repair findings and enable each capability whose gates pass.
 

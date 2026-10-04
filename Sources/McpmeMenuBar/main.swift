@@ -2492,8 +2492,8 @@ private struct NativeRecipeAcceptanceContext {
         NativeRecipeDirectoryIdentity(url) != nil
     }
 
-    init?(fixture: URL, agent: Bool = false, service: Bool = false) {
-        guard !(agent && service), let fixtureIdentity = NativeRecipeFileIdentity(fixture),
+    init?(fixture: URL, agent: Bool = false, service: Bool = false, liveAgent: Bool = false) {
+        guard (!liveAgent || agent), !(agent && service), let fixtureIdentity = NativeRecipeFileIdentity(fixture),
               Self.privateDirectory(fixture.deletingLastPathComponent()), let object = PrivateFile.read(fixture, limit: 262144),
               Set(object.keys) == (agent ? ["schema_version", "state_dir", "output_path", "fixture_nonce", "draft_id", "agent_scope", "answers_by_label"] :
                   service ? ["schema_version", "state_dir", "output_path", "fixture_nonce", "service", "answers_by_label"] :
@@ -2524,13 +2524,13 @@ private struct NativeRecipeAcceptanceContext {
         } else if agent {
             guard preparationUUID(object["draft_id"]) != nil,
                   let scope = object["agent_scope"] as? [String: Any],
-                  AgentPreparationView.acceptanceScopeValid(scope),
+                  AgentPreparationView.acceptanceScopeValid(scope, live: liveAgent),
                   let answers = object["answers_by_label"] as? [String: Any], answers.count <= 256 else { return nil }
         } else {
             guard let recipes = object["recipes"] as? [[String: Any]], recipes.count <= 8,
                   let forms = object["forms"] as? [[String: Any]], forms.count <= 16, !recipes.isEmpty || !forms.isEmpty else { return nil }
         }
-        let marker = state.appendingPathComponent((agent ? "native-agent-" : service ? "native-service-" : "native-recipes-") + nonce + ".json")
+        let marker = state.appendingPathComponent((agent ? (liveAgent ? "native-agent-live-" : "native-agent-") : service ? "native-service-" : "native-recipes-") + nonce + ".json")
         guard let markerIdentity = NativeRecipeFileIdentity(marker), let proof = PrivateFile.read(marker, limit: 8192),
               Set(proof.keys) == ["schema_version", "fixture_nonce", "expires_at", "manager_file"],
               preparationInteger(proof["schema_version"]) == 1, preparationUUID(proof["fixture_nonce"]) == nonce,
@@ -2763,11 +2763,11 @@ extension McpmeApp {
 
     /// Runs the native form actions against an already launched, owner-only
     /// host. Backend execution remains governed by that host's factory gates.
-    fileprivate static func preparationNativeAcceptance(fixture: URL, agent: Bool = false,
+    fileprivate static func preparationNativeAcceptance(fixture: URL, agent: Bool = false, liveAgent: Bool = false,
                                                         directoryContext: NativeDirectoryAcceptanceContext? = nil,
                                                         serviceContext: NativeRecipeAcceptanceContext? = nil) -> Bool {
-        let agentContext = agent ? NativeRecipeAcceptanceContext(fixture: fixture, agent: true) : nil
-        guard !agent || (agentContext != nil && directoryContext == nil && serviceContext == nil),
+        let agentContext = agent ? NativeRecipeAcceptanceContext(fixture: fixture, agent: true, liveAgent: liveAgent) : nil
+        guard !liveAgent || agent, !agent || (agentContext != nil && directoryContext == nil && serviceContext == nil),
               serviceContext == nil || directoryContext == nil, serviceContext?.current() != false,
               directoryContext?.current() != false, fixture.isFileURL,
               let data = try? Data(contentsOf: fixture), data.count <= 262144,
@@ -2987,9 +2987,9 @@ extension McpmeApp {
             let agentView = app.agentPreparationView
             stage = "agent_options"; agentView.loadOptions()
             guard awaitCondition(30, { pending == 0 && !agentView.busy }),
-                  let scope = object["agent_scope"] as? [String: Any], agentView.acceptanceSelect(scope) else { return report(false) }
+                  let scope = object["agent_scope"] as? [String: Any], agentView.acceptanceSelect(scope, live: liveAgent) else { return report(false) }
             stage = "agent_review"; agentView.reviewScope()
-            guard awaitCondition(60, { pending == 0 && !agentView.busy }), agentView.acceptanceReviewed else { return report(false) }
+            guard awaitCondition(60, { pending == 0 && !agentView.busy }), agentView.acceptanceReviewed(live: liveAgent, generation: scope["provider_generation"] as? String) else { return report(false) }
             stage = "agent_start"; agentView.startAnalysis()
             guard awaitCondition(60, { pending == 0 && !agentView.busy }), agentView.job != nil else { return report(false) }
             stage = "agent_poll"
@@ -3004,7 +3004,8 @@ extension McpmeApp {
                   proposal.context == PreparationContext(importID: draft.id, revision: draft.revision, sourceRevision: draft.sourceRevision ?? ""),
                   app.currentDraft?.revision == draft.revision, view.job == nil, view.resolutionJob == nil else { return report(false) }
             receipt["agent_job_id"] = proposal.id; receipt["proposal_digest"] = digest
-            receipt["agent_revision"] = proposal.context.revision; receipt["simulated_provider"] = true
+            receipt["agent_revision"] = proposal.context.revision; receipt["simulated_provider"] = !liveAgent
+            if liveAgent { receipt["provider_generation"] = scope["provider_generation"]; receipt["live_transport_selected"] = true }
             stage = "agent_handoff"; agentView.adoptCandidate()
             guard awaitCondition(60, { pending == 0 && !view.busy }), agentView.errorCode == nil,
                   let form = view.form, form.importID == proposal.context.importID,
@@ -3309,11 +3310,24 @@ if CommandLine.arguments.dropFirst().first == "--preparation-ui-self-test" {
     exit(passed ? 0 : 1)
 }
 
-if ["--preparation-native-acceptance", "--agent-native-acceptance"].contains(CommandLine.arguments.dropFirst().first ?? "") {
+if CommandLine.arguments.dropFirst().first == "--agent-live-acceptance-preflight" {
+    guard CommandLine.arguments.count == 2 else { exit(2) }
+    print("agent_live_acceptance_preflight_v1"); exit(0)
+}
+
+if CommandLine.arguments.dropFirst().first == "--agent-live-acceptance-self-test" {
+    guard CommandLine.arguments.count == 2 else { exit(2) }
+    _ = NSApplication.shared
+    let passed = AgentPreparationView.liveAcceptanceSelfTest()
+    print(passed ? "agent_live_acceptance_contracts_passed" : "agent_live_acceptance_contracts_failed")
+    exit(passed ? 0 : 1)
+}
+
+if ["--preparation-native-acceptance", "--agent-native-acceptance", "--agent-live-native-acceptance"].contains(CommandLine.arguments.dropFirst().first ?? "") {
     _ = NSApplication.shared
     let arguments = Array(CommandLine.arguments.dropFirst())
     guard arguments.count == 2, arguments[1].hasPrefix("/") else { exit(2) }
-    let passed = McpmeApp.preparationNativeAcceptance(fixture: URL(fileURLWithPath: arguments[1]), agent: arguments[0] == "--agent-native-acceptance")
+    let passed = McpmeApp.preparationNativeAcceptance(fixture: URL(fileURLWithPath: arguments[1]), agent: arguments[0] != "--preparation-native-acceptance", liveAgent: arguments[0] == "--agent-live-native-acceptance")
     print(passed ? "preparation_native_acceptance_passed" : "preparation_native_acceptance_failed")
     exit(passed ? 0 : 1)
 }

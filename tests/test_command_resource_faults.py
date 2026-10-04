@@ -38,7 +38,8 @@ async def test_native_sampler_errors_latch_failure_and_settle_exact_tree(binarie
     try:
         result = await owner.execute(spec(pair, "echo"))
         assert result.report.reason == reason and not result.report.sample_windows_valid
-        assert not result.result_admissible and owner.reconcile()["pending"] == 0
+        assert not result.result_admissible
+        assert owner.reconcile() == {"pending": 0, "reserved_units": 0}
     finally:
         await owner.close()
 

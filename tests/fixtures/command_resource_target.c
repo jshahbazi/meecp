@@ -20,6 +20,11 @@ int main(int argc, char **argv) {
         volatile uint64_t n = 1;
         for (;;) n = n * 1664525 + 1013904223;
     }
+    if (!strcmp(argv[1], "footprint")) {
+        /* Keep membership stable so only the footprint threshold is exercised. */
+        allocation(24 * 1024 * 1024);
+        for (;;) pause();
+    }
     if (!strcmp(argv[1], "short")) {
         for (int i = 0; i < 20; ++i) {
             pid_t child = fork();

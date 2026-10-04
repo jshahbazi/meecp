@@ -90,7 +90,7 @@ async def test_actual_windowed_report_never_claims_complete_lifetime_or_result(b
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode,policy,reason", [
-    ("overlap", ResourcePolicyV1(footprint_bytes=16 * 1024**2), "footprint_threshold"),
+    ("footprint", ResourcePolicyV1(footprint_bytes=16 * 1024**2), "footprint_threshold"),
     ("overlap", ResourcePolicyV1(group_members=1), "process_threshold"),
     ("cpu", ResourcePolicyV1(cpu_ns=20_000_000), "cpu_threshold"),
     ("echo", ResourcePolicyV1(read_window_ns=1), "read_window_exceeded"),

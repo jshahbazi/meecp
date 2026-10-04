@@ -142,6 +142,18 @@ def sign_runtime(root: Path, identity: str = "-", release: bool = False,
     return count
 
 
+def refresh_postbuild_host_artifacts(host: Path, host_receipt: dict) -> None:
+    """Add files appended after build_host froze its regular-file inventory."""
+    relatives = ["bin/mcpme-handoff", "native-app.json"]
+    if (host / "legacy-handoff.json").exists():
+        relatives.append("legacy-handoff.json")
+    for relative in relatives:
+        path = host / relative
+        if not path.is_file() or path.is_symlink():
+            raise SystemExit("Bundled host receipt requires regular post-build files")
+        host_receipt["artifact_sha256"][relative] = sha256(path)
+
+
 def build(destination: Path, legacy_recovery_app: Path | None = None,
           sign_identity: str | None = None, keychain: Path | None = None,
           version: str | None = None, textgen_engine: Path | None = None) -> Path:
@@ -223,13 +235,7 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
         refresh_command_inventory(host)
     if (host / "command-resource-execution.json").is_file():
         refresh_command_resource_inventory(host)
-    # These files are appended after build_host freezes its payload. Include
-    # them in the sealed inventory before rewriting the receipt.
-    for relative in ("bin/mcpme-handoff", "native-app.json"):
-        path = host / relative
-        if not path.is_file() or path.is_symlink():
-            raise SystemExit("Bundled host receipt requires regular post-build files")
-        host_receipt["artifact_sha256"][relative] = sha256(path)
+    refresh_postbuild_host_artifacts(host, host_receipt)
     for relative in host_receipt["artifact_sha256"]:
         host_receipt["artifact_sha256"][relative] = sha256(host / relative)
     host_receipt["signing"] = "developer_id" if release else "ad_hoc"

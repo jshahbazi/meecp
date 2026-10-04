@@ -257,6 +257,24 @@ def test_final_starter_validation_rejects_unsigned_artifact_changes(monkeypatch,
     assert calls[0][0] == str(tmp_path / "host/bin/mcpme")
 
 
+def test_postbuild_host_inventory_binds_optional_legacy_handoff(tmp_path):
+    host = tmp_path / "host"
+    (host / "bin").mkdir(parents=True)
+    for relative in ("bin/mcpme-handoff", "native-app.json", "legacy-handoff.json"):
+        path = host / relative
+        path.write_bytes(b"synthetic " + relative.encode())
+    receipt = {"artifact_sha256": {}}
+    app_builder.refresh_postbuild_host_artifacts(host, receipt)
+    assert set(receipt["artifact_sha256"]) == {
+        "bin/mcpme-handoff", "native-app.json", "legacy-handoff.json"}
+    assert all(value == app_builder.sha256(host / key)
+               for key, value in receipt["artifact_sha256"].items())
+    (host / "legacy-handoff.json").unlink()
+    (host / "legacy-handoff.json").symlink_to(host / "native-app.json")
+    with pytest.raises(SystemExit, match="regular post-build files"):
+        app_builder.refresh_postbuild_host_artifacts(host, {"artifact_sha256": {}})
+
+
 def test_all_native_helpers_and_extensions_get_hardened_signatures(monkeypatch, tmp_path):
     native = tmp_path / "Contents/MacOS/mcpme"
     extension = tmp_path / "Contents/Resources/host/python/site-packages/native.so"

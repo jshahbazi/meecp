@@ -222,11 +222,11 @@ def test_lifecycle_policy_guard_accepts_historical_and_current_bytes(tmp_path, m
     host = tmp_path / "host"
     policy_path = host / management.POLICY_PATH
     policy_path.parent.mkdir(parents=True)
-    for raw, expected in ((ROOT_POLICY_JSON.encode(), "c8fa615def941e66e85a68ac0e7cc46dd7caf1797918fc03fdd5277ac2326522"),
-                          ((Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes(), "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375")):
+    for raw, expected_scope, expected in ((ROOT_POLICY_JSON.encode(), "closed", "c8fa615def941e66e85a68ac0e7cc46dd7caf1797918fc03fdd5277ac2326522"),
+                          ((Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes(), "selected_model_accepted", "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375")):
         policy_path.write_bytes(raw)
         scope, observed = lifecycle.verify_lifecycle_policy(host)
-        assert observed == expected and scope in {"closed", "selected_model_accepted"}
+        assert observed == expected and scope == expected_scope
 
 
 @pytest.mark.parametrize("mutation", ["malformed", "extra_family", "extra_closure", "command", "agent_model", "policy_id"])
@@ -237,12 +237,13 @@ def test_lifecycle_policy_guard_rejects_mutated_current_bytes(tmp_path, monkeypa
     host = tmp_path / "host"
     policy_path = host / management.POLICY_PATH
     policy_path.parent.mkdir(parents=True)
-    current = json.loads((Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes())
+    current_raw = (Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes()
+    current = json.loads(current_raw)
     if mutation == "malformed":
         raw = b"{\"schema_version\":1} trailing"
     else:
         if mutation == "extra_family":
-            current["preparation"]["families"].append({"id": "extra-registered-family-v1",
+            current["preparation"]["families"].append({"id": management.PYTHON[0],
                 "version": management.PYTHON[1], "digest": management.PYTHON[2]})
         elif mutation == "extra_closure":
             current["preparation"]["recipe_component_sets"].append([{"id": management.PYTHON[0],
@@ -253,7 +254,9 @@ def test_lifecycle_policy_guard_rejects_mutated_current_bytes(tmp_path, monkeypa
             current["agent"]["providers"][0]["models"].append("gpt-6.1-sol-extra")
         else:
             current["policy_id"] = "unexpected-policy"
-        raw = (json.dumps(current, sort_keys=True) + "\n").encode()
+        baseline = (json.dumps(json.loads(current_raw), indent=2) + "\n").encode()
+        assert baseline == current_raw
+        raw = (json.dumps(current, indent=2) + "\n").encode()
     policy_path.write_bytes(raw)
     monkeypatch.setattr(management, "typed_policy_scope", lambda _host: pytest.fail("typed validation reached"))
     with pytest.raises(lifecycle.onboarding.AcceptanceError, match="lifecycle_policy_not_reviewed"):

@@ -16,9 +16,11 @@ silent substitution after disable/deprecate/revoke/remove and cleared the
 original owner-socket controls. Immutable text-generation recipe 1.0.7 binds
 the corrected producer; 189 combined source checks, 96 independent checks and
 95 actual scanner-fixture checks pass. Every earlier bundle is unchanged.
-This later producer composition awaits a fresh combined host/native acceptance
-and applicable common-contract rechecks; A0's completed receipt names its
-recorded earlier composition.
+A0R is complete on clean source `509b807`, frozen host and compiled native
+`7026611c`: all ten lifecycle cases, the independent recipe's actual installed
+HTTP/stdio path, fresh packaged catalog and independent final scope review pass.
+See [A0R acceptance](A0R_ACCEPTANCE.md) for exact artifacts and receipts.
+A0's completed receipt retains its recorded earlier composition.
 Common confinement, CLI recipe 1.0.1, locked/unlocked generated adapters and
 the reviewed agent request repair are integrated. The locked request-only
 pipeline passed 147 focused checks and its actual private build/probe/attachment
@@ -53,7 +55,7 @@ combined installed artifact and the independent whole-phase adversarial review.
 
 The tables below track **104 subgoals**: 71 acceptance subgoals, 24 required
 cross-family verification subgoals and nine shared delivery subgoals. Of these,
-11 are complete, 51 have verified checkpoint evidence, 35 are open, three are
+16 are complete, 47 have verified checkpoint evidence, 34 are open, three are
 in progress and four have separate capability gates. These counts describe the
 evidence ledger; they are not a release-completion percentage. Additional A6
 capabilities require their own acceptance before they can be advertised.
@@ -70,7 +72,7 @@ being fixed; **Separate gate** covers additional capability work.
 | Goal | Status | Main subgoals | Remaining acceptance |
 | --- | --- | --- | --- |
 | A0: contracts and authority | Complete | All 11 common contract criteria pass: immutable identities, static inspection, scoped authority, durable jobs, cancellation/recovery, privacy and confinement. | No open common-contract work for this composition. Repeat applicable guards after producer/runtime changes and on the final signed release. |
-| A0R: recipe extensibility | In progress | Versioned recipes, generated forms, independent recipe addition and lifecycle management have checkpoint evidence. | Final catalog/native extension and lifecycle checks; executable worker extensions retain a separate gate. |
+| A0R: recipe extensibility | Complete | All five declarative recipe criteria pass on the recorded 509b807 host/native composition, including independent installed calls and ten lifecycle cases. | Repeat applicable checks on final signed delivery; additional executable workers retain a separate gate. |
 | A1: automatic Python/MCP | In progress | Callable and existing-MCP preparation, dependencies, SDK probes, attachment and installed calls have checkpoint evidence. | Separate callable and existing-MCP cases on the final native, installed and relocated artifact. |
 | A2: automatic ONNX | In progress | Exact supported detector, real inference, native intake, tensor controls and limits have checkpoint evidence. | Repeat inference, maximum workloads, negative eligibility and lifecycle under current confinement on the final artifact. |
 | A3: native CLI | In progress | Command contracts, immutable builder, measured verification, resource cleanup and ownership repairs have checkpoint evidence. | Final native directory-to-installed flow, topology/recovery/resource checks and individual capability enablement. |
@@ -93,11 +95,11 @@ being fixed; **Separate gate** covers additional capability work.
 | A0.09 | A0 | Keep source, prompts, responses, credentials and raw diagnostics out of journals | Complete | None; packaged sentinel/privacy controls, full provider regressions and repository credential scan pass. |
 | A0.10 | A0 | Managed private Python/ONNX probe confinement | Complete | None for common confinement; both launcher shapes pass actual packaged SDK probes with source removed. A2 model inference retains its separate gate. |
 | A0.11 | A0 | Current job authority and complete package identities at native creation | Complete | None; ten held native-task identity/deadline negatives create zero processes, with graph accounting off/on; existing authority/tree guards pass. |
-| A0R.01 | A0R: recipe extensibility | Immutable recipe bundles, component composition and version collisions | Verified checkpoint | Recipe 1.0.7 producer/bundle/catalog identities independently pass; all 15 earlier builtin bundles and frozen agent closures are unchanged. Fresh packaged catalog regression remains. |
-| A0R.02 | A0R | Scaffold, check, add, inspect and manage recipes | Verified checkpoint | Final packaged CLI/native recheck. |
-| A0R.03 | A0R | Add an independent recipe without host dispatcher, import or UI edits | Verified checkpoint | Recheck the independent recipe against the final host. |
-| A0R.04 | A0R | Generated fields, explicit recipe selection and compatible defaults | Verified checkpoint | Saved-selection substitution defect is repaired and original socket controls pass; fresh packaged/mixed-family/native forms remain. |
-| A0R.05 | A0R | Enable/disable/revoke/remove/deprecate, restart retention and lifecycle races | Verified checkpoint | Complete combined race matrix; nine installed/native lifecycle cases have earlier evidence. |
+| A0R.01 | A0R: recipe extensibility | Immutable recipe bundles, component composition and version collisions | Complete | None for the recorded development composition. Fresh final-host catalog and immutable identity checks pass; all 15 earlier builtin bundles and frozen agent closures retain their bytes. |
+| A0R.02 | A0R | Scaffold, check, add, inspect and manage recipes | Complete | None for the recorded development composition. Actual packaged authoring and native management pass, including two independent bundles and ten registry changes. |
+| A0R.03 | A0R | Add an independent recipe without host dispatcher, import or UI edits | Complete | None for the recorded development composition. Independent recipe preparation, revision-2 attachment, installation and both SDK transports pass with unchanged host/source. |
+| A0R.04 | A0R | Generated fields, explicit recipe selection and compatible defaults | Complete | None for the recorded development composition. Original four lifecycle controls, 16 native form checks, four manager fences and independent generated fields pass. |
+| A0R.05 | A0R | Enable/disable/revoke/remove/deprecate, restart retention and lifecycle races | Complete | None for the recorded development composition. Ten lifecycle cases and eight exact restart checks pass; owners/reservations settle, and installed package/receipt survive recipe removal. |
 | A0R.06 | A0R | Additional executable preparation workers | Separate gate | Capability and descendant-ownership acceptance before enabling this extension kind. |
 | A1.01 | A1: automatic Python/MCP | Ordinary callable directory to resolved interface and private dependency closure | Verified checkpoint | Recheck current common confinement on the final host. |
 | A1.02 | A1 | Declared foreground MCP server, including dynamic discovery | Verified checkpoint | Separate final installed/native case remains required. |
@@ -200,16 +202,17 @@ until the final combined families and artifact have the applicable evidence.
 | D02 | Scoped artifact acquisition, verified TLS, disk limits and joined cancellation | Verified checkpoint | Final packaged acquisition/cleanup regressions. |
 | D03 | Generated native forms, review, stage polling and explicit cancellation | Verified checkpoint | Agent parent control repair independently cleared; final native flows remain. |
 | D04 | Exact signed application and relocated payload hashes | Open | Build and validate the final combined signed candidate. Existing development hosts do not close this gate. |
-| D05 | Full combined Python and Swift regressions | Open | Clean ed59a64 passed 2,978 Python / 87 explicit skips and 18 Swift / 3 installer opt-in skips. New A0R producer/native integration needs another full run; final family and signed gates remain separate. |
+| D05 | Full combined Python and Swift regressions | Verified checkpoint | Clean 2ede0a0 passed 3,105 Python / 15 explicit skips and 21 Swift / zero skips. Fourteen private-host opt-ins subsequently passed; one filesystem capability skip remains. Native path repair passed 36 focused checks and seven selftests. Final producer/signed regressions remain. |
 | D06 | First public automatic Python/MCP/ONNX capability | Open | A0, A0R and A1–A2 must pass on the final installed/relocated artifact before enabling it. |
 | D07 | Independent CLI, local LLM and agent capability enablement | Open | Enable individually after A3–A5 acceptance. |
 | D08 | Final independent whole-phase adversarial review and repairs | Open | Review the complete integrated result; checkpoint reviews have already produced repairs. |
-| D09 | Publish verified work to the working branch | In progress | Reviewed native provider/picker setup, recipe 1.0.6, native handoff and A0 acceptance are recorded on codex/phase3-llm-integration. Later family/final-artifact and review repairs also need publication. |
+| D09 | Publish verified work to the working branch | In progress | A0 and A0R acceptance, recipe 1.0.7 and reviewed native selection/path repairs are recorded on codex/phase3-llm-integration. Remaining family/final-artifact changes and review repairs need publication. |
 
 ## Current critical path
 
 1. Continue from the completed A0 composition and freeze remaining family
-   changes for acceptance. Full regressions pass at ed59a64. CLI recipe 1.0.1
+   changes for acceptance. A0R passes at 509b807; full regressions pass at 2ede0a0
+   with the later native repair's focused controls passing. CLI recipe 1.0.1
    and text-generation recipe 1.0.7 are minted; any later backend producer edit
    requires a fresh immutable text-generation version and applicable rechecks.
 2. Build one coherent artifact and rerun Python/MCP, ONNX and local LLM native,
@@ -221,6 +224,7 @@ until the final combined families and artifact have the applicable evidence.
    review, repair findings and enable each capability whose gates pass.
 
 Sources: [A0 acceptance](A0_ACCEPTANCE.md),
+[A0R acceptance](A0R_ACCEPTANCE.md),
 [original acceptance plan](AUTOMATIC_PREPARATION.md),
 [implementation ledger](PHASE3_IMPLEMENTATION.md),
 [trust and resource scope](PHASE3_TRUST_AND_RESOURCE_SCOPE.md),

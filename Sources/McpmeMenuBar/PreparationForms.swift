@@ -699,6 +699,16 @@ final class PreparationWorkspaceView: NSStackView {
         return true
     }
 
+    func acceptanceSelectExactRecipe(_ reference: PreparationRecipeReference) -> Bool {
+        guard !busy, !hasActiveJob, saved, eligible, available?() == true, request != nil,
+              let form, let choice = form.recipes.first(where: { $0.reference == reference }),
+              let item = recipePicker.itemArray.first(where: { $0.representedObject as? String == choice.choice.id }) else { return false }
+        recipePicker.select(item); selectionChanged(recipePicker)
+        return true
+    }
+
+    var acceptanceReviewEnabled: Bool { reviewButton?.isEnabled == true }
+
     func acceptanceAnswers(_ overrides: [String: Any]) -> Bool {
         guard !busy, !hasActiveJob, let form, !form.resolutionRequired, overrides.count <= 256,
               preparationJSON(overrides, maximum: 262144) != nil else { return false }
@@ -910,6 +920,7 @@ final class PreparationRecipesView: NSStackView {
     private var buttons: [NSButton] = []
     private var epoch: UInt64 = 0
     private var busy = false
+    private var inspectedState: String?
 
     override init(frame: NSRect) {
         super.init(frame: frame); orientation = .vertical; alignment = .leading; spacing = 12
@@ -962,14 +973,14 @@ final class PreparationRecipesView: NSStackView {
             let prior = self.selected; self.rows = identities; self.picker.removeAllItems()
             for row in identities { self.picker.addItem(withTitle: row.label); self.picker.lastItem?.representedObject = row.digest }
             if let prior, let index = identities.firstIndex(of: prior) { self.picker.selectItem(at: index) }
-            self.selected = nil; self.status.stringValue = identities.isEmpty ? "No recipes are registered. Add a local recipe folder." : "Choose a version to inspect its exact identity and compatibility."
+            self.selected = nil; self.inspectedState = nil; self.status.stringValue = identities.isEmpty ? "No recipes are registered. Add a local recipe folder." : "Choose a version to inspect its exact identity and compatibility."
             self.updateControls(); if !identities.isEmpty { self.inspectRecipe() }
         }
     }
 
     @objc private func inspectRecipe() {
         guard !busy, available?() == true, rows.indices.contains(picker.indexOfSelectedItem), let request else { return }
-        let identity = rows[picker.indexOfSelectedItem]; selected = identity
+        let identity = rows[picker.indexOfSelectedItem]; selected = identity; inspectedState = nil
         epoch &+= 1; let expected = epoch; busy = true; updateControls()
         request("v1/recipes/inspect", "POST", identity.payload) { [weak self] object, code in
             guard let self, self.epoch == expected, self.selected == identity else { return }; self.busy = false
@@ -982,6 +993,7 @@ final class PreparationRecipesView: NSStackView {
                 self.selected = nil; self.detail.string = ""; self.status.stringValue = "Recipe inspection failed (\(preparationCode(code) ?? "recipe_identity_changed"))."; self.updateControls(); return
             }
             self.detail.string = metadata
+            self.inspectedState = state
             self.status.stringValue = identity.label + " · " + state + (object["runnable"] as? Bool == true ? " · Execution admitted by host" : " · Automatic execution unavailable")
             self.updateControls()
         }
@@ -993,27 +1005,40 @@ final class PreparationRecipesView: NSStackView {
         panel.message = "Select a local recipe folder. Adding validates and snapshots its metadata and bytes."
         let panelEpoch = epoch
         panel.begin { [weak self] result in
-            guard let self, self.epoch == panelEpoch, !self.busy, self.available?() == true,
-                  result == .OK, let url = panel.url, let request = self.request else { return }
-            self.epoch &+= 1; let expected = self.epoch; self.busy = true; self.updateControls()
-            request("v1/recipes", "POST", ["path": url.path]) { [weak self] object, code in
-                guard let self, self.epoch == expected else { return }; self.busy = false
-                if let object, let identity = PreparationRecipeIdentity(object) {
-                    self.selected = identity; self.onRegistryChange?(); self.refreshRecipes()
-                } else { self.status.stringValue = "Recipe could not be added (\(preparationCode(code) ?? "invalid_recipe_response"))."; self.updateControls() }
-            }
+            guard result == .OK, let url = panel.url else { return }
+            _ = self?.selectedRecipeFolder(url, panelEpoch: panelEpoch)
         }
+    }
+
+    // Both the real file dialog and the closed developer acceptance driver
+    // enter this same selection-completion handler. Selection itself is static.
+    @discardableResult private func selectedRecipeFolder(_ url: URL, panelEpoch: UInt64) -> Bool {
+        guard url.isFileURL, self.epoch == panelEpoch, !busy, available?() == true, let request else { return false }
+        epoch &+= 1; let expected = epoch; busy = true; updateControls()
+        request("v1/recipes", "POST", ["path": url.path]) { [weak self] object, code in
+            guard let self, self.epoch == expected else { return }; self.busy = false
+            if let object, let identity = PreparationRecipeIdentity(object) {
+                self.selected = identity; self.onRegistryChange?(); self.refreshRecipes()
+            } else { self.status.stringValue = "Recipe could not be added (\(preparationCode(code) ?? "invalid_recipe_response"))."; self.updateControls() }
+        }
+        return true
     }
 
     @objc private func changeRecipe(_ sender: NSButton) {
         guard !busy, available?() == true, let identity = selected,
-              let action = sender.identifier?.rawValue, ["enable", "disable", "deprecate", "revoke", "remove"].contains(action), let request else { return }
+              let action = sender.identifier?.rawValue, ["enable", "disable", "deprecate", "revoke", "remove"].contains(action), request != nil else { return }
         if ["revoke", "remove"].contains(action) {
             let alert = NSAlert(); alert.messageText = action.capitalized + " this recipe version?"
             alert.informativeText = identity.label + "\nImplementation: " + identity.digest + "\nGenerated apps retain their package identities and data."
             alert.addButton(withTitle: action.capitalized); alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
+        performRecipeChange(action, identity: identity)
+    }
+
+    private func performRecipeChange(_ action: String, identity: PreparationRecipeIdentity) {
+        guard !busy, available?() == true, selected == identity,
+              ["enable", "disable", "deprecate", "revoke", "remove"].contains(action), let request else { return }
         epoch &+= 1; let expected = epoch; busy = true; updateControls()
         request("v1/recipes/" + action, "POST", identity.payload) { [weak self] object, code in
             guard let self, self.epoch == expected, self.selected == identity else { return }; self.busy = false
@@ -1022,6 +1047,29 @@ final class PreparationRecipesView: NSStackView {
             }
             self.onRegistryChange?(); self.refreshRecipes()
         }
+    }
+
+    // These entry points take no source directives. Only main.swift's private,
+    // nonce-bound acceptance CLI supplies their simulated dialog choices.
+    var acceptanceBusy: Bool { busy }
+    var acceptanceIdentity: PreparationRecipeIdentity? { selected }
+    var acceptanceState: String? { inspectedState }
+
+    func acceptanceChooseRecipeFolder(_ folder: URL) -> Bool {
+        selectedRecipeFolder(folder, panelEpoch: epoch)
+    }
+
+    func acceptanceSelectRecipe(_ identity: PreparationRecipeIdentity) -> Bool {
+        guard !busy, available?() == true, request != nil, let index = rows.firstIndex(of: identity) else { return false }
+        picker.selectItem(at: index); inspectRecipe()
+        return true
+    }
+
+    func acceptanceConfirmedChange(_ action: String, identity: PreparationRecipeIdentity) -> Bool {
+        guard !busy, available?() == true, request != nil, selected == identity,
+              ["enable", "disable", "deprecate", "revoke", "remove"].contains(action) else { return false }
+        performRecipeChange(action, identity: identity)
+        return true
     }
 }
 
@@ -1341,6 +1389,15 @@ extension PreparationWorkspaceView {
         view.invalidate(); guard calls.isEmpty, view.job?.state == "succeeded", view.review == nil else { return false }
         view.bind(PreparationTestData.context, saved: true, eligible: true); view.refreshForm(); calls.removeFirst().complete(nil, "caller\nsecret")
         guard !view.status.stringValue.contains("secret") else { return false }
+        var unavailable = PreparationTestData.form()
+        unavailable["recipe"] = NSNull(); unavailable["blockers"] = ["recipe_selection_required"]
+        view.bind(PreparationTestData.context, saved: true, eligible: true)
+        for _ in 0..<3 {
+            view.refreshForm(); guard calls.count == 1 else { return false }
+            calls.removeFirst().complete(unavailable, nil)
+            guard view.form?.recipe == nil, view.recipePicker.selectedItem?.representedObject == nil,
+                  !view.acceptanceReviewEnabled, view.status.stringValue.contains("recipe_selection_required") else { return false }
+        }
         return true
     }
 }

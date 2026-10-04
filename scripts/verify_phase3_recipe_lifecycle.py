@@ -27,7 +27,7 @@ import verify_phase3_native_onboarding as onboarding
 from verify_phase3_primitives import _check_module_origins, _host_imports, _host_paths
 
 CASES = ("disabled_queued", "revoked_verification", "revoked_attachment", "updated_active",
-         "canceled_native_owner", "crashed_native_owner", "stale_revision", "stale_source", "capability_blocker")
+         "canceled_native_owner", "crashed_native_owner", "stale_revision", "stale_source", "capability_blocker", "native_management")
 BARRIERS = {"disabled_queued": "scheduler_before_snapshot", "stale_source": "scheduler_before_snapshot",
     "revoked_verification": "actual_verifier_return_before_publication",
     "updated_active": "actual_verifier_return_before_publication", "stale_revision": "actual_verifier_return_before_publication",
@@ -38,6 +38,46 @@ require = onboarding.require
 digest = onboarding.digest
 private_json = onboarding.private_json
 write_private_json = onboarding.write_private_json
+
+
+def manager_file_identity(path):
+    """Metadata binding for a fresh manager generation; never reads its token."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        before, named = os.fstat(descriptor), path.lstat()
+        require(stat.S_ISREG(before.st_mode) and before.st_uid == os.getuid()
+            and stat.S_IMODE(before.st_mode) == 0o600 and before.st_nlink == 1
+            and 0 < before.st_size <= 262144 and path.resolve() == path,
+            "native_manager_file_invalid")
+        def identity(value):
+            return {"device": value.st_dev, "inode": value.st_ino, "bytes": value.st_size,
+                "mode": stat.S_IMODE(value.st_mode), "modified_seconds": value.st_mtime_ns // 1_000_000_000,
+                "modified_nanoseconds": value.st_mtime_ns % 1_000_000_000,
+                "changed_seconds": value.st_ctime_ns // 1_000_000_000,
+                "changed_nanoseconds": value.st_ctime_ns % 1_000_000_000}
+        result = identity(before)
+        require(result == identity(named) == identity(os.fstat(descriptor)), "native_manager_file_changed")
+        return result
+    finally:
+        os.close(descriptor)
+
+
+def native_management_fixture(base, state, recipes, forms=()):
+    nonce = str(uuid.uuid4())
+    marker = state / ("native-recipes-" + nonce + ".json")
+    fixture = base / ("native-recipes-case-" + nonce + ".json")
+    receipt = base / ("native-recipes-receipt-" + nonce + ".json")
+    write_private_json(marker, {"schema_version": 1, "fixture_nonce": nonce,
+        "expires_at": int(time.time()) + 120,
+        "manager_file": manager_file_identity(state / "manager-connection.json")})
+    write_private_json(fixture, {"schema_version": 1, "state_dir": str(state), "output_path": str(receipt),
+        "fixture_nonce": nonce, "recipes": recipes, "forms": list(forms)})
+    return fixture, receipt
+
+
+def verify_sealed_host_payload(host):
+    """Reject a changed or expanded payload before importing target modules."""
+    return onboarding.verify_host_payload(host)
 
 
 async def join_owned(task):
@@ -58,6 +98,7 @@ logging.disable(logging.CRITICAL)
 from mcpme.supervisor import serve
 from mcpme.preparation_runner import PreparationRunner,JournaledPreparationOwner
 from mcpme.preparation_resolution_runner import OwnedResolutionRunner
+from mcpme.preparation_resolved_python import ResolvedPythonComponent
 mode=sys.argv[6]; control=int(sys.argv[7]); status=int(sys.argv[8])
 released=threading.Event(); used=False
 def listener():
@@ -78,9 +119,10 @@ class QueueBarrier(asyncio.Semaphore):
   return await super().__aenter__()
 def preparation(*args,**kwargs):
  kwargs['enabled']=True
- selected=tuple(key for key in args[0].families if key[:2]==('resolved-python-v1','1.0.0'))
+ current=ResolvedPythonComponent().reference.key
+ selected=tuple(key for key in args[0].families if key==current)
  if len(selected)!=1: raise ValueError('reviewed_python_family_required')
- kwargs['enabled_families']=selected
+ kwargs['enabled_families']=frozenset(selected)
  runner=PreparationRunner(*args,**kwargs)
  if mode in {'disabled_queued','stale_source'}: runner._serial=QueueBarrier(1)
  if mode in {'revoked_verification','updated_active','stale_revision'}:
@@ -331,6 +373,72 @@ class LifecycleHarness(onboarding.Harness):
         added = await self.manager(state, "/v1/recipes", {"path": str(bundle)})
         require(added["state"] == "proposed", "independent_recipe_not_proposed")
         return bundle, added
+
+    async def native_management_case(self):
+        started = time.monotonic()
+        base, state, home, environment = self.new_case("native_management")
+        child = await self.start(state, environment, home, enabled=False)
+        try:
+            cases, expected = [], []
+            for label, operations in (
+                ("deprecate", [("add", "proposed"), ("enable", "enabled"), ("refresh", "enabled"),
+                    ("disable", "disabled"), ("enable", "enabled"), ("deprecate", "deprecated"), ("remove", "removed")]),
+                ("revoke", [("add", "proposed"), ("enable", "enabled"), ("revoke", "revoked"), ("remove", "removed")])):
+                recipe_id = "local.native-management-" + label
+                bundle = base / ("recipe-" + label)
+                scaffold = await self.cli(state, environment, home, "recipes", "scaffold", "--output", bundle,
+                    "--id", recipe_id, "--component", "resolved-python-v1", "--json")
+                checked = await self.cli(state, environment, home, "recipes", "check", "--path", bundle, "--json")
+                require(scaffold["digest"] == checked["digest"] and checked["valid"] is True,
+                    "native_recipe_check_failed")
+                identity = {"recipe_id": recipe_id, "version": "1.0.0", "digest": checked["digest"]}
+                cases.append({"folder": str(bundle), "recipe": identity,
+                    "operations": [{"action": action, "expected_state": status} for action, status in operations]})
+                expected.append(identity)
+            fixture, receipt_path = native_management_fixture(base, state, cases)
+            code, _ = await self.run([str(self.native), "--recipes-native-acceptance", str(fixture)], environment, home, timeout=180)
+            require(code == 0 and receipt_path.is_file(), "native_recipe_management_failed")
+            receipt = private_json(receipt_path, 262144)
+            require(receipt.get("passed") is True and receipt.get("callbacks_joined") is True
+                and receipt.get("production_handlers") is True and receipt.get("owner_private_socket") is True
+                and receipt.get("requests_sent") == receipt.get("requests_completed")
+                and receipt.get("execution_started_by_driver") is False, "native_recipe_management_receipt_invalid")
+            before = [await self.manager(state, "/v1/recipes/inspect", {"recipe_id": item["recipe_id"],
+                "version": item["version"]}) for item in expected]
+            require(all(item["state"] == "removed" and item["digest"] == binding["digest"]
+                for item, binding in zip(before, expected)), "native_recipe_management_identity_changed")
+            require(not (await self.request(state, "/v1/preparations"))["preparations"]
+                and onboarding.preparation_ownership_count(state) == 0, "native_recipe_management_executed")
+            await self.shutdown(child, state)
+            for item in cases:
+                shutil.rmtree(Path(item["folder"]))
+            child = await self.start(state, environment, home, enabled=False)
+            retained_cases = [{"folder": None, "recipe": item,
+                "operations": [{"action": "inspect", "expected_state": "removed"},
+                    {"action": "refresh", "expected_state": "removed"}]} for item in expected]
+            fixture2, receipt2_path = native_management_fixture(base, state, retained_cases)
+            code, _ = await self.run([str(self.native), "--recipes-native-acceptance", str(fixture2)], environment, home, timeout=180)
+            require(code == 0 and receipt2_path.is_file(), "native_recipe_management_restart_failed")
+            receipt2 = private_json(receipt2_path, 262144)
+            require(receipt2.get("passed") is True and receipt2.get("callbacks_joined") is True,
+                "native_recipe_management_restart_receipt_invalid")
+            after = [await self.manager(state, "/v1/recipes/inspect", {"recipe_id": item["recipe_id"],
+                "version": item["version"]}) for item in expected]
+            for old, new in zip(before, after):
+                require(all(old[key] == new[key] for key in ("recipe_id", "version", "digest", "epoch", "state", "evidence")),
+                    "native_recipe_management_restart_changed")
+            return {"passed": True, "native_receipt_sha256": digest(receipt_path),
+                "restart_native_receipt_sha256": digest(receipt2_path), "recipe_count": len(cases),
+                "registry_changes": receipt["registry_changes"], "callbacks_joined": True,
+                "authoring_bundles_removed": True, "removed_records_retained_after_restart": True,
+                "zero_preparation_jobs": True, "zero_preparation_ownership": True,
+                "simulated_dialog_folder_selection": True, "simulated_lifecycle_confirmation": True,
+                "production_handlers_and_owner_socket": True, "seconds": round(time.monotonic() - started, 3)}
+        except BaseException:
+            self.lease["safe_to_remove"] = False
+            raise
+        finally:
+            await self.shutdown(child, state)
 
     async def lifecycle_case(self, mode):
         self.failure_step = None
@@ -646,23 +754,16 @@ class LifecycleHarness(onboarding.Harness):
 
 
 async def verify(host_path, native_path, report, cases=CASES):
+    verify_sealed_host_payload(host_path)
     with onboarding.isolated_workspace(report) as (root, lease):
         host, native = root / "relocated-host", root / "McpmeMenuBar"
         shutil.copytree(host_path, host, symlinks=True)
         shutil.copyfile(native_path, native)
         native.chmod(0o700)
+        build = verify_sealed_host_payload(host)
+        artifacts = build["artifact_sha256"]
         _host_paths(host)
         _host_imports(host)
-        build = json.loads((host / "build.json").read_bytes())
-        require(build.get("source_tree_dirty") is False and isinstance(build.get("source_commit"), str)
-            and re.fullmatch(r"[0-9a-f]{40}", build["source_commit"]), "relocated_host_source_invalid")
-        artifacts = build["artifact_sha256"]
-        require(isinstance(artifacts, dict) and 1 <= len(artifacts) <= 20000 and all(
-            isinstance(path, str) and len(path) <= 4096 and not Path(path).is_absolute()
-            and ".." not in Path(path).parts and (host / path).resolve() == host / path
-            and isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
-            for path, value in artifacts.items()), "relocated_host_manifest_invalid")
-        require(all(digest(host / path) == value for path, value in artifacts.items()), "relocated_host_artifact_mismatch")
         report.update(host_source_commit=build["source_commit"], host_build_sha256=digest(host / "build.json"),
             host_artifacts_checked=len(artifacts), native_binary_sha256=digest(native), relocated_host=True,
             minimal_environment=True, development_execution_only=True)
@@ -674,8 +775,12 @@ async def verify(host_path, native_path, report, cases=CASES):
             report["production_defaults_disabled"] = await harness.defaults()
             for case in cases:
                 report["active_case"] = case
-                report["cases"][case] = await (harness.capability_case() if case == "capability_blocker"
-                    else harness.lifecycle_case(case))
+                if case == "capability_blocker":
+                    report["cases"][case] = await harness.capability_case()
+                elif case == "native_management":
+                    report["cases"][case] = await harness.native_management_case()
+                else:
+                    report["cases"][case] = await harness.lifecycle_case(case)
             _check_module_origins(host)
         except BaseException:
             if getattr(harness, "failure_step", None) is not None:

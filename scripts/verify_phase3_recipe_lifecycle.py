@@ -1,9 +1,10 @@
 """Exercise independent recipe races through native forms and a sealed host.
 
 Private inherited pipes select trusted scheduling barriers in the development
-runner factory. Actual policy, routes, native owners, verifier reports and
-attachment transactions remain unchanged. The production CLI stays disabled.
-Only bounded metadata and hashes leave the isolated workspace.
+runner factory. The lifecycle cases run against the reviewed public family and
+retain explicit closed-policy checks as a separate historical control. Actual
+policy, routes, native owners, verifier reports and attachment transactions
+remain unchanged. Only bounded metadata and hashes leave the isolated workspace.
 """
 from __future__ import annotations
 
@@ -297,6 +298,41 @@ class ReceiptHold:
 
 
 class LifecycleHarness(onboarding.Harness):
+    async def active_defaults(self):
+        """Check the reviewed public family without asserting closed defaults."""
+        stage("active_policy_defaults", "none")
+        base, state, home, environment = self.new_case("active-policy-defaults")
+        child = await self.start(state, environment, home, enabled=True)
+        try:
+            caps = await self.cli(state, environment, home, "capabilities", "--json")
+            execution = caps.get("preparation_execution", {})
+            require(caps.get("automatic_preparation") is True
+                and caps.get("recipe_execution") is True
+                and caps.get("preparation_resolution", {}).get("execution") is True,
+                "active_policy_execution_unavailable")
+            require(execution.get("families") and execution.get("recipe_component_sets")
+                and isinstance(execution.get("admission_digest"), str)
+                and re.fullmatch(r"[0-9a-f]{64}", execution["admission_digest"]),
+                "active_policy_admission_missing")
+            source = base / "source"
+            source.mkdir(mode=0o700)
+            (source / "worker.py").write_text(CALLABLE_SOURCE)
+            (source / "LICENSE").write_text("Synthetic fixture permission notice.\n")
+            draft = await self.cli(state, environment, home, "imports", "create", "--source", source,
+                "--name", "Active policy fixture", "--json")
+            form = await self.manager(state, "/v1/preparations/form",
+                {"import_id": draft["draft_id"], "revision": draft["revision"]})
+            require(form["execution_available"] is True and form["resolution_available"] is True
+                and form["resolution_required"] is False, "active_policy_form_unavailable")
+            require((await self.cli(state, environment, home, "preparations", "list", "--json"))["preparations"] == []
+                and (await self.cli(state, environment, home, "resolutions", "list", "--json"))["resolutions"] == [],
+                "active_policy_created_job")
+            return {"passed": True, "policy_mode": "reviewed_public_family",
+                "admission_digest": execution["admission_digest"], "preparation_jobs": 0,
+                "resolution_jobs": 0, "execution_available": True}
+        finally:
+            await self.shutdown(child, state)
+
     async def start_reviewed(self, state, environment, home):
         gate = Barrier()
         try:
@@ -769,7 +805,8 @@ async def verify(host_path, native_path, report, cases=CASES):
             barrier_factory_sha256=hashlib.sha256(BARRIER_HOST.encode()).hexdigest())
         harness = LifecycleHarness(root, host, native, lease)
         try:
-            report["production_defaults_disabled"] = await harness.defaults()
+            _check_module_origins(host)
+            report["active_policy_defaults"] = await harness.active_defaults()
             for case in cases:
                 report["active_case"] = case
                 if case == "capability_blocker":
@@ -810,7 +847,8 @@ def main():
         "limits": ["development_barriers_only", "other_host_helper_crash_boundaries_unverified",
             "mismatched_native_receipt_unverified",
             "source_copy_mutation_races_unverified", "hard_aggregate_process_memory_unverified",
-            "signed_final_bundle_unverified", "public_execution_disabled"]}
+            "signed_final_bundle_unverified", "closed_historical_defaults_unverified",
+            "private_barriers_and_factory_scope_unverified"]}
     try:
         asyncio.run(verify(args.host.resolve(strict=True), args.native.resolve(strict=True), report, args.case or CASES))
     except (Exception, KeyboardInterrupt) as error:

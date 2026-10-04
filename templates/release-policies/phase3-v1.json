@@ -20,8 +20,8 @@
       },
       {
         "id": "text-generate-v1",
-        "version": "1.0.10",
-        "digest": "77d9b9b834c13f05816626736ee8546c14ee617bef0f8e89353f61496bf9b6db"
+        "version": "1.0.11",
+        "digest": "b206dd2d5cc61af91328393181c7d772eb3a094fc01c21e783ccd56c3c553327"
       }
     ],
     "recipe_component_sets": [
@@ -61,13 +61,13 @@
       [
         {
           "id": "llamacpp-cpu-v1",
-          "version": "1.0.10",
-          "digest": "a3d3f000365e1a485a6bdaa3daa21363df54321656c4aaba1c42920e36cc9ca7"
+          "version": "1.0.11",
+          "digest": "d5e3f2d64b08ee68d7e3feac80756d8350bc22e79dd2e5649ffa4be65f31a9cd"
         },
         {
           "id": "text-generate-v1",
-          "version": "1.0.10",
-          "digest": "77d9b9b834c13f05816626736ee8546c14ee617bef0f8e89353f61496bf9b6db"
+          "version": "1.0.11",
+          "digest": "b206dd2d5cc61af91328393181c7d772eb3a094fc01c21e783ccd56c3c553327"
         }
       ]
     ],

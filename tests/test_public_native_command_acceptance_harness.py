@@ -15,6 +15,45 @@ def module(monkeypatch):
 
 
 @pytest.fixture
+def upgrade_identity(module):
+    slot = {key: "synthetic-" + key for key in module.UPGRADE_STABLE_FIELDS}
+    slot.update(start_policy="host", wake_suppressed=False, public_port=19386, generation=2)
+    history = {"operation_count": 1, "completed_install_count": 1, "upgrade_count": 0,
+        "identity_sha256": "a" * 64}
+    return slot, history
+
+
+def test_cross_build_checks_exact_runtime_epoch_and_retains_installed_identity(module, upgrade_identity):
+    before, history = upgrade_identity
+    result = module.upgrade_transition(before, before | {"generation": 3}, history, dict(history))
+    assert result["runtime_generation_before"] == 2 and result["runtime_generation_after"] == 3
+    assert result["runtime_generation_transition_verified"] and result["operation_history_preserved"]
+
+
+@pytest.mark.parametrize("generation", [True, 0, 1, 2, 4, 3.0])
+def test_cross_build_rejects_missing_extra_or_invalid_runtime_epoch(module, upgrade_identity, generation):
+    before, history = upgrade_identity
+    with pytest.raises(module.common.AcceptanceError, match="runtime_generation_changed"):
+        module.upgrade_transition(before, before | {"generation": generation}, history, history)
+
+
+@pytest.mark.parametrize("field", ["slot_id", "package_digest", "package_path", "settings_digest",
+    "settings_path", "data_path", "public_port", "credential_ref", "start_policy", "wake_suppressed"])
+def test_cross_build_rejects_installed_identity_or_settings_drift(module, upgrade_identity, field):
+    before, history = upgrade_identity
+    with pytest.raises(module.common.AcceptanceError, match="slot_identity_changed"):
+        module.upgrade_transition(before, before | {"generation": 3, field: "changed"}, history, history)
+
+
+@pytest.mark.parametrize("field,value", [("operation_count", 2), ("completed_install_count", 2),
+    ("upgrade_count", 1), ("identity_sha256", "b" * 64)])
+def test_cross_build_rejects_reinstall_upgrade_or_changed_operation_history(module, upgrade_identity, field, value):
+    before, history = upgrade_identity
+    with pytest.raises(module.common.AcceptanceError, match="operation_history_changed"):
+        module.upgrade_transition(before, before | {"generation": 3}, history, history | {field: value})
+
+
+@pytest.fixture
 def release_input(module, tmp_path):
     app = tmp_path.resolve() / "Synthetic metadata.app"
     host = app / "Contents/Resources/host"

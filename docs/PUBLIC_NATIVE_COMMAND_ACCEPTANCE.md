@@ -32,9 +32,12 @@ invoke model inference or call providers.
 Optional `--upgrade-app` supplies a genuinely separate signed build whose two
 command helpers have exactly the same approved bytes. The driver reopens the
 first build's final installed state with the second shipped CLI and calls the
-existing sealed package over HTTP and stdio. It performs no reinstall and checks
-the slot generation, package identity, complete tool schema and original sealed
-package files. Both original apps remain unchanged. Omitting this input explicitly
+existing sealed package over HTTP and stdio. It requires the host-started runtime
+generation to advance by exactly one while preserving the installed app identity,
+package, settings, data path, port, credentials, startup policy and complete
+installation operation history. It performs no reinstall or upgrade operation and
+checks the complete tool schema and original sealed package files. Both original
+apps remain unchanged. Omitting this input explicitly
 leaves cross-build upgrade acceptance unverified.
 
 The inherited topology/crash controls remain trusted private embeddings and are

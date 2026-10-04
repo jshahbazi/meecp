@@ -16,6 +16,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import sqlite3
 import stat
 import subprocess
 
@@ -141,6 +142,45 @@ def review_answers(form):
     return answers
 
 
+UPGRADE_STABLE_FIELDS = ("slot_id", "package_digest", "package_path", "settings_digest",
+    "settings_path", "data_path", "public_port", "credential_ref", "start_policy", "wake_suppressed")
+
+
+def operation_snapshot(state):
+    path = state / "registry.sqlite"
+    details = path.lstat()
+    require(stat.S_ISREG(details.st_mode) and details.st_uid == os.getuid()
+        and stat.S_IMODE(details.st_mode) == 0o600 and path.resolve() == path,
+        "public_command_upgrade_unsafe_registry")
+    database = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=5)
+    try:
+        rows = database.execute("SELECT operation_id,action,slot_id,generation,status,error_code,"
+            "created_at,updated_at,idempotency_key,details FROM operations ORDER BY operation_id").fetchall()
+    finally:
+        database.close()
+    return {"operation_count": len(rows),
+        "completed_install_count": sum(row[1] == "install" and row[4] == "completed" for row in rows),
+        "upgrade_count": sum(row[1] == "upgrade" for row in rows),
+        "identity_sha256": hashlib.sha256(json.dumps(rows, separators=(",", ":")).encode()).hexdigest()}
+
+
+def upgrade_transition(before, after, operations_before, operations_after):
+    require(before.get("start_policy") == "host" and before.get("wake_suppressed") is False,
+        "public_command_upgrade_restart_policy_changed")
+    require(all(key in before and key in after and before[key] == after[key]
+        for key in UPGRADE_STABLE_FIELDS), "public_command_upgrade_slot_identity_changed")
+    generation = before.get("generation")
+    require(type(generation) is int and generation >= 1 and type(after.get("generation")) is int
+        and after["generation"] == generation + 1, "public_command_upgrade_runtime_generation_changed")
+    require(operations_before["operation_count"] == operations_before["completed_install_count"] == 1
+        and operations_before["upgrade_count"] == 0 and operations_after == operations_before,
+        "public_command_upgrade_operation_history_changed")
+    return {"runtime_generation_before": generation, "runtime_generation_after": after["generation"],
+        "expected_runtime_generation_delta": 1, "runtime_generation_transition_verified": True,
+        "installed_identity_preserved": True, "operation_history_preserved": True,
+        "operation_history_sha256": operations_before["identity_sha256"]}
+
+
 class PublicCommandHarness(command.CommandHarness):
     def __init__(self, *args, fixture, report, upgrade_app=None):
         super().__init__(*args, fixture=fixture)
@@ -229,6 +269,7 @@ class PublicCommandHarness(command.CommandHarness):
             require(hashlib.sha256(json.dumps(tools, sort_keys=True).encode()).hexdigest() == original["full_tool_contract_sha256"],
                 "public_command_upgrade_original_tools_changed")
             before = snapshot(package_root)
+            operations_before = operation_snapshot(state)
         finally:
             await self.shutdown(first, state)
         upgrade_root = self.root / "second signed build"; upgrade_root.mkdir(mode=0o700)
@@ -244,9 +285,8 @@ class PublicCommandHarness(command.CommandHarness):
         second = await successor.start(state, environment, home, enabled=False)
         try:
             slots = (await successor.cli(state, environment, home, "slots", "list", "--json"))["slots"]
-            require(len(slots) == 1 and all(slots[0][key] == slot[key]
-                for key in ("slot_id", "generation", "package_digest", "package_path")),
-                "public_command_upgrade_slot_identity_changed")
+            require(len(slots) == 1, "public_command_upgrade_slot_identity_changed")
+            transition = upgrade_transition(slot, slots[0], operations_before, operation_snapshot(state))
             calls = [("run", {"ok": True}, {"ok": True})]
             http = await successor.sdk(state, environment, home, slot["slot_id"], tools, calls, "http")
             stdio = await successor.sdk(state, environment, home, slot["slot_id"], tools, calls, "stdio")
@@ -256,7 +296,7 @@ class PublicCommandHarness(command.CommandHarness):
         require(not successor.children and snapshot(package_root) == before
             and validate_package(package_root).digest == package.digest, "public_command_upgrade_sealed_package_changed")
         return {"verified": True, "second_signed_app_supplied": True, "same_state_reopened": True,
-            "reinstalled": False, "selected_source_available": False, "slot_generation_preserved": True,
+            "reinstalled": False, "selected_source_available": False, **transition,
             "package_digest": package.digest, "full_tool_contract_sha256": original["full_tool_contract_sha256"],
             "sealed_package_preserved": True, "http_calls": http, "stdio_calls": stdio,
             "ordinary_owned_children_joined": True, "execution_authority": "shipped_signed_release_policy"}

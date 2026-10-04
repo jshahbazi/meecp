@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 from pydantic import Field, model_validator
 
 from .contracts import StrictModel
-from .preparation_contracts import PreparationError, canonical_bytes, contract_digest, load_contract
+from .preparation_contracts import PreparationError, RecipeReference, canonical_bytes, contract_digest, load_contract
 
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 Identity = Annotated[str, Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")]
@@ -33,6 +33,41 @@ class SourceFileV1(StrictModel):
     def path_valid(self):
         relative_path(self.path)
         return self
+
+
+class SourceMetadataV1(SourceFileV1):
+    """Explicitly reviewed identity disclosure; never authorizes content transfer."""
+    bytes: Annotated[int, Field(ge=1, le=16 * 1024 * 1024)]
+
+
+class RoleGuideV1(StrictModel):
+    role: Role
+    depends_on: Annotated[list[Role], Field(max_length=3)]
+    instructions: Annotated[str, Field(min_length=1, max_length=16384)]
+
+
+class AnalysisGuideV1(StrictModel):
+    schema_version: Literal[1] = 1
+    id: Annotated[str, Field(pattern=r"^[a-z][a-z0-9.-]{0,127}$")]
+    component: RecipeReference
+    roles: Annotated[list[RoleGuideV1], Field(min_length=4, max_length=4)]
+
+    @model_validator(mode="after")
+    def closed_graph(self):
+        seen = set()
+        for item in self.roles:
+            if item.role in seen or len(set(item.depends_on)) != len(item.depends_on) or not set(item.depends_on) <= seen:
+                raise ValueError("agent_guide_graph_invalid")
+            seen.add(item.role)
+        if [item.role for item in self.roles] != ["interface", "dependencies", "fixtures", "adapter"]:
+            raise ValueError("agent_guide_graph_invalid")
+        if len(canonical_bytes(self.model_dump())) > 65536:
+            raise ValueError("agent_guide_limit")
+        return self
+
+    @property
+    def digest(self):
+        return contract_digest("agent-analysis-guide-v1", self.model_dump())
 
 
 class ProviderV1(StrictModel):
@@ -60,6 +95,9 @@ class AnalysisRequestV1(StrictModel):
     expires_at: Annotated[int, Field(ge=1)]
     provider: ProviderV1
     selected_files: Annotated[list[SourceFileV1], Field(min_length=1, max_length=32)]
+    selected_metadata: Annotated[list[SourceMetadataV1], Field(max_length=32)] = Field(default_factory=list)
+    recipe: RecipeReference | None = None
+    guide: AnalysisGuideV1 | None = None
     intent: Annotated[str, Field(min_length=1, max_length=4096)]
     permitted_tools: list[Literal["read-selected-source", "propose-files"]]
     limits: AgentLimitsV1
@@ -80,6 +118,11 @@ class AnalysisRequestV1(StrictModel):
         paths = [item.path for item in self.selected_files]
         if paths != sorted(set(paths)) or sum(item.bytes for item in self.selected_files) > 128 * 1024:
             raise ValueError("agent_source_scope_invalid")
+        metadata_paths = [item.path for item in self.selected_metadata]
+        if metadata_paths != sorted(set(metadata_paths)) or set(paths) & set(metadata_paths):
+            raise ValueError("agent_source_scope_invalid")
+        if self.guide is not None and self.recipe is None:
+            raise ValueError("agent_guide_recipe_required")
         canonical_bytes(self.model_dump())
         return self
 

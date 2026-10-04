@@ -7,7 +7,7 @@ typed proposal artifacts remain untrusted in the separate attempt store.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import hashlib
 import json
 from pathlib import Path
@@ -21,9 +21,11 @@ from pydantic import Field, ValidationError, model_validator
 
 from .contracts import StrictModel
 from .preparation_agent_backend import AgentBackend, ENDPOINT
-from .preparation_agent_contracts import AnalysisRequestV1, AgentLimitsV1, SourceFileV1
+from .preparation_agent_contracts import AnalysisGuideV1, AnalysisRequestV1, AgentLimitsV1, SourceFileV1, SourceMetadataV1
+from .preparation_agent_guides import AnalysisGuideRegistry, builtin_analysis_guides
 from .preparation_agent_coordinator import AgentAttemptStore, AgentCoordinator, TERMINAL
 from .preparation_application_source import _read_file, _scan, application_source_records
+from .preparation_selection_snapshot import selection_snapshot_metadata
 from .preparation_contracts import PreparationError, RecipeReference, canonical_bytes, contract_digest, load_contract
 
 UUID = Annotated[str, Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")]
@@ -40,11 +42,14 @@ class AgentPlanRequest(StrictModel):
     provider_id: Reference
     model: Reference
     selected_paths: Annotated[list[str], Field(min_length=1, max_length=32)]
+    selected_metadata_paths: Annotated[list[str], Field(max_length=32)] = Field(default_factory=list)
     limits: AgentLimitsV1 = Field(default_factory=AgentLimitsV1)
 
     @model_validator(mode="after")
     def closed_selection(self):
-        if self.selected_paths != sorted(set(self.selected_paths)):
+        if (self.selected_paths != sorted(set(self.selected_paths))
+                or self.selected_metadata_paths != sorted(set(self.selected_metadata_paths))
+                or set(self.selected_paths) & set(self.selected_metadata_paths)):
             raise ValueError("agent_source_scope_invalid")
         return self
 
@@ -100,7 +105,7 @@ async def _join(task):
 
 
 class AgentPreparationHost:
-    def __init__(self, preparations, root: Path, *, providers=(), live_enabled=False, simulated_enabled=False):
+    def __init__(self, preparations, root: Path, *, providers=(), live_enabled=False, simulated_enabled=False, guides=None):
         if type(live_enabled) is not bool or type(simulated_enabled) is not bool:
             raise PreparationError("agent_host_configuration_invalid")
         self.preparations, self.imports, self.recipes = preparations, preparations.imports, preparations.recipes
@@ -108,6 +113,7 @@ class AgentPreparationHost:
         if len(self.providers) != len(providers) or len(providers) > 16:
             raise PreparationError("agent_provider_configuration_invalid")
         self.live_enabled, self.simulated_enabled = live_enabled, simulated_enabled
+        self.guides = AnalysisGuideRegistry(builtin_analysis_guides() if guides is None else guides)
         self.store = AgentAttemptStore(Path(root))
         self.tasks, self.stops, self.children = {}, {}, {}
         self.static_workers = set()
@@ -160,6 +166,8 @@ class AgentPreparationHost:
                 "execution_available": self._available(value)} for value in self.providers.values()],
             "files": [item for item in draft["source"]["files"] if 1 <= item["size"] <= 16384][:256],
             "files_truncated": sum(1 <= item["size"] <= 16384 for item in draft["source"]["files"]) > 256,
+            "metadata_files": [item for item in draft["source"]["files"] if 1 <= item["size"] <= 16 * 1024 * 1024][:256],
+            "metadata_files_truncated": sum(1 <= item["size"] <= 16 * 1024 * 1024 for item in draft["source"]["files"]) > 256,
             "recipes": [{"id": value["recipe_id"], "version": value["version"], "digest": value["digest"]}
                         for value in self.recipes.list() if value["state"] == "enabled"],
             "latest_job": next((self.get(json.loads(row[0])["job_id"]) for row in self.db.execute(
@@ -174,6 +182,7 @@ class AgentPreparationHost:
             source_revision=plan["source_revision"], authority_id=plan["plan_id"], expires_at=plan["expires_at"],
             provider={"backend": provider.backend.backend_id, "model": plan["model"], "credential_ref": provider.credential_ref},
             selected_files=plan["selected_files"], intent=draft["intent"],
+            selected_metadata=plan.get("selected_metadata", []), recipe=plan["recipe"], guide=plan.get("guide"),
             permitted_tools=["read-selected-source", "propose-files"], limits=plan["limits"])
 
     def _validate(self, plan, *, dispatch=False):
@@ -184,6 +193,8 @@ class AgentPreparationHost:
         draft = self._draft(plan["import_id"], plan["revision"])
         if contract_digest("agent-host-source-v1", draft["source"]) != plan["source_identity_digest"]:
             raise PreparationError("agent_source_identity_mismatch")
+        if self._snapshot_metadata(draft) != plan.get("snapshot_metadata_digest"):
+            raise PreparationError("agent_source_identity_mismatch")
         provider = self._provider(plan["provider_id"], plan["model"])
         if provider.digest != plan["provider_digest"]:
             raise PreparationError("agent_provider_changed")
@@ -193,10 +204,18 @@ class AgentPreparationHost:
         recipe = self.recipes.assert_admissible(ref["id"], ref["version"], ref["digest"])
         if recipe["epoch"] != plan["recipe_epoch"]:
             raise PreparationError("agent_recipe_changed")
+        if self.guides.resolve(recipe) != plan.get("guide"):
+            raise PreparationError("agent_guide_changed")
         request = self._request(plan, draft)
         if request.digest != plan["request_digest"]:
             raise PreparationError("agent_scope_changed")
         return request, draft, provider
+
+    @staticmethod
+    def _snapshot_metadata(draft):
+        data = json.dumps(asdict(selection_snapshot_metadata(draft)), sort_keys=True,
+            separators=(",", ":"), allow_nan=False).encode()
+        return hashlib.sha256(b"agent-host-snapshot-metadata-v1\0" + data).hexdigest()
 
     @staticmethod
     def _selected_bytes(draft, records, check):
@@ -251,12 +270,16 @@ class AgentPreparationHost:
             records = {item["path"]: item for item in draft["source"]["files"]}
             selected = [SourceFileV1(path=path, sha256=records[path]["sha256"], bytes=records[path]["size"]).model_dump()
                         for path in selection.selected_paths]
+            metadata = [SourceMetadataV1(path=path, sha256=records[path]["sha256"], bytes=records[path]["size"]).model_dump()
+                        for path in selection.selected_metadata_paths]
             plan = {"schema_version": 1, "plan_id": str(uuid.uuid4()), "import_id": selection.import_id,
                 "revision": selection.revision, "source_revision": draft["source"]["revision"],
                 "source_identity_digest": contract_digest("agent-host-source-v1", draft["source"]),
+                "snapshot_metadata_digest": self._snapshot_metadata(draft),
                 "recipe": selection.recipe.model_dump(), "recipe_epoch": recipe["epoch"],
                 "provider_id": provider.provider_id, "provider_digest": provider.digest, "model": selection.model,
-                "selected_files": selected, "limits": selection.limits.model_dump(),
+                "selected_files": selected, "selected_metadata": metadata, "guide": self.guides.resolve(recipe),
+                "limits": selection.limits.model_dump(),
                 "expires_at": int(time.time()) + 300 + selection.limits.wall_seconds, "job_id": None}
             request = self._request(plan, draft)
             plan["request_digest"] = request.digest
@@ -268,10 +291,11 @@ class AgentPreparationHost:
         # A joined recipe worker is not authority to create another worker after
         # shutdown has begun. This fence and task registration have no await.
         self._validate(plan)
-        worker = asyncio.create_task(asyncio.to_thread(self._selected_bytes, draft, selected, lambda: None))
+        worker = asyncio.create_task(asyncio.to_thread(self._selected_bytes, draft, selected + metadata, lambda: None))
         self.static_workers.add(worker)
         try:
-            request.selected_source(await asyncio.shield(worker))
+            captured = await asyncio.shield(worker)
+            request.selected_source({item["path"]: captured[item["path"]] for item in selected})
         except asyncio.CancelledError:
             try:
                 await _join(worker)
@@ -290,8 +314,9 @@ class AgentPreparationHost:
     def review(self, plan):
         provider = self._provider(plan["provider_id"], plan["model"])
         return {key: plan[key] for key in ("schema_version", "plan_id", "plan_digest", "import_id", "revision",
-            "source_revision", "recipe", "provider_id", "model", "selected_files", "limits", "expires_at")} | {
+            "source_revision", "recipe", "provider_id", "model", "selected_files", "selected_metadata", "guide", "limits", "expires_at")} | {
             "destination": ENDPOINT, "simulated": provider.simulated, "execution_available": self._available(provider),
+            "guide_digest": AnalysisGuideV1.model_validate(plan["guide"]).digest if plan["guide"] else None,
             "maximum_reserved_output_tokens": plan["limits"]["max_calls"] * plan["limits"]["max_output_tokens"],
             "monetary_ceiling_enforced": False, "remote_usage_after_cancel": "unknown",
             "blockers": [] if self._available(provider) else ["agent_execution_disabled"]}
@@ -355,8 +380,10 @@ class AgentPreparationHost:
         try:
             request, draft, provider = self._validate(plan, dispatch=True)
             job["state"] = "snapshotting"; self._save_job(job)
-            worker = asyncio.create_task(asyncio.to_thread(self._selected_bytes, draft, plan["selected_files"], check))
-            source = await asyncio.shield(worker)
+            worker = asyncio.create_task(asyncio.to_thread(self._selected_bytes, draft,
+                plan["selected_files"] + plan.get("selected_metadata", []), check))
+            captured = await asyncio.shield(worker)
+            source = {item["path"]: captured[item["path"]] for item in plan["selected_files"]}
             check()
             self._validate(plan, dispatch=True)
             def authority(current):

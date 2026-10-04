@@ -195,12 +195,8 @@ async def test_reviewed_scope_rechecked_before_dispatch(foundation, tmp_path, mu
         else:
             host.providers.clear()
         start = {"action": "analyze", "plan_id": plan["plan_id"], "plan_digest": plan["plan_digest"], "idempotency_key": str(uuid.uuid4())}
-        if mutation == "bytes":
-            job = await host.start(start)
-            assert (await completed(host, job))["state"] == "failed"
-        else:
-            with pytest.raises(ValueError):
-                await host.start(start)
+        with pytest.raises(ValueError):
+            await host.start(start)
         assert calls == [] and preparations.list() == []
     finally:
         await host.close()

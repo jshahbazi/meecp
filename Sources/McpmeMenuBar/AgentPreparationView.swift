@@ -57,12 +57,16 @@ extension AgentPreparationView {
             if path.hasSuffix("/plans"), body?.count == 2 {
                 completion(["schema_version": 1, "import_id": importID, "revision": 1, "source_revision": source,
                     "providers": [["provider_id": "configured", "models": ["configured-model"]]],
-                    "files": [["path": "worker.py", "sha256": digest, "size": 32]], "recipes": [recipe], "latest_job": NSNull()], nil)
+                    "files": [["path": "worker.py", "sha256": digest, "size": 32]],
+                    "metadata_files": [["path": "uv.lock", "sha256": digest, "size": 32768]], "recipes": [recipe], "latest_job": NSNull()], nil)
             } else if path.hasSuffix("/plans"), let body {
                 completion(["schema_version": 1, "import_id": importID, "revision": 1, "source_revision": source,
                     "plan_id": planID, "plan_digest": digest, "expires_at": Date().timeIntervalSince1970 + 300,
                     "provider_id": "configured", "model": "configured-model", "recipe": recipe,
                     "selected_files": [["path": "worker.py", "sha256": digest, "bytes": 32]], "limits": body["limits"]!,
+                    "selected_metadata": [["path": "uv.lock", "sha256": digest, "bytes": 32768]],
+                    "guide_digest": digest, "guide": ["schema_version": 1, "id": "test.guide", "component": recipe,
+                        "roles": ["interface", "dependencies", "fixtures", "adapter"].map { ["role": $0, "instructions": "Public contract", "depends_on": []] as [String: Any] }],
                     "destination": "https://api.openai.com/v1/responses", "simulated": true,
                     "monetary_ceiling_enforced": false, "execution_available": true], nil)
             } else if path.hasSuffix("/start"), body?["action"] as? String == "analyze", let body {
@@ -76,9 +80,11 @@ extension AgentPreparationView {
             else { completion(row("succeeded", candidate: true), nil) }
         }
         view.loadButton.performClick(nil)
-        guard view.fileControls.count == 1, !view.sendButton.isEnabled else { return false }
-        view.fileControls[0].performClick(nil); view.reviewButton.performClick(nil)
+        guard view.fileControls.count == 1, view.metadataControls.count == 1, view.metadataControls[0].state == .off, !view.sendButton.isEnabled else { return false }
+        view.fileControls[0].performClick(nil); view.metadataControls[0].performClick(nil); view.reviewButton.performClick(nil)
         guard view.sendButton.isEnabled, view.reviewLabel.stringValue.contains("worker.py"),
+              view.reviewLabel.stringValue.contains("Identity-only transfer"), view.reviewLabel.stringValue.contains("uv.lock"),
+              view.reviewLabel.stringValue.contains("test.guide"),
               view.reviewLabel.stringValue.contains("dollar ceiling"), view.reviewLabel.stringValue.contains("Simulated") else { return false }
         view.sendButton.performClick(nil)
         guard view.blocksNavigation, view.pendingStart != nil, starts.count == 1 else { return false }
@@ -156,6 +162,7 @@ final class AgentPreparationView: NSStackView {
     private let modelPicker = NSPopUpButton()
     private let recipePicker = NSPopUpButton()
     private var fileControls: [NSButton] = []
+    private var metadataControls: [NSButton] = []
     private let files = NSStackView()
     private let reviewLabel = NSTextField(wrappingLabelWithString: "Load configured providers and choose the captured files to review for transfer.")
     private let status = NSTextField(wrappingLabelWithString: "")
@@ -224,6 +231,7 @@ final class AgentPreparationView: NSStackView {
         adoptButton?.isEnabled = editable && job?.state == "succeeded" && job?.settled == true && job?.candidateDigest != nil && job?.context == context
         for control in [providerPicker, modelPicker, recipePicker, transfer, output, deadline] as [NSControl] { control.isEnabled = editable }
         fileControls.forEach { $0.isEnabled = editable }
+        metadataControls.forEach { $0.isEnabled = editable }
     }
     private func fail(_ code: String) {
         errorCode = preparationCode(code) ?? "agent_request_failed"
@@ -267,10 +275,22 @@ final class AgentPreparationView: NSStackView {
             for value in recipes { self.recipePicker.addItem(withTitle: (value["id"] as! String) + " " + (value["version"] as! String)); self.recipePicker.lastItem?.representedObject = value }
             self.reloadModels()
             self.fileControls.forEach { self.files.removeArrangedSubview($0); $0.removeFromSuperview() }; self.fileControls = []
+            self.metadataControls.forEach { self.files.removeArrangedSubview($0); $0.removeFromSuperview() }; self.metadataControls = []
             for value in records {
                 let button = NSButton(checkboxWithTitle: value["path"] as! String, target: self, action: #selector(self.selectionChanged))
                 button.setAccessibilityLabel("Transfer " + button.title); button.state = .off
                 self.fileControls.append(button); self.files.addArrangedSubview(button)
+            }
+            let metadata = object["metadata_files"] as? [[String: Any]] ?? []
+            guard metadata.count <= 256, metadata.allSatisfy({ preparationText($0["path"], maximum: 256) != nil && preparationDigest($0["sha256"]) != nil && (1...16777216).contains(preparationInteger($0["size"]) ?? 0) }) else { self.fail("agent_options_invalid"); return }
+            for value in metadata {
+                let path = value["path"] as! String
+                let recommended = ["LICENSE", "LICENSE.txt", "LICENSE.md", "pyproject.toml", "uv.lock"].contains((path as NSString).lastPathComponent)
+                let button = NSButton(checkboxWithTitle: "Identity only: " + path + (recommended ? " (recommended)" : ""), target: self, action: #selector(self.selectionChanged))
+                button.identifier = NSUserInterfaceItemIdentifier(path)
+                button.setAccessibilityLabel(button.title + "; sends path, byte count and SHA-256, no contents")
+                button.state = .off
+                self.metadataControls.append(button); self.files.addArrangedSubview(button)
             }
             if let latest = object["latest_job"] as? [String: Any], let job = AgentPreparationJob(latest), job.context.importID == context.importID { self.job = job }
             self.status.stringValue = providers.isEmpty ? "No agent provider is configured. Live analysis is unavailable." : "Choose the files to transfer. Files are never sent while loading options."
@@ -284,9 +304,12 @@ final class AgentPreparationView: NSStackView {
               let tokens = Int(output.stringValue), (64...16384).contains(tokens),
               let seconds = Int(deadline.stringValue), (1...600).contains(seconds) else { return nil }
         let paths = fileControls.filter { $0.state == .on }.map(\.title).sorted()
+        let metadataPaths = metadataControls.filter { $0.state == .on }.compactMap { $0.identifier?.rawValue }.sorted()
         guard (1...32).contains(paths.count) else { return nil }
+        guard metadataPaths.count <= 32, Set(paths).isDisjoint(with: metadataPaths) else { return nil }
         return ["import_id": context.importID, "revision": context.revision, "recipe": recipe,
             "provider_id": provider, "model": model, "selected_paths": paths,
+            "selected_metadata_paths": metadataPaths,
             "limits": ["max_calls": 4, "max_parallel": 3, "max_transfer_bytes": bytes, "max_output_tokens": tokens,
                        "wall_seconds": seconds, "max_artifact_bytes": 131072]]
     }
@@ -316,6 +339,13 @@ final class AgentPreparationView: NSStackView {
                 "A dollar ceiling is not enforced. Remote usage after cancellation is unknown.",
                 "Selected files for transfer:"]
             lines += records.map { ($0["path"] as! String) + " · \($0["bytes"]!) bytes · " + ($0["sha256"] as! String) }
+            let metadata = object["selected_metadata"] as? [[String: Any]] ?? []
+            lines += ["Identity-only transfer (contents excluded):"]
+            lines += metadata.map { ($0["path"] as! String) + " · \($0["bytes"]!) original bytes · " + ($0["sha256"] as! String) }
+            if let guide = object["guide"] as? [String: Any], let id = guide["id"] as? String {
+                lines += ["Trusted proposal contract: " + id + " · " + (object["guide_digest"] as! String),
+                    "The provider also receives the selected recipe identity, public output contract and task dependencies."]
+            }
             self.reviewLabel.stringValue = lines.joined(separator: "\n")
             self.status.stringValue = preparationBoolean(object["execution_available"]) == true ? "Review this transfer scope, then choose Send Reviewed Files." : "Agent execution is disabled. This review sends nothing."
             self.refreshAvailability()
@@ -335,6 +365,18 @@ final class AgentPreparationView: NSStackView {
               let records = object["selected_files"] as? [[String: Any]], records.count <= 32,
               records.compactMap({ $0["path"] as? String }) == body["selected_paths"] as? [String],
               records.allSatisfy({ preparationText($0["path"], maximum: 256) != nil && preparationDigest($0["sha256"]) != nil && (1...16384).contains(preparationInteger($0["bytes"]) ?? 0) }) else { return false }
+        let metadata = object["selected_metadata"] as? [[String: Any]] ?? []
+        guard metadata.count <= 32,
+              metadata.compactMap({ $0["path"] as? String }) == (body["selected_metadata_paths"] as? [String] ?? []),
+              metadata.allSatisfy({ preparationText($0["path"], maximum: 256) != nil && preparationDigest($0["sha256"]) != nil && (1...16777216).contains(preparationInteger($0["bytes"]) ?? 0) }) else { return false }
+        if let guide = object["guide"] as? [String: Any] {
+            guard preparationInteger(guide["schema_version"]) == 1, preparationText(guide["id"], maximum: 128) != nil,
+                  preparationDigest(object["guide_digest"]) != nil,
+                  let component = guide["component"] as? [String: Any], preparationDigest(component["digest"]) != nil,
+                  let roles = guide["roles"] as? [[String: Any]], roles.count == 4,
+                  roles.compactMap({ $0["role"] as? String }) == ["interface", "dependencies", "fixtures", "adapter"],
+                  roles.allSatisfy({ preparationText($0["instructions"], maximum: 16384) != nil && ($0["depends_on"] as? [String]) != nil }) else { return false }
+        } else if object["guide"] != nil && !(object["guide"] is NSNull) { return false }
         return true
     }
     @objc func startAnalysis() {

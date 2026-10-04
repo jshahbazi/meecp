@@ -14,11 +14,12 @@ metadata, then reproduced rejection of advertised binary identity-only choices.
 Repair `9de90fc` independently passed 147 focused checks, a release Swift build,
 the native agent self-test and the actual request-only confined pipeline. It is
 integrated through `5d87e93`; all published locked component and recipe bytes are
-preserved. The separately frozen unlocked checkpoint `f10e13a` repairs resolver
-metadata continuity and has passing actual private resolution, build, SDK probe,
-attachment and relocation evidence. Its independent review and request-only
-integration remain active. All provider evidence uses simulated calls; there are
-zero live calls. Final artifact acceptance
+preserved. Unlocked checkpoint `f10e13a` independently passed 266 focused checks,
+34 additional controls and the actual private pipeline. It is integrated through
+`b7c1e21`, whose request-only actual dependency/build/SDK/attachment/relocation
+pipeline also passed. A separate source inventory confirmed that normal packaged
+users cannot configure an agent provider; host and native setup work are active.
+All provider evidence uses simulated calls; there are zero live calls. Final artifact acceptance
 is open. This table tracks implementation and acceptance separately; no entire
 A0–A5 release gate is closed.
 
@@ -93,10 +94,10 @@ being fixed; **Separate gate** covers additional capability work.
 | A5 | Host-validated candidate adoption through ordinary preparation | Verified checkpoint | Original-source and integrated locked-adapter adoption retain validated metadata through the short commit and deny actual mutation. Unlocked resolver-proof continuity is a separate active repair; final combined controls remain. |
 | A5 | Native agent controls and owner-only shared routes | Verified checkpoint | Independent 50-case owner-route/backend recheck and actual parent handlers passed on 2dc8508. New Draft disables before transfer; button/direct navigation preserve the draft. Root release build and all three UI self-tests passed. Final installed/native flow remains. |
 | A5 | Unfamiliar supported Python source through proposal, build, SDK probe and attachment | Verified checkpoint | Independent actual private build, SDK probe, attachment and relocation passed with four simulated provider calls and zero live calls. Live-provider and generated-adapter acceptance remain open. |
-| A5 | Live backend, selected credentials and model compatibility | Open | Requires a selected configured provider; no credential discovery or live dispatch has occurred. |
+| A5 | Live backend, selected credentials and model compatibility | In progress | Independent inventory confirmed no normal-user packaged provider setup. Separate host registry/private credential storage and secure native configuration lanes are active. Selected live provider/model acceptance remains open; no credential discovery or live dispatch has occurred. |
 | A5 | Governed adapter derivation and licensed derived artifacts | Verified checkpoint | Selection repair fe7d6d2 cleared 172 independent checks; both mutation controls deny selection at revision 1. Locked component/bundle and all legacy hashes remain unchanged. Integrated; final artifact and new request-contract acceptance remain. |
 | A5 | Locked unfamiliar Python directory to generated adapter and app | Verified checkpoint | Root's independent actual private build, confined SDK, matching attachment, source/state removal and confined relocation passed on the exact frozen source composition. Four simulated calls, zero live calls; provider fixtures still need replacement with the reviewed request-only contract and live acceptance. |
-| A5 | Unlocked unfamiliar directories needing a generated adapter | In review | Frozen f10e13a repairs the reproduced original resolver-lock race. Actual v4 passed private uv resolution, build, confined SDK, revision-2 attachment, source/state removal and relocated confined SDK verification in 24.144 seconds, including an unknown binary asset. Independent review, root/request-guide integration and native/installed acceptance remain. |
+| A5 | Unlocked unfamiliar directories needing a generated adapter | Verified checkpoint | Independent review cleared f10e13a; integrated through b7c1e21. The actual combined request-only pipeline passed in 26.306 seconds with ordinary dependency resolution, build, confined SDK, revision-2 attachment and relocation after source/state removal. It retained an unknown binary asset and inferred an unpinned dependency only from reviewed source. Native/installed/live acceptance remains. |
 | A5 | Final packaged/native generated-adapter flow | Open | Complete after request-contract repair, locked/unlocked derivation integration and final artifact review. |
 | A5 | Integrated installed/native path and final adversarial acceptance | Open | Complete after source integration and concrete live acceptance. |
 | A6: broader modular coverage | Host component/recipe extension seams | Verified checkpoint | Each new capability needs its own implementation and evidence. |
@@ -154,13 +155,13 @@ until the final combined families and artifact have the applicable evidence.
 | First public automatic Python/MCP/ONNX capability | Open | A0, A0R and A1–A2 must pass on the final installed/relocated artifact before enabling it. |
 | Independent CLI, local LLM and agent capability enablement | Open | Enable individually after A3–A5 acceptance. |
 | Final independent whole-phase adversarial review and repairs | Open | Review the complete integrated result; checkpoint reviews have already produced repairs. |
-| Publish verified work to the working branch | In progress | Reviewed common/A4/A5 wiring, CLI repair, locked adapter selection repair and cold inspection are integrated on codex/phase3-llm-integration. Unlocked adapters and provider-request repair remain separate active lanes awaiting independent clearance and integration. |
+| Publish verified work to the working branch | In progress | Reviewed common/A4/A5 wiring, CLI repair, locked/unlocked adapters, request repair and cold inspection are integrated on codex/phase3-llm-integration. Provider host/native configuration remains in separate active lanes awaiting review and integration. |
 
 ## Current critical path
 
-1. Finish independent review of the frozen unlocked checkpoint and integrate
-   it with the independently cleared provider-request repair. Run the combined
-   actual unlocked request-only pipeline without hidden fixture dependencies.
+1. Complete normal-user provider configuration, independently review and
+   integrate host and native setup. Finish the native agent-to-resolution handoff
+   and selected live-provider acceptance after explicit provider/model selection.
 2. Freeze the complete source composition. CLI recipe 1.0.1 is minted;
    mint the coherent next text-generation version after backend freeze and run
    the full combined regression suite.

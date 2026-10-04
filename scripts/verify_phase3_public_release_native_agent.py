@@ -25,9 +25,32 @@ common = agent.common
 TEXTGEN_VERSION = "1.0.10"
 
 
-def combined_capabilities(value, engine, task):
-    common.require(engine[:2] == ("textgen-engine-v1", TEXTGEN_VERSION)
-        and task[:2] == ("text-generate-v1", TEXTGEN_VERSION), "combined_textgen_version_changed")
+def closed_agent_record(value):
+    record = value.get("agent") if type(value) is dict else None
+    common.require(type(record) is dict and set(record) == {"components", "providers", "unlocked_resolution"}
+        and type(record["components"]) is list and record["components"] == []
+        and type(record["providers"]) is list and record["providers"] == []
+        and record["unlocked_resolution"] is False, "combined_public_agent_policy_open")
+
+
+def closed_release_policy(value):
+    # Called only after common.verify imports the relocated packaged backend.
+    from mcpme.preparation_release_policy import ReleasePolicy
+    closed_agent_record(value)
+    try:
+        policy = ReleasePolicy.model_validate(value)
+        preparation, agent_admission, command_admission = policy.admissions()
+    except ValueError:
+        raise common.AcceptanceError("combined_release_policy_invalid") from None
+    common.require(preparation is not None and agent_admission is None and command_admission is not None,
+        "combined_release_policy_invalid")
+    return policy
+
+
+def combined_capabilities(value, engine, task, policy):
+    from mcpme.preparation_textgen import ENGINE_ID, TASK_ID
+    common.require(engine[:2] == (ENGINE_ID, TEXTGEN_VERSION)
+        and task[:2] == (TASK_ID, TEXTGEN_VERSION), "combined_textgen_version_changed")
     identity = textgen.public_textgen_capabilities(value, engine, task)
     execution = value["preparation_execution"]
     families = {tuple(item) for item in execution.get("families", ())}
@@ -40,6 +63,10 @@ def combined_capabilities(value, engine, task):
     common.require(not any(key[0].startswith("agent-") for key in families)
         and not any(key[0].startswith("agent-") for group in closures for key in group),
         "combined_public_agent_admitted")
+    common.require(families == {item.key for item in policy.preparation.families}
+        and closures == {frozenset(item.key for item in group) for group in policy.preparation.recipe_component_sets}
+        and set(value["preparation_resolution"]["candidate_kinds"]) == set(policy.preparation.resolution_candidate_kinds),
+        "combined_release_policy_capabilities_changed")
     return identity
 
 
@@ -75,11 +102,13 @@ class PublicReleaseAgentHarness(agent.Harness):
 
     async def defaults(self):
         common.stage("production_defaults", "defaults")
+        _, policy_value = command._json(self.host / command.POLICY_PATH)
+        policy = closed_release_policy(policy_value)
         base, state, home, environment = self.new_case("combined-agent-closed-defaults")
         child = await self.start(state, environment, home, enabled=False)
         try:
             identity = combined_capabilities(
-                await self.cli(state, environment, home, "capabilities", "--json"), *textgen_keys())
+                await self.cli(state, environment, home, "capabilities", "--json"), *textgen_keys(), policy)
             providers = await self.get(state, "/v1/agent-providers")
             common.require(providers["providers"] == [] and providers["live_execution_enabled"] is False,
                 "combined_public_agent_enabled")
@@ -92,6 +121,7 @@ class PublicReleaseAgentHarness(agent.Harness):
                 "combined_public_agent_job_created")
             self.combined_report["public_defaults"] = {"passed": True, "admission_digest": identity,
                 "ordinary_cli_launcher": True, "execution_factory_injected": False,
+                "typed_release_policy_validated": True, "closed_agent_record_validated": True,
                 "python_mcp_onnx_cli_textgen_admitted": True, "provider_registry_empty": True,
                 "live_agent_enabled": False, "job_counts": counts, "review_created_jobs": False}
             return True
@@ -121,7 +151,7 @@ async def verify(host_path, native_path, report):
     common.require(app.suffix == ".app" and native_path.parent == app / "Contents/MacOS"
         and host_path == app / "Contents/Resources/host", "combined_signed_app_required")
     policy_bytes, policy = command._json(host_path / command.POLICY_PATH)
-    common.require(policy.get("agent", "missing") is None, "combined_public_agent_policy_open")
+    closed_agent_record(policy)
     command.signature(app, deep=True)
     common.verify_native_app_signature(native_path)
     original_app = command.snapshot(app)

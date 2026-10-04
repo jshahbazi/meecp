@@ -1,13 +1,18 @@
 # Native agent acceptance against a combined signed release
 
 `scripts/verify_phase3_public_release_native_agent.py` accepts a clean signed app
-whose shipped policy admits ordinary Python/MCP, ONNX, CLI and TextGen `1.0.10`,
-while its agent record remains null. It adds no public gate or runtime setting.
+whose shipped policy admits ordinary Python/MCP, ONNX, CLI and TextGen `1.0.10`
+with engine `llamacpp-cpu-v1`. Its agent record must contain exactly empty
+`components` and `providers` lists and `unlocked_resolution: false`. It adds no
+public gate or runtime setting.
 
 The initial host starts through the shipped `bin/mcpme serve` command. Its actual
 capabilities must identify the exact ordinary family and recipe closures,
 ordinary resolution producer `1.0.1`, package schemas `[1, 2]`, and the four
-supported execution profiles. Agent families or closures are rejected. The
+supported execution profiles. After relocating the signed app, the packaged
+`ReleasePolicy` parser validates the complete policy and its closed agent record;
+the actual capability families and closures must match that typed policy exactly.
+Agent families or closures are rejected. The
 provider registry must be empty, live execution false, and both API job lists
 and all four preparation/resolution/agent ledger counts must be zero.
 

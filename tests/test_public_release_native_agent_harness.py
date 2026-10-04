@@ -180,19 +180,33 @@ def test_textgen_keys_bind_actual_current_producer_to_literal_policy(driver, mon
     from mcpme import preparation_textgen
     assert ENGINE[0] == preparation_textgen.ENGINE_ID == "llamacpp-cpu-v1"
     assert TASK[0] == preparation_textgen.TASK_ID == "text-generate-v1"
-    assert preparation_textgen.VERSION == "1.0.12"
-    assert {item.key for item in preparation_textgen.references()} == {ENGINE, TASK}
-    if previous_version:
-        monkeypatch.setattr(preparation_textgen, "VERSION", previous_version)
+    assert preparation_textgen.VERSION == "1.0.13"
+    if previous_version is None:
         with pytest.raises(driver.common.AcceptanceError, match="combined_textgen_version_changed"):
             driver.textgen_keys()
     else:
-        assert driver.textgen_keys() == (ENGINE, TASK)
+        monkeypatch.setattr(preparation_textgen, "VERSION", previous_version)
+        with pytest.raises(driver.common.AcceptanceError, match="combined_textgen_version_changed"):
+            driver.textgen_keys()
 
 
-def test_historical_policy_literal_and_current_agent_delta():
+def test_historical_driver_accepts_only_explicit_frozen_12_refs(driver, monkeypatch):
+    from types import SimpleNamespace
+    from mcpme import preparation_textgen
+    monkeypatch.setattr(preparation_textgen, "VERSION", "1.0.12")
+    monkeypatch.setattr(preparation_textgen, "references", lambda: [
+        SimpleNamespace(id=ENGINE[0], key=ENGINE), SimpleNamespace(id=TASK[0], key=TASK)])
+    assert driver.textgen_keys() == (ENGINE, TASK)
+
+
+def test_historical_policy_literal_remains_frozen():
     assert hashlib.sha256(ROOT_POLICY_JSON.encode()).hexdigest() == (
         "c8fa615def941e66e85a68ac0e7cc46dd7caf1797918fc03fdd5277ac2326522")
+    assert json.loads(ROOT_POLICY_JSON)["agent"] == {
+        "components": [], "providers": [], "unlocked_resolution": False}
+
+
+def test_current13_policy_changes_only_textgen_references():
     from mcpme.preparation_release_policy import POLICY_PATH
     historical = json.loads(ROOT_POLICY_JSON)
     expected = copy.deepcopy(historical)
@@ -209,10 +223,17 @@ def test_historical_policy_literal_and_current_agent_delta():
                         "models": ["gpt-6.1-sol"]}],
         "unlocked_resolution": True,
     }
+    expected["preparation"]["families"][3] = {"id": "text-generate-v1", "version": "1.0.13",
+        "digest": "936c30b0ede738344713d37d62cb71dbfea59b7375dfa24ea023d9693bf9274a"}
+    expected["preparation"]["recipe_component_sets"][4] = [
+        {"id": "llamacpp-cpu-v1", "version": "1.0.13",
+         "digest": "899aa082f51bbe079968ce4540fa801215adcb9f8a2fc622844e4e63ee133c9e"},
+        {"id": "text-generate-v1", "version": "1.0.13",
+         "digest": "936c30b0ede738344713d37d62cb71dbfea59b7375dfa24ea023d9693bf9274a"}]
     policy_path = Path(__file__).resolve().parents[1] / POLICY_PATH
     assert json.loads(policy_path.read_bytes()) == expected
     assert hashlib.sha256(policy_path.read_bytes()).hexdigest() == (
-        "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375")
+        "8a9a8fd69217352b49e0e338d4d652df8cebcac86609edae1190a88cd2d9a592")
 
 
 def test_lifecycle_policy_guard_accepts_historical_and_current_bytes(tmp_path, monkeypatch):
@@ -223,7 +244,7 @@ def test_lifecycle_policy_guard_accepts_historical_and_current_bytes(tmp_path, m
     policy_path = host / management.POLICY_PATH
     policy_path.parent.mkdir(parents=True)
     for raw, expected_scope, expected in ((ROOT_POLICY_JSON.encode(), "closed", "c8fa615def941e66e85a68ac0e7cc46dd7caf1797918fc03fdd5277ac2326522"),
-                          ((Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes(), "selected_model_accepted", "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375")):
+                          ((Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes(), "selected_model_accepted", "8a9a8fd69217352b49e0e338d4d652df8cebcac86609edae1190a88cd2d9a592")):
         policy_path.write_bytes(raw)
         scope, observed = lifecycle.verify_lifecycle_policy(host)
         assert observed == expected and scope == expected_scope

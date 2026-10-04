@@ -543,6 +543,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        agentPreparationView.clearCredentialEntry()
         if installing { return .terminateCancel }
         if quitting { return .terminateLater }
         quitting = true; timer?.invalidate(); timer = nil
@@ -561,6 +562,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         pollInFlight = false; importsPollInFlight = false; downloadsPolling = false
         setupRequest = false; detailRequests = []; pendingAppRequests = []
         preparationView.invalidate(); recipesView.invalidate(); agentPreparationView.invalidate()
+        agentPreparationView.resetProviderConnection()
     }
 
     private func startHost() {
@@ -1654,6 +1656,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     func windowWillClose(_ notification: Notification) {
+        if notification.object as? NSWindow === window { agentPreparationView.clearCredentialEntry() }
         if notification.object as? NSWindow === window, draftDirty, currentDraft?.editable == true, !setupRequest {
             saveCurrentDraft { _ in }
         }

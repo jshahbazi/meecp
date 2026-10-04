@@ -35,7 +35,8 @@ async def test_actual_cli_scaffold_check_add_enable_binds_current_exact_resolved
         assert enabled["state"] == "enabled" and not enabled["runnable"]
 
 
-def test_old_component_metadata_and_bundle_remain_exact_but_forms_offer_only_current():
+@pytest.mark.parametrize("kind", ["python-callable", "python-mcp"])
+def test_old_component_metadata_and_bundle_remain_exact_but_forms_offer_only_current(kind):
     old = validate_bundle(ROOT / "templates/builtin-recipes/resolved-python-v1")
     current = validate_bundle(ROOT / "templates/builtin-recipes/resolved-python-v1-0-1")
     old_step, = old["manifest"]["steps"]
@@ -45,9 +46,11 @@ def test_old_component_metadata_and_bundle_remain_exact_but_forms_offer_only_cur
     assert component_catalog()["resolved-python-v1@1.0.0"]["digest"] == old_step["digest"]
     assert (new_step["component"], new_step["version"], new_step["digest"]) == reference.key
     provider = ResolvedPythonFormProvider()
-    candidate = {"_resolved_path": True}
+    candidate = {"kind": kind, "_resolved_path": True}
     assert not provider.accepts(candidate, old)
     assert provider.accepts(candidate, current)
+    for other_kind in ("agent-python-adapter", "agent-unlocked-python-adapter", "native-json-command"):
+        assert not provider.accepts({**candidate, "kind": other_kind}, current)
     for key in ("component", "version", "digest"):
         changed = {"manifest": {"steps": [{**new_step, key: "invalid"}]}}
         assert not provider.accepts(candidate, changed)

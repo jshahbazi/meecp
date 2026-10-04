@@ -375,7 +375,7 @@ class AgentPreparationHost:
             job.update(state="validating", proposal_digest=result.digest); self._save_job(job)
             def validate_candidate():
                 check()
-                descriptor, draft = self._candidate_descriptor(job, plan, result)
+                descriptor, draft = self._candidate_descriptor(job, plan, result, check)
                 self._candidate_binding(descriptor, draft)
                 check()
                 return {"descriptor_digest": descriptor.digest, "recipe": descriptor.recipe.model_dump()}
@@ -400,6 +400,8 @@ class AgentPreparationHost:
                         await _join(owned)
                     except BaseException:
                         pass
+            if job["state"] != "succeeded":
+                self._cancel_generated_candidate(job)
             if job["attempt_id"] is not None:
                 attempt = self.store.get(job["attempt_id"])
                 if attempt["state"] not in TERMINAL:
@@ -409,15 +411,36 @@ class AgentPreparationHost:
             self._save_job(job)
             self.tasks.pop(job_id, None); self.stops.pop(job_id, None); self.children.pop(job_id, None)
 
+    def _cancel_generated_candidate(self, job):
+        for family in self.preparations.families.values():
+            if hasattr(family, "cancel_agent_proposal"):
+                family.cancel_agent_proposal(job)
+
     def _candidate(self, job):
         plan = self._plan(job["plan_id"])
         request, _, _ = self._validate(plan)
         result = self.store.proposal(job["attempt_id"], request, lambda _: self._validate(plan))
         return self._candidate_descriptor(job, plan, result)
 
-    def _candidate_descriptor(self, job, plan, result):
+    def _candidate_descriptor(self, job, plan, result, check=lambda: None):
         if result.digest != job["proposal_digest"] or any(task.unresolved for task in result.tasks):
             raise PreparationError("agent_candidate_unresolved")
+        # Only the exact registered trusted family selected by the reviewed
+        # recipe may interpret generated source. Other families retain their
+        # existing JSON-only blocker. A proposal cannot register a component.
+        ref = plan["recipe"]
+        record = self.recipes.resolve(ref["id"], ref["version"], ref["digest"])
+        keys = {(item["component"], item["version"], item["digest"]) for item in record["manifest"]["steps"]}
+        matching = [family for family in self.preparations.families.values() if keys == {
+            item.reference.key for item in getattr(family, "components", (family.component,))}]
+        if len(matching) == 1 and hasattr(matching[0], "freeze_agent_proposal"):
+            observed = self._draft(job["import_id"], job["revision"])
+            descriptor = matching[0].freeze_agent_proposal(job, plan, result, observed, check)
+            descriptor, observed, _ = self.preparations._bound_descriptor(job["import_id"], job["revision"],
+                descriptor.model_dump(mode="json", exclude_none=True), enforce_selection=False)
+            if descriptor.recipe.model_dump() != plan["recipe"]:
+                raise PreparationError("agent_candidate_recipe_mismatch")
+            return descriptor, observed
         if any(not file.path.endswith(".json") for task in result.tasks for file in task.files):
             raise PreparationError("agent_generated_source_requires_review")
         files = result.tasks[-1].files
@@ -432,6 +455,8 @@ class AgentPreparationHost:
     def _candidate_binding(self, descriptor, draft):
         if descriptor.schema_version == 2:
             family = self.preparations.family_for(descriptor)
+            if hasattr(family, "selection_binding"):
+                return family.selection_binding(descriptor, draft)
             if hasattr(family, "resolution_binding"):
                 binding = family.resolution_binding(descriptor)
                 if binding is not None:
@@ -543,9 +568,11 @@ class AgentPreparationHost:
             self._validate(plan)
             return True
         def prepare():
-            if stop.is_set():
-                raise PreparationError("agent_cancel_requested")
-            descriptor, observed = self._candidate_descriptor(job, plan, result)
+            def check():
+                if stop.is_set():
+                    raise PreparationError("agent_cancel_requested")
+            check()
+            descriptor, observed = self._candidate_descriptor(job, plan, result, check)
             candidate_id, resolution_digest = self._candidate_binding(descriptor, observed)
             checked = self.preparations.prepare_descriptor_selection(job["import_id"], job["revision"],
                 descriptor.model_dump(mode="json", exclude_none=True), candidate_id=candidate_id,
@@ -582,6 +609,8 @@ class AgentPreparationHost:
                     await _join(worker)
                 except BaseException:
                     pass
+            if committed is None and job["state"] == "canceled":
+                self._cancel_generated_candidate(job)
             job["local_io_settled"] = True; self._save_job(job)
             self.tasks.pop(job["job_id"], None); self.stops.pop(job["job_id"], None)
 

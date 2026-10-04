@@ -710,6 +710,14 @@ class ImportStore:
                 shutil.rmtree(directory)
             raise
 
+    def create_service(self, source: dict, **choices) -> dict[str, Any]:
+        from .preparation_service_source import create
+        return create(self, source, **choices)
+
+    def revise_service(self, draft_id: str, revision: int, source: dict) -> dict[str, Any]:
+        from .preparation_service_source import revise
+        return revise(self, draft_id, revision, source)
+
     def inspect(self, draft_id: str) -> dict[str, Any]:
         with self._lock:
             return self._get(draft_id)
@@ -906,6 +914,8 @@ class ImportStore:
             specification["retention_seconds"] = RETENTION_SECONDS
             source_instruction = (f"Use the source snapshot at {draft['source']['snapshot_path']}; its resolved source identity is "
                                   if "snapshot_path" in draft["source"] else
+                                  "Use the selected versioned service connection; its resolved source identity is "
+                                  if draft["source"]["kind"] == "service_connection" else
                                   "Use the selected captured artifact collection; its resolved source identity is ")
             specification["agent_instructions"] = (
                 f"Prepare a sealed mcpme package for import {draft_id}, revision {revision}. "
@@ -1091,6 +1101,8 @@ class ImportStore:
                             raise ImportError("package_digest_mismatch")
                         if admission is not None:
                             admission(draft, sealed)
+                        elif draft["source"]["kind"] == "service_connection":
+                            raise ImportError("service_preparation_receipt_required")
                         if existing is None:
                             if target_identity is None:
                                 ensure_private_directory(final.parent)
@@ -1100,6 +1112,11 @@ class ImportStore:
                             attachment = _attachment(sealed)
                             attachment["path"] = str(final)
                             draft["attachment"] = attachment
+                            if draft["source"]["kind"] == "service_connection":
+                                from .preparation_service_source import checked_source
+                                connection = checked_source(draft).connection
+                                draft["requirements"] = {**draft["requirements"],
+                                    "secret_references": connection.secret_references.model_dump()}
                             self._save(draft)
                 if not retry:
                     committed = True

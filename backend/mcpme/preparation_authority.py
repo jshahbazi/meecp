@@ -14,6 +14,7 @@ import uuid
 
 from .ownership_receipts import verify_receipt
 from .preparation_inputs import parse_preparation_descriptor, descriptor_tools
+from .preparation_service_contracts import parse_policy
 from .preparation_contracts import ExecutionPolicy, PreparationError, canonical_bytes, contract_digest
 
 MAX_EXECUTION_PLANS = 1024
@@ -106,7 +107,7 @@ class PreparationAuthority:
                 existing_start(self, "preparation", job, authority)
                 return job
         return self.reserve(plan["import_id"], plan["revision"], plan["descriptor"],
-                            ExecutionPolicy.model_validate(plan["execution_policy"]), idempotency_key=idempotency_key,
+                            parse_policy(plan["execution_policy"]), idempotency_key=idempotency_key,
                             authorization=plan, management_grant_id=grant_id)
 
     def _check_start_authority(self, plan, value, observed, policy):
@@ -167,7 +168,7 @@ class PreparationAuthority:
             value = json.loads(row["data"])
             draft = self.imports._get(job["binding"]["import_id"], job["binding"]["revision"])
             descriptor = parse_preparation_descriptor(value["descriptor"])
-            policy = ExecutionPolicy.model_validate(value["execution_policy"])
+            policy = parse_policy(value["execution_policy"])
             if descriptor.digest != job["binding"]["descriptor_digest"] or policy.digest != job["binding"]["policy_digest"]:
                 raise PreparationError("preparation_authority_mismatch")
             return descriptor, draft, policy
@@ -179,7 +180,7 @@ class PreparationAuthority:
             row = self.db.execute("SELECT data FROM preparation_job_inputs WHERE job_id=?", (job_id,)).fetchone()
             if not job.get("managed") or row is None:
                 raise PreparationError("preparation_authority_required")
-            policy = ExecutionPolicy.model_validate(json.loads(row["data"])["execution_policy"])
+            policy = parse_policy(json.loads(row["data"])["execution_policy"])
             if policy.digest != job["binding"]["policy_digest"]:
                 raise PreparationError("preparation_authority_mismatch")
             return policy

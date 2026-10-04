@@ -440,6 +440,10 @@ struct PreparationReview {
         guard let display = PreparationReviewSummary.render(draft: draft, tools: tools,
             access: object["access"] as! [String: Any], resources: object["resources"] as! [String: Any],
             policy: object["execution_policy"] as? [String: Any], downloads: downloads, available: available, blockers: blockers) else { return nil }
+        if let policy = object["execution_policy"] as? [String: Any], preparationInteger(policy["schema_version"]) == 2 {
+            guard let grant = policy["service_probe"] as? [String: Any], let digest = preparationDigest(object["descriptor_digest"]),
+                  grant["descriptor_digest"] as? String == digest else { return nil }
+        }
         self.context = context; self.formDigest = form.digest; self.planID = planID; self.planDigest = planDigest; self.expiresAt = expiresAt
         self.executionAvailable = available; self.blockers = blockers; self.draft = draft; self.display = display
     }
@@ -472,7 +476,7 @@ private enum PreparationReviewSummary {
             "Writes: " + (writes ? "Declared by this app" : "None declared"), "Saved secret access: " + list(secrets), "Memory: \(memory) MB"]
         lines += ["", "Preparation scope and limits"]
         if let policy {
-            guard preparationInteger(policy["schema_version"]) == 1,
+            guard let policyVersion = preparationInteger(policy["schema_version"]), [1, 2].contains(policyVersion),
                   let operations = names(policy["operations"], maximum: 64), (1...2).contains(operations.count),
                   Set(operations).count == operations.count, Set(operations).isSubset(of: ["build", "probe"]),
                   let network = names(policy["network"], maximum: 256), network.count <= 32,
@@ -481,6 +485,11 @@ private enum PreparationReviewSummary {
                   let memory = preparationInteger(policy["memory_mb"]), (1...4096).contains(memory) else { return nil }
             lines += ["Work: " + list(operations.map { $0.replacingOccurrences(of: "_", with: " ").capitalized }),
                 "Network: " + list(network), "Deadline: \(seconds) seconds", "Disk budget: " + bytes(disk), "Memory budget: \(memory) MB"]
+            if policyVersion == 2 {
+                guard Set(policy.keys) == ["schema_version", "operations", "network", "wall_seconds", "disk_bytes", "memory_mb", "service_probe"],
+                      let service = ServiceConnectionContract.probeSummary(policy["service_probe"], draft: draft) else { return nil }
+                lines += service
+            } else if policy["service_probe"] != nil { return nil }
         } else {
             guard !available else { return nil }; lines.append("The host has not supplied an executable preparation scope.")
         }

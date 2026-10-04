@@ -82,7 +82,10 @@ def capabilities(host=None) -> dict:
             "management_grant_modes": ["read", "prepare", "lifecycle", "install",
                                        "recipe-management", "preparation-execution", "resolution-execution"],
             "management_mcp": "scoped_stdio", "preparation_job_schema_versions": [1, 2], "resolution_job_schema_versions": [1, 2],
-            "import_schema_versions": [1], "import_sources": ["local_folder", "markdown", "text", "prepared_package", "artifact_collection", "captured_artifact_collection"],
+            "import_schema_versions": [1], "import_sources": ["local_folder", "markdown", "text", "prepared_package", "artifact_collection", "captured_artifact_collection", "service_connection"],
+            "service_intake": {"contract_versions": [1], "credentials": "owner_only", "execution": False,
+                "protocols": ["openai-chat-completions-v1"], "transport": "loopback_http_bearer",
+                "remote_endpoints": False, "upstream_process_owned": False, "model_bytes_attested": False},
             "preparation_templates": ["python-function-v1", "existing-mcp-v1", "jevk5-llamacpp-v1"],
             "preparation_descriptor_schema_versions": [1], "recipe_bundle_schema_versions": [1],
             "recipe_management": "local_static_declarative", "recipe_execution": False,
@@ -131,6 +134,11 @@ def capabilities(host=None) -> dict:
         records = [host.recipes.inspect(item["recipe_id"], item["version"]) for item in host.recipes.list_summaries()
             if item["state"] == "enabled" and not item["revoked"]]
         ready = [record for record in records if runner.execution_available_for_recipe(record)]
+        result["service_intake"]["execution"] = any(
+            getattr(family, "source_kind", None) == "service_connection"
+            and {(step["component"], step["version"], step["digest"]) for step in record["manifest"]["steps"]}
+                == {component.reference.key for component in family.components}
+            for record in ready for family in host.preparations.families.values())
         if ready:
             has_composite = any({(step["component"], step["version"], step["digest"])
                 for step in record["manifest"]["steps"]} == {component.reference.key
@@ -307,9 +315,12 @@ class Supervisor(UpgradeHost):
             from .preparation_onnx import OnnxPreparationFamily
             from .preparation_textgen import TextGenerationFamily
             from .preparation_command_registration import shipped_command_family
+            from .preparation_service import ServicePreparationFamily
+            self.secrets = SecretStore(self.root)
             command_family = shipped_command_family(self.reaper.parent.parent)
             self.preparations = PreparationStore(self.imports, self.recipes, resolutions=self.resolutions,
                 families=(OnnxPreparationFamily(self.captures), TextGenerationFamily(self.captures),
+                          ServicePreparationFamily(self.secrets),
                           AgentPythonAdapterFamily(self.agent_adapter_derivations),
                           AgentUnlockedPythonFamily(self.agent_unlocked_inputs, self.resolutions),
                           *((command_family,) if command_family is not None else ())))
@@ -361,7 +372,6 @@ class Supervisor(UpgradeHost):
                 reserve_resources=self.reserve_resolution, release_resources=self.release_resolution,
                 enabled=public_admission is not None and (bool(public_admission.resolution_candidate_kinds)
                     or agent_execution_admission is not None and agent_execution_admission.unlocked_resolution), **resolution_admissions)
-            self.secrets = SecretStore(self.root)
             self.downloads = DownloadManager(self.root)
             self.upgrades = UpgradeStore(self.root)
             from .preparation_agent_host import AgentPreparationHost
@@ -420,7 +430,8 @@ class Supervisor(UpgradeHost):
                 if (set(value) != {"schema_version", "job_id", "execution_policy"}
                         or type(value["schema_version"]) is not int or value["schema_version"] != 1 or value["job_id"] != job_id):
                     raise ValueError()
-                policy = ExecutionPolicy.model_validate(value["execution_policy"])
+                from .preparation_service_contracts import parse_policy
+                policy = parse_policy(value["execution_policy"])
                 job = self.preparations.get(job_id)
                 if policy.digest != job["binding"]["policy_digest"]:
                     raise ValueError()
@@ -676,7 +687,12 @@ class Supervisor(UpgradeHost):
             recipe=payload["recipe"], form_digest=payload["form_digest"], answers=payload["answers"],
             execution_available=available, resolution_digest=payload.get("resolution_digest"),
             resolution_available=self.resolution_runner.enabled is True))
-        policy = _policy(payload.get("execution_policy"), value)
+        supplied_policy = payload.get("execution_policy")
+        if value.schema_version == 2:
+            family = self.preparations.family_for(value)
+            if hasattr(family, "execution_policy"):
+                supplied_policy = await self.static_work(lambda: family.execution_policy(value, context.draft, supplied_policy))
+        policy = _policy(supplied_policy, value)
         draft = await self.static_work(lambda: self.preparations.select_descriptor(
             payload["import_id"], payload["revision"], value.model_dump(mode="json", exclude_none=True),
             candidate_id=payload["candidate_id"], form_digest=context.form.form_digest,
@@ -2212,6 +2228,20 @@ def management_app(host: Supervisor, token: str, port: int):
                     raise GrantError("grant_scope", 403)
                 grants = host.workflow_grants if workflow_grant else host.grants
                 grants.authorize_route(grant_id, request.method, route, payload)
+            if (route == "/v1/service-connectors" or route == "/v1/imports/service"
+                    or route.startswith("/v1/imports/") and request.path_params.get("action") == "service"):
+                if request.scope["mcpme.principal"].get("owner") is not True:
+                    raise GrantError("grant_scope", 403)
+                from . import preparation_service_routes as service_routes
+                if route == "/v1/service-connectors" and request.method == "GET":
+                    result = await host.static_work(service_routes.registry)
+                elif route == "/v1/imports/service" and request.method == "POST":
+                    result = await host.static_work(lambda: service_routes.create(host, payload))
+                elif request.method == "POST":
+                    result = await host.static_work(lambda: service_routes.revise(host, request.path_params["draft_id"], payload))
+                else:
+                    raise HostError("invalid_request")
+                return JSONResponse({"api_version": 1, **result})
             if request.method == "GET":
                 if route == "/v1/capabilities":
                     result = capabilities(host)
@@ -2314,7 +2344,8 @@ def management_app(host: Supervisor, token: str, port: int):
                 elif route.startswith("/v1/secrets/"):
                     if payload:
                         raise SettingsError("invalid_secret")
-                    result = host.secrets.revoke(request.path_params["secret_id"])
+                    from .preparation_service_routes import revoke
+                    result = await revoke(host, request.path_params["secret_id"])
                 elif route == "/v1/downloads":
                     result = await host.downloads.start(payload)
                 elif route.startswith("/v1/downloads/"):
@@ -2557,6 +2588,8 @@ def management_app(host: Supervisor, token: str, port: int):
         Route("/v1/slots/{slot_id}/details", dispatch),
         Route("/v1/slots/{slot_id}", dispatch, methods=["GET", "PATCH"]), Route("/v1/operations/{operation_id}", dispatch),
         Route("/v1/operations/{operation_id}/{action}", dispatch, methods=["POST"]),
+        Route("/v1/service-connectors", dispatch),
+        Route("/v1/imports/service", dispatch, methods=["POST"]),
         Route("/v1/imports", dispatch, methods=["GET", "POST"]),
         Route("/v1/imports/{draft_id}", dispatch),
         Route("/v1/imports/{draft_id}/{action}", dispatch, methods=["POST"]),

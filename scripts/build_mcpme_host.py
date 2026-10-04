@@ -338,6 +338,8 @@ def build(destination: Path, version: str | None = None, *, textgen_engine: Path
     copy_private_runtime(runtime, destination / "python")
     shutil.copytree(ROOT / "backend/mcpme", destination / "backend/mcpme",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copytree(ROOT / "backend/mcpme_service", destination / "backend/mcpme_service",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copyfile(ROOT / "backend/mcpme_local_transport.py", destination / "backend/mcpme_local_transport.py")
     bundle_textgen_backend(destination)
     (destination / "bin").mkdir()

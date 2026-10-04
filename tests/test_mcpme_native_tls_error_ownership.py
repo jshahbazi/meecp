@@ -115,7 +115,8 @@ def test_error_pointer_is_released_when_any_failure_stage_raises(monkeypatch, st
     monkeypatch.setattr(_macos.CoreFoundation, "CFRelease", lambda ref: released.append(ctypes.cast(ref, ctypes.c_void_p).value))
     with pytest.raises(RuntimeError):
         _macos._verify_peercerts_impl_macos_10_14(ssl.create_default_context(), object())
-    assert released == [1] if stage == "evaluate" else [2, 1]
+    expected = [1] if stage in {"evaluate", "code", "description"} else [2, 1]
+    assert released == expected
 
 
 def test_cert_none_known_error_still_releases_error(monkeypatch):
@@ -148,4 +149,65 @@ def test_unexpected_result_still_releases_error(monkeypatch):
     monkeypatch.setattr(_macos.CoreFoundation, "CFRelease", lambda ref: released.append(ctypes.cast(ref, ctypes.c_void_p).value))
     with pytest.raises(ssl.SSLError, match="Unknown result"):
         _macos._verify_peercerts_impl_macos_10_14(ssl.create_default_context(), object())
+    assert released == [1]
+
+
+def test_null_description_skips_converter_and_releases_error(monkeypatch):
+    error = _error_pointer()
+    released = []
+    converted = []
+
+    def evaluate(_, output):
+        _set_error(output, error)
+        return 0
+
+    monkeypatch.setattr(_macos.Security, "SecTrustEvaluateWithError", evaluate)
+    monkeypatch.setattr(_macos.CoreFoundation, "CFErrorGetCode", lambda _: -67808)
+    monkeypatch.setattr(_macos.CoreFoundation, "CFErrorCopyDescription", lambda _: None)
+    monkeypatch.setattr(_macos, "_cf_string_ref_to_str", lambda _: converted.append(1))
+    monkeypatch.setattr(_macos.Security, "SecTrustGetTrustResult", lambda *_: None)
+    monkeypatch.setattr(_macos.CoreFoundation, "CFRelease", lambda ref: released.append(ctypes.cast(ref, ctypes.c_void_p).value))
+    with pytest.raises(ssl.SSLCertVerificationError, match="Certificate verification failed"):
+        _macos._verify_peercerts_impl_macos_10_14(ssl.create_default_context(), object())
+    assert converted == []
+    assert released == [1]
+
+
+def test_description_release_failure_still_releases_error(monkeypatch):
+    error = _error_pointer()
+    description = ctypes.c_void_p(2)
+    released = []
+
+    def evaluate(_, output):
+        _set_error(output, error)
+        return 0
+
+    def release(ref):
+        address = ctypes.cast(ref, ctypes.c_void_p).value
+        released.append(address)
+        if address == 2:
+            raise RuntimeError("description release")
+
+    monkeypatch.setattr(_macos.Security, "SecTrustEvaluateWithError", evaluate)
+    monkeypatch.setattr(_macos.CoreFoundation, "CFErrorGetCode", lambda _: -67808)
+    monkeypatch.setattr(_macos.CoreFoundation, "CFErrorCopyDescription", lambda _: description)
+    monkeypatch.setattr(_macos, "_cf_string_ref_to_str", lambda _: "failure")
+    monkeypatch.setattr(_macos.Security, "SecTrustGetTrustResult", lambda *_: None)
+    monkeypatch.setattr(_macos.CoreFoundation, "CFRelease", release)
+    with pytest.raises(RuntimeError, match="description release"):
+        _macos._verify_peercerts_impl_macos_10_14(ssl.create_default_context(), object())
+    assert released == [2, 1]
+
+
+def test_success_with_nonnull_error_still_releases_error(monkeypatch):
+    error = _error_pointer()
+    released = []
+
+    def evaluate(_, output):
+        _set_error(output, error)
+        return 1
+
+    monkeypatch.setattr(_macos.Security, "SecTrustEvaluateWithError", evaluate)
+    monkeypatch.setattr(_macos.CoreFoundation, "CFRelease", lambda ref: released.append(ctypes.cast(ref, ctypes.c_void_p).value))
+    _macos._verify_peercerts_impl_macos_10_14(ssl.create_default_context(), object())
     assert released == [1]

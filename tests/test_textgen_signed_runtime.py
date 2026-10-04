@@ -20,6 +20,7 @@ import signed_textgen_asset as assets
 import build_mcpme_app as app_builder
 import build_mcpme_host as host_builder
 import build_mcpme_dmg as dmg_builder
+from test_distribution_signing import closed_release_source
 
 
 def archive(tmp_path, *, change=None):
@@ -98,7 +99,7 @@ def test_runtime_mutation_denies_copy_or_signature_probe(tmp_path, kind):
 
 
 @pytest.mark.parametrize("entry", ["host", "app", "dmg"])
-def test_invalid_archive_rejected_before_build_or_credentials(tmp_path, monkeypatch, entry):
+def test_invalid_archive_rejected_before_build_or_credentials(tmp_path, monkeypatch, entry, closed_release_source):
     path, value = archive(tmp_path)
     path.write_bytes(path.read_bytes() + b"changed")
     monkeypatch.setattr(assets, "manifest", lambda: value)
@@ -106,10 +107,14 @@ def test_invalid_archive_rejected_before_build_or_credentials(tmp_path, monkeypa
     for module in (app_builder, dmg_builder, host_builder): monkeypatch.setattr(module, "run", forbidden)
     monkeypatch.setattr(app_builder, "developer_identity", forbidden)
     monkeypatch.setattr(dmg_builder, "developer_identity", forbidden)
-    with pytest.raises((ValueError, PreparationError)):
+    policy = closed_release_source / "templates/release-policies/phase3-v1.json"
+    before = policy.read_bytes()
+    with pytest.raises(ValueError, match="^signed_textgen_asset_invalid$"):
         if entry == "host": host_builder.build(tmp_path / "host", version="1.0.0", textgen_signed_asset=path)
         elif entry == "app": app_builder.build(tmp_path / "test.app", version="1.0.0", sign_identity="A" * 40, textgen_signed_asset=path)
         else: dmg_builder.build(tmp_path / "test.dmg", version="1.0.0", sign_identity="A" * 40, textgen_signed_asset=path)
+    assert policy.read_bytes() == before and not (closed_release_source / ".build").exists()
+    assert not any((tmp_path / name).exists() for name in ("host", "test.app", "test.dmg"))
 
 
 def test_manifest_pins_closed_signed_identity_and_full_provenance():

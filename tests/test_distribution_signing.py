@@ -26,6 +26,40 @@ IDENTITY = "Developer ID Application: Distribution Test (TESTTEAM01)"
 SUBMISSION = "12345678-1234-1234-1234-123456789abc"
 
 
+@pytest.fixture
+def closed_release_source(tmp_path, monkeypatch):
+    """A complete closed policy isolates TextGen preflight from CLI prerequisites."""
+    from mcpme.preparation_release_policy import ReleasePolicy
+    source = tmp_path / "preflight-source"
+    policy = source / "templates/release-policies/phase3-v1.json"
+    policy.parent.mkdir(parents=True)
+    value = {"schema_version": 1, "policy_id": "test-closed-release-v1",
+        "preparation": {"families": [], "recipe_component_sets": [], "resolution_candidate_kinds": []},
+        "agent": {"components": [], "providers": [], "unlocked_resolution": False}, "command": None}
+    assert ReleasePolicy.model_validate(value).admissions() == (None, None, None)
+    policy.write_text(json.dumps(value))
+    (source / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n')
+    for builder in (app_builder, dmg_builder, host_builder): monkeypatch.setattr(builder, "ROOT", source)
+    return source
+
+
+@pytest.fixture
+def active_command_source(closed_release_source):
+    from mcpme.preparation_release_command_admission import (
+        COMMAND_COMPONENT, INSTALLED_PLATFORM_POLICY, RESOURCE_PLATFORM_POLICY,
+    )
+    from mcpme.preparation_release_policy import ReleasePolicy
+    policy = closed_release_source / "templates/release-policies/phase3-v1.json"
+    value = json.loads(policy.read_bytes())
+    component = dict(zip(("id", "version", "digest"), COMMAND_COMPONENT))
+    value["preparation"].update(families=[component], recipe_component_sets=[[component]])
+    value["command"] = {"component": list(COMMAND_COMPONENT),
+        "installed_platform_policy": INSTALLED_PLATFORM_POLICY, "resource_platform_policy": RESOURCE_PLATFORM_POLICY}
+    assert ReleasePolicy.model_validate(value).admissions()[2].component == COMMAND_COMPONENT
+    policy.write_text(json.dumps(value))
+    return closed_release_source
+
+
 def test_only_developer_id_application_identities_can_make_release(monkeypatch, tmp_path):
     keychain = tmp_path / "signing.keychain-db"
     keychain.touch()
@@ -65,7 +99,9 @@ def test_development_textgen_closure_is_verified_without_native_byte_rewrites(mo
     assert not any(args[-1] == str(engine) and "--force" in args for args in calls)
 
 
-def test_signed_textgen_source_build_is_rejected_before_credential_lookup(monkeypatch, tmp_path):
+def test_signed_textgen_source_build_is_rejected_before_credential_lookup(monkeypatch, tmp_path, closed_release_source):
+    policy = closed_release_source / "templates/release-policies/phase3-v1.json"
+    before = policy.read_bytes()
     def forbidden(*args, **kwargs):
         pytest.fail("unsupported exact engine reached signing credentials or tools")
     monkeypatch.setattr(app_builder, "developer_identity", forbidden)
@@ -76,6 +112,9 @@ def test_signed_textgen_source_build_is_rejected_before_credential_lookup(monkey
         app_builder.build(tmp_path / "mcpme.app", sign_identity=CERTIFICATE, textgen_engine=tmp_path / "engine")
     with pytest.raises(SystemExit, match="^signed_textgen_preparation_not_supported$"):
         dmg_builder.build(tmp_path / "mcpme.dmg", sign_identity=CERTIFICATE, textgen_engine=tmp_path / "engine")
+    assert policy.read_bytes() == before
+    assert not (tmp_path / "mcpme.app").exists() and not (tmp_path / "mcpme.dmg").exists()
+    assert not (closed_release_source / ".build").exists()
 
 
 def test_supplied_development_textgen_app_cannot_enter_signed_release_path(monkeypatch, tmp_path):
@@ -379,20 +418,34 @@ def test_command_asset_rejected_before_credentials_or_tools(monkeypatch, tmp_pat
                           command_signed_asset=tmp_path / "invalid.tar.gz")
 
 
-def test_active_command_source_requires_immutable_asset_before_credentials(monkeypatch, tmp_path):
-    policy = tmp_path / "templates/release-policies/phase3-v1.json"
-    policy.parent.mkdir(parents=True)
-    policy.write_text(json.dumps({"command": {"reviewed": True}}))
-    monkeypatch.setattr(app_builder, "ROOT", tmp_path)
+def test_active_command_source_requires_immutable_asset_before_credentials(monkeypatch, tmp_path, active_command_source):
     monkeypatch.setattr(app_builder, "developer_identity", lambda *args: pytest.fail("missing asset reached credentials"))
     monkeypatch.setattr(app_builder, "run", lambda *args: pytest.fail("missing asset reached tools"))
     with pytest.raises(SystemExit, match="^signed_command_asset_required$"):
         app_builder.build(tmp_path / "mcpme.app", sign_identity=CERTIFICATE, version="1.2.3")
-    monkeypatch.setattr(dmg_builder, "ROOT", tmp_path)
     monkeypatch.setattr(dmg_builder, "developer_identity", lambda *args: pytest.fail("missing asset reached DMG credentials"))
     monkeypatch.setattr(dmg_builder, "run", lambda *args: pytest.fail("missing asset reached DMG tools"))
     with pytest.raises(SystemExit, match="^signed_command_asset_required$"):
         dmg_builder.build(tmp_path / "mcpme.dmg", sign_identity=CERTIFICATE, version="1.2.3")
+    assert not (tmp_path / "mcpme.app").exists() and not (tmp_path / "mcpme.dmg").exists()
+    assert not (active_command_source / ".build").exists()
+
+
+@pytest.mark.parametrize("selection", ["development-engine", "invalid-archive"])
+def test_missing_command_asset_precedes_dmg_textgen_checks_without_tools(
+        monkeypatch, tmp_path, active_command_source, selection):
+    import signed_textgen_asset
+    def forbidden(*args, **kwargs): pytest.fail("missing command asset reached later preflight or tools")
+    monkeypatch.setattr(dmg_builder, "developer_identity", forbidden)
+    monkeypatch.setattr(dmg_builder, "run", forbidden)
+    monkeypatch.setattr(signed_textgen_asset, "admit_archive", forbidden)
+    options = {"textgen_engine" if selection == "development-engine" else "textgen_signed_asset": tmp_path / "unreviewed"}
+    policy = active_command_source / "templates/release-policies/phase3-v1.json"
+    before = policy.read_bytes()
+    with pytest.raises(SystemExit, match="^signed_command_asset_required$"):
+        dmg_builder.build(tmp_path / "mcpme.dmg", version="1.2.3", sign_identity=CERTIFICATE, **options)
+    assert policy.read_bytes() == before and not (tmp_path / "mcpme.dmg").exists()
+    assert not (active_command_source / ".build").exists()
 
 
 def test_supplied_active_command_app_is_checked_before_credentials(monkeypatch, tmp_path):

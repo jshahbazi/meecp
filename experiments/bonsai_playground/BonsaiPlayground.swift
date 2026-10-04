@@ -79,7 +79,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
         modelSelector.addItems(withTitles: ModelProfile.selectableProfiles.map { $0.displayName })
         modelSelector.target = self
         modelSelector.action = #selector(selectModel)
-        modelSelector.toolTip = "Bonsai, MiniCPM5 Fable, Qwen3.5 2B, Falcon3 1B, and Falcon-H1 Tiny 90M"
+        modelSelector.toolTip = "Bonsai, MiniCPM5 Fable, Qwen3.5 2B, Qwen3 0.6B BF16, Falcon3 1B, and Falcon-H1 Tiny 90M"
         let modelSelection = row([label("Model"), modelSelector])
         let conversationLabel = label("Conversation")
         let responseScroll = textArea(editable: false)
@@ -304,7 +304,7 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
               let output = Int(maximumOutput.titleOfSelectedItem ?? ""),
               let current = Int(context.titleOfSelectedItem ?? "") else { return }
         // Leave room for conversation when the requested response grows.
-        let required = output + 8192
+        let required = output + (selectedProfile.isQwen35 ? 8192 : 2048)
         if current < required, let larger = selectedProfile.contextSizes.first(where: { $0 >= required }) {
             context.selectItem(withTitle: String(larger))
         }
@@ -734,6 +734,31 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate, NSMenu
             checks[profile.rawValue + "_chat_restores"] = conversation.turns.count == 1
                 && promptView.string == "Synthetic Falcon draft"
         }
+        modelSelector.selectItem(at: ModelProfile.selectableProfiles.firstIndex(of: .qwen3Small)!)
+        selectModel()
+        checks["qwen3_small_selector_uses_full_precision_defaults"] = selectedProfile == .qwen3Small
+            && modelField.stringValue == ModelProfile.qwen3Small.defaultModelPath && conversation.isEmpty
+            && context.titleOfSelectedItem == "8192" && maximumOutput.titleOfSelectedItem == "2048"
+            && thinking.state == .off && thinking.isEnabled && !thinkingBudget.isEnabled
+            && temperature.doubleValue == 0.7 && samplingHint.stringValue.contains("Top p 0.80")
+        thinking.state = .on
+        thinkingChanged()
+        checks["qwen3_small_thinking_uses_own_sampler"] = temperature.doubleValue == 0.6
+            && thinkingBudget.isEnabled && thinkingBudget.titleOfSelectedItem == "1024"
+            && samplingPreset.itemTitles == ["Recommended"] && samplingHint.stringValue.contains("Presence 0.0")
+        simulateCompletion("<think>\nSynthetic thought\n</think>\n\nSynthetic small Qwen answer", failure: nil, stopped: false)
+        maximumOutput.selectItem(withTitle: "16384")
+        responseBudgetChanged()
+        checks["qwen3_small_large_response_fits_native_context"] = context.titleOfSelectedItem == "32768"
+            && !context.itemTitles.contains("65536") && !maximumOutput.itemTitles.contains("32768")
+        modelSelector.selectItem(at: ModelProfile.selectableProfiles.firstIndex(of: .qwen35Full)!)
+        selectModel()
+        modelSelector.selectItem(at: ModelProfile.selectableProfiles.firstIndex(of: .qwen3Small)!)
+        selectModel()
+        checks["qwen3_small_restores_separate_chat_and_thinking"] = conversation.turns.count == 1
+            && conversation.turns.last?.assistant.contains("Synthetic small Qwen answer") == true
+            && thinking.state == .on && temperature.doubleValue == 0.6
+            && maximumOutput.titleOfSelectedItem == "16384" && context.titleOfSelectedItem == "32768"
         return checks
     }
 

@@ -61,6 +61,23 @@ Controlled runtime comparison: the MiniCPM IQ2 artifact failed the same greeting
 - License: Apache-2.0; see [licenses/Qwen3.5-2B-LICENSE](licenses/Qwen3.5-2B-LICENSE).
 - Validation: SHA-256 and byte count match the pinned artifact. With the existing Metal runtime and native Qwen template, the application's two-turn arithmetic check passed. The native GUI greeting passed at temperature 0.2. The temperature-zero greeting exhausted 2048 output tokens without closing its thinking block; see [local verification](README.md#local-verification).
 
+## Qwen3 0.6B full precision BF16
+
+- Base model: [Qwen/Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B/tree/c1899de289a04d12100db370d81485cdf75e47ca), immutable revision `c1899de289a04d12100db370d81485cdf75e47ca`.
+- Conversion repository: [unsloth/Qwen3-0.6B-GGUF](https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/tree/50968a4468ef4233ed78cd7c3de230dd1d61a56b), immutable revision `50968a4468ef4233ed78cd7c3de230dd1d61a56b`.
+- File: `Qwen3-0.6B-BF16.gguf`.
+- Download: https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/50968a4468ef4233ed78cd7c3de230dd1d61a56b/Qwen3-0.6B-BF16.gguf
+- Size: `1198182848` bytes.
+- SHA-256: `f9c9f1d3c1e21755b82d4e165f88dbbbd4355646d632fb5d6cef7c66ed4ee04e`.
+- Local model path: `models/qwen3-0.6b/Qwen3-0.6B-BF16.gguf`.
+- Local metadata: GGUF v3; architecture `qwen3`; 28 layers; embedding length 1024; 310 tensors; 596,049,920 parameters calculated from tensor dimensions. All tensor types are floating point: 197 BF16 tensors and 113 F32 tensors. The download passed exact byte-count and SHA-256 verification.
+- Tokenizer: pretokenizer `qwen2`; `add_bos_token=false`; EOS ID 151645 (`<|im_end|>`); no BOS ID declared in the GGUF metadata.
+- The embedded context metadata is 40960. The official model card states 32768, so the app caps choices at 32768 and defaults to 8192.
+- The embedded native template is 4905 bytes (SHA-256 `5da44855ab7e0641774d5ed0ff0b4f89671d01df7d316e54d06557a962211cb4`). It differs from the pinned base tokenizer's 4168-byte template (SHA-256 `a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8`); the runtime uses the GGUF's native Jinja template. The official Qwen3 thinking template leaves the assistant role open and the model emits its own thinking opener; direct mode adds the closed empty thinking prefix. Completed history supplies final answers only.
+- Sampling: thinking uses temperature 0.6, top p 0.95, top k 20, min p 0; direct mode uses temperature 0.7, top p 0.8, top k 20, min p 0, following the pinned official card. Presence penalty 0 and repetition penalty 1 are the app's neutral defaults.
+- License: Apache-2.0; retained verbatim from the pinned official base in [licenses/Qwen3-0.6B-LICENSE](licenses/Qwen3-0.6B-LICENSE), SHA-256 `832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e`.
+- Functional results are recorded in [local verification](README.md#local-verification).
+
 ## Falcon3 1B Instruct Q4_K_M
 
 - Publisher: Technology Innovation Institute (TII).

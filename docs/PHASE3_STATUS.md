@@ -10,9 +10,14 @@ CLI repair `753bc17` and locked generated adapters `33fe6e0`, including the
 independently cleared selection repair `fe7d6d2`, are integrated. The new immutable
 CLI recipe is 1.0.1. Root's actual confined locked-adapter pipeline passed.
 Independent request-only review then found missing recipe guidance and reviewed
-lock metadata in provider requests; an Astra agent is repairing that contract.
-Unlocked generated adapters and their actual resolution pipeline are active in
-a separate worktree. Final artifact acceptance
+lock metadata in provider requests. The separate repair checkpoint `d9d4ee5`
+has 139 passing focused checks, a passing Swift build and native review self-test;
+its actual request-only pipeline and independent review remain in progress.
+The unlocked-directory pipeline passed real private dependency resolution,
+build, SDK probe, attachment, source/state removal and relocated SDK verification
+with four simulated provider calls and zero live calls. Review then found a
+resolver-lock metadata race; that separate implementation is being repaired
+before its immutable freeze and integration. Final artifact acceptance
 is open. This table tracks implementation and acceptance separately; no entire
 A0–A5 release gate is closed.
 
@@ -33,7 +38,7 @@ being fixed; **Separate gate** covers additional capability work.
 | --- | --- | --- | --- |
 | A0: contracts and authority | Strict descriptors, component versions, canonical digests and unknown-field rejection | Verified checkpoint | Recheck the final integrated implementation. |
 | A0 | Preserve legacy source, import/export and package identities | Verified checkpoint | Final compatibility regression run. |
-| A0 | Inspect ordinary directories without executing selected source | In review | Cold untyped directories exposed a missing optional blocker field. Repair d649a07 passed 66 static inspection/forms/adapter/default-CLI checks; separate actual pipeline confirmation and final packaged controls remain. |
+| A0 | Inspect ordinary directories without executing selected source | Verified checkpoint | Cold-directory repair d649a07 passed 66 inspection/forms/adapter/default-CLI checks and the separate unlocked actual pipeline advanced through intake successfully. Final packaged controls remain. |
 | A0 | Capture text, binaries, models and licenses with exact immutable identities | Verified checkpoint | Recheck final artifact intake and retention. |
 | A0 | Durable jobs, exact scopes, idempotency, deadlines and declared resource reservations | Verified checkpoint | Complete combined lifecycle and admission matrix. |
 | A0 | Cancellation, crash recovery, owned threads and native completion receipts | Verified checkpoint | Current common launch-boundary repairs are independently reviewed and integrated; final combined recovery matrix remains. |
@@ -80,17 +85,17 @@ being fixed; **Separate gate** covers additional capability work.
 | A4 | Measured engine/adapter memory, capacity denial and JevK5 parity | Verified checkpoint | Final combined workload and parity run. |
 | A4 | Restricted engine/adapter probes and current host-owned bindings | Verified checkpoint | Independent 111-case policy/verifier run passed; integrated as 55781f0. Earlier 68a7533 inference passed; current confined inference awaits the next recipe/host. Wildcard-listener containment is unproved. |
 | A4 | Immutable recipe upgrade with preserved lifecycle choices | In progress | Mint the coherent next version; retain all published 1.0.5 and earlier bytes. |
-| A5: integrated agent | Concrete provider transport and parallel task coordinator | In repair | Request-only review confirmed missing recipe-specific role schemas/paths and reviewed lock metadata. Closed trusted guidance and explicit metadata-only disclosure are being implemented; live provider/model acceptance remains open. |
-| A5 | Integrate parallel subtask outputs into one reviewed proposal | In repair | Existing simulated composition passes, but fixtures lack an agreed interface when dispatched concurrently. Add required task dependencies and request-only consistency controls while keeping independent tasks parallel. |
+| A5: integrated agent | Concrete provider transport and parallel task coordinator | In review | Separate repair d9d4ee5 adds closed component-bound role guidance, explicitly reviewed metadata and native disclosure controls. Its 139 focused checks, Swift build and native self-test pass; request-only actual pipeline, independent review, integration and live acceptance remain. |
+| A5 | Integrate parallel subtask outputs into one reviewed proposal | In review | Repair orders interface/dependencies before fixtures and adapter while preserving independent parallel tasks. Encoded-request-only simulated controls produce an admissible locked candidate without an external lock hash; independent review and actual pipeline remain. |
 | A5 | Review exact source transfer, provider/model, recipe and usage limits | Verified checkpoint | Repaired checkpoint 06f253f6 cleared independent review with all 15 hashes matched; integrated as 86ff1a5. Final artifact acceptance remains. |
 | A5 | Durable jobs, cancellation, restart and stale-result rejection | Verified checkpoint | All four reproduced source, cancellation, pending-cap and worker-handoff defects passed independent re-review. Final combined lifecycle checks remain. |
-| A5 | Host-validated candidate adoption through ordinary preparation | Verified checkpoint | Original-source adoption retains its validated metadata through the short commit and denies actual mutation. Generated-adapter selection has a separately reproduced derived-input race, recorded below. |
+| A5 | Host-validated candidate adoption through ordinary preparation | Verified checkpoint | Original-source and integrated locked-adapter adoption retain validated metadata through the short commit and deny actual mutation. Unlocked resolver-proof continuity is a separate active repair; final combined controls remain. |
 | A5 | Native agent controls and owner-only shared routes | Verified checkpoint | Independent 50-case owner-route/backend recheck and actual parent handlers passed on 2dc8508. New Draft disables before transfer; button/direct navigation preserve the draft. Root release build and all three UI self-tests passed. Final installed/native flow remains. |
 | A5 | Unfamiliar supported Python source through proposal, build, SDK probe and attachment | Verified checkpoint | Independent actual private build, SDK probe, attachment and relocation passed with four simulated provider calls and zero live calls. Live-provider and generated-adapter acceptance remain open. |
 | A5 | Live backend, selected credentials and model compatibility | Open | Requires a selected configured provider; no credential discovery or live dispatch has occurred. |
 | A5 | Governed adapter derivation and licensed derived artifacts | Verified checkpoint | Selection repair fe7d6d2 cleared 172 independent checks; both mutation controls deny selection at revision 1. Locked component/bundle and all legacy hashes remain unchanged. Integrated; final artifact and new request-contract acceptance remain. |
 | A5 | Locked unfamiliar Python directory to generated adapter and app | Verified checkpoint | Root's independent actual private build, confined SDK, matching attachment, source/state removal and confined relocation passed on the exact frozen source composition. Four simulated calls, zero live calls; provider fixtures still need replacement with the reviewed request-only contract and live acceptance. |
-| A5 | Unlocked unfamiliar directories needing a generated adapter | In progress | Separate branch codex/phase3-agent-unlocked has 34 focused checks plus resolver, durable-store and actual checked-selection controls. Actual uv/build/SDK pipeline is in progress after the cold-inspection fix. Final freeze, independent review and integration remain; analysis staging executes no source or dependency resolution. |
+| A5 | Unlocked unfamiliar directories needing a generated adapter | In repair | Actual source-only v3 passed private uv resolution, build, SDK probe, attachment, source/state removal and independent relocated SDK verification in 26.935 seconds, including an unknown binary asset. Review found that changing the original resolver lock after full validation could survive selection; same-baseline metadata fencing is being repaired. Final freeze, independent review, request-guide integration and native/installed acceptance remain. |
 | A5 | Final packaged/native generated-adapter flow | Open | Complete after request-contract repair, locked/unlocked derivation integration and final artifact review. |
 | A5 | Integrated installed/native path and final adversarial acceptance | Open | Complete after source integration and concrete live acceptance. |
 | A6: broader modular coverage | Host component/recipe extension seams | Verified checkpoint | Each new capability needs its own implementation and evidence. |
@@ -148,15 +153,16 @@ until the final combined families and artifact have the applicable evidence.
 | First public automatic Python/MCP/ONNX capability | Open | A0, A0R and A1–A2 must pass on the final installed/relocated artifact before enabling it. |
 | Independent CLI, local LLM and agent capability enablement | Open | Enable individually after A3–A5 acceptance. |
 | Final independent whole-phase adversarial review and repairs | Open | Review the complete integrated result; checkpoint reviews have already produced repairs. |
-| Publish verified work to the working branch | In progress | Reviewed common/A4/A5 wiring, CLI repair and locked adapter selection repair are integrated through 0635560. Unlocked adapters and provider-request repair remain separate active lanes. |
+| Publish verified work to the working branch | In progress | Reviewed common/A4/A5 wiring, CLI repair, locked adapter selection repair and cold inspection are integrated on codex/phase3-llm-integration. Unlocked adapters and provider-request repair remain separate active lanes awaiting independent clearance and integration. |
 
 ## Current critical path
 
-1. Repair provider requests with closed recipe guidance, explicitly reviewed
-   metadata facts and task dependencies; independently verify request-only
-   proposal generation without hidden fixture inputs.
-2. Complete governed unlocked adapter/dependency derivation, independently
-   review and integrate it with the request repair. CLI recipe 1.0.1 is minted;
+1. Independently review the provider-request repair with closed recipe guidance,
+   explicitly reviewed metadata facts and task dependencies, including its
+   actual request-only proposal pipeline without hidden fixture inputs.
+2. Repair and independently verify unlocked resolver metadata continuity, freeze
+   governed adapter/dependency derivation and integrate it with the request
+   repair. CLI recipe 1.0.1 is minted;
    mint the coherent next text-generation version after backend freeze and run
    the full combined regression suite.
 3. Build one coherent artifact and rerun Python/MCP, ONNX and local LLM native,

@@ -1,0 +1,55 @@
+{
+  "archive": {
+    "bytes": 24938,
+    "sha256": "30539c050891beec398a8ecb69b959092f6897c2b495dc66b73e9cfb3de9b2cd"
+  },
+  "archive_reconstruction": {
+    "format": "tar-gzip",
+    "gzip_compresslevel": 9,
+    "gzip_filename": "",
+    "gzip_mtime": 0,
+    "member_gid": 0,
+    "member_gname": "",
+    "member_mtime": 0,
+    "member_order": "lexicographic",
+    "member_uid": 0,
+    "member_uname": "",
+    "tar_format": "ustar"
+  },
+  "artifacts": {
+    "bin/mcpme-command-reap": {
+      "mode": 448,
+      "sha256": "9dab276553fec8f2039fa6d7a3ce5cc8b7aeebc01f9df730027320e72f0e6513",
+      "size": 70752
+    },
+    "bin/mcpme-command-resource-reap": {
+      "mode": 448,
+      "sha256": "c2ecbc7942981430d6f1bad26809c2e42c409d75aafdc19fc6426faf52110bb5",
+      "size": 71504
+    }
+  },
+  "license": {
+    "sha256": "581dcf167cf2fd0f557cb99f829e2b7e4f5901fa53beebd5dfced3746df505b4",
+    "source": "templates/LICENSE"
+  },
+  "method": "byte-preserving extraction of previously signed A5 host helpers; no compilation or signing",
+  "original_app_build_sha256": "6f371aca7cb1f225c942bbd2b74303962eafdb54db9e690ba2c8c6d2a9ad7c89",
+  "original_host_build_sha256": "214b545ffcb6015f5a9e303710658017612404178b50d12f17565936c496c9fe",
+  "original_inventory_sha256": {
+    "command-execution.json": "53942030c0e79fe73c772689305be1cd0bd71b66ef36b9f12b0855b816e3c3ef",
+    "command-resource-execution.json": "2dbd245d5f235649c60f5fe62c99b6a26a4e5f77dd321cb20ce4b9a9b4d2f53a"
+  },
+  "original_source_commit": "31b50ccd5bddb780d66d2d5f70e643704f8e13c3",
+  "original_source_tree_dirty": false,
+  "producer_sources": {
+    "scripts/build_mcpme_app.py": "92734440ebf9b635b672d1fdb58fb0a7f8cc01e6c4a9db4ac5ee2aea271a3cce",
+    "scripts/build_mcpme_host.py": "0014d08482be91cd6af90047643f613d9b2d2c1d0f589246d0084fe50ce40c56",
+    "scripts/mcpme-command-reap.c": "b99f87541598427df51a39486d384a5855813ea3decac55a1d091cafb5e17933",
+    "scripts/mcpme-command-resource-reap.c": "09b455941c0a2890e2bdbd2ca91b6d8e47538a4e5f1a4115e7885412df89c400",
+    "scripts/mcpme-command-resource-v1.h": "a30d8a2acbdc15d704ed3d2480cad749d78f2647a98171c55b930ae0a9072c55"
+  },
+  "profile": "command-native-v1",
+  "publication": "Local explicit archive input only; no remote acquisition URL or publication.",
+  "schema_version": 1,
+  "version": "1.0.0"
+}

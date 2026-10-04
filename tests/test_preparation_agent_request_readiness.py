@@ -101,6 +101,8 @@ async def test_actual_encoded_request_supplies_admissible_proposal_only_with_rev
     try:
         plan = await host.plan(selected(adapter_foundation, metadata=metadata))
         assert plan["guide"] == builtin_analysis_guides()[0].model_dump()
+        journal = host.db.execute("SELECT data FROM agent_host_plans").fetchone()[0]
+        assert "instructions" not in journal and "Tool JSON schema" not in journal
         assert [item["path"] for item in plan["selected_metadata"]] == selected(adapter_foundation, metadata=metadata)["selected_metadata_paths"]
         job = await completed(host, await start(host, plan))
         assert job["state"] == "succeeded" and len(seen) == 4 and peak == 2

@@ -182,7 +182,7 @@ class AgentPreparationHost:
             source_revision=plan["source_revision"], authority_id=plan["plan_id"], expires_at=plan["expires_at"],
             provider={"backend": provider.backend.backend_id, "model": plan["model"], "credential_ref": provider.credential_ref},
             selected_files=plan["selected_files"], intent=draft["intent"],
-            selected_metadata=plan.get("selected_metadata", []), recipe=plan["recipe"], guide=plan.get("guide"),
+            selected_metadata=plan.get("selected_metadata", []), recipe=plan["recipe"], guide=self._guide(plan),
             permitted_tools=["read-selected-source", "propose-files"], limits=plan["limits"])
 
     def _validate(self, plan, *, dispatch=False):
@@ -204,12 +204,27 @@ class AgentPreparationHost:
         recipe = self.recipes.assert_admissible(ref["id"], ref["version"], ref["digest"])
         if recipe["epoch"] != plan["recipe_epoch"]:
             raise PreparationError("agent_recipe_changed")
-        if self.guides.resolve(recipe) != plan.get("guide"):
-            raise PreparationError("agent_guide_changed")
+        self._guide(plan, recipe)
         request = self._request(plan, draft)
         if request.digest != plan["request_digest"]:
             raise PreparationError("agent_scope_changed")
         return request, draft, provider
+
+    @staticmethod
+    def _guide_binding(value):
+        if value is None:
+            return None
+        guide = AnalysisGuideV1.model_validate(value)
+        return {"id": guide.id, "digest": guide.digest, "component": guide.component.model_dump()}
+
+    def _guide(self, plan, recipe=None):
+        if recipe is None:
+            ref = plan["recipe"]
+            recipe = self.recipes.assert_admissible(ref["id"], ref["version"], ref["digest"])
+        value = self.guides.resolve(recipe)
+        if self._guide_binding(value) != plan.get("guide_binding"):
+            raise PreparationError("agent_guide_changed")
+        return value
 
     @staticmethod
     def _snapshot_metadata(draft):
@@ -278,7 +293,8 @@ class AgentPreparationHost:
                 "snapshot_metadata_digest": self._snapshot_metadata(draft),
                 "recipe": selection.recipe.model_dump(), "recipe_epoch": recipe["epoch"],
                 "provider_id": provider.provider_id, "provider_digest": provider.digest, "model": selection.model,
-                "selected_files": selected, "selected_metadata": metadata, "guide": self.guides.resolve(recipe),
+                "selected_files": selected, "selected_metadata": metadata,
+                "guide_binding": self._guide_binding(self.guides.resolve(recipe)),
                 "limits": selection.limits.model_dump(),
                 "expires_at": int(time.time()) + 300 + selection.limits.wall_seconds, "job_id": None}
             request = self._request(plan, draft)
@@ -313,10 +329,11 @@ class AgentPreparationHost:
 
     def review(self, plan):
         provider = self._provider(plan["provider_id"], plan["model"])
+        guide = self._guide(plan)
         return {key: plan[key] for key in ("schema_version", "plan_id", "plan_digest", "import_id", "revision",
-            "source_revision", "recipe", "provider_id", "model", "selected_files", "selected_metadata", "guide", "limits", "expires_at")} | {
+            "source_revision", "recipe", "provider_id", "model", "selected_files", "selected_metadata", "limits", "expires_at")} | {
             "destination": ENDPOINT, "simulated": provider.simulated, "execution_available": self._available(provider),
-            "guide_digest": AnalysisGuideV1.model_validate(plan["guide"]).digest if plan["guide"] else None,
+            "guide": guide, "guide_digest": plan["guide_binding"]["digest"] if guide else None,
             "maximum_reserved_output_tokens": plan["limits"]["max_calls"] * plan["limits"]["max_output_tokens"],
             "monetary_ceiling_enforced": False, "remote_usage_after_cancel": "unknown",
             "blockers": [] if self._available(provider) else ["agent_execution_disabled"]}

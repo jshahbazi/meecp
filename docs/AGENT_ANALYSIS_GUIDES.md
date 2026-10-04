@@ -24,6 +24,9 @@ names one exact component ID, version and implementation digest. It applies only
 to a resolved recipe with that single component. Imported recipe manifests and
 source files cannot supply guide instructions, choose tools or add disclosure.
 The selected recipe remains separately bound by its exact digest and registry epoch.
+The durable plan journal retains only the guide ID, digest and component reference.
+Review and dispatch reconstruct the public instructions from the trusted registry
+and reject a changed binding. Instruction text is absent from the journal.
 
 Each guide contains four bounded role instructions and an acyclic dependency list
 in the existing interface, dependencies, fixtures, adapter order. The coordinator

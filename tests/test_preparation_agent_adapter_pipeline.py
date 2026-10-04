@@ -182,6 +182,10 @@ async def test_required_generated_adapter_real_confined_build_probe_attach_and_r
             await agent.close()
         if builder is not None:
             await builder.close()
+        evidence["all_owners_joined"] = (
+            (agent is None or not agent.tasks and not agent.static_workers and not agent.children)
+            and (builder is None or all(task.done() for task in builder.tasks.values())))
+        evidence["frozen_host_unchanged"] = helper.verify_host_payload(host_root) == before
         if not evidence.get("passed"):
             evidence.update(passed=False, stage=phase, elapsed_milliseconds=round((time.monotonic()-started)*1000))
         payload = canonical_bytes(evidence)

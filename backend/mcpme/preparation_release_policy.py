@@ -220,7 +220,17 @@ def _load_policy(host_root):
 
 
 def release_admissions():
-    return _load_policy(Path(__file__).resolve().parents[2])
+    # Source checkouts and standalone development hosts retain manual package
+    # operation even after the tracked distribution policy becomes nonempty.
+    # Only this fixed module location selects the context; neither policy bytes
+    # nor an owner setting can opt a source host into automatic execution.
+    module = Path(__file__).absolute()
+    resolved = module.resolve()
+    if not any(part.endswith(".app") for path in (module, resolved) for part in path.parts):
+        return None, None, (None, None)
+    # Preserve strict rejection for every enclosed app, including malformed
+    # layouts and links which point outside their original app context.
+    return _load_policy(resolved.parents[2])
 
 
 async def load_release_admissions():

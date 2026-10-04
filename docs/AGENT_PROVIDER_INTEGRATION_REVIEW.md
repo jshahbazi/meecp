@@ -75,8 +75,17 @@ owner-socket CRUD/review requests, secure-editor/undo clearing and closed gates
 passed. That checkpoint is not integrated; a separate author repair and rerun of
 the original reproductions are required.
 
-The author froze the two-defect repair as `7e702d62` in a new worktree; independent
-re-review remains open. A further actual AppKit observation found that
+The author froze the two-defect repair as `7e702d62` in a new worktree. Independent
+re-review cleared both original controls, the 22 repeated-refresh controls and
+two actual nine-request owner-socket flows. The latter also consumed the current
+host's unlocked-recipe recommendation. Provider calls, agent jobs and ordinary
+preparations remained zero; all owners joined and all gates stayed closed.
+The private review receipt SHA-256 is
+`c01e15753d7fe62dc688e5c8d63738cff9192bc7a7dbfbc3c008786eb4b13e75`.
+This narrow clearance preserves the original failure evidence and does not
+integrate the native checkpoint.
+
+A further actual AppKit observation found that
 `NSPopUpButton.addItem(withTitle:)` collapses identical titles. Guided recipe
 aliases and duplicate provider names can therefore lose their distinct exact
 references in the pickers. A separate identity-preserving menu repair and

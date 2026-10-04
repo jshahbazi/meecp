@@ -1,7 +1,8 @@
 # Phase 3 goals and subgoals
 
-Snapshot: checked against integration commit `8d93ae5` on
-`codex/phase3-llm-integration` and the current separate provider workstreams.
+Snapshot: integrated source commit `8d93ae5` on
+`codex/phase3-llm-integration`, checked against documentation commit `4c41d0c`
+and the current separate provider workstreams.
 Common confinement, CLI recipe 1.0.1, locked/unlocked generated adapters and
 the reviewed agent request repair are integrated. The locked request-only
 pipeline passed 147 focused checks and its actual private build/probe/attachment
@@ -13,11 +14,13 @@ Provider/backend API checkpoint `cd7c0405` cleared independent review and is
 integrated. Recipe discovery `3c3c575` also cleared independent review and is
 integrated. Combined source passed 204 focused checks; both actual locked and
 unlocked pipelines passed with 126 source and 4,782 runtime identities checked.
-Native checkpoint `cdf5fa55` has confirmed issues under repair: repeated refresh
-can replace a disappeared explicit recipe, the credential editor omits its
-private-file storage disclosure, and duplicate picker titles collapse distinct
-recipe/provider identities. Repair `7e702d62` covers the first two and awaits
-re-review; the separate picker repair is active. These checkpoints are not integrated.
+Native checkpoint `cdf5fa55` had two independently reproduced issues: repeated
+refresh could replace a disappeared explicit recipe, and the credential editor
+omitted its private-file storage disclosure. Repair `7e702d62` cleared independent
+re-review of both original controls, including two nine-request owner-socket
+flows with zero provider calls and joined owners. A separate repair is active
+because duplicate picker titles collapse distinct recipe/provider identities.
+These native checkpoints are not integrated.
 Final native, live-provider and signed artifact acceptance remain open. No A0–A5
 goal has completed final release acceptance.
 
@@ -25,6 +28,13 @@ goal has completed final release acceptance.
 A passing checkpoint establishes its stated scope on its recorded source or
 artifact. Final acceptance requires the combined installed artifact and the
 independent whole-phase adversarial review.
+
+The tables below track **103 subgoals**: 70 acceptance subgoals, 24 required
+cross-family verification subgoals and nine shared delivery subgoals. Of these,
+59 have verified checkpoint evidence; 35 are open, four are in progress, one is
+in repair and four have separate capability gates. These counts describe the
+evidence ledger; they are not a release-completion percentage. Additional A6
+capabilities require their own acceptance before they can be advertised.
 
 Status terms: **Verified checkpoint** has passing recorded evidence;
 **In review** has implementation awaiting independent clearance;
@@ -103,10 +113,10 @@ being fixed; **Separate gate** covers additional capability work.
 | A5 | Review exact source transfer, provider/model, recipe and usage limits | Verified checkpoint | Repaired checkpoint 06f253f6 cleared independent review with all 15 hashes matched; integrated as 86ff1a5. Final artifact acceptance remains. |
 | A5 | Durable jobs, cancellation, restart and stale-result rejection | Verified checkpoint | All four reproduced source, cancellation, pending-cap and worker-handoff defects passed independent re-review. Final combined lifecycle checks remain. |
 | A5 | Host-validated candidate adoption through ordinary preparation | Verified checkpoint | Locked and unlocked adoption preserve source/resolver proof continuity; independent repeated-selection, mutation and joined-shutdown controls passed. Final combined artifact controls remain. |
-| A5 | Native agent controls and owner-only shared routes | Verified checkpoint | Independent owner-route and actual parent-handler checks passed. New Draft/navigation controls preserve the owned draft. These checks do not close the newly identified API envelope mismatch or final socket/native acceptance. |
+| A5 | Native agent controls and owner-only shared routes | Verified checkpoint | Independent owner-route and actual parent-handler checks passed. New Draft/navigation controls preserve the owned draft. The separate API envelope repair is now integrated; final native consumer and signed acceptance remain. |
 | A5 | Unfamiliar supported Python source through proposal, build, SDK probe and attachment | Verified checkpoint | Independent actual private build, SDK probe, attachment and relocation passed with four simulated provider calls and zero live calls. Live-provider and generated-adapter acceptance remain open. |
 | A5 | Owner-only provider configuration and private credentials | Verified checkpoint | Checkpoint cd7c0405 independently passed 337 checks, including 28 new fault/race controls; integrated through 8d93ae5. Final packaged CRUD/rotation/restart acceptance remains; configuration itself performs no provider calls. |
-| A5 | Secure native provider setup and explicit model selection | In repair | Actual socket/AppKit CRUD/review and secure-editor controls pass. Two-defect repair 7e702d62 awaits re-review; a separate duplicate-title repair must preserve distinct recipe/provider references. Native integration and final acceptance remain. |
+| A5 | Secure native provider setup and explicit model selection | In repair | Actual socket/AppKit CRUD/review and secure-editor controls pass. Two-defect repair 7e702d62 independently cleared the original controls and both nine-request socket flows. Separate duplicate-title handling must preserve distinct recipe/provider references. Native integration and final acceptance remain. |
 | A5 | Native/agent API response compatibility | Verified checkpoint | Agent/provider success, fixed errors and ownership denial include api_version 1. Production parser/private transport passed 15 owner-socket scenarios and invalid-version controls; root combined run passed. Final signed app acceptance remains. |
 | A5 | Compatible agent recipe choices for ordinary directories | Verified checkpoint | Metadata producer 3c3c575 independently passed 257 checks, including 45 new controls; integrated. Exact guide/component, visible source/identity records, ambiguity, lifecycle and discovery limits pass. Native consumer repair and final actual onboarding remain. |
 | A5 | Live backend, selected credentials and model compatibility | Open | Complete a configured provider/model run after host/native setup and integration. Current evidence uses simulated calls only; no live dispatch has occurred. |
@@ -170,7 +180,7 @@ until the final combined families and artifact have the applicable evidence.
 | First public automatic Python/MCP/ONNX capability | Open | A0, A0R and A1–A2 must pass on the final installed/relocated artifact before enabling it. |
 | Independent CLI, local LLM and agent capability enablement | Open | Enable individually after A3–A5 acceptance. |
 | Final independent whole-phase adversarial review and repairs | Open | Review the complete integrated result; checkpoint reviews have already produced repairs. |
-| Publish verified work to the working branch | In progress | Reviewed common/A4/A5 wiring, CLI repair, locked/unlocked adapters, request repair, cold inspection, provider backend/wire and recipe discovery are integrated on codex/phase3-llm-integration. Native provider/recipe repair awaits re-review and integration. |
+| Publish verified work to the working branch | In progress | Reviewed common/A4/A5 wiring, CLI repair, locked/unlocked adapters, request repair, cold inspection, provider backend/wire and recipe discovery are integrated and pushed on codex/phase3-llm-integration. Native two-defect repair is independently cleared; separate picker repair/review and native integration remain. |
 
 ## Current critical path
 

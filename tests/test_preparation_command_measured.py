@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
@@ -39,7 +40,20 @@ def measured_owner(tmp_path, native, measured_admission, mode="measured-tree"):
 async def test_real_sdk_forked_workload_has_positive_same_invocation_evidence(tmp_path, native, measured_admission):
     imports, store, owner = measured_owner(tmp_path, native, measured_admission)
     try:
-        report = await verify_command_package(owner.package.root, owner.descriptor, None, owner.workspace, owner=owner)
+        try:
+            report = await verify_command_package(owner.package.root, owner.descriptor, None, owner.workspace, owner=owner)
+        except Exception as failure:
+            from mcpme.command_resource_execution_v1 import read_resource_completion
+            diagnostics = []
+            for entry in owner.executor.journal["entries"]:
+                valid, code, measurement = read_resource_completion(owner.executor.state, entry)
+                diagnostics.append({"completion_valid": valid, "returncode": code,
+                    "reason": measurement.reason if measurement is not None else None,
+                    "valid_windows": measurement.sample_windows_valid if measurement is not None else None,
+                    "samples": measurement.samples if measurement is not None else None})
+            receipt = {"failure_type": type(failure).__name__, "measurements": diagnostics}
+            (tmp_path / "positive-failure-diagnostic.json").write_text(json.dumps(receipt, sort_keys=True))
+            pytest.fail(json.dumps(receipt, sort_keys=True), pytrace=False)
         assert report.peak_memory_bytes > 8 * 1024**2
         assert report.measurement_scope == "held-group-plus-helper-windowed-footprint-v1"
         evidence, = report.command_resource_evidence

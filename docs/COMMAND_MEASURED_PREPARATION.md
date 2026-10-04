@@ -51,6 +51,18 @@ Missing, malformed, cross-format or inconsistent proof retains ownership and
 reservations. Recovery remains available with new execution admission disabled.
 Neither elapsed time nor discovered process IDs clear ownership.
 
+The owner captures a fixed metadata baseline before the original full byte
+validation. It includes every locked file, manifest, lock, internal directory,
+ancestor and helper. Full internal metadata includes ctime so restoring bytes
+and mtime does not restore the baseline. External ancestors use stable directory
+identity. This same baseline is checked after each joined full validation and
+immediately before native helper creation. That final synchronous callback also
+checks current job binding, registered attempt, fixture, session and deadline.
+It performs no package-byte hashing. A rejection after durable invocation setup
+publishes the existing proven-nonlaunch completion and settles its reservation.
+An unsupported asynchronous callback is rejected and its coroutine is closed or
+its task canceled and joined; only literal `True` permits native creation.
+
 ## Native ownership and exit sampling
 
 The helper creates the original leader's session before applying inherited

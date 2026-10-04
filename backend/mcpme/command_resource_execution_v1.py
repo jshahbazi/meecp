@@ -204,13 +204,17 @@ def verify_command_completion(state: Path, item: dict) -> tuple[bool, int]:
 
 class CommandResourceExecutorV1:
     def __init__(self, helper: Path, expected_helper_sha256: str, state: Path, *, expected_platform_policy: str,
-                 admit: Callable[[CommandResourceSpecV1], bool | Awaitable[bool]]):
+                 admit: Callable[[CommandResourceSpecV1], bool | Awaitable[bool]],
+                 before_native_create: Callable[[CommandResourceSpecV1], bool] | None = None):
         self.policy_digest = _platform_policy()
         if not _hex(expected_platform_policy) or expected_platform_policy != self.policy_digest:
             raise CommandExecutionError("command_platform_policy_mismatch")
         self.helper = Path(helper)
         self.helper_digest = expected_helper_sha256
         self.admit = admit
+        if before_native_create is not None and not callable(before_native_create):
+            raise CommandExecutionError("command_admission_required")
+        self.before_native_create = before_native_create
         self._verify_helper()
         if not callable(admit):
             raise CommandExecutionError("command_admission_required")
@@ -366,6 +370,14 @@ class CommandResourceExecutorV1:
                 transport.write(wire)
                 transport.flush()
                 transport.seek(0)
+                accepted = self.before_native_create(spec) if self.before_native_create is not None else True
+                if inspect.iscoroutine(accepted):
+                    accepted.close()
+                elif isinstance(accepted, asyncio.Future):
+                    accepted.cancel()
+                    await _join(asyncio.gather(accepted, return_exceptions=True))
+                if self.closed or accepted is not True:
+                    raise CommandExecutionError("command_authority_changed")
                 process = subprocess.Popen([str(self.helper), str(transport.fileno()), str(control_read), str(fd), str(directory), str(os.getpid())],
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env={}, close_fds=True,
                     pass_fds=(transport.fileno(), control_read, fd, directory), start_new_session=True)

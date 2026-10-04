@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
         puts("{\"ok\":true}");
         return 0;
     }
-    if (!strcmp(argv[1], "tree") || !strcmp(argv[1], "hang")) {
+    if (!strcmp(argv[1], "tree") || !strcmp(argv[1], "hang") || !strcmp(argv[1], "ready-hang")) {
         pid_t child = fork();
         if (child < 0) return 66;
         if (!child) {
@@ -73,6 +73,7 @@ int main(int argc, char **argv) {
             _exit(67);
         }
         if (!strcmp(argv[1], "tree")) { puts("{\"ok\":true}"); return 0; }
+        if (!strcmp(argv[1], "ready-hang")) { puts("{\"ok\":true}"); fflush(stdout); }
         while (1) pause();
     }
     if (!strcmp(argv[1], "exit")) return 17;

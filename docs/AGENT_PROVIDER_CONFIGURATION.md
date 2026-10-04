@@ -48,7 +48,13 @@ bodies are limited to 64 KiB and reject unknown fields.
 | `POST /v1/agent-providers/{id}` | `schema_version: 1`, `expected_generation`, `name`, `models`, `configuration`, `credentials` |
 | `POST /v1/agent-providers/{id}/remove` | `schema_version: 1`, `expected_generation` |
 
-Each mutation returns `{schema_version: 1, provider: ...}`. Provider metadata has
+HTTP success responses add `api_version: 1` to the schema-versioned result;
+mutation responses are `{api_version: 1, schema_version: 1, provider: ...}`.
+The agent preparation routes use the same wire envelope. Route errors, including
+owner denials, also include `api_version: 1`, as required by the production native
+request parser. Existing LocalPolicy authentication and transport failures retain
+their shared legacy contract. Internal registry methods return their existing
+schema-versioned objects. Provider metadata has
 `provider_id`, `adapter_id`, `name`, `models`, `configuration`, `generation`,
 `credential_generation`, `credential_status`, `status`, `destination` and
 `execution_available: false`. Status is `active` or `removed`; credential status
@@ -65,7 +71,7 @@ entering `api_key` rotates it. Keys are 1–4096 visible ASCII characters. Names
 `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`. The registry permits 16 active providers and
 128 total records, including removed tombstones.
 
-Errors have the shape `{error: {code: ...}}`. Generation conflicts return
+Route errors have the shape `{api_version: 1, error: {code: ...}}`. Generation conflicts return
 `agent_provider_configuration_stale` with HTTP 409; unknown IDs return
 `agent_provider_not_found` with HTTP 404. Owner denial returns `grant_scope` with
 HTTP 403. Other rejected requests return fixed errors with HTTP 400. Mutations
@@ -96,3 +102,6 @@ They cover persistence, rotation/revocation, stale and in-flight reviews, owner
 route authorization, closed inputs, private-file checks, default Supervisor
 registration and a synthetic trusted adapter extension. They do not discover
 credentials, make live provider calls, or establish live-provider compatibility.
+The native wire control compiles the production response parser and private HTTP
+transport, exercises the real Supervisor over its owner Unix socket, and verifies
+that schema-only and invalid API-version responses remain rejected.

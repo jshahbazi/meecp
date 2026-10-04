@@ -103,8 +103,13 @@ def capabilities(host=None) -> dict:
             "unsupported": ["first_call", "reference_document_service", "integrated_preparation"]}
     if host is None or host.closing or type(host.public_admission) is not PublicPreparationAdmission:
         return result
+    try:
+        host.public_admission.check_current()
+    except PreparationError:
+        return result
     from .preparation_runner import PreparationRunner
     from .preparation_resolution_runner import OwnedResolutionRunner
+    from .preparation_agent_public_resolution import PublicAgentResolutionRunner
     admission = host.public_admission
     runner = host.preparation_runner
     if (type(runner) is PreparationRunner and runner.public_admission is admission
@@ -126,7 +131,7 @@ def capabilities(host=None) -> dict:
                 "recipe_component_sets": [sorted([list(key) for key in keys]) for keys in
                     sorted(admission.recipe_component_sets, key=lambda keys: sorted(keys))]}
     resolution = host.resolution_runner
-    if (type(resolution) is OwnedResolutionRunner and resolution.public_resolution_admission is admission
+    if (type(resolution) in {OwnedResolutionRunner, PublicAgentResolutionRunner} and resolution.public_resolution_admission is admission
             and host.resolutions.public_admission is admission and resolution.enabled is True
             and not resolution._closed and admission.resolution_candidate_kinds):
         result["preparation_resolution"].update(execution=True,
@@ -184,7 +189,15 @@ class Resident:
 class Supervisor(UpgradeHost):
     def __init__(self, state_dir: Path, reaper: Path, *, preparation_runner_factory=None, resolution_runner_factory=None,
                  command_admission=None, command_resource_admission=None, agent_preparation_factory=None,
-                 public_admission=None):
+                 public_admission=None, agent_execution_admission=None):
+        from .preparation_release_policy import AgentExecutionAdmission
+        if agent_execution_admission is not None and (type(agent_execution_admission) is not AgentExecutionAdmission
+                or type(public_admission) is not PublicPreparationAdmission or preparation_runner_factory is not None
+                or resolution_runner_factory is not None or agent_preparation_factory is not None
+                or not agent_execution_admission.components <= public_admission.families
+                or any(frozenset({key}) not in public_admission.recipe_component_sets for key in agent_execution_admission.components)):
+            raise PreparationError("invalid_agent_execution_admission")
+        self.agent_execution_admission = agent_execution_admission
         if public_admission is not None and (type(public_admission) is not PublicPreparationAdmission
                 or preparation_runner_factory is not None or resolution_runner_factory is not None
                 or agent_preparation_factory is not None):
@@ -239,6 +252,9 @@ class Supervisor(UpgradeHost):
         self.candidate_slots = {}
         from .host_command import HostCommands
         self.commands = HostCommands(self, command_admission)
+        if public_admission is not None and public_admission.artifact is not None and command_admission is not None:
+            from .preparation_release_command_admission import ReleasedHostCommands
+            self.commands = ReleasedHostCommands(self, command_admission, public_admission.artifact)
         self.upgrade_cancels = {}
         try:
             self.imports = ImportStore(self.root)
@@ -246,9 +262,15 @@ class Supervisor(UpgradeHost):
             from .preparation_agent_unlocked_store import AgentUnlockedInputStore
             from .preparation_agent_unlocked_resolution import AgentUnlockedResolutionStore
             self.agent_unlocked_inputs = AgentUnlockedInputStore(self.imports, self.recipes)
-            self.resolutions = (ResolutionStore(self.imports, public_admission=public_admission,
-                current_producer=lambda: self.resolution_runner._producer_sync()) if public_admission is not None
-                else AgentUnlockedResolutionStore(self.imports, self.agent_unlocked_inputs))
+            if agent_execution_admission is not None and agent_execution_admission.unlocked_resolution:
+                from .preparation_agent_public_resolution import PublicAgentResolutionStore
+                self.resolutions = PublicAgentResolutionStore(self.imports, self.agent_unlocked_inputs,
+                    public_admission=public_admission, agent_admission=agent_execution_admission,
+                    current_producer=lambda request: self.resolution_runner.producer_for(request))
+            else:
+                self.resolutions = (ResolutionStore(self.imports, public_admission=public_admission,
+                    current_producer=lambda: self.resolution_runner._producer_sync()) if public_admission is not None
+                    else AgentUnlockedResolutionStore(self.imports, self.agent_unlocked_inputs))
             from .preparation_builtin_recipes import seed_builtin_recipes
             self.builtin_recipe_metadata = seed_builtin_recipes(self.recipes)
             self.grants = GrantStore(self.registry)
@@ -307,7 +329,11 @@ class Supervisor(UpgradeHost):
                 enabled=public_admission is not None and bool(public_admission.recipe_component_sets), **runner_admissions)
             resolution_admissions = {}
             if resolution_runner_factory is None:
-                if public_admission is not None:
+                if agent_execution_admission is not None and agent_execution_admission.unlocked_resolution:
+                    from .preparation_agent_public_resolution import PublicAgentResolutionRunner
+                    resolution_runner_factory = PublicAgentResolutionRunner
+                    resolution_admissions = {"public_admission": public_admission, "agent_admission": agent_execution_admission}
+                elif public_admission is not None:
                     from .preparation_resolution_runner import OwnedResolutionRunner
                     resolution_runner_factory = OwnedResolutionRunner
                     resolution_admissions = {"public_admission": public_admission}
@@ -317,16 +343,19 @@ class Supervisor(UpgradeHost):
             self.resolution_runner = resolution_runner_factory(
                 self.resolutions, self.reaper.parent.parent, self.reaper,
                 reserve_resources=self.reserve_resolution, release_resources=self.release_resolution,
-                enabled=public_admission is not None and bool(public_admission.resolution_candidate_kinds), **resolution_admissions)
+                enabled=public_admission is not None and (bool(public_admission.resolution_candidate_kinds)
+                    or agent_execution_admission is not None and agent_execution_admission.unlocked_resolution), **resolution_admissions)
             self.secrets = SecretStore(self.root)
             self.downloads = DownloadManager(self.root)
             self.upgrades = UpgradeStore(self.root)
             from .preparation_agent_host import AgentPreparationHost
             from .preparation_agent_providers import AgentProviderRegistry
-            self.agent_provider_registry = AgentProviderRegistry(self.root / "agent-provider-config")
+            self.agent_provider_registry = AgentProviderRegistry(self.root / "agent-provider-config",
+                execution_admission=agent_execution_admission)
             factory = agent_preparation_factory or AgentPreparationHost
             self.agent_preparations = factory(self.preparations, self.root / "agent-preparations",
-                **({"provider_registry": self.agent_provider_registry} if agent_preparation_factory is None else {}))
+                **({"provider_registry": self.agent_provider_registry, "execution_admission": agent_execution_admission}
+                    if agent_preparation_factory is None else {}))
         except BaseException:
             if hasattr(self, "imports"):
                 self.imports.close()
@@ -2496,11 +2525,15 @@ async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None, *,
     # Trusted development acceptance may inject an explicitly enabled runner.
     # The CLI and ordinary native launch supply no factory; production remains
     # disabled by the reviewed source hook. No payload or environment selects one.
-    admission = public_preparation_admission() if all(factory is None for factory in
-        (preparation_runner_factory, resolution_runner_factory, agent_preparation_factory)) else None
+    if all(factory is None for factory in (preparation_runner_factory, resolution_runner_factory, agent_preparation_factory)):
+        from .preparation_release_policy import load_release_admissions
+        admission, agent_admission, commands = await load_release_admissions()
+    else:
+        admission, agent_admission, commands = None, None, (None, None)
     host = Supervisor(state_dir, reaper, preparation_runner_factory=preparation_runner_factory,
                       resolution_runner_factory=resolution_runner_factory, agent_preparation_factory=agent_preparation_factory,
-                      public_admission=admission)
+                      public_admission=admission, agent_execution_admission=agent_admission,
+                      command_admission=commands[0], command_resource_admission=commands[1])
     listener = bind_listener()
     token = secrets.token_urlsafe(32)
     port = listener.getsockname()[1]

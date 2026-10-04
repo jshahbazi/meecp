@@ -44,7 +44,7 @@ RUNNER_FILES = ("preparation_runner.py", "preparation_builder.py", "preparation_
                 "preparation_components.py", "preparation_processes.py", "preparations.py",
                 "preparation_authority.py", "preparation_contracts.py", "processes.py", "ownership_receipts.py",
                 "imports.py", "preparation_application_source.py", "private.py", "recipes.py", "contracts.py", "preparation_inputs.py",
-                "preparation_resolved_python.py", "preparation_resolution.py", "preparation_admission.py")
+                "preparation_resolved_python.py", "preparation_resolution.py", "preparation_admission.py", "preparation_release_policy.py", "preparation_release_artifact.py")
 VERIFIER_FILES = ("preparation_verifier.py", "preparation_probe_confinement.py", "process_graph_accounting_v1.py",
                   "preparation_processes.py", "preparation_contracts.py",
                   "contracts.py", "processes.py", "ownership_receipts.py")
@@ -368,6 +368,7 @@ class PreparationRunner:
         if self._closed or not self.enabled:
             raise PreparationError("preparation_runner_unavailable")
         if self.public_admission is not None:
+            self.public_admission.check_current()
             record = self.store.recipes.inspect(descriptor.recipe.id, descriptor.recipe.version)
             if record["digest"] != descriptor.recipe.digest or not self._recipe_admitted(record):
                 raise PreparationError("preparation_recipe_not_admitted")
@@ -379,13 +380,19 @@ class PreparationRunner:
         if getattr(family, "preparation_owner_kind", None) == "command-v3":
             from .host_command import HostCommandAdmission
             if (type(self.command_admission) is not HostCommandAdmission
-                    or self.command_admission.helper_sha256 != family.helper_sha256):
+                    or self.command_admission.helper_sha256 != family.helper_sha256
+                    or self.public_admission is not None and self.command_resource_admission is None):
                 raise PreparationError("command_preparation_not_admitted")
         return family
 
     def execution_available_for_recipe(self, record):
         if self._closed or not self.enabled:
             return False
+        if self.public_admission is not None:
+            try:
+                self.public_admission.check_current()
+            except PreparationError:
+                return False
         if self.public_admission is not None and not self._recipe_admitted(record):
             return False
         steps = record["manifest"]["steps"]
@@ -395,7 +402,8 @@ class PreparationRunner:
         if matching:
             return (len(matching) == 1 and matching[0].component.reference.key in self.enabled_families
                 and (getattr(matching[0], "preparation_owner_kind", None) != "command-v3"
-                     or self.command_admission is not None and self.command_admission.helper_sha256 == matching[0].helper_sha256))
+                     or self.command_admission is not None and self.command_admission.helper_sha256 == matching[0].helper_sha256
+                     and (self.public_admission is None or self.command_resource_admission is not None)))
         from .recipes import LEGACY_COMPONENT_KEYS, builtin_components
         catalog = builtin_components()
         return len(keys) == 1 and all(component + "@" + version in LEGACY_COMPONENT_KEYS
@@ -418,6 +426,7 @@ class PreparationRunner:
             self._require_admission(parse_preparation_descriptor(plan["descriptor"]))
 
     async def _implementation_identities(self, descriptor, dependencies, *, attempt=None):
+        await self._check_release(attempt)
         family = self._require_admission(descriptor)
         async def calculate(domain, files):
             if attempt is not None:
@@ -443,7 +452,24 @@ class PreparationRunner:
                     "resource_policy_digest": admission.policy.digest})
         return runner, verifier
 
+    async def _check_release(self, attempt=None):
+        if self.public_admission is None:
+            return
+        if attempt is not None:
+            await self._thread(attempt, lambda: self.public_admission.check_current(full=True))
+            return
+        task = asyncio.create_task(asyncio.to_thread(lambda: self.public_admission.check_current(full=True)))
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            try:
+                await _joined(task)
+            except Exception:
+                pass
+            raise
+
     async def _verify(self, package_root, descriptor, workspace, *, timeout_seconds, owner):
+        await self._check_release()
         family = self._require_admission(descriptor)
         verifier = getattr(family, "verify", None)
         if verifier is None:
@@ -691,6 +717,7 @@ class PreparationRunner:
         attempt.check()
 
     async def _command(self, attempt, executor, toolchain, candidate, spec: CommandSpec):
+        await self._check_release(attempt)
         attempt.check()
         work = candidate.parent / (candidate.name + "-builder")
         if (not isinstance(spec, CommandSpec) or Path(spec.argv[0]) not in
@@ -840,6 +867,7 @@ class PreparationRunner:
                 self._require_admission(descriptor)
                 self.store.settle(attempt.job_id)
                 self.store.begin_verification_publication(attempt.job_id)
+                await self._check_release(attempt)
                 await self._thread(attempt, self.store.record_verified, attempt.job_id, package, verification=report)
                 stage_bytes = await self._thread(attempt, _workspace_size, package.root, policy.disk_bytes, attempt.stop)
                 await self._disk_check(attempt, extra=stage_bytes)
@@ -855,6 +883,7 @@ class PreparationRunner:
                 await self._disk_check(attempt)
                 # This transaction shares the atomic winner with cancellation,
                 # recipe revocation and import revision changes.
+                await self._check_release(attempt)
                 await self._thread(attempt, self.store.admit, attempt.job_id, attempt.stage)
                 attempt.stage = None
         except asyncio.CancelledError:

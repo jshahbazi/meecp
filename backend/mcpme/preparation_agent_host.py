@@ -75,6 +75,10 @@ class AgentProviderConfiguration:
     models: tuple[str, ...]
     credential_ref: str
     simulated: bool = False
+    generation: str | None = None
+    destination: str = ENDPOINT
+    adapter_digest: str | None = None
+    name: str | None = None
 
     def __post_init__(self):
         pattern = r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}"
@@ -82,14 +86,19 @@ class AgentProviderConfiguration:
                 or type(self.models) is not tuple or not 1 <= len(self.models) <= 16
                 or len(set(self.models)) != len(self.models)
                 or any(not isinstance(value, str) or not re.fullmatch(pattern, value) for value in self.models)
-                or type(self.simulated) is not bool or self.backend.backend_id != "openai-responses-v1"):
+                or type(self.simulated) is not bool or not re.fullmatch(pattern, self.backend.backend_id)
+                or self.generation is not None and not re.fullmatch(r"[0-9a-f-]{36}", self.generation)
+                or self.adapter_digest is not None and not re.fullmatch(r"[0-9a-f]{64}", self.adapter_digest)
+                or not isinstance(self.destination, str) or not 1 <= len(self.destination) <= 256
+                or any(ord(char) < 32 for char in self.destination)):
             raise PreparationError("agent_provider_configuration_invalid")
 
     @property
     def digest(self):
         return contract_digest("agent-host-provider-v1", {"id": self.provider_id,
             "backend": self.backend.backend_id, "models": list(self.models),
-            "credential_ref": self.credential_ref, "simulated": self.simulated, "destination": ENDPOINT})
+            "credential_ref": self.credential_ref, "simulated": self.simulated, "destination": self.destination,
+            "generation": self.generation, "adapter_digest": self.adapter_digest, "name": self.name})
 
 
 async def _join(task):
@@ -105,11 +114,12 @@ async def _join(task):
 
 
 class AgentPreparationHost:
-    def __init__(self, preparations, root: Path, *, providers=(), live_enabled=False, simulated_enabled=False, guides=None):
+    def __init__(self, preparations, root: Path, *, providers=(), live_enabled=False, simulated_enabled=False, guides=None, provider_registry=None):
         if type(live_enabled) is not bool or type(simulated_enabled) is not bool:
             raise PreparationError("agent_host_configuration_invalid")
         self.preparations, self.imports, self.recipes = preparations, preparations.imports, preparations.recipes
         self.providers = {value.provider_id: value for value in providers}
+        self.provider_registry = provider_registry
         if len(self.providers) != len(providers) or len(providers) > 16:
             raise PreparationError("agent_provider_configuration_invalid")
         self.live_enabled, self.simulated_enabled = live_enabled, simulated_enabled
@@ -142,9 +152,22 @@ class AgentPreparationHost:
 
     def _provider(self, provider_id, model):
         provider = self.providers.get(provider_id)
+        if provider is None and self.provider_registry is not None:
+            try:
+                provider = self.provider_registry.configuration(provider_id)
+            except Exception:
+                raise PreparationError("agent_provider_unavailable") from None
         if provider is None or model not in provider.models:
             raise PreparationError("agent_provider_unavailable")
         return provider
+
+    def _providers(self):
+        values = list(self.providers.values())
+        if self.provider_registry is not None:
+            values.extend(self.provider_registry.configurations())
+        if len({value.provider_id for value in values}) != len(values):
+            raise PreparationError("agent_provider_configuration_invalid")
+        return values
 
     def _draft(self, import_id, revision):
         with self.imports._lock:
@@ -162,8 +185,9 @@ class AgentPreparationHost:
         return {"schema_version": 1, "import_id": import_id, "revision": revision,
             "source_revision": draft["source"]["revision"],
             "providers": [{"provider_id": value.provider_id, "models": list(value.models),
-                "backend": value.backend.backend_id, "destination": ENDPOINT, "simulated": value.simulated,
-                "execution_available": self._available(value)} for value in self.providers.values()],
+                "name": value.name or value.provider_id, "generation": value.generation,
+                "backend": value.backend.backend_id, "destination": value.destination, "simulated": value.simulated,
+                "execution_available": self._available(value)} for value in self._providers()],
             "files": [item for item in draft["source"]["files"] if 1 <= item["size"] <= 16384][:256],
             "files_truncated": sum(1 <= item["size"] <= 16384 for item in draft["source"]["files"]) > 256,
             "metadata_files": [item for item in draft["source"]["files"] if 1 <= item["size"] <= 16 * 1024 * 1024][:256],
@@ -180,7 +204,9 @@ class AgentPreparationHost:
         provider = self._provider(plan["provider_id"], plan["model"])
         return AnalysisRequestV1(import_id=plan["import_id"], revision=plan["revision"],
             source_revision=plan["source_revision"], authority_id=plan["plan_id"], expires_at=plan["expires_at"],
-            provider={"backend": provider.backend.backend_id, "model": plan["model"], "credential_ref": provider.credential_ref},
+            provider={"backend": provider.backend.backend_id, "model": plan["model"], "credential_ref": provider.credential_ref,
+                "provider_id": provider.provider_id, "configuration_generation": provider.generation,
+                "adapter_digest": provider.adapter_digest, "destination": provider.destination},
             selected_files=plan["selected_files"], intent=draft["intent"],
             selected_metadata=plan.get("selected_metadata", []), recipe=plan["recipe"], guide=self._guide(plan),
             permitted_tools=["read-selected-source", "propose-files"], limits=plan["limits"])
@@ -337,7 +363,8 @@ class AgentPreparationHost:
         guide = self._guide(plan)
         return {key: plan[key] for key in ("schema_version", "plan_id", "plan_digest", "import_id", "revision",
             "source_revision", "recipe", "provider_id", "model", "selected_files", "selected_metadata", "limits", "expires_at")} | {
-            "destination": ENDPOINT, "simulated": provider.simulated, "execution_available": self._available(provider),
+            "destination": provider.destination, "simulated": provider.simulated, "execution_available": self._available(provider),
+            "provider_generation": provider.generation,
             "guide": guide, "guide_digest": plan["guide_binding"]["digest"] if guide else None,
             "maximum_reserved_output_tokens": plan["limits"]["max_calls"] * plan["limits"]["max_output_tokens"],
             "monetary_ceiling_enforced": False, "remote_usage_after_cancel": "unknown",

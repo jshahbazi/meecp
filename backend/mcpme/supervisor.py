@@ -268,8 +268,11 @@ class Supervisor(UpgradeHost):
             self.downloads = DownloadManager(self.root)
             self.upgrades = UpgradeStore(self.root)
             from .preparation_agent_host import AgentPreparationHost
+            from .preparation_agent_providers import AgentProviderRegistry
+            self.agent_provider_registry = AgentProviderRegistry(self.root / "agent-provider-config")
             factory = agent_preparation_factory or AgentPreparationHost
-            self.agent_preparations = factory(self.preparations, self.root / "agent-preparations")
+            self.agent_preparations = factory(self.preparations, self.root / "agent-preparations",
+                **({"provider_registry": self.agent_provider_registry} if agent_preparation_factory is None else {}))
         except BaseException:
             if hasattr(self, "imports"):
                 self.imports.close()
@@ -2428,7 +2431,9 @@ def management_app(host: Supervisor, token: str, port: int):
         Route("/v1/migrations/{transfer_id}/recover", dispatch, methods=["POST"]),
         Route("/v1/slots/{slot_id}/{action}", dispatch, methods=["POST"])])
     from .preparation_agent_host import agent_preparation_routes
-    return agent_preparation_routes(LocalPolicy(app, token=token, port=port, authenticate=authenticate), host.agent_preparations)
+    from .preparation_agent_providers import agent_provider_routes
+    policy = agent_preparation_routes(LocalPolicy(app, token=token, port=port, authenticate=authenticate), host.agent_preparations)
+    return agent_provider_routes(policy, host.agent_provider_registry)
 
 
 async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None, *, preparation_runner_factory=None, resolution_runner_factory=None, agent_preparation_factory=None):

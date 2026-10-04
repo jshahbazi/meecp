@@ -368,18 +368,19 @@ def agent_provider_routes(local_policy, registry):
     async def dispatch(request):
         principal = request.scope.get("mcpme.principal", {})
         if principal.get("owner") is not True or principal.get("grant_id") is not None:
-            return JSONResponse({"error": {"code": "grant_scope"}}, status_code=403)
+            return JSONResponse({"api_version": 1, "error": {"code": "grant_scope"}}, status_code=403)
         try:
             data = None if request.method == "GET" else await request.body()
             if data is not None and len(data) > 64 * 1024:
                 raise AgentProviderError("agent_provider_request_rejected")
             payload = None if data is None else load_json(data)
-            return JSONResponse(registry.dispatch(request.method, request.url.path, payload, owner_authorized=True))
+            result = registry.dispatch(request.method, request.url.path, payload, owner_authorized=True)
+            return JSONResponse(result | {"api_version": 1})
         except AgentProviderError as error:
             status = {"agent_provider_configuration_stale": 409, "agent_provider_not_found": 404}.get(error.code, 400)
-            return JSONResponse({"error": {"code": error.code}}, status_code=status)
+            return JSONResponse({"api_version": 1, "error": {"code": error.code}}, status_code=status)
         except Exception:
-            return JSONResponse({"error": {"code": "agent_provider_request_rejected"}}, status_code=400)
+            return JSONResponse({"api_version": 1, "error": {"code": "agent_provider_request_rejected"}}, status_code=400)
 
     local_policy.app.routes.extend([
         Route("/v1/agent-providers", dispatch, methods=["GET", "POST"]),

@@ -748,17 +748,17 @@ def agent_preparation_routes(local_policy, agent_host):
     async def dispatch(request):
         principal = request.scope.get("mcpme.principal", {})
         if principal.get("owner") is not True or principal.get("grant_id") is not None:
-            return JSONResponse({"error": {"code": "grant_scope"}}, status_code=403)
+            return JSONResponse({"api_version": 1, "error": {"code": "grant_scope"}}, status_code=403)
         try:
             payload = None if request.method == "GET" else load_json(await request.body())
             if payload is not None and not isinstance(payload, dict):
                 raise PreparationError("agent_request_invalid")
             result = await agent_host.dispatch(request.method, request.url.path, payload, owner_authorized=True)
-            return JSONResponse(result)
+            return JSONResponse(result | {"api_version": 1})
         except Exception:
             # Includes imported source/recipe errors: no raw strings or payloads
             # from a provider or extension enter response diagnostics.
-            return JSONResponse({"error": {"code": "agent_request_rejected"}}, status_code=400)
+            return JSONResponse({"api_version": 1, "error": {"code": "agent_request_rejected"}}, status_code=400)
     local_policy.app.routes.extend([
         Route("/v1/agent-preparations/plans", dispatch, methods=["POST"]),
         Route("/v1/agent-preparations/start", dispatch, methods=["POST"]),

@@ -1,6 +1,6 @@
 # Phase 3 goals and subgoals
 
-Snapshot: October 3, 2026, checked against integration commit `bc48c05` on
+Snapshot: checked against integration commit `8d93ae5` on
 `codex/phase3-llm-integration` and the current separate provider workstreams.
 Common confinement, CLI recipe 1.0.1, locked/unlocked generated adapters and
 the reviewed agent request repair are integrated. The locked request-only
@@ -9,14 +9,15 @@ case; unlocked integration passed 168 focused checks and its actual
 dependency/build/probe/attachment/relocation case. Published component and recipe
 bytes are preserved. All provider calls in this evidence are simulated.
 
-Provider configuration backend checkpoint `a3e62bbb` is implemented and pushed
-in a separate branch, awaiting independent review and integration. Secure native
-provider configuration is still being implemented. Native integration uncovered
-an API envelope mismatch: the shared native request handler requires
-`api_version: 1`, while the separate agent route handler returns unversioned
-envelopes. Repair and actual socket verification remain open. Compatible agent
-recipe recommendations also remain open; the UI must not default to an unrelated
-recipe. No A0–A5 goal has completed final release acceptance.
+Provider/backend API checkpoint `cd7c0405` cleared independent review and is
+integrated. Recipe discovery `3c3c575` also cleared independent review and is
+integrated. Combined source passed 204 focused checks; both actual locked and
+unlocked pipelines passed with 126 source and 4,782 runtime identities checked.
+Native checkpoint `cdf5fa55` has two confirmed issues under repair: repeated
+refresh can replace a disappeared explicit recipe, and the credential editor
+omits its private-file storage disclosure. That checkpoint is not integrated.
+Final native, live-provider and signed artifact acceptance remain open. No A0–A5
+goal has completed final release acceptance.
 
 **Phase 3 is in progress. Public automatic preparation remains disabled.**
 A passing checkpoint establishes its stated scope on its recorded source or
@@ -39,7 +40,7 @@ being fixed; **Separate gate** covers additional capability work.
 | A2: automatic ONNX | In progress | Exact supported detector, real inference, native intake, tensor controls and limits have checkpoint evidence. | Repeat inference, maximum workloads, negative eligibility and lifecycle under current confinement on the final artifact. |
 | A3: native CLI | In progress | Command contracts, immutable builder, measured verification, resource cleanup and ownership repairs have checkpoint evidence. | Final native directory-to-installed flow, topology/recovery/resource checks and individual capability enablement. |
 | A4: local text generation | In progress | Pinned CPU runtime, actual generation, shared queue, cancellation, native preparation and parity have checkpoint evidence. | Mint the next immutable recipe after source freeze; repeat confined inference, workloads and signed installed acceptance. |
-| A5: integrated agent | In progress | Scoped request review, parallel proposals, locked/unlocked adapter derivation, dependency resolution and actual local probes have checkpoint evidence. | Provider backend review, native setup, wire repair, compatible recipe choices, a live provider/model run and final native installed flow. |
+| A5: integrated agent | In progress | Scoped request review, parallel proposals, locked/unlocked derivation, provider setup backend, API compatibility, recipe discovery and actual local probes have checkpoint evidence. | Native setup repairs/integration, a live provider/model run and final native installed flow. |
 | A6: broader modular coverage | Separate gate | Component/recipe extension seams have checkpoint evidence. | Each additional provider, provider-backed app, runtime, model family or execution capability needs its own acceptance before advertisement. |
 
 ## Acceptance goals
@@ -102,10 +103,10 @@ being fixed; **Separate gate** covers additional capability work.
 | A5 | Host-validated candidate adoption through ordinary preparation | Verified checkpoint | Locked and unlocked adoption preserve source/resolver proof continuity; independent repeated-selection, mutation and joined-shutdown controls passed. Final combined artifact controls remain. |
 | A5 | Native agent controls and owner-only shared routes | Verified checkpoint | Independent owner-route and actual parent-handler checks passed. New Draft/navigation controls preserve the owned draft. These checks do not close the newly identified API envelope mismatch or final socket/native acceptance. |
 | A5 | Unfamiliar supported Python source through proposal, build, SDK probe and attachment | Verified checkpoint | Independent actual private build, SDK probe, attachment and relocation passed with four simulated provider calls and zero live calls. Live-provider and generated-adapter acceptance remain open. |
-| A5 | Owner-only provider configuration and private credentials | In review | Separate pushed backend checkpoint a3e62bbb has 320 author-reported passing checks. Independent review, integration and final packaged CRUD/rotation/restart acceptance remain; configuration itself performs no provider calls. |
-| A5 | Secure native provider setup and explicit model selection | In progress | Refresh/Add/Edit/Remove, transient secure key entry, generation checks and reconnect handling are implemented in an unfrozen native worktree. Final checks, independent review and actual owner-socket integration remain. |
-| A5 | Native/agent API response compatibility | In repair | Add the required versioned response envelope for agent routes and verify success/error paths through the production native request handler. Existing fake-transport UI checks do not establish this. |
-| A5 | Compatible agent recipe choices for ordinary directories | In progress | Add bounded host metadata recommendations and native explicit choice/default behavior. Cold unlocked directories must select a compatible enabled recipe; ambiguous or unsupported sources need an unresolved choice. No checkpoint evidence yet. |
+| A5 | Owner-only provider configuration and private credentials | Verified checkpoint | Checkpoint cd7c0405 independently passed 337 checks, including 28 new fault/race controls; integrated through 8d93ae5. Final packaged CRUD/rotation/restart acceptance remains; configuration itself performs no provider calls. |
+| A5 | Secure native provider setup and explicit model selection | In repair | Frozen native cdf5fa55 passed positive actual socket/AppKit CRUD/review and secure-editor controls, but two independent reproductions require repair: repeated refresh replaces an explicit choice and private-file storage is undisclosed in the editor. New isolated repair, re-review and integration remain. |
+| A5 | Native/agent API response compatibility | Verified checkpoint | Agent/provider success, fixed errors and ownership denial include api_version 1. Production parser/private transport passed 15 owner-socket scenarios and invalid-version controls; root combined run passed. Final signed app acceptance remains. |
+| A5 | Compatible agent recipe choices for ordinary directories | Verified checkpoint | Metadata producer 3c3c575 independently passed 257 checks, including 45 new controls; integrated. Exact guide/component, visible source/identity records, ambiguity, lifecycle and discovery limits pass. Native consumer repair and final actual onboarding remain. |
 | A5 | Live backend, selected credentials and model compatibility | Open | Complete a configured provider/model run after host/native setup and integration. Current evidence uses simulated calls only; no live dispatch has occurred. |
 | A5 | Governed adapter derivation and licensed derived artifacts | Verified checkpoint | Locked/unlocked selection and source/resolver mutation controls are independently cleared and integrated. Frozen component/bundle bytes remain unchanged. Final signed artifact and combined race acceptance remain. |
 | A5 | Locked unfamiliar Python directory to generated adapter and app | Verified checkpoint | Independent encoded-request-only proposals reached actual private build, confined SDK, matching attachment, source/state removal and confined relocation. Four simulated calls and zero live calls; live provider and final native/installed acceptance remain. |
@@ -167,14 +168,14 @@ until the final combined families and artifact have the applicable evidence.
 | First public automatic Python/MCP/ONNX capability | Open | A0, A0R and A1–A2 must pass on the final installed/relocated artifact before enabling it. |
 | Independent CLI, local LLM and agent capability enablement | Open | Enable individually after A3–A5 acceptance. |
 | Final independent whole-phase adversarial review and repairs | Open | Review the complete integrated result; checkpoint reviews have already produced repairs. |
-| Publish verified work to the working branch | In progress | Reviewed common/A4/A5 wiring, CLI repair, locked/unlocked adapters, request repair and cold inspection are integrated on codex/phase3-llm-integration. Provider host/native configuration remains in separate active lanes awaiting review and integration. |
+| Publish verified work to the working branch | In progress | Reviewed common/A4/A5 wiring, CLI repair, locked/unlocked adapters, request repair, cold inspection, provider backend/wire and recipe discovery are integrated on codex/phase3-llm-integration. Native provider/recipe repair awaits re-review and integration. |
 
 ## Current critical path
 
-1. Complete normal-user provider configuration, independently review and
-   integrate host and native setup. Repair the native API envelope, add compatible
-   recipe choices, finish the native agent-to-resolution handoff and run selected
-   live-provider acceptance after explicit provider/model selection.
+1. Repair and re-review native provider/recipe configuration, then integrate it
+   with the cleared backend, wire and recipe discovery. Finish the native
+   agent-to-resolution handoff and run selected live-provider acceptance after
+   explicit provider/model selection.
 2. Freeze the complete source composition. CLI recipe 1.0.1 is minted;
    mint the coherent next text-generation version after backend freeze and run
    the full combined regression suite.
@@ -195,5 +196,6 @@ Sources: [original acceptance plan](AUTOMATIC_PREPARATION.md),
 [default CLI registration](COMMAND_DEFAULT_REGISTRATION.md), and current
 implementation-lane reports. Current request and unlocked evidence is recorded in
 [request checkpoint review](AGENT_REQUEST_INDEPENDENT_REVIEW.md) and
-[unlocked integration review](AGENT_UNLOCKED_INTEGRATION_REVIEW.md). Provider
-backend and native workstream reports describe separate, unintegrated changes.
+[unlocked integration review](AGENT_UNLOCKED_INTEGRATION_REVIEW.md), and
+[provider/discovery integration review](AGENT_PROVIDER_INTEGRATION_REVIEW.md).
+Native workstream reports describe the separate, unintegrated repair.

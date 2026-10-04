@@ -18,6 +18,7 @@ import re
 import shutil
 import sqlite3
 import stat
+import sys
 import time
 import tomllib
 import uuid
@@ -412,11 +413,18 @@ def main():
     data = policy_path.read_bytes()
     if len(data) > 65536:
         raise SystemExit("live_agent_policy_limit")
-    from mcpme.preparation_contracts import load_contract
+    # Source review is intentionally separate from live bundled imports. The
+    # ordinary script entry point has no pytest backend path configuration.
+    # This fixed path is never added on the --run-live branch above.
+    previous_path = list(sys.path)
+    sys.path.insert(0, str(ROOT / "backend"))
     try:
+        from mcpme.preparation_contracts import load_contract
         report = prepare_review(load_contract(data), args.model)
     except Exception:
         raise SystemExit("live_agent_review_rejected") from None
+    finally:
+        sys.path[:] = previous_path
     report["base_policy_sha256"] = hashlib.sha256(data).hexdigest()
     payload = json.dumps(report, indent=2, sort_keys=True).encode() + b"\n"
     fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)

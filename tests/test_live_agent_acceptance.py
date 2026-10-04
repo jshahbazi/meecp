@@ -7,6 +7,8 @@ import asyncio
 import time
 import uuid
 import subprocess
+import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -72,6 +74,46 @@ def test_output_exclusive_and_no_credential_environment_read(driver, monkeypatch
     with pytest.raises(FileExistsError):
         driver.main()
     assert output.read_bytes() == before
+
+
+def test_ordinary_default_entry_without_pytest_import_paths(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    output = tmp_path / "review.json"
+    uv = shutil.which("uv")
+    assert uv is not None
+    # No inherited PYTHONPATH, credentials or pytest import setup. Existing
+    # locked environment only; offline mode prevents dependency acquisition.
+    result = subprocess.run([uv, "run", "--frozen", "python",
+        "scripts/verify_phase3_live_agent.py", "--model", "synthetic-explicit-model",
+        "--output", str(output)], cwd=root,
+        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "UV_OFFLINE": "1",
+            "UV_CACHE_DIR": str(tmp_path / "uv-cache")}, capture_output=True, timeout=30)
+    assert result.returncode == 0 and result.stdout == b"live_agent_review_prepared_no_dispatch\n"
+    assert not result.stderr and output.stat().st_mode & 0o777 == 0o600
+    report = json.loads(output.read_bytes())
+    assert report["credential_reads"] == report["live_provider_calls"] == 0
+    assert report["dispatch_authorized"] is False and report["live_acceptance_verified"] is False
+
+
+def test_live_entry_never_bootstraps_source_backend(driver, monkeypatch, tmp_path):
+    output = tmp_path / "live.json"
+    before = list(sys.path)
+    entered = []
+    async def verify(*args):
+        entered.append(True)
+        assert sys.path == before
+        raise driver.common.AcceptanceError("live_agent_test_blocked")
+    monkeypatch.setattr(driver, "verify_live", verify)
+    monkeypatch.setattr(driver.logging, "disable", lambda _: None)
+    monkeypatch.setattr(driver.os, "umask", lambda _: 0o077)
+    monkeypatch.setattr(sys, "argv", ["verify", "--run-live", "--model", "synthetic-explicit-model",
+        "--host", str(tmp_path), "--native", str(tmp_path), "--credential-file", str(tmp_path / "unread"),
+        "--output", str(output)])
+    with pytest.raises(SystemExit) as exited:
+        driver.main()
+    assert exited.value.code == 1 and entered == [True] and sys.path == before
+    report = json.loads(output.read_bytes())
+    assert report["credential_read"] is False and report["live_dispatch_attempted"] is False
 
 
 def test_closed_policy_denied_before_credentials(driver, policy, monkeypatch):

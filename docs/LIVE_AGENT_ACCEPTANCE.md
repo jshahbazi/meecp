@@ -100,3 +100,10 @@ all environment lookups also intercepted Pydantic's plugin setting, the registry
 create result needed its `provider` envelope, and malformed repeated-review
 replies needed a fresh selection to invalidate the preceding valid test plan.
 The failed receipt is retained; no provider attempt was used to resolve them.
+
+Independent review also caught a default-entry import failure hidden by pytest's
+backend import path. The follow-up adds the fixed repository backend path only
+inside the nondispatch review branch and restores the previous search path
+afterward. A real offline `uv run --frozen python` subprocess without PYTHONPATH
+now verifies this entry point. The live branch retains its bundled-module origin
+checks and receives no source bootstrap.

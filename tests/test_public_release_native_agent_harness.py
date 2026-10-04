@@ -215,6 +215,51 @@ def test_historical_policy_literal_and_current_agent_delta():
         "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375")
 
 
+def test_lifecycle_policy_guard_accepts_historical_and_current_bytes(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))
+    lifecycle = importlib.import_module("verify_phase3_recipe_lifecycle")
+    management = importlib.import_module("verify_phase3_public_management")
+    host = tmp_path / "host"
+    policy_path = host / management.POLICY_PATH
+    policy_path.parent.mkdir(parents=True)
+    for raw, expected in ((ROOT_POLICY_JSON.encode(), "c8fa615def941e66e85a68ac0e7cc46dd7caf1797918fc03fdd5277ac2326522"),
+                          ((Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes(), "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375")):
+        policy_path.write_bytes(raw)
+        scope, observed = lifecycle.verify_lifecycle_policy(host)
+        assert observed == expected and scope in {"closed", "selected_model_accepted"}
+
+
+@pytest.mark.parametrize("mutation", ["malformed", "extra_family", "extra_closure", "command", "agent_model", "policy_id"])
+def test_lifecycle_policy_guard_rejects_mutated_current_bytes(tmp_path, monkeypatch, mutation):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))
+    lifecycle = importlib.import_module("verify_phase3_recipe_lifecycle")
+    management = importlib.import_module("verify_phase3_public_management")
+    host = tmp_path / "host"
+    policy_path = host / management.POLICY_PATH
+    policy_path.parent.mkdir(parents=True)
+    current = json.loads((Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes())
+    if mutation == "malformed":
+        raw = b"{\"schema_version\":1} trailing"
+    else:
+        if mutation == "extra_family":
+            current["preparation"]["families"].append({"id": "extra-registered-family-v1",
+                "version": management.PYTHON[1], "digest": management.PYTHON[2]})
+        elif mutation == "extra_closure":
+            current["preparation"]["recipe_component_sets"].append([{"id": management.PYTHON[0],
+                "version": management.PYTHON[1], "digest": management.PYTHON[2]}])
+        elif mutation == "command":
+            current["command"]["installed_platform_policy"] = "f" * 64
+        elif mutation == "agent_model":
+            current["agent"]["providers"][0]["models"].append("gpt-6.1-sol-extra")
+        else:
+            current["policy_id"] = "unexpected-policy"
+        raw = (json.dumps(current, sort_keys=True) + "\n").encode()
+    policy_path.write_bytes(raw)
+    monkeypatch.setattr(management, "typed_policy_scope", lambda _host: pytest.fail("typed validation reached"))
+    with pytest.raises(lifecycle.onboarding.AcceptanceError, match="lifecycle_policy_not_reviewed"):
+        lifecycle.verify_lifecycle_policy(host)
+
+
 def capabilities(driver):
     return {"automatic_preparation": True, "recipe_execution": True,
         "package_schema_versions": [1, 2], "profiles": ["mcp-stdio", "mcp-http", "model-service", "host-command"],

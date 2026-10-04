@@ -15,16 +15,6 @@ from types import SimpleNamespace
 import pytest
 
 
-def test_lifecycle_policy_digest_guard_accepts_only_reviewed_images(lifecycle, tmp_path):
-    policy = tmp_path / "phase3-v1.json"
-    policy.write_bytes(b"historical")
-    assert lifecycle.LIFECYCLE_POLICY_SHA256 == frozenset({
-        "c8fa615def941e66e85a68ac0e7cc46dd7caf1797918fc03fdd5277ac2326522",
-        "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375"})
-    policy.write_bytes(b"superset")
-    assert lifecycle.digest(policy) not in lifecycle.LIFECYCLE_POLICY_SHA256
-
-
 @pytest.fixture
 def lifecycle(monkeypatch):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))

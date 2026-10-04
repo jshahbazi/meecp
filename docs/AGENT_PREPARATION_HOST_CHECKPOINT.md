@@ -79,3 +79,13 @@ route regression covers unauthenticated rejection, old scoped grants on all
 four agent routes, Host/Origin denial and empty default providers. Independent
 parent-navigation review, packaged native socket acceptance, generated adapters
 and live-provider acceptance remain open.
+
+The applied parent review reproduced a navigation gap: during a held options
+request, the child already blocked navigation while the parent New Draft button
+remained enabled; its clean-draft fast path cleared the current draft. Root's
+repair refreshes parent actions before forwarding each agent request and checks
+agent ownership at navigation entry, after asynchronous saving and before an
+unsaved-edit discard. Operation-detail navigation uses the same guard. The
+frozen pre-fix receipt has SHA-256
+`d83510c524325d77e434eeaa4ba66d8bd44eaf9be088839ef073d40a86488599`.
+Independent repaired-parent acceptance remains required.

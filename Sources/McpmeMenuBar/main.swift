@@ -1015,7 +1015,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             return !uiPreviewMode && self.connection() != nil && self.hostAvailable && !self.setupRequest && !self.stopping && !self.quitting &&
                 (self.agentPreparationView.blocksNavigation || !self.preparationView.busy && !self.preparationView.hasActiveJob && !self.artifactCaptureView.blocksNavigation)
         }
-        agentPreparationView.request = preparationView.request
+        agentPreparationView.request = { [weak self] path, method, body, completion in
+            guard let self else { completion(nil, "manager_request_failed"); return }
+            self.refreshActionButtons()
+            self.request(path, method: method, body: body, completion: completion)
+        }
         agentPreparationView.onUpdatedDraft = { [weak self] object in
             guard let self, !self.draftDirty, !self.setupRequest, let current = self.currentDraft, let updated = ImportDraft(object),
                   updated.id == current.id, updated.revision == current.revision + 1, updated.sourceRevision == current.sourceRevision else { return false }
@@ -1361,7 +1365,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private func showAppOperation(_ id: String) {
         let related = operations.filter { $0.projectID == id && ["install", "upgrade"].contains($0.action) }
         guard let operation = related.first(where: { $0.status == "recovery_required" }) ?? related.first else { return }
-        saveCurrentDraft { [weak self] saved in
+        saveDraftBeforeNavigation { [weak self] saved in
             guard let self, saved else { return }; self.clearDraft(); self.showManagement(); self.selectWorkspace(1)
             self.setupOperation = operation.id; self.trackedOperations.insert(operation.id)
             self.setupLabel?.stringValue = operation.label + (operation.exposed ? " Candidate was exposed; recovery preserves its saved data." : "")
@@ -1922,9 +1926,13 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private func saveDraftBeforeNavigation(completion: @escaping (Bool) -> Void) {
+        guard !agentPreparationView.blocksNavigation else {
+            updateDraftPicker(); completion(false); return
+        }
         saveCurrentDraft { [weak self] saved in
+            guard let self, !self.agentPreparationView.blocksNavigation else { completion(false); return }
             guard !saved else { completion(true); return }
-            guard let self, self.draftDirty, !self.setupRequest, let draft = self.currentDraft,
+            guard self.draftDirty, !self.setupRequest, let draft = self.currentDraft,
                   draft.editable, let window = self.window else { completion(false); return }
             let expectedView = self.importViewGeneration
             let alert = NSAlert(); alert.messageText = "Keep editing this draft?"
@@ -1932,7 +1940,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             alert.addButton(withTitle: "Keep Editing"); alert.addButton(withTitle: "Discard Edits and Continue")
             alert.beginSheetModal(for: window) { [weak self] response in
                 guard let self, self.importViewGeneration == expectedView, self.currentDraft?.id == draft.id,
-                      self.currentDraft?.revision == draft.revision, !self.setupRequest else { completion(false); return }
+                      self.currentDraft?.revision == draft.revision, !self.setupRequest,
+                      !self.agentPreparationView.blocksNavigation else { completion(false); return }
                 guard response == .alertSecondButtonReturn else {
                     self.updateDraftPicker(); completion(false); return
                 }

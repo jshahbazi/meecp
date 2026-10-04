@@ -264,7 +264,7 @@ def test_postbuild_host_inventory_binds_optional_legacy_handoff(tmp_path):
         path = host / relative
         path.write_bytes(b"synthetic " + relative.encode())
     receipt = {"artifact_sha256": {}}
-    app_builder.refresh_postbuild_host_artifacts(host, receipt)
+    app_builder.refresh_postbuild_host_artifacts(host, receipt, expected_legacy=True)
     assert set(receipt["artifact_sha256"]) == {
         "bin/mcpme-handoff", "native-app.json", "legacy-handoff.json"}
     assert all(value == app_builder.sha256(host / key)
@@ -272,6 +272,12 @@ def test_postbuild_host_inventory_binds_optional_legacy_handoff(tmp_path):
     (host / "legacy-handoff.json").unlink()
     (host / "legacy-handoff.json").symlink_to(host / "native-app.json")
     with pytest.raises(SystemExit, match="regular post-build files"):
+        app_builder.refresh_postbuild_host_artifacts(host, {"artifact_sha256": {}}, expected_legacy=True)
+    (host / "legacy-handoff.json").unlink()
+    with pytest.raises(SystemExit, match="regular post-build files"):
+        app_builder.refresh_postbuild_host_artifacts(host, {"artifact_sha256": {}}, expected_legacy=True)
+    (host / "legacy-handoff.json").symlink_to(host / "native-app.json")
+    with pytest.raises(SystemExit, match="Unexpected legacy handoff"):
         app_builder.refresh_postbuild_host_artifacts(host, {"artifact_sha256": {}})
 
 

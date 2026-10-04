@@ -142,11 +142,14 @@ def sign_runtime(root: Path, identity: str = "-", release: bool = False,
     return count
 
 
-def refresh_postbuild_host_artifacts(host: Path, host_receipt: dict) -> None:
+def refresh_postbuild_host_artifacts(host: Path, host_receipt: dict, *, expected_legacy: bool = False) -> None:
     """Add files appended after build_host froze its regular-file inventory."""
     relatives = ["bin/mcpme-handoff", "native-app.json"]
-    if (host / "legacy-handoff.json").exists():
+    legacy = host / "legacy-handoff.json"
+    if expected_legacy:
         relatives.append("legacy-handoff.json")
+    elif legacy.exists() or legacy.is_symlink():
+        raise SystemExit("Unexpected legacy handoff in bundled host")
     for relative in relatives:
         path = host / relative
         if not path.is_file() or path.is_symlink():
@@ -235,7 +238,7 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
         refresh_command_inventory(host)
     if (host / "command-resource-execution.json").is_file():
         refresh_command_resource_inventory(host)
-    refresh_postbuild_host_artifacts(host, host_receipt)
+    refresh_postbuild_host_artifacts(host, host_receipt, expected_legacy=legacy_recovery_app is not None)
     for relative in host_receipt["artifact_sha256"]:
         host_receipt["artifact_sha256"][relative] = sha256(host / relative)
     host_receipt["signing"] = "developer_id" if release else "ad_hoc"

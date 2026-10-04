@@ -830,7 +830,7 @@ class PreparationRunner:
                     def create_command_owner():
                         created = CommandPreparationOwner(self.command_admission, self.store, attempt.job_id,
                             attempt.workspace, package, descriptor, attempt_id=attempt.command_attempt_id,
-                            check=attempt.check, deadline=attempt.deadline, resource_admission=self.command_resource_admission)
+                            check=current, deadline=attempt.deadline, resource_admission=self.command_resource_admission)
                         # Cancellation joins this thread before cleanup reads the
                         # list, so a just-created owner cannot be abandoned.
                         attempt.owners.append(created)

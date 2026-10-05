@@ -2802,11 +2802,19 @@ extension McpmeApp {
         defer { if let prior { setenv("MCPME_STATE_DIR", prior, 1) } else { unsetenv("MCPME_STATE_DIR") } }
         let app = McpmeApp(); _ = app.makeSetupWorkspace()
         var stage = "connection", routes: [String] = [], pending = 0
+        var handoffProposal: AgentPreparationJob?
         var receipt: [String: Any] = ["schema_version": 1]
         if let draftID { receipt["draft_id"] = draftID }
         func report(_ passed: Bool) -> Bool {
             receipt["passed"] = passed; receipt["stage"] = stage; receipt["routes"] = routes
-            if let code = app.agentPreparationView.errorCode ?? app.artifactCaptureView.errorCode ?? app.artifactCaptureView.job?.error ?? app.preparationView.job?.error ?? app.preparationView.resolutionJob?.error { receipt["error_code"] = code }
+            if agent, stage == "agent_handoff" {
+                receipt["handoff_postconditions"] = nativeAgentHandoffObservation(
+                    proposal: handoffProposal, form: app.preparationView.form, pending: pending,
+                    agentBusy: app.agentPreparationView.busy, ordinaryBusy: app.preparationView.busy,
+                    agentError: app.agentPreparationView.errorCode, ordinaryError: app.preparationView.formErrorCode,
+                    preparationJobPresent: app.preparationView.job != nil, resolutionJobPresent: app.preparationView.resolutionJob != nil)
+            }
+            if let code = app.agentPreparationView.errorCode ?? app.preparationView.formErrorCode ?? app.artifactCaptureView.errorCode ?? app.artifactCaptureView.job?.error ?? app.preparationView.job?.error ?? app.preparationView.resolutionJob?.error { receipt["error_code"] = code }
             if let context = directoryContext { return context.report(receipt) && passed }
             guard let result = try? JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]), result.count <= 262144 else { return false }
             if let serviceContext { return serviceContext.report(result) && passed }
@@ -3006,6 +3014,7 @@ extension McpmeApp {
             receipt["agent_job_id"] = proposal.id; receipt["proposal_digest"] = digest
             receipt["agent_revision"] = proposal.context.revision; receipt["simulated_provider"] = !liveAgent
             if liveAgent { receipt["provider_generation"] = scope["provider_generation"]; receipt["live_transport_selected"] = true }
+            handoffProposal = proposal
             stage = "agent_handoff"; agentView.adoptCandidate()
             guard awaitCondition(60, { pending == 0 && !view.busy }), agentView.errorCode == nil,
                   let form = view.form, form.importID == proposal.context.importID,
@@ -3307,6 +3316,75 @@ if CommandLine.arguments.dropFirst().first == "--preparation-ui-self-test" {
     let fixture = arguments.count == 2 ? URL(fileURLWithPath: arguments[1]) : nil
     let passed = preparationFormsSelfTest(fixture: fixture) && McpmeApp.preparationBindingSelfTest(fixture: fixture)
     print(passed ? "preparation_ui_contracts_passed" : "preparation_ui_contracts_failed")
+    exit(passed ? 0 : 1)
+}
+
+/// Metadata for the explicit acceptance command; never a handoff authority gate.
+func nativeAgentHandoffObservation(proposal: AgentPreparationJob?, form: OnboardingFormV1?, pending: Int,
+    agentBusy: Bool, ordinaryBusy: Bool, agentError: String?, ordinaryError: String?,
+    preparationJobPresent: Bool, resolutionJobPresent: Bool) -> [String: Bool] {
+    let paired = proposal != nil && form != nil
+    return ["proposal_present": proposal != nil, "proposal_succeeded": proposal?.state == "succeeded",
+        "proposal_settled": proposal?.settled == true, "requests_complete": pending == 0,
+        "agent_idle": !agentBusy, "ordinary_idle": !ordinaryBusy,
+        "agent_error_absent": agentError == nil, "ordinary_error_absent": ordinaryError == nil,
+        "form_present": form != nil,
+        "form_import_matches": paired && form?.importID == proposal?.context.importID,
+        "form_revision_matches": paired && form?.revision == proposal?.context.revision,
+        "form_source_matches": paired && form?.sourceRevision == proposal?.context.sourceRevision,
+        "resolution_required": form?.resolutionRequired == true,
+        "resolution_result_absent": form != nil && form?.resolutionDigest == nil,
+        "preparation_job_absent": !preparationJobPresent, "resolution_job_absent": !resolutionJobPresent]
+}
+
+func nativeAgentHandoffObservationSelfTest() -> Bool {
+    let row: [String: Any] = ["schema_version": 1, "job_id": PreparationTestData.jobID,
+        "import_id": PreparationTestData.importID, "revision": 1, "source_revision": PreparationTestData.source,
+        "state": "succeeded", "local_io_settled": true, "proposal_digest": PreparationTestData.recipeDigest,
+        "candidate": NSNull(), "verification": NSNull(), "installed": false, "error_code": NSNull()]
+    guard let proposal = AgentPreparationJob(row), let form = OnboardingFormV1(PreparationTestData.resolutionForm()) else { return false }
+    func observe(_ proposal: AgentPreparationJob?, _ form: OnboardingFormV1?, pending: Int = 0,
+        agentBusy: Bool = false, ordinaryBusy: Bool = false, agentError: String? = nil, ordinaryError: String? = nil,
+        preparation: Bool = false, resolution: Bool = false) -> [String: Bool] {
+        nativeAgentHandoffObservation(proposal: proposal, form: form, pending: pending,
+            agentBusy: agentBusy, ordinaryBusy: ordinaryBusy, agentError: agentError, ordinaryError: ordinaryError,
+            preparationJobPresent: preparation, resolutionJobPresent: resolution)
+    }
+    let baseline = observe(proposal, form)
+    guard baseline.count == 16, baseline.values.allSatisfy({ $0 }),
+          observe(nil, nil)["form_import_matches"] == false, observe(nil, nil)["resolution_result_absent"] == false,
+          observe(proposal, nil)["form_present"] == false, observe(nil, form)["proposal_present"] == false else { return false }
+    for (key, result) in [("requests_complete", observe(proposal, form, pending: 1)),
+        ("agent_idle", observe(proposal, form, agentBusy: true)), ("ordinary_idle", observe(proposal, form, ordinaryBusy: true)),
+        ("agent_error_absent", observe(proposal, form, agentError: "agent_source_identity_mismatch")),
+        ("ordinary_error_absent", observe(proposal, form, ordinaryError: "preparation_form_unavailable")),
+        ("preparation_job_absent", observe(proposal, form, preparation: true)),
+        ("resolution_job_absent", observe(proposal, form, resolution: true))] {
+        guard result[key] == false, result.filter({ !$0.value }).count == 1 else { return false }
+    }
+    for (field, value, key) in [("import_id", "99999999-2222-4333-8444-555555555555" as Any, "form_import_matches"),
+        ("revision", 2 as Any, "form_revision_matches"), ("source_revision", String(repeating: "e", count: 64) as Any, "form_source_matches")] {
+        var changed = PreparationTestData.resolutionForm(); changed[field] = value
+        guard let mismatch = OnboardingFormV1(changed), observe(proposal, mismatch)[key] == false else { return false }
+    }
+    guard let resolved = OnboardingFormV1(PreparationTestData.resolutionForm(resolved: true)),
+          observe(proposal, resolved)["resolution_required"] == false,
+          observe(proposal, resolved)["resolution_result_absent"] == false else { return false }
+    return true
+}
+
+if CommandLine.arguments.dropFirst().first == "--agent-handoff-observation-self-test" {
+    guard CommandLine.arguments.count == 2 else { exit(2) }
+    let passed = nativeAgentHandoffObservationSelfTest()
+    print(passed ? "agent_handoff_observation_contracts_passed" : "agent_handoff_observation_contracts_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--preparation-form-error-self-test" {
+    guard CommandLine.arguments.count == 2 else { exit(2) }
+    _ = NSApplication.shared
+    let passed = PreparationWorkspaceView.formErrorObservationSelfTest()
+    print(passed ? "preparation_form_error_contracts_passed" : "preparation_form_error_contracts_failed")
     exit(passed ? 0 : 1)
 }
 

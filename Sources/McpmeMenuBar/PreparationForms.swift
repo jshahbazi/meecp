@@ -535,6 +535,8 @@ final class PreparationWorkspaceView: NSStackView {
     private var polling = false
     private(set) var busy = false
     private(set) var form: OnboardingFormV1?
+    // Diagnostic only: this never participates in execution/control admission.
+    private(set) var formErrorCode: String?
     private(set) var review: PreparationReview?
     private(set) var job: PreparationJob?
     private(set) var resolutionReview: PreparationResolutionReview?
@@ -591,7 +593,7 @@ final class PreparationWorkspaceView: NSStackView {
     func bind(_ next: PreparationContext?, saved: Bool, eligible: Bool) {
         if context != next || self.saved != saved || self.eligible != eligible {
             let sameSource = context?.importID == next?.importID && context?.sourceRevision == next?.sourceRevision
-            epoch &+= 1; busy = false; polling = false; resolutionPolling = false; form = nil; review = nil; startKey = nil; resolutionReview = nil; resolutionStartKey = nil
+            epoch &+= 1; busy = false; polling = false; resolutionPolling = false; form = nil; formErrorCode = nil; review = nil; startKey = nil; resolutionReview = nil; resolutionStartKey = nil
             formView.configure(fields: [], values: [:]); candidatePicker.removeAllItems(); recipePicker.removeAllItems(); reviewText.string = ""
             if !sameSource { job = nil; attachedNotification = nil; progress.stringValue = ""; resolutionJob = nil; resolutionNotification = nil; resolutionProgress.stringValue = "" }
             resolutionStatus.stringValue = ""
@@ -603,7 +605,7 @@ final class PreparationWorkspaceView: NSStackView {
 
     // Dropping connection state never cancels a durable host job.
     func invalidate() {
-        epoch &+= 1; busy = false; polling = false; resolutionPolling = false; form = nil; review = nil; startKey = nil; resolutionReview = nil; resolutionStartKey = nil
+        epoch &+= 1; busy = false; polling = false; resolutionPolling = false; form = nil; formErrorCode = nil; review = nil; startKey = nil; resolutionReview = nil; resolutionStartKey = nil
         formView.configure(fields: [], values: [:]); reviewText.string = ""; updateControls()
     }
     func refreshAvailability() { updateControls() }
@@ -657,7 +659,7 @@ final class PreparationWorkspaceView: NSStackView {
     private func loadForm(candidateID: String?, recipe: PreparationRecipeReference?, resolutionDigest: String? = nil) {
         guard !busy, !hasActiveJob, saved, eligible, available?() == true, let context, let request else { return }
         epoch &+= 1; let expected = epoch; busy = true; polling = false; resolutionPolling = false
-        form = nil; review = nil; startKey = nil; formView.configure(fields: [], values: [:]); reviewText.string = ""
+        form = nil; formErrorCode = nil; review = nil; startKey = nil; formView.configure(fields: [], values: [:]); reviewText.string = ""
         resolutionReview = nil; resolutionStartKey = nil
         var body: [String: Any] = ["import_id": context.importID, "revision": context.revision]
         if let candidateID { body["candidate_id"] = candidateID }; if let recipe { body["recipe"] = recipe.object }
@@ -669,7 +671,9 @@ final class PreparationWorkspaceView: NSStackView {
                   form.revision == context.revision, form.sourceRevision == context.sourceRevision,
                   candidateID == nil || candidateID == form.candidateID, recipe == nil || recipe == form.recipe,
                   resolutionDigest == nil || resolutionDigest == form.resolutionDigest else {
-                self.status.stringValue = "Questions unavailable (\(preparationCode(code) ?? "unsupported_preparation_form"))."; self.updateControls(); self.onStateChange?(); return
+                let safeError = preparationCode(code) ?? "unsupported_preparation_form"
+                self.formErrorCode = safeError
+                self.status.stringValue = "Questions unavailable (\(safeError))."; self.updateControls(); self.onStateChange?(); return
             }
             self.form = form; self.candidatePicker.removeAllItems(); self.recipePicker.removeAllItems()
             self.candidatePicker.addItem(withTitle: "Choose…"); self.recipePicker.addItem(withTitle: "Choose…")
@@ -1156,6 +1160,48 @@ enum PreparationTestData {
 }
 
 extension PreparationWorkspaceView {
+    static func formErrorObservationSelfTest() -> Bool {
+        let context = PreparationTestData.context, view = PreparationWorkspaceView()
+        var calls: [PreparationTestRequest] = []
+        view.available = { true }; view.bind(context, saved: true, eligible: true)
+        view.request = { calls.append(PreparationTestRequest(path: $0, method: $1, body: $2, complete: $3)) }
+        func load() -> PreparationTestRequest? {
+            let count = calls.count; view.refreshForm()
+            guard calls.count == count + 1, view.busy, view.formErrorCode == nil,
+                  calls.last?.path == "v1/preparations/form", calls.last?.method == "POST" else { return nil }
+            return calls.last
+        }
+        guard let rejected = load() else { return false }
+        rejected.complete(nil, "agent_pending_proposal_unavailable")
+        guard !view.busy, view.form == nil, view.formErrorCode == "agent_pending_proposal_unavailable" else { return false }
+        // A current malformed success response is still an unavailable form;
+        // untrusted error text is reduced to the existing fixed fallback.
+        guard let malformed = load() else { return false }
+        malformed.complete(["schema_version": 1], "untrusted diagnostic text")
+        guard !view.busy, view.form == nil, view.formErrorCode == "unsupported_preparation_form" else { return false }
+        guard let recovered = load() else { return false }
+        recovered.complete(PreparationTestData.resolutionForm(), nil)
+        guard !view.busy, view.form != nil, view.formErrorCode == nil else { return false }
+        guard let stale = load() else { return false }
+        let next = PreparationContext(importID: context.importID, revision: 2, sourceRevision: context.sourceRevision)!
+        view.bind(next, saved: true, eligible: true)
+        stale.complete(nil, "agent_pending_proposal_unavailable")
+        guard !view.busy, view.form == nil, view.formErrorCode == nil else { return false }
+        guard let current = load() else { return false }
+        stale.complete(nil, "agent_generated_form_invalid")
+        guard view.busy, view.form == nil, view.formErrorCode == nil else { return false }
+        current.complete(PreparationTestData.resolutionForm(revision: 2), nil)
+        guard !view.busy, view.form?.revision == 2, view.formErrorCode == nil else { return false }
+        guard let invalidated = load() else { return false }
+        view.invalidate(); invalidated.complete(nil, "agent_generated_form_invalid")
+        guard !view.busy, view.form == nil, view.formErrorCode == nil else { return false }
+        guard let failed = load() else { return false }
+        failed.complete(nil, "preparation_form_unavailable")
+        guard view.formErrorCode == "preparation_form_unavailable" else { return false }
+        view.bind(context, saved: false, eligible: true)
+        return view.formErrorCode == nil && view.form == nil && !view.busy && view.job == nil && view.resolutionJob == nil
+    }
+
     static func agentProposalReviewSelfTest() -> Bool {
         let context = PreparationTestData.context, view = PreparationWorkspaceView()
         var calls: [PreparationTestRequest] = []

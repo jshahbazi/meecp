@@ -42,6 +42,77 @@ NATIVE_STAGES = native_common.NATIVE_STAGES
 LIVE_ERRORS = frozenset({"agent_provider_rejected", "agent_provider_failed", "agent_provider_incomplete",
     "agent_provider_response_limit", "agent_provider_output_invalid", "agent_proposal_invalid", "agent_deadline",
     "agent_credentials_unavailable", "agent_provider_configuration_stale", "agent_source_identity_mismatch"})
+NATIVE_FAILURE_CODES = LIVE_ERRORS | frozenset({"native_live_agent_acceptance_failed",
+    "unsupported_preparation_form",
+    "agent_pending_proposal_unavailable", "agent_generated_form_unavailable", "agent_generated_form_invalid",
+    "preparation_form_invalid", "preparation_form_unavailable", "preparation_selection_missing",
+    "preparation_recipe_unavailable", "agent_candidate_requires_review", "manager_request_failed"})
+HANDOFF_POSTCONDITIONS = frozenset({"proposal_present", "proposal_succeeded", "proposal_settled",
+    "requests_complete", "agent_idle", "ordinary_idle", "agent_error_absent", "ordinary_error_absent",
+    "form_present", "form_import_matches", "form_revision_matches", "form_source_matches",
+    "resolution_required", "resolution_result_absent", "preparation_job_absent", "resolution_job_absent"})
+JOB_STATES = frozenset({"queued", "snapshotting", "analyzing", "validating", "cancel_requested",
+    "adopting", "adopted", "succeeded", "failed", "canceled", "interrupted"})
+
+
+def native_failure_metadata(value):
+    """Project only finite acceptance diagnostics; never copy native payloads."""
+    if not isinstance(value, dict):
+        return {"receipt_available": False}
+    code = value.get("error_code")
+    stage = value.get("stage")
+    result = {"receipt_available": True, "native_error_present": "error_code" in value,
+        "native_error_allowed": isinstance(code, str) and code in NATIVE_FAILURE_CODES,
+        "native_error_code": code if isinstance(code, str) and code in NATIVE_FAILURE_CODES else "native_live_agent_acceptance_failed",
+        "native_stage": stage if isinstance(stage, str) and stage in NATIVE_STAGES else "unknown"}
+    postconditions = value.get("handoff_postconditions")
+    if (isinstance(postconditions, dict) and set(postconditions) == HANDOFF_POSTCONDITIONS
+            and all(type(item) is bool for item in postconditions.values())):
+        result["handoff_postconditions"] = dict(postconditions)
+    else:
+        result["handoff_postconditions_available"] = False
+    routes = value.get("routes")
+    if isinstance(routes, list) and len(routes) <= 512 and all(isinstance(item, str) and len(item) <= 256 for item in routes):
+        result["native_route_count"] = len(routes)
+        result["agent_start_requested"] = "POST v1/agent-preparations/start" in routes
+        result["form_requested"] = "POST v1/preparations/form" in routes
+        result["resolution_start_requested"] = "POST v1/resolutions/start" in routes
+        result["preparation_start_requested"] = "POST v1/preparations/start" in routes
+    return result
+
+
+def agent_call_metadata(job, draft, job_id):
+    """Account durable reservations separately from remote provider execution."""
+    unknown = {"known": False, "remote_calls_after_cancel": "unknown"}
+    if (not isinstance(draft, dict) or not isinstance(draft.get("source"), dict)
+            or type(draft.get("revision")) is not int or not isinstance(job, dict)
+            or job.get("job_id") != job_id or job.get("import_id") != draft.get("draft_id")
+            or type(job.get("revision")) is not int
+            or job.get("revision") != draft["revision"] or job.get("source_revision") != draft["source"].get("revision")):
+        return unknown
+    calls = job.get("calls")
+    if not isinstance(calls, list) or len(calls) > LIMITS["max_calls"]:
+        return unknown
+    roles = set()
+    for call in calls:
+        if (not isinstance(call, dict) or set(call) != {"role", "transfer_bytes", "reserved_output_tokens", "usage"}
+                or not isinstance(call["role"], str) or call["role"] not in {"interface", "dependencies", "fixtures", "adapter"}
+                or call["role"] in roles or type(call["transfer_bytes"]) is not int
+                or not 0 <= call["transfer_bytes"] <= LIMITS["max_transfer_bytes"]
+                or type(call["reserved_output_tokens"]) is not int or call["reserved_output_tokens"] != LIMITS["max_output_tokens"]):
+            return unknown
+        roles.add(call["role"])
+        usage = call["usage"]
+        if usage is not None and (not isinstance(usage, dict) or set(usage) != {"input_tokens", "output_tokens"}
+                or any(type(value) is not int or not 0 <= value <= 10**9 for value in usage.values())):
+            return unknown
+    if sum(call["transfer_bytes"] for call in calls) > LIMITS["max_transfer_bytes"]:
+        return unknown
+    state = job.get("state")
+    return {"known": True, "state": state if isinstance(state, str) and state in JOB_STATES else "unknown",
+        "local_io_settled": job.get("local_io_settled") is True,
+        "reserved_calls": len(calls), "usage_recorded_calls": sum(call.get("usage") is not None for call in calls),
+        "remote_calls_after_cancel": "unknown"}
 
 
 def active_candidate(policy, model, adapter_digest):
@@ -132,6 +203,27 @@ class LiveHarness(native_common.Harness):
             "live_agent_configuration_invalid")
         return provider
 
+    async def observe_failure(self, state, draft, native):
+        observation = native_failure_metadata(native)
+        observation["call_accounting"] = {"known": False, "remote_calls_after_cancel": "unknown"}
+        try:
+            counts = native_common.job_counts(state)
+            if (set(counts) <= {"preparation_jobs", "resolution_jobs", "agent_host_jobs", "attempts"}
+                    and all(type(count) is int and 0 <= count <= 1024 for count in counts.values())):
+                observation["journal_counts"] = counts
+        except Exception:
+            observation["journal_counts_available"] = False
+        job_id = native.get("agent_job_id") if isinstance(native, dict) else None
+        if (isinstance(job_id, str) and re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", job_id)):
+            try:
+                job = await asyncio.wait_for(self.get(state, "/v1/agent-preparations/jobs/" + job_id), 5)
+                observation["call_accounting"] = agent_call_metadata(job, draft, job_id)
+            except BaseException:
+                # This is a read-only diagnostic. Retain the original failure,
+                # including cancellation, and never trigger another attempt.
+                observation["call_accounting_available"] = False
+        self.report["live_failure_observation"] = observation
+
 
     async def case(self, label):
         common.require(label == "scalar", "live_agent_case_not_admitted")
@@ -152,6 +244,7 @@ class LiveHarness(native_common.Harness):
         (source / "unknown.payload").write_bytes(b"\0\xffsynthetic\n")
         original = {path.name: common.digest(path) for path in source.iterdir()}
         child = await self.start(state, environment, home, enabled=False)
+        draft, native = None, None
         try:
             provider = await self.configure(state)
             draft = await self.cli(state, environment, home, "imports", "create", "--source", source,
@@ -179,8 +272,8 @@ class LiveHarness(native_common.Harness):
             common.require(output.is_file(), "native_agent_receipt_missing")
             native = common.private_json(output, 262144)
             if code or native.get("passed") is not True:
-                error = common.AcceptanceError(native.get("error_code") if native.get("error_code") in LIVE_ERRORS else "native_live_agent_acceptance_failed")
-                error.native_stage = native.get("stage") if native.get("stage") in NATIVE_STAGES else "connection"
+                error = common.AcceptanceError(native_failure_metadata(native)["native_error_code"])
+                error.native_stage = native_failure_metadata(native)["native_stage"]
                 raise error
             common.require(native["stage"] == "attached" and native["draft_id"] == draft["draft_id"]
                 and native["source_revision"] == draft["source"]["revision"]
@@ -271,6 +364,14 @@ class LiveHarness(native_common.Harness):
                 "captured_source_removed": True, "restart_invoked": True, "relocated_confined_probe": True,
                 "elapsed_seconds": round(time.monotonic() - started, 3)}
         except BaseException as error:
+            if draft is not None:
+                try:
+                    await self.observe_failure(state, draft, native)
+                except BaseException:
+                    # A secondary observation can never replace the original
+                    # acceptance failure or cancellation.
+                    self.report["live_failure_observation"] = {"observation_available": False,
+                        "call_accounting": {"known": False, "remote_calls_after_cancel": "unknown"}}
             if not isinstance(error, common.AcceptanceError):
                 error.acceptance_context = dict(common.DIAGNOSTIC)
             raise
@@ -414,7 +515,7 @@ def main():
             error, _ = common.bounded_failure(error)
             code = error.code if isinstance(error, common.AcceptanceError) else "live_agent_acceptance_failed"
             report["diagnostic"] = {"code": code if code.startswith(("live_agent_", "native_agent_", "acceptance_"))
-                or code in LIVE_ERRORS else "live_agent_acceptance_failed",
+                or code in NATIVE_FAILURE_CODES else "live_agent_acceptance_failed",
                 "stage": getattr(error, "native_stage", "unknown") if getattr(error, "native_stage", "unknown") in NATIVE_STAGES else "unknown"}
         finally:
             with os.fdopen(fd, "wb") as stream:

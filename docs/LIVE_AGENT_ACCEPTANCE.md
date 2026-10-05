@@ -126,3 +126,29 @@ inside the nondispatch review branch and restores the previous search path
 afterward. A real offline `uv run --frozen python` subprocess without PYTHONPATH
 now verifies this entry point. The live branch retains its bundled-module origin
 checks and receives no source bootstrap.
+
+The handoff diagnostics follow-up preserves a finite native failure code and
+boolean postconditions before the isolated state is cleaned up. The explicit
+native acceptance command now includes the ordinary preparation form error and
+records whether a form exists, matches the proposal context, requires resolution,
+has no resolution result, and has no ordinary job. It also records request
+completion, view idleness, and error absence. These observations do not change
+the production handoff guards or grant execution authority. A pure compiled
+contract command covers matching, missing, and mismatched form contexts. A
+separate compiled control exercises the production form callback with current
+errors, malformed replies, stale replies after rebinding or invalidation, and
+successful recovery. The form error is diagnostic metadata, cleared on a new
+load or binding change; it does not participate in execution admission. The
+observed proposal is the exact local proposal captured before the handoff.
+
+On failure, the Python driver makes at most one bounded read of the existing
+agent job identified by the native receipt. It requires the original import,
+revision, and source binding before retaining state and call-accounting counts.
+The counts distinguish durable reservations from recorded usage; they do not
+claim that remote provider work settled or that every reserved call was sent.
+Missing, malformed, or unavailable metadata remains unknown. The receipt never
+copies form values, source, provider replies, credentials, token counts, or raw
+errors, and this diagnostic read cannot create or retry a provider attempt.
+Malformed call records, duplicate roles, and invalid usage records remain
+unknown. A secondary diagnostic failure cannot replace the original acceptance
+failure or cancellation.

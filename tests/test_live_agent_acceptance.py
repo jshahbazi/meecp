@@ -352,6 +352,192 @@ def test_compiled_live_selection_review_and_legacy_simulation(native_recipe_driv
     assert result.returncode == 0 and result.stdout == b"agent_live_acceptance_contracts_passed\n" and not result.stderr
 
 
+def test_compiled_handoff_observation_has_no_native_startup(native_recipe_driver, tmp_path):
+    result = subprocess.run([str(native_recipe_driver), "--agent-handoff-observation-self-test"],
+        env={"HOME": str(tmp_path), "TMPDIR": str(tmp_path), "PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
+    assert result.returncode == 0 and result.stdout == b"agent_handoff_observation_contracts_passed\n" and not result.stderr
+
+
+def test_compiled_form_error_current_stale_malformed_and_recovery(native_recipe_driver, tmp_path):
+    result = subprocess.run([str(native_recipe_driver), "--preparation-form-error-self-test"],
+        env={"HOME": str(tmp_path), "TMPDIR": str(tmp_path), "PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
+    assert result.returncode == 0 and result.stdout == b"preparation_form_error_contracts_passed\n" and not result.stderr
+
+
+@pytest.mark.asyncio
+async def test_secondary_observation_failure_cannot_replace_original_case_error(driver, tmp_path):
+    harness = driver.LiveHarness(tmp_path, tmp_path, tmp_path, None, model="synthetic", credential_file=tmp_path / "not-read", report={})
+    original = driver.common.AcceptanceError("synthetic_original_failure")
+    joined = asyncio.Event()
+    async def start(*_, **kwargs):
+        assert kwargs == {"enabled": False}; return object()
+    async def configure(*_): return {"synthetic": True}
+    async def cli(_state, _environment, _home, *argv):
+        if argv[:2] == ("imports", "create"):
+            source = tmp_path / "scalar" / "unfamiliar source"
+            return {"draft_id": str(uuid.uuid4()), "revision": 1,
+                "source": {"revision": "a" * 64, "files": [{"path": path.name, "sha256": driver.common.digest(path)} for path in source.iterdir()]}}
+        raise original
+    async def observe(*_): raise RuntimeError("synthetic secondary failure")
+    async def shutdown(*_): joined.set()
+    harness.start, harness.configure, harness.cli = start, configure, cli
+    harness.observe_failure, harness.shutdown = observe, shutdown
+    with pytest.raises(driver.common.AcceptanceError) as raised:
+        await harness.case("scalar")
+    assert raised.value is original and joined.is_set()
+    assert harness.report["live_failure_observation"] == {"observation_available": False,
+        "call_accounting": {"known": False, "remote_calls_after_cancel": "unknown"}}
+    assert not harness.credential_file.exists() and not harness.children
+
+
+@pytest.mark.parametrize("fault", ["duplicate_role", "unknown_role", "extra_call_key", "bool_transfer", "negative_transfer",
+    "oversized_transfer", "bool_reservation", "wrong_reservation", "extra_usage_key", "bool_usage", "negative_usage", "oversized_usage", "missing_source"])
+def test_malformed_durable_call_records_remain_unknown(driver, fault):
+    job_id, import_id = str(uuid.uuid4()), str(uuid.uuid4())
+    draft = {"draft_id": import_id, "revision": 1, "source": {"revision": "a" * 64}}
+    call = {"role": "interface", "transfer_bytes": 32, "reserved_output_tokens": driver.LIMITS["max_output_tokens"],
+        "usage": {"input_tokens": 1, "output_tokens": 2}}
+    job = {"job_id": job_id, "import_id": import_id, "revision": 1, "source_revision": "a" * 64,
+        "state": "failed", "local_io_settled": True, "calls": [call]}
+    assert driver.agent_call_metadata(job, draft, job_id)["known"] is True
+    if fault == "duplicate_role": job["calls"].append(copy.deepcopy(call))
+    elif fault == "unknown_role": call["role"] = "synthetic-unretained-content"
+    elif fault == "extra_call_key": call["synthetic-unretained-content"] = True
+    elif fault == "bool_transfer": call["transfer_bytes"] = True
+    elif fault == "negative_transfer": call["transfer_bytes"] = -1
+    elif fault == "oversized_transfer": call["transfer_bytes"] = driver.LIMITS["max_transfer_bytes"] + 1
+    elif fault == "bool_reservation": call["reserved_output_tokens"] = True
+    elif fault == "wrong_reservation": call["reserved_output_tokens"] += 1
+    elif fault == "extra_usage_key": call["usage"]["synthetic-unretained-content"] = 1
+    elif fault == "bool_usage": call["usage"]["input_tokens"] = True
+    elif fault == "negative_usage": call["usage"]["input_tokens"] = -1
+    elif fault == "oversized_usage": call["usage"]["input_tokens"] = 10**9 + 1
+    else: draft.pop("source")
+    assert driver.agent_call_metadata(job, draft, job_id) == {"known": False, "remote_calls_after_cancel": "unknown"}
+
+
+@pytest.mark.parametrize("damage", ["absent", "unknown_code", "unknown_stage", "extra_condition", "integer_condition"])
+def test_failure_projection_never_copies_unknown_native_content(driver, damage):
+    secret = "synthetic-unretained-content"
+    value = {"stage": "agent_handoff", "error_code": "preparation_form_unavailable",
+        "handoff_postconditions": dict.fromkeys(driver.HANDOFF_POSTCONDITIONS, True),
+        "routes": ["POST v1/preparations/form"], "options": secret, "response": secret}
+    if damage == "absent": value = None
+    elif damage == "unknown_code": value["error_code"] = secret
+    elif damage == "unknown_stage": value["stage"] = secret
+    elif damage == "extra_condition": value["handoff_postconditions"][secret] = True
+    else: value["handoff_postconditions"]["form_present"] = 1
+    projected = driver.native_failure_metadata(value)
+    assert secret not in json.dumps(projected)
+    if damage == "absent": assert projected == {"receipt_available": False}
+    elif damage == "unknown_code":
+        assert projected["native_error_present"] and not projected["native_error_allowed"]
+        assert projected["native_error_code"] == "native_live_agent_acceptance_failed"
+    elif damage == "unknown_stage": assert projected["native_stage"] == "unknown"
+    else: assert projected["handoff_postconditions_available"] is False
+
+
+def test_failure_projection_preserves_exact_native_handoff_conditions(driver):
+    value = {"stage": "agent_handoff", "error_code": "preparation_form_unavailable",
+        "handoff_postconditions": dict.fromkeys(driver.HANDOFF_POSTCONDITIONS, True),
+        "routes": ["POST v1/agent-preparations/start", "POST v1/preparations/form"]}
+    value["handoff_postconditions"].update(form_present=False, ordinary_error_absent=False)
+    projected = driver.native_failure_metadata(value)
+    assert projected["native_error_code"] == "preparation_form_unavailable"
+    assert projected["native_stage"] == "agent_handoff"
+    assert projected["handoff_postconditions"] == value["handoff_postconditions"]
+    assert projected["agent_start_requested"] and projected["form_requested"]
+    assert not projected["resolution_start_requested"] and not projected["preparation_start_requested"]
+
+
+@pytest.mark.asyncio
+async def test_failure_observation_reads_production_ledger_before_cleanup(driver, tmp_path, monkeypatch):
+    from test_preparation_agent import request_for
+    from mcpme.preparation_agent_contracts import AgentUsageV1
+    from mcpme.preparation_agent_coordinator import AgentAttemptStore
+    from mcpme.preparation_agent_host import AgentPreparationHost
+    from mcpme.preparation_contracts import canonical_bytes
+    request, _ = request_for()
+    store = AgentAttemptStore(tmp_path / "journal")
+    try:
+        attempt = store.create(request); attempt.update(state="running", local_io_settled=False); store.save(attempt)
+        store.reserve_call(attempt["attempt_id"], attempt["generation"], request, "interface", 32)
+        store.account(attempt["attempt_id"], attempt["generation"], request, "interface", AgentUsageV1(input_tokens=1, output_tokens=2))
+        store.reserve_call(attempt["attempt_id"], attempt["generation"], request, "dependencies", 32)
+        store.finish(attempt["attempt_id"], attempt["generation"], "failed", "agent_provider_failed")
+        job_id = str(uuid.uuid4())
+        job = {"job_id": job_id, "import_id": request.import_id, "revision": request.revision,
+            "source_revision": request.source_revision, "state": "failed", "local_io_settled": True,
+            "attempt_id": attempt["attempt_id"], "candidate_metadata": None, "candidate_blocker": None}
+        # Exercise the production SQLite/get projection; no host executor or
+        # provider is constructed by this ledger-only fixture.
+        store.db.execute("CREATE TABLE agent_host_jobs (id TEXT PRIMARY KEY, idem TEXT UNIQUE NOT NULL, data TEXT NOT NULL)")
+        store.db.execute("INSERT INTO agent_host_jobs VALUES (?,?,?)", (job_id, str(uuid.uuid4()), canonical_bytes(job).decode()))
+        host = object.__new__(AgentPreparationHost); host.db, host.store = store.db, store
+        draft = {"draft_id": request.import_id, "revision": request.revision, "source": {"revision": request.source_revision}}
+        harness = driver.LiveHarness(tmp_path, tmp_path, tmp_path, None, model="synthetic", credential_file=tmp_path / "not-read", report={})
+        seen = []
+        async def get(state, route):
+            seen.append(route); return host.get(job_id)
+        harness.get = get
+        monkeypatch.setattr(driver.native_common, "job_counts", lambda _state: {"agent_host_jobs": 1, "attempts": 1})
+        await harness.observe_failure(tmp_path, draft, {"agent_job_id": job_id, "stage": "agent_handoff"})
+        assert seen == ["/v1/agent-preparations/jobs/" + job_id]
+        observed = harness.report["live_failure_observation"]
+        assert observed["journal_counts"] == {"agent_host_jobs": 1, "attempts": 1}
+        assert observed["call_accounting"] == {"known": True, "state": "failed", "local_io_settled": True,
+            "reserved_calls": 2, "usage_recorded_calls": 1, "remote_calls_after_cancel": "unknown"}
+        mismatch = dict(draft, revision=draft["revision"] + 1)
+        assert driver.agent_call_metadata(host.get(job_id), mismatch, job_id)["known"] is False
+        assert not harness.children and not harness.credential_file.exists()
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_failure_observation_missing_or_silent_owner_is_unknown_and_joined(driver, tmp_path, monkeypatch):
+    harness = driver.LiveHarness(tmp_path, tmp_path, tmp_path, None, model="synthetic", credential_file=tmp_path / "not-read", report={})
+    draft = {"draft_id": str(uuid.uuid4()), "revision": 1, "source": {"revision": "a" * 40}}
+    monkeypatch.setattr(driver.native_common, "job_counts", lambda _state: {})
+    completed = asyncio.Event()
+    async def silent(*_):
+        try: await asyncio.Future()
+        finally: completed.set()
+    harness.get = silent
+    actual_wait = driver.asyncio.wait_for
+    async def short_wait(value, timeout):
+        assert timeout == 5
+        return await actual_wait(value, 0.02)
+    monkeypatch.setattr(driver.asyncio, "wait_for", short_wait)
+    await harness.observe_failure(tmp_path, draft, {"agent_job_id": str(uuid.uuid4()), "stage": "agent_handoff"})
+    assert completed.is_set() and harness.report["live_failure_observation"]["call_accounting_available"] is False
+    assert harness.report["live_failure_observation"]["call_accounting"]["known"] is False
+    seen = []
+    async def forbidden(*_): seen.append(True); pytest.fail("invalid job ID reached owner route")
+    harness.get = forbidden
+    await harness.observe_failure(tmp_path, draft, {"agent_job_id": "../not-owned"})
+    assert not seen and harness.report["live_failure_observation"]["call_accounting"]["known"] is False
+
+
+def test_main_preserves_fixed_native_fallback_and_metadata(driver, tmp_path, monkeypatch):
+    output = tmp_path / "receipt.json"
+    async def verify(_host, _native, _model, _credential, report):
+        report["live_failure_observation"] = driver.native_failure_metadata({"stage": "agent_handoff"})
+        error = driver.common.AcceptanceError("native_live_agent_acceptance_failed"); error.native_stage = "agent_handoff"
+        raise error
+    monkeypatch.setattr(driver, "verify_live", verify)
+    monkeypatch.setattr(driver.logging, "disable", lambda _: None)
+    monkeypatch.setattr(driver.os, "umask", lambda _: 0o077)
+    monkeypatch.setattr(sys, "argv", ["verify", "--run-live", "--model", "synthetic", "--host", str(tmp_path),
+        "--native", str(tmp_path), "--credential-file", str(tmp_path), "--output", str(output)])
+    with pytest.raises(SystemExit) as exited: driver.main()
+    assert exited.value.code == 1
+    report = json.loads(output.read_bytes())
+    assert report["diagnostic"] == {"code": "native_live_agent_acceptance_failed", "stage": "agent_handoff"}
+    assert not report["credential_read_attempted"] and not report["credential_read"]
+    assert report["live_failure_observation"]["receipt_available"] is True
+
+
 @pytest.mark.parametrize("fault", ["missing_generation", "invalid_generation", "extra_secret", "simulation_marker", "expired", "replaced_manager"])
 def test_compiled_live_fixture_denied_before_claim(native_recipe_driver, tmp_path, driver, fault):
     workspace = tmp_path.resolve() / ("mcpme-native-onboarding-" + str(uuid.uuid4()))

@@ -16,7 +16,7 @@ from .private import PrivateStateError, check_private_file, ensure_private_direc
 from .recipes import (LOCK_NAME, MANIFEST_NAME, MAX_BUNDLE_BYTES, MAX_ENTRIES, MAX_FILE_BYTES, MAX_FILES,
                       _path, _read, builtin_components, validate_bundle)
 
-COMPONENTS = ("python-function-v1", "existing-mcp-v1")
+COMPONENTS = ("python-function-v1", "existing-mcp-v1", "resolved-python-v1")
 
 
 def read_contract_file(path: Path) -> dict:
@@ -170,7 +170,14 @@ def scaffold_recipe(output: Path, recipe_id: str, version: str = "1.0.0",
     if component not in COMPONENTS:
         raise PreparationError("recipe_component_unavailable")
     catalog = builtin_components()
-    component_identity = catalog[component + "@1.0.0"]["digest"]
+    component_version = "1.0.0"
+    if component == "resolved-python-v1":
+        from .preparation_resolved_python import ResolvedPythonComponent
+        component_version = ResolvedPythonComponent().reference.version
+    entry = catalog.get(component + "@" + component_version)
+    if entry is None:
+        raise PreparationError("recipe_component_unavailable")
+    component_identity = entry["digest"]
     manifest = _manifest({
         "schema_version": 1, "id": recipe_id, "version": version, "kind": "declarative",
         "worker_api_version": 1,
@@ -180,7 +187,7 @@ def scaffold_recipe(output: Path, recipe_id: str, version: str = "1.0.0",
             "required": ["label"]},
         "form": [{"field": "label", "label": "Tool label", "kind": "string", "default": "Synthetic tool"},
                  {"field": "precision", "label": "Decimal places", "kind": "integer", "default": 2}],
-        "steps": [{"component": component, "version": "1.0.0", "digest": component_identity, "config": {}}],
+        "steps": [{"component": component, "version": component_version, "digest": component_identity, "config": {}}],
         "requirements": {"capabilities": ["declarative-composition", component]},
         "licenses": ["LICENSE"], "provenance": {"origin": "mcpme-recipe-sdk-v1", "publisher": "mcpme contributors"},
     })
@@ -193,8 +200,7 @@ def scaffold_recipe(output: Path, recipe_id: str, version: str = "1.0.0",
     readme = (
         "# " + recipe_id + "\n\n"
         "This declarative recipe composes the pinned " + component + " component. "
-        "Its bounded label and precision fields declare metadata for future generated native forms. "
-        "Native recipe forms are not implemented in this milestone.\n\n"
+        "Its bounded label and precision fields are rendered in generated native forms.\n\n"
         "The fixture contains synthetic metadata only. Static checking and enabling metadata do not run this recipe. "
         "Execution remains unavailable until the independent preparation runner and runtime verification gates pass.\n\n"
         "Edit the input schema, form and nonsecret fixture together; regenerate the closed-tree lock after edits with "

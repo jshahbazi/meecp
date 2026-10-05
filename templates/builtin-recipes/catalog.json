@@ -1,0 +1,53 @@
+{
+  "recipes": [
+    {
+      "digest": "e8c9b371f0fa8db3ff858aeb6e1d4cf1d2e2286b380e9029ba41aeede651da2a",
+      "directory": "python-callable-v1",
+      "recipe_id": "mcpme.python-callable",
+      "version": "1.0.0"
+    },
+    {
+      "digest": "086f3cbe68fc6412baad7dafb2f1c9c132275606460af030dd32391c8852d239",
+      "directory": "resolved-python-v1-0-1",
+      "recipe_id": "mcpme.resolved-python",
+      "version": "1.0.1"
+    },
+    {
+      "digest": "1ef17324b5efe21af607854d17a62026ac911388539afbd7e487a5e1048f3ba8",
+      "directory": "onnx-hotdog-v1",
+      "recipe_id": "mcpme.onnx-hotdog",
+      "version": "1.0.0"
+    },
+    {
+      "digest": "6f643fa3a1cb89ef2c4aa3c4efe0a3941b1d70c416a363f2d6d16cd2f8c23f45",
+      "directory": "text-generation-v1-0-14",
+      "recipe_id": "mcpme.text-generation",
+      "version": "1.0.14"
+    },
+    {
+      "digest": "4c8244519199d76224efa11ace14c8edc5f14d2218c85ecf31a4de16913b3c79",
+      "directory": "native-command-v1-0-1",
+      "recipe_id": "mcpme.native-command",
+      "version": "1.0.1"
+    },
+    {
+      "digest": "ed6413e202c9f9e8de682c324b2e46695c9c59e1bb44d15db6a5f423dce3cc04",
+      "directory": "agent-python-adapter-v1-0-0",
+      "recipe_id": "mcpme.agent-python-adapter",
+      "version": "1.0.0"
+    },
+    {
+      "digest": "a7103a35adbf5d55a9ea369a48614517d34e0c0d69a9b9f2498dd079f9eddea3",
+      "directory": "agent-unlocked-python-adapter-v1-0-0",
+      "recipe_id": "mcpme.agent-unlocked-python-adapter",
+      "version": "1.0.0"
+    },
+    {
+      "digest": "579defab9a646d37f07eb92f2e6a2260ad1923477f1cadb96c46fc9edf6d28c3",
+      "directory": "local-openai-text-v1",
+      "recipe_id": "mcpme.local-openai-text",
+      "version": "1.0.0"
+    }
+  ],
+  "schema_version": 1
+}

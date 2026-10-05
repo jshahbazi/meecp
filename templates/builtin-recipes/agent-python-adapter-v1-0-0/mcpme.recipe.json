@@ -1,0 +1,38 @@
+{
+  "form": [],
+  "id": "mcpme.agent-python-adapter",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "kind": "declarative",
+  "licenses": [
+    "LICENSE"
+  ],
+  "provenance": {
+    "origin": "mcpme-shipped-recipe-v1",
+    "publisher": "mcpme contributors"
+  },
+  "requirements": {
+    "architecture": "arm64",
+    "capabilities": [
+      "declarative-composition"
+    ],
+    "host_api_version": 1,
+    "os": "macos",
+    "package_schema": 1,
+    "protocol": "2025-11-25"
+  },
+  "schema_version": 1,
+  "steps": [
+    {
+      "component": "agent-python-adapter-v1",
+      "config": {},
+      "digest": "28c1d862b947f294dcd0a7f038c32f3d9cf4e31ea20f81d91ab800b13d0b8274",
+      "version": "1.0.0"
+    }
+  ],
+  "version": "1.0.0",
+  "worker_api_version": 1
+}

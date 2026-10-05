@@ -158,7 +158,8 @@ async def call(state_dir: Path, method: str, path: str, body: dict | None = None
         from .grants import read_credential
         # Reopen for every call; a removed or unsafe file never selects owner authority.
         token = read_credential(credential_file)["token"]
-    timeout = 300 if path in {"/v1/install/plan", "/v1/upgrade/plan", "/v1/migrations/jevk5/plan", "/v1/imports"} or path.endswith(("/attach", "/engine")) else 30
+    timeout = 300 if path in {"/v1/install/plan", "/v1/upgrade/plan", "/v1/migrations/jevk5/plan", "/v1/imports",
+                             "/v1/preparations/plan", "/v1/preparations/inspect-source", "/v1/resolutions/plan"} or path.endswith(("/attach", "/engine")) else 30
     async with httpx.AsyncClient(base_url=endpoint(connection), timeout=timeout, follow_redirects=False, trust_env=False,
                                  transport=private_transport(socket_path(state_dir, "manager")),
                                  headers={"Authorization": "Bearer " + token}) as client:
@@ -268,6 +269,16 @@ def parser() -> argparse.ArgumentParser:
     scope.add_argument("--read-only", action="store_true")
     scope.add_argument("--prepare", action="store_true")
     scope.add_argument("--slot", type=uuid_argument, action="append", dest="slot_ids")
+    scope.add_argument("--preparation-plan", type=uuid_argument)
+    scope.add_argument("--resolution-plan", type=uuid_argument)
+    scope.add_argument("--recipe", dest="recipe_id")
+    authorize.add_argument("--plan-digest")
+    authorize.add_argument("--idempotency-key", type=uuid_argument)
+    authorize.add_argument("--recipe-version")
+    authorize.add_argument("--recipe-digest")
+    authorize.add_argument("--recipe-action", choices=["register", "enable", "disable", "deprecate", "revoke", "remove"],
+                           action="append", dest="recipe_actions")
+    authorize.add_argument("--recipe-path", type=Path)
     authorize.add_argument("--action", choices=["start", "stop", "restart"], action="append", dest="actions")
     authorize.add_argument("--ttl-seconds", type=int)
     authorize.add_argument("--json", action="store_true")
@@ -293,8 +304,23 @@ def parser() -> argparse.ArgumentParser:
     management.add_parser("export").add_argument("--json", action="store_true")
     imports = commands.add_parser("imports").add_subparsers(dest="action", required=True)
     imports.add_parser("list").add_argument("--json", action="store_true")
+    service = imports.add_parser("create-service")
+    service.add_argument("--name", required=True)
+    service.add_argument("--intent", required=True)
+    service.add_argument("--port", type=int, required=True)
+    service.add_argument("--model", required=True)
+    service.add_argument("--secret-reference", type=uuid_argument, required=True)
+    service.add_argument("--timeout-seconds", type=int, default=30)
+    service.add_argument("--max-input-bytes", type=int, default=16384)
+    service.add_argument("--max-output-tokens", type=int, default=512)
+    service.add_argument("--max-response-bytes", type=int, default=1048576)
+    service.add_argument("--start", action="store_true")
+    service.add_argument("--start-policy", choices=["manual", "host"], default="manual")
+    service.add_argument("--json", action="store_true")
     create = imports.add_parser("create")
     create.add_argument("--source", type=Path, required=True)
+    create.add_argument("--source-mode", choices=["legacy", "automatic"], default="legacy",
+                        help="Automatic directory intake includes bounded binary application files.")
     create.add_argument("--model-engine", type=Path, help="Explicit verified engine build for a selected GGUF model.")
     create.add_argument("--name", required=True)
     create.add_argument("--intent", default="")
@@ -327,13 +353,14 @@ def parser() -> argparse.ArgumentParser:
     scaffold.add_argument("--output", type=Path, required=True)
     scaffold.add_argument("--id", dest="recipe_id", required=True)
     scaffold.add_argument("--version", default="1.0.0")
-    scaffold.add_argument("--component", choices=["python-function-v1", "existing-mcp-v1"], default="python-function-v1")
+    scaffold.add_argument("--component", choices=["python-function-v1", "existing-mcp-v1", "resolved-python-v1"], default="python-function-v1")
     scaffold.add_argument("--json", action="store_true")
     for action in ("check", "lock", "add"):
         item = recipes.add_parser(action)
         item.add_argument("--path", type=Path, required=True)
         item.add_argument("--json", action="store_true")
     recipes.add_parser("list").add_argument("--json", action="store_true")
+    recipes.add_parser("schema").add_argument("--json", action="store_true")
     for action in ("inspect", "enable", "disable", "revoke", "remove", "deprecate"):
         item = recipes.add_parser(action)
         item.add_argument("--id", dest="recipe_id", required=True)
@@ -344,10 +371,40 @@ def parser() -> argparse.ArgumentParser:
     preparation_plan.add_argument("--import", dest="import_id", type=uuid_argument, required=True)
     preparation_plan.add_argument("--revision", type=int, required=True)
     preparation_plan.add_argument("--descriptor", type=Path, required=True)
+    preparation_plan.add_argument("--policy", type=Path, help="Review an execution plan under the policy in this JSON file.")
     preparation_plan.add_argument("--json", action="store_true")
+    preparation_inspect = preparations.add_parser("inspect-source")
+    preparation_inspect.add_argument("--import", dest="import_id", type=uuid_argument, required=True)
+    preparation_inspect.add_argument("--revision", type=int, required=True)
+    preparation_inspect.add_argument("--json", action="store_true")
+    preparation_start = preparations.add_parser("start")
+    preparation_start.add_argument("--plan", dest="plan_id", type=uuid_argument, required=True)
+    preparation_start.add_argument("--plan-digest", type=digest_argument, required=True)
+    preparation_start.add_argument("--idempotency-key", type=uuid_argument, required=True)
+    preparation_start.add_argument("--json", action="store_true")
     preparations.add_parser("list").add_argument("--json", action="store_true")
     for action in ("get", "cancel"):
         item = preparations.add_parser(action)
+        item.add_argument("job_id", type=uuid_argument)
+        item.add_argument("--json", action="store_true")
+    preparation_recover = preparations.add_parser("recover")
+    preparation_recover.add_argument("--job-id", type=uuid_argument, required=True)
+    preparation_recover.add_argument("--json", action="store_true")
+    resolutions = commands.add_parser("resolutions").add_subparsers(dest="action", required=True)
+    resolution_plan = resolutions.add_parser("plan")
+    resolution_plan.add_argument("--import", dest="import_id", type=uuid_argument, required=True)
+    resolution_plan.add_argument("--revision", type=int, required=True)
+    resolution_plan.add_argument("--candidate", dest="candidate_id", type=digest_argument, required=True)
+    resolution_plan.add_argument("--policy", type=Path, required=True)
+    resolution_plan.add_argument("--json", action="store_true")
+    resolution_start = resolutions.add_parser("start")
+    resolution_start.add_argument("--plan", dest="plan_id", type=uuid_argument, required=True)
+    resolution_start.add_argument("--plan-digest", type=digest_argument, required=True)
+    resolution_start.add_argument("--idempotency-key", type=uuid_argument, required=True)
+    resolution_start.add_argument("--json", action="store_true")
+    resolutions.add_parser("list").add_argument("--json", action="store_true")
+    for action in ("get", "cancel", "recover"):
+        item = resolutions.add_parser(action)
         item.add_argument("job_id", type=uuid_argument)
         item.add_argument("--json", action="store_true")
     downloads = commands.add_parser("downloads").add_subparsers(dest="action", required=True)
@@ -412,6 +469,26 @@ async def execute(args) -> dict | None:
             "mcpme-management": {"command": str(cli_launcher()), "args": ["--state-dir", str(state),
                 "--credential-file", str(credential), "management", "connect"]}}}}
     if args.command == "authorize":
+        workflow_plan = args.preparation_plan or args.resolution_plan
+        recipe_options = (args.recipe_version, args.recipe_digest, args.recipe_actions, args.recipe_path)
+        if workflow_plan is not None:
+            if args.actions or any(value is not None for value in recipe_options) or args.plan_digest is None or args.idempotency_key is None:
+                return {"error": {"code": "invalid_grant_request"}}
+            return await api("POST", "/v1/grants", {"mode": "preparation-execution" if args.preparation_plan else "resolution-execution",
+                "plan_id": workflow_plan, "plan_digest": args.plan_digest, "idempotency_key": args.idempotency_key,
+                "ttl_seconds": args.ttl_seconds if args.ttl_seconds is not None else 300})
+        if args.recipe_id is not None:
+            if (args.actions or args.plan_digest is not None or args.idempotency_key is not None
+                    or args.recipe_version is None or args.recipe_digest is None or not args.recipe_actions):
+                return {"error": {"code": "invalid_grant_request"}}
+            body = {"mode": "recipe-management", "recipe_id": args.recipe_id, "version": args.recipe_version,
+                    "digest": args.recipe_digest, "actions": args.recipe_actions,
+                    "ttl_seconds": args.ttl_seconds if args.ttl_seconds is not None else 300}
+            if args.recipe_path is not None:
+                body["path"] = str(args.recipe_path.absolute())
+            return await api("POST", "/v1/grants", body)
+        if args.plan_digest is not None or args.idempotency_key is not None or any(value is not None for value in recipe_options):
+            return {"error": {"code": "invalid_grant_request"}}
         if args.plan is not None:
             if args.actions or args.ttl_seconds not in {None, 900}:
                 return {"error": {"code": "invalid_grant_request"}}
@@ -462,23 +539,51 @@ async def execute(args) -> dict | None:
             return check_recipe(args.path.absolute())
         if args.action == "list":
             return await api("GET", "/v1/recipes")
+        if args.action == "schema":
+            return await api("GET", "/v1/recipes/schema")
         if args.action == "add":
             return await api("POST", "/v1/recipes", {"path": str(args.path.absolute())})
         return await api("POST", "/v1/recipes/" + args.action,
                          {"recipe_id": args.recipe_id, "version": args.version})
     if args.command == "preparations":
-        if args.action == "plan":
+        if args.action in {"plan", "inspect-source"}:
             from .recipe_sdk import read_contract_file
             if args.revision < 1:
                 from .preparation_contracts import PreparationError
                 raise PreparationError("invalid_import_revision")
-            descriptor = read_contract_file(args.descriptor)
-            return await api("POST", "/v1/preparations/plan",
-                             {"import_id": args.import_id, "revision": args.revision, "descriptor": descriptor})
+            body = {"import_id": args.import_id, "revision": args.revision}
+            if args.action == "plan":
+                body["descriptor"] = read_contract_file(args.descriptor)
+                if args.policy is not None:
+                    body["execution_policy"] = read_contract_file(args.policy)
+            return await api("POST", "/v1/preparations/" + args.action, body)
+        if args.action == "start":
+            return await api("POST", "/v1/preparations/start", {"plan_id": args.plan_id,
+                             "plan_digest": args.plan_digest, "idempotency_key": args.idempotency_key})
         if args.action == "list":
             return await api("GET", "/v1/preparations")
         route = "/v1/preparations/" + args.job_id
-        return await api("GET", route) if args.action == "get" else await api("POST", route + "/cancel", {})
+        return await api("GET", route) if args.action == "get" else await api("POST", route + "/" + args.action, {})
+    if args.command == "resolutions":
+        if args.action == "plan":
+            from .recipe_sdk import read_contract_file
+            from .preparation_resolution import ResolutionPolicyV1
+            from .preparation_contracts import PreparationError
+            if args.revision < 1:
+                raise PreparationError("invalid_import_revision")
+            try:
+                policy = ResolutionPolicyV1.model_validate(read_contract_file(args.policy))
+            except ValueError:
+                raise PreparationError("invalid_resolution_policy") from None
+            return await api("POST", "/v1/resolutions/plan", {"import_id": args.import_id,
+                "revision": args.revision, "candidate_id": args.candidate_id, "policy": policy.model_dump(mode="json")})
+        if args.action == "start":
+            return await api("POST", "/v1/resolutions/start", {"plan_id": args.plan_id,
+                "plan_digest": args.plan_digest, "idempotency_key": args.idempotency_key})
+        if args.action == "list":
+            return await api("GET", "/v1/resolutions")
+        route = "/v1/resolutions/" + args.job_id
+        return await api("GET", route) if args.action == "get" else await api("POST", route + "/" + args.action, {})
     if args.command == "downloads":
         if args.action == "fetch":
             body = {"url": args.url, "sha256": args.sha256, "size": args.size}
@@ -533,6 +638,19 @@ async def execute(args) -> dict | None:
                 return {"error": {"code": error.code}}
         return await api("POST", "/v1/upgrade/plan", body)
     if args.command == "imports":
+        if args.action == "create-service":
+            catalog = await api("GET", "/v1/service-connectors")
+            records = catalog.get("connectors", [])
+            if len(records) != 1:
+                return {"error": {"code": "service_connector_unavailable"}}
+            selected = records[0]
+            connection = {"schema_version": 1, **{key: selected[key] for key in ("protocol", "transport_auth", "task")},
+                "endpoint": {"scheme": "http", "host": "127.0.0.1", "port": args.port, "base_path": "/v1"},
+                "model": args.model, "secret_references": {"api_key": args.secret_reference},
+                "limits": {"timeout_seconds": args.timeout_seconds, "max_input_bytes": args.max_input_bytes,
+                    "max_output_tokens": args.max_output_tokens, "max_response_bytes": args.max_response_bytes}}
+            return await api("POST", "/v1/imports/service", {"schema_version": 1, "name": args.name,
+                "intent": args.intent, "start": args.start, "start_policy": args.start_policy, "connection": connection})
         if args.action == "list":
             return await api("GET", "/v1/imports")
         if args.action == "create":
@@ -544,6 +662,8 @@ async def execute(args) -> dict | None:
                 body["files"] = args.files
             if args.model_engine is not None:
                 body["model_engine"] = str(args.model_engine.absolute())
+            if args.source_mode != "legacy":
+                body["source_mode"] = args.source_mode
             return await api("POST", "/v1/imports", body)
         route = "/v1/imports/" + args.draft_id
         if args.action == "inspect":

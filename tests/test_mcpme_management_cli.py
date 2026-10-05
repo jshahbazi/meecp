@@ -95,7 +95,7 @@ async def test_grant_file_is_reopened_and_unsafe_file_has_no_owner_fallback(tmp_
 async def test_manager_responses_are_bounded_while_streaming(tmp_path, monkeypatch):
     async with private_manager(tmp_path) as host:
         grant = await execute(host.root, "authorize", "--read-only")
-        monkeypatch.setattr("mcpme.supervisor.capabilities", lambda: {"payload": "x" * (1024 * 1024 + 1)})
+        monkeypatch.setattr("mcpme.supervisor.capabilities", lambda host=None: {"payload": "x" * (1024 * 1024 + 1)})
         with pytest.raises(ValueError, match="response_limit"):
             await cli.call(host.root, "GET", "/v1/capabilities", credential_file=Path(grant["credential_file"]))
 

@@ -14,7 +14,7 @@ from mcpme.supervisor import Supervisor, capabilities, management_app
 from test_mcpme_imports import prepared_for, source_folder
 
 
-async def test_new_foundation_routes_require_owner_and_execution_stays_unavailable(tmp_path):
+async def test_foundation_metadata_allows_prepare_and_execution_stays_unavailable(tmp_path):
     host = Supervisor(tmp_path.resolve() / "state", tmp_path / "unused-reaper")
     port, owner = 19886, "synthetic-owner-authorization"
     try:
@@ -24,14 +24,52 @@ async def test_new_foundation_routes_require_owner_and_execution_stays_unavailab
                                      base_url=f"http://127.0.0.1:{port}") as client:
             for route in ("/v1/recipes", "/v1/preparations"):
                 assert (await client.get(route)).status_code == 401
-                rejected = await client.get(route, headers={"Authorization": "Bearer " + scoped})
-                assert rejected.status_code == 403 and rejected.json()["error"]["code"] == "grant_scope"
+                metadata = await client.get(route, headers={"Authorization": "Bearer " + scoped})
+                assert metadata.status_code == 200
                 assert (await client.get(route, headers={"Authorization": "Bearer " + owner})).status_code == 200
+            denied = await client.post("/v1/preparations/start", json={}, headers={"Authorization": "Bearer " + scoped})
+            assert denied.status_code == 403 and denied.json()["error"]["code"] == "grant_scope"
+            denied = await client.post("/v1/recipes/enable", json={}, headers={"Authorization": "Bearer " + scoped})
+            assert denied.status_code == 403 and denied.json()["error"]["code"] == "grant_scope"
             unavailable = await client.post("/v1/preparations/start", json={}, headers={"Authorization": "Bearer " + owner})
-            assert unavailable.status_code == 405
+            assert unavailable.status_code == 400 and unavailable.json()["error"]["code"] == "invalid_preparation_request"
             assert not host.registry.list_slots() and not host.registry.list_operations()
         assert capabilities()["automatic_preparation"] is False
         assert capabilities()["recipe_execution"] is False
+    finally:
+        await host.close()
+
+
+async def test_integrated_agent_routes_preserve_owner_policy_and_closed_defaults(tmp_path):
+    host = Supervisor(tmp_path.resolve() / "state", tmp_path / "unused-reaper")
+    port, owner = 19886, "synthetic-owner-authorization"
+    try:
+        draft = host.imports.create(source_folder(tmp_path), name="Synthetic", intent="Expose validator",
+                                    source_mode="automatic")
+        grant = host.grants.issue({"mode": "prepare", "ttl_seconds": 60})
+        scoped = read_credential(Path(grant["credential_file"]))["token"]
+        payload = {"import_id": draft["draft_id"], "revision": draft["revision"]}
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=management_app(host, owner, port)),
+                base_url=f"http://127.0.0.1:{port}") as client:
+            route = "/v1/agent-preparations/plans"
+            assert (await client.post(route, json=payload)).status_code == 401
+            denied = await client.post(route, json=payload, headers={"Authorization": "Bearer " + scoped})
+            assert denied.status_code == 403 and denied.json()["error"]["code"] == "grant_scope"
+            job_route = "/v1/agent-preparations/jobs/10000000-0000-4000-8000-000000000001"
+            for method, path in (("POST", "/v1/agent-preparations/start"),
+                                 ("GET", job_route), ("POST", job_route + "/cancel")):
+                denied = await client.request(method, path, headers={"Authorization": "Bearer " + scoped})
+                assert denied.status_code == 403 and denied.json()["error"]["code"] == "grant_scope"
+            headers = {"Authorization": "Bearer " + owner}
+            for extra in ({"Host": "invalid.test"}, {"Origin": "https://invalid.test"}):
+                assert (await client.post(route, json=payload, headers=headers | extra)).status_code == 403
+            options = await client.post(route, json=payload, headers=headers)
+            assert options.status_code == 200
+            assert options.json()["providers"] == [] and options.json()["latest_job"] is None
+            rejected = await client.post("/v1/agent-preparations/start", json={}, headers=headers)
+            assert rejected.status_code == 400
+        assert not host.agent_preparations.tasks and not host.agent_preparations.static_workers
+        assert not host.registry.list_slots() and not host.registry.list_operations()
     finally:
         await host.close()
 

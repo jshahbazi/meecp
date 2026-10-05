@@ -12,7 +12,7 @@ import re
 import subprocess
 import tempfile
 
-from build_mcpme_app import build as build_app, developer_identity, verify_signature
+from build_mcpme_app import build as build_app, developer_identity, require_command_asset, verify_signature
 from build_mcpme_host import ROOT, BuildCommandError, project_version, run
 
 
@@ -35,6 +35,26 @@ def app_metadata(app: Path, certificate_hash: str | None = None) -> dict:
     if run("/usr/bin/lipo", "-archs", str(app / "Contents/MacOS/mcpme")) != "arm64":
         raise SystemExit("Input must be an arm64 mcpme application")
     return info
+
+
+def command_profile(app: Path, certificate_hash: str | None = None) -> dict | None:
+    """Check the immutable helper pair when a supplied app enables commands."""
+    host = app / "Contents/Resources/host"
+    policy = host / "templates/release-policies/phase3-v1.json"
+    if not policy.exists():
+        return None
+    try:
+        if policy.stat().st_size > 64 * 1024:
+            raise ValueError
+        value = json.loads(policy.read_bytes())
+        if type(value) is not dict:
+            raise ValueError
+        if value.get("command") is None:
+            return None
+        from signed_command_helpers import verify_host
+        return verify_host(host, certificate=certificate_hash)
+    except (OSError, ValueError, TypeError):
+        raise SystemExit("signed_command_helpers_invalid") from None
 
 
 def sign_disk_image(image: Path, certificate_hash: str, keychain: Path | None = None):
@@ -114,6 +134,7 @@ def verify_image(image: Path, workspace: Path, info: dict,
     # Verify after ejecting, from a path with spaces and without developer tools
     # in PATH. Never launch the user's real installation or touch its state.
     app_metadata(installed, certificate_hash)
+    command_profile(installed, certificate_hash)
     if gatekeeper:
         run("/usr/bin/xcrun", "stapler", "validate", str(installed))
         run("/usr/sbin/spctl", "--assess", "--type", "exec", str(installed))
@@ -129,10 +150,35 @@ def verify_image(image: Path, workspace: Path, info: dict,
 
 def build(output: Path | None = None, app: Path | None = None,
           sign_identity: str | None = None, notary_profile: str | None = None,
-          keychain: Path | None = None, version: str | None = None) -> Path:
+          keychain: Path | None = None, version: str | None = None, textgen_engine: Path | None = None,
+          textgen_signed_asset: Path | None = None, command_signed_asset: Path | None = None) -> Path:
     # Validate before credential lookup, copying, signing, or notarization.
     if version is not None:
         project_version(version)
+    if app is not None and (textgen_engine is not None or textgen_signed_asset is not None):
+        raise SystemExit("textgen_engine_requires_source_build")
+    if app is not None and command_signed_asset is not None:
+        raise SystemExit("command_asset_requires_source_build")
+    if command_signed_asset is not None:
+        from signed_command_helpers import admit_archive as admit_commands
+        admit_commands(command_signed_asset)
+    if app is None:
+        require_command_asset(ROOT, signed=sign_identity is not None, asset=command_signed_asset)
+    if sign_identity is not None and textgen_engine is not None:
+        raise SystemExit("signed_textgen_preparation_not_supported")
+    if textgen_signed_asset is not None:
+        if textgen_engine is not None:
+            raise ValueError("textgen_runtime_selection_conflict")
+        from signed_textgen_asset import admit_archive
+        admit_archive(textgen_signed_asset)
+    supplied_textgen = app is not None and (app / "Contents/Resources/host/preparation-toolchain/textgen-runtime").exists()
+    if supplied_textgen and sign_identity is not None:
+        from signed_textgen_asset import verify_host
+        try:
+            verify_host(app / "Contents/Resources/host")
+        except Exception:
+            raise SystemExit("signed_textgen_preparation_not_supported") from None
+    supplied_commands = command_profile(app) if app is not None else None
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise SystemExit("Build requires Apple silicon macOS")
     if output is not None and (output.suffix != ".dmg" or output.exists() or output.is_symlink()):
@@ -142,6 +188,10 @@ def build(output: Path | None = None, app: Path | None = None,
     if notary_profile is not None and not notary_profile.strip():
         raise SystemExit("notary_profile_required")
     certificate_hash = developer_identity(sign_identity, keychain) if sign_identity is not None else None
+    if supplied_textgen and certificate_hash is not None:
+        verify_host(app / "Contents/Resources/host", certificate=certificate_hash)
+    if supplied_commands is not None and command_profile(app, certificate_hash) != supplied_commands:
+        raise SystemExit("signed_command_helpers_changed")
     signed, notarized = certificate_hash is not None, notary_profile is not None
     scratch = ROOT / ".build"
     scratch.mkdir(exist_ok=True)
@@ -152,11 +202,23 @@ def build(output: Path | None = None, app: Path | None = None,
             # Notarization staples a ticket; operate on a copy of supplied artifacts.
             run("/usr/bin/ditto", str(app.resolve(strict=True)), str(source))
         else:
-            if version is None:
-                build_app(source, sign_identity=certificate_hash, keychain=keychain)
-            else:
-                build_app(source, sign_identity=certificate_hash, keychain=keychain, version=version)
+            app_options = {"sign_identity": certificate_hash, "keychain": keychain}
+            if version is not None:
+                app_options["version"] = version
+            if textgen_engine is not None:
+                app_options["textgen_engine"] = textgen_engine
+            if textgen_signed_asset is not None:
+                app_options["textgen_signed_asset"] = textgen_signed_asset
+            if command_signed_asset is not None:
+                app_options["command_signed_asset"] = command_signed_asset
+            build_app(source, **app_options)
         info = app_metadata(source, certificate_hash)
+        source_commands = command_profile(source, certificate_hash)
+        if supplied_commands is not None and source_commands != supplied_commands:
+            raise SystemExit("signed_command_helpers_changed")
+        if certificate_hash is not None and (source / "Contents/Resources/host/preparation-toolchain/textgen-runtime").exists():
+            from signed_textgen_asset import verify_host
+            verify_host(source / "Contents/Resources/host", certificate=certificate_hash)
         if version is not None and info["CFBundleShortVersionString"] != version:
             raise SystemExit("supplied_app_version_mismatch")
         app_receipt = json.loads((source / "Contents/Resources/app-build.json").read_bytes())
@@ -175,6 +237,8 @@ def build(output: Path | None = None, app: Path | None = None,
             app_notary_result = notarize(archive, notary_profile, keychain)
             staple(source)
             app_metadata(source, certificate_hash)
+            if command_profile(source, certificate_hash) != source_commands:
+                raise SystemExit("signed_command_helpers_changed")
             run("/usr/sbin/spctl", "--assess", "--type", "exec", str(source))
             # Keep the embedded receipt sealed; final distribution receipt records
             # the notarization that happened after the application was signed.
@@ -231,11 +295,16 @@ if __name__ == "__main__":
     parser.add_argument("--notary-profile", help="notarytool Keychain profile; requires --sign-identity")
     parser.add_argument("--keychain", type=Path, help="Keychain containing signing identity and notary profile")
     parser.add_argument("--version", help="Override the application version (major.minor.patch)")
+    parser.add_argument("--textgen-engine", type=Path, help="Exact reviewed engine Resources directory; requires source build")
+    parser.add_argument("--textgen-signed-asset", type=Path, help="Exact immutable signed TextGen runtime archive; requires source build")
+    parser.add_argument("--command-signed-asset", type=Path, help="Exact immutable signed command helper archive; requires source build")
     arguments = parser.parse_args()
     try:
         print(build(arguments.output, arguments.app, arguments.sign_identity,
                     arguments.notary_profile, arguments.keychain,
-                    version=arguments.version))
+                    version=arguments.version, textgen_engine=arguments.textgen_engine,
+                    textgen_signed_asset=arguments.textgen_signed_asset,
+                    command_signed_asset=arguments.command_signed_asset))
     except KeyboardInterrupt:
         raise SystemExit("dmg_build_interrupted") from None
     except BuildCommandError as error:

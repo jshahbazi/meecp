@@ -223,11 +223,18 @@ class GrantStore:
             if mode in {"read", "prepare"} or path.split("/")[3] == scope.get("plan_id"):
                 return
         if mode in {"read", "prepare"}:
+            if method == "GET" and (path in {"/v1/recipes", "/v1/recipes/schema", "/v1/preparations", "/v1/resolutions"}
+                    or re.fullmatch(r"/v1/(?:preparations|resolutions)/" + IDENTITY, path)):
+                return
+            if method == "POST" and path in {"/v1/recipes/inspect", "/v1/preparations/inspect-source", "/v1/preparations/form"}:
+                return
             if method == "GET" and (path == "/v1/imports" or re.fullmatch(r"/v1/imports/" + IDENTITY, path)):
                 return
             if method == "POST" and re.fullmatch(r"/v1/imports/" + IDENTITY + r"/export", path):
                 return
         if mode == "prepare" and method == "POST":
+            if path in {"/v1/preparations/plan", "/v1/preparations/plan-form", "/v1/resolutions/plan"}:
+                return
             if path in {"/v1/imports", "/v1/install/plan"} or re.fullmatch(
                     r"/v1/imports/" + IDENTITY + r"/(?:revise|attach|cancel|expire)", path):
                 return

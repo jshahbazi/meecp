@@ -222,6 +222,8 @@ A native descriptor form and repository descriptor generate the same normalized 
 
 Add versioned recipe management and preparation plan/start/list/inspect/cancel operations to the CLI, management API and management MCP facade. Proposed namespaces are `mcpme recipes ...` for the versioned registry and `mcpme preparations inspect-source|plan|start|list|get|cancel` for app jobs. Recipe metadata routes live under `/v1/recipes`; preparation routes live under `/v1/preparations`. Code-free planning remains static. Execution requires its own scope. Import summaries reference preparation job ID/status without conflating them with installation operation ID/status.
 
+The [management preparation workflow contract](MANAGEMENT_PREPARATION_WORKFLOWS.md) implements the MCP recipe/preparation/resolution surfaces with separately owner-issued exact execution grants. Earlier read/prepare/install/lifecycle grants retain their execution denials. New job authority and grant association commit together; current checks cannot reinterpret a missing association as owner authority.
+
 The CLI/API needs descriptor and artifact-selection file arguments or structured request bodies; current `imports create` does not expose a general requirements-file argument. Extend explicit import create/revise contracts and keep unknown-field rejection. Native polling must observe job stage/revision changes alongside existing draft and installation changes.
 
 Runtime MCP checks target revision 2025-11-25 and compare the full tool definitions. MCP specifies tool input schemas and structured output conformity; adapters must satisfy the declared contract. [MCP tools specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)

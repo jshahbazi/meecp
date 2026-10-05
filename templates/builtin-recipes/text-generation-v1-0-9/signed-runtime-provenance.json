@@ -1,0 +1,456 @@
+{
+  "dependency_lock_sha256": "cb390350187a3e4c64d7301617cb04363923c4b715bd4858b6933890014413d3",
+  "dependency_project_sha256": "ad126e2ee57ae0efe6aea316d784dcba835be9bacb4f9c3bdf4823a1e315600f",
+  "launcher_source_sha256": "dcc9b1a5695fbda99c012e3cf7c5e3d5125d11e9851e6c89c0494df833939356",
+  "native_paths": [
+    "bin/textgen-adapter",
+    "bin/textgen-engine",
+    "llama/lib/libcrypto.3.dylib",
+    "llama/lib/libggml-base.0.dylib",
+    "llama/lib/libggml.0.dylib",
+    "llama/lib/libllama-common.0.dylib",
+    "llama/lib/libllama-server-impl.dylib",
+    "llama/lib/libllama.0.dylib",
+    "llama/lib/libmtmd.0.dylib",
+    "llama/lib/libomp.dylib",
+    "llama/lib/libssl.3.dylib",
+    "llama/llama-server.real",
+    "llama/plugins/libggml-blas.so",
+    "llama/plugins/libggml-cpu-apple_m1.so",
+    "llama/plugins/libggml-cpu-apple_m2_m3.so",
+    "llama/plugins/libggml-cpu-apple_m4.so",
+    "llama/plugins/libggml-metal.so",
+    "python/bin/python",
+    "python/bin/python3",
+    "python/bin/python3.12",
+    "python/lib/itcl4.3.5/libitcl4.3.5.dylib",
+    "python/lib/itcl4.3.5/libtcl9itcl4.3.5.dylib",
+    "python/lib/libpython3.12.dylib",
+    "python/lib/libtcl9.0.dylib",
+    "python/lib/libtcl9tk9.0.dylib",
+    "python/lib/python3.12/lib-dynload/_crypt.cpython-312-darwin.so",
+    "python/lib/python3.12/lib-dynload/_dbm.cpython-312-darwin.so",
+    "python/lib/python3.12/lib-dynload/_tkinter.cpython-312-darwin.so",
+    "python/lib/thread3.0.4/libtcl9thread3.0.4.dylib",
+    "python/lib/thread3.0.4/libthread3.0.4.dylib",
+    "python/site-packages/_cffi_backend.cpython-312-darwin.so",
+    "python/site-packages/cryptography/hazmat/bindings/_rust.abi3.so",
+    "python/site-packages/pydantic_core/_pydantic_core.cpython-312-darwin.so",
+    "python/site-packages/rpds/rpds.cpython-312-darwin.so"
+  ],
+  "original_engine_closure": {
+    "licenses/ggml-LICENSE": {
+      "bytes": 1078,
+      "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d"
+    },
+    "licenses/libomp-LICENSE.TXT": {
+      "bytes": 15141,
+      "sha256": "8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee"
+    },
+    "licenses/llama.cpp-LICENSE": {
+      "bytes": 1078,
+      "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d"
+    },
+    "licenses/openssl-LICENSE.txt": {
+      "bytes": 10175,
+      "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a"
+    },
+    "licenses/python-LICENSE.txt": {
+      "bytes": 13936,
+      "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf"
+    },
+    "llama/lib/libcrypto.3.dylib": {
+      "bytes": 4862416,
+      "sha256": "f9563883fdbb4f2b367c708a6abd786119c935d3f9cd01fa8e11c34666775d1b"
+    },
+    "llama/lib/libggml-base.0.dylib": {
+      "bytes": 522992,
+      "sha256": "045e9778c75a3790ae1f5d02d19c85e966b277216578d226d776d85cd7d97333"
+    },
+    "llama/lib/libggml.0.dylib": {
+      "bytes": 77968,
+      "sha256": "7b262216670ab6bcc198b486777fe3b723b045660b369d8123e785e8594d9a4d"
+    },
+    "llama/lib/libllama-common.0.dylib": {
+      "bytes": 4885120,
+      "sha256": "ea16c90d3fc4087309df244a11ac4b7e041ae9029d3749c3aded51ebdf19f200"
+    },
+    "llama/lib/libllama-server-impl.dylib": {
+      "bytes": 3150752,
+      "sha256": "5175db0f6e7e501b0bf3b779342e0ac3f177ff706be9e0589ecc4743df9c5c1b"
+    },
+    "llama/lib/libllama.0.dylib": {
+      "bytes": 2956256,
+      "sha256": "555ad4924da7fdd6e8567cea75bfb8bc92642b219ad72fab5af5f2a036544e3c"
+    },
+    "llama/lib/libmtmd.0.dylib": {
+      "bytes": 1168448,
+      "sha256": "42c27b4bcbebd7e13e80c155a41397e2104a0d1d0d5ae30f70c52d3bbc2ade05"
+    },
+    "llama/lib/libomp.dylib": {
+      "bytes": 739760,
+      "sha256": "7fd28cb0ea6020f4d7c90339a046296c6a3f9955bdafb6ec4f8dc1d93de787eb"
+    },
+    "llama/lib/libssl.3.dylib": {
+      "bytes": 901744,
+      "sha256": "7e89651576fc4dfe9461f65de448fc99990dc5c32c06c413d86bdbbfc11e9774"
+    },
+    "llama/llama-server": {
+      "bytes": 52080,
+      "sha256": "cb29d514a50b1589b31a57dcd4cd7a327f46b90aa7342c69b060a153f0f2d53a"
+    },
+    "llama/llama-server.real": {
+      "bytes": 51424,
+      "sha256": "f88d172551ef370aca9a38a9284ba8d6d35b287212b80080461f15f5074c550c"
+    },
+    "llama/plugins/libggml-blas.so": {
+      "bytes": 76544,
+      "sha256": "0571889bbc32bae0648fe8efd2d39a6f42a171aa786e672736f181114fe751cb"
+    },
+    "llama/plugins/libggml-cpu-apple_m1.so": {
+      "bytes": 618720,
+      "sha256": "6072198ba5851ce0870f28f5042ea6a79afbcfff99375a9f73984d6e878f872a"
+    },
+    "llama/plugins/libggml-cpu-apple_m2_m3.so": {
+      "bytes": 618752,
+      "sha256": "28a7104df79f5082ba94dbf643a62ead476c70370cf644b73863685ac901a75e"
+    },
+    "llama/plugins/libggml-cpu-apple_m4.so": {
+      "bytes": 618736,
+      "sha256": "cc7a568c84ecdda5a7408776f467f149a4c06807ab0429ac2e10e81faa028921"
+    },
+    "llama/plugins/libggml-metal.so": {
+      "bytes": 2182208,
+      "sha256": "80bff4685cb0feb395a8a3ebdd6507506535f5400cd5e391f3e2a3799b3e4432"
+    }
+  },
+  "policy": "Sign once; preserve this asset unchanged in future app builds; no entitlement exceptions.",
+  "producer_source_sha256": {
+    "backend/mcpme/preparation_builder.py": "04c1195c76cdb1d7aa5cbccff706f0ff0d1211b0b2c8542a458165c9d3c0a7d6",
+    "backend/mcpme/preparation_textgen_signed_runtime.py": "ffe4530f3af75d62ca2c4f2b80201f3519cf891cc927486f252bb641ae99c35a",
+    "scripts/build_mcpme_app.py": "8e61bb700836a78fcc814f09447487d8426f49b541b83ff01165f30a526255df",
+    "scripts/build_signed_textgen_runtime.py": "ba8c309ccbb55091064cb80b79c0de45fc31849e164ed939917674b16978ca07",
+    "scripts/signed_textgen_asset.py": "dce74704ca32ce82924f18179fa5c695a2121f4678884a0845fa7dbbe07dc80d"
+  },
+  "profile": "textgen-signed-cpu-v1",
+  "schema_version": 1,
+  "signing": {
+    "certificate_sha1": "EFE6CD2666B9106E68724C38ADD1C405267A2F94",
+    "entitlements": {},
+    "hardened_runtime": true,
+    "secure_timestamp": true,
+    "team_id": "S5BT2PRN5B"
+  },
+  "source_commit": "bcc3120f8e25296f3639d57f496e18de200b3980",
+  "toolchain_identity": "89076dec5c69d61e153168e84373fa38a00442d938b71b1b0bbf8d04d5a9dacc",
+  "transformed_files": {
+    "bin/textgen-adapter": {
+      "final_sha256": "3c1ce0e8b9fba4258dccf3c2aeae26b6fe9c8e26e349afd2fdcaf71bed600246",
+      "input_sha256": "22464908716c923ebd973b81ecd1a7fab8dd43e936e5f9457afd2435ccdf9420"
+    },
+    "bin/textgen-engine": {
+      "final_sha256": "3c1ce0e8b9fba4258dccf3c2aeae26b6fe9c8e26e349afd2fdcaf71bed600246",
+      "input_sha256": "22464908716c923ebd973b81ecd1a7fab8dd43e936e5f9457afd2435ccdf9420"
+    },
+    "llama/lib/libcrypto.3.dylib": {
+      "final_sha256": "3ce311832fafdac494bd5729632ce0f61af4146dd7ae460c51296a9625870c8d",
+      "input_sha256": "f9563883fdbb4f2b367c708a6abd786119c935d3f9cd01fa8e11c34666775d1b"
+    },
+    "llama/lib/libggml-base.0.dylib": {
+      "final_sha256": "3bc65e500a7037ff6e41da590cc7929501213cf94fb0f6de459d7160c6295d29",
+      "input_sha256": "045e9778c75a3790ae1f5d02d19c85e966b277216578d226d776d85cd7d97333"
+    },
+    "llama/lib/libggml.0.dylib": {
+      "final_sha256": "3a248e5b1836ba89f735ead0198fcd153fd748e9ad2f4f29cfd2848ebef945d3",
+      "input_sha256": "7b262216670ab6bcc198b486777fe3b723b045660b369d8123e785e8594d9a4d"
+    },
+    "llama/lib/libllama-common.0.dylib": {
+      "final_sha256": "dde529db6ec4387ef609ee71a2b887a3e45ddd04a2ebf97b5696c729e6b77d6e",
+      "input_sha256": "ea16c90d3fc4087309df244a11ac4b7e041ae9029d3749c3aded51ebdf19f200"
+    },
+    "llama/lib/libllama-server-impl.dylib": {
+      "final_sha256": "25cf92c308b9c7d21827e802b8cd2394061ee50fb8ce5719d39d34596326a9c5",
+      "input_sha256": "5175db0f6e7e501b0bf3b779342e0ac3f177ff706be9e0589ecc4743df9c5c1b"
+    },
+    "llama/lib/libllama.0.dylib": {
+      "final_sha256": "3dba655e59775d08d48ee457e77866dc9ab4f4a4eac5361a4cfbe29ea64f376e",
+      "input_sha256": "555ad4924da7fdd6e8567cea75bfb8bc92642b219ad72fab5af5f2a036544e3c"
+    },
+    "llama/lib/libmtmd.0.dylib": {
+      "final_sha256": "a8442fc05c597925b9efe82b0734fd2fbc2a10ad80994d33f4edfd142d136603",
+      "input_sha256": "42c27b4bcbebd7e13e80c155a41397e2104a0d1d0d5ae30f70c52d3bbc2ade05"
+    },
+    "llama/lib/libomp.dylib": {
+      "final_sha256": "421bbc70683ee62f571c7cb0dd99b926e42b46037c5eb2fc4268c9fac2769af1",
+      "input_sha256": "7fd28cb0ea6020f4d7c90339a046296c6a3f9955bdafb6ec4f8dc1d93de787eb"
+    },
+    "llama/lib/libssl.3.dylib": {
+      "final_sha256": "085dbdec0f64b338b285e3ad5c29bff080055fdeee18e5209a8833003f1e1cab",
+      "input_sha256": "7e89651576fc4dfe9461f65de448fc99990dc5c32c06c413d86bdbbfc11e9774"
+    },
+    "llama/llama-server.real": {
+      "final_sha256": "4e40b557b3276ce1b693c08f35ae014baedc91e96d95ec23f337eee501df56be",
+      "input_sha256": "f88d172551ef370aca9a38a9284ba8d6d35b287212b80080461f15f5074c550c"
+    },
+    "llama/plugins/libggml-blas.so": {
+      "final_sha256": "e17e3f7a8758f506394dbe4704e458ed1397d843949d8659c4203bb6e0bdd46a",
+      "input_sha256": "0571889bbc32bae0648fe8efd2d39a6f42a171aa786e672736f181114fe751cb"
+    },
+    "llama/plugins/libggml-cpu-apple_m1.so": {
+      "final_sha256": "de38ce0cd73003b816684caa3c59fe97560125f750868761e9ce19a8ba834289",
+      "input_sha256": "6072198ba5851ce0870f28f5042ea6a79afbcfff99375a9f73984d6e878f872a"
+    },
+    "llama/plugins/libggml-cpu-apple_m2_m3.so": {
+      "final_sha256": "7c3b28e128b08b71f5ee18703150833b2f100de9de66ac39a4382ff73a524648",
+      "input_sha256": "28a7104df79f5082ba94dbf643a62ead476c70370cf644b73863685ac901a75e"
+    },
+    "llama/plugins/libggml-cpu-apple_m4.so": {
+      "final_sha256": "455a49780d4c8a3e49af1f86e85a369ec055886e7be895b44d7c35b2873ad76b",
+      "input_sha256": "cc7a568c84ecdda5a7408776f467f149a4c06807ab0429ac2e10e81faa028921"
+    },
+    "llama/plugins/libggml-metal.so": {
+      "final_sha256": "ce37665ae57bf69b4edf9046489bce1eeebe1a117ea08a93f9a38532a044a615",
+      "input_sha256": "80bff4685cb0feb395a8a3ebdd6507506535f5400cd5e391f3e2a3799b3e4432"
+    },
+    "python-runtime-origin.json": {
+      "final_sha256": "f9063b019a83546457dc143fa3de69a5d4937230885462e3aa9970f62f3f4e1d",
+      "input_sha256": "be315778c86d36bb1110be6f75d4dd3ec7985196f6aff7163a9af8f5ae195cf0"
+    },
+    "python/bin/python": {
+      "final_sha256": "bc31f6237579fb87d96dbcb1816884feff60e531fe7edc3c05c8b1232507298b",
+      "input_sha256": "36984af9f922aec72ba5b03e811ee92512268785007192e20f826cbd07cf8d04"
+    },
+    "python/bin/python3": {
+      "final_sha256": "bd40b964b284ae924153fc60b5ee26d646f3fa9bdea8a89ff5fee06b6dd35814",
+      "input_sha256": "36984af9f922aec72ba5b03e811ee92512268785007192e20f826cbd07cf8d04"
+    },
+    "python/bin/python3.12": {
+      "final_sha256": "ca18c62739e88f0ecb533b17edf4be99bf7667006b6d09ffd004bdc453055158",
+      "input_sha256": "36984af9f922aec72ba5b03e811ee92512268785007192e20f826cbd07cf8d04"
+    },
+    "python/lib/itcl4.3.5/libitcl4.3.5.dylib": {
+      "final_sha256": "f2266825af9dfff2f93bad52f03ef6c844d7d75c5cd144ad789d6da78f5710ef",
+      "input_sha256": "29d1374a9c1677f89172aa45455932097a64872ce42e9a7293b2071c4ba3e5b4"
+    },
+    "python/lib/itcl4.3.5/libtcl9itcl4.3.5.dylib": {
+      "final_sha256": "7676d662f9eef47a5fc73c2b91d93061e47ab8fb489dd526c477881490e59aa1",
+      "input_sha256": "96bc19ac88eaefd4e2e2c2265c156735c8e4a46a42922764538685b0e8492dd5"
+    },
+    "python/lib/libpython3.12.dylib": {
+      "final_sha256": "bbc10ff86e53096f3b6b1fe9755049e67d3deda001a49fb6675e741b92c2aff0",
+      "input_sha256": "a1aa9237d9fa2a9bac6632dd9e80f1c0d0c868b29095016032202879e29fb4b2"
+    },
+    "python/lib/libtcl9.0.dylib": {
+      "final_sha256": "ae76788dfc829e3e7f0ff3844bda9dc95e48a32f837178b7fb2938991761372a",
+      "input_sha256": "935d22f3f363fb252d15c3aa88e0eef29d3369e9490e008942731ebc3838e3a2"
+    },
+    "python/lib/libtcl9tk9.0.dylib": {
+      "final_sha256": "ca69b347a780654715c1491f9ed17fe69accdbf831dcdd1122cb3869e116b892",
+      "input_sha256": "6f3bbe9d1b6771974b7f4b5a0a5356df7d5ca216ec7385b5978c96851362066c"
+    },
+    "python/lib/python3.12/lib-dynload/_crypt.cpython-312-darwin.so": {
+      "final_sha256": "9b8fb5a1c7e0f511cdb65ef1a11a4e34072dd2c4e0307f0db59141e711cdc901",
+      "input_sha256": "2295fbacbefd7fcbf74a65211072f8d5065aae412b8be946fa63d845d45eb3b8"
+    },
+    "python/lib/python3.12/lib-dynload/_dbm.cpython-312-darwin.so": {
+      "final_sha256": "08cf3c6c9ecc1c6f494c4ddb30ad22bc90f6c06f76547312debbf29941de3574",
+      "input_sha256": "178a0c487a89b083e493256e241fca9c8230d218b29e55e93cd3f2af2637ba64"
+    },
+    "python/lib/python3.12/lib-dynload/_tkinter.cpython-312-darwin.so": {
+      "final_sha256": "b8f2762577009ec32268bf41da8856aeaa26861c305fbeaf22c932d1f62e8055",
+      "input_sha256": "02227f84d0046e43e70347998d97c5b33afd205ddcdfd994db9721f4f12b57f9"
+    },
+    "python/lib/thread3.0.4/libtcl9thread3.0.4.dylib": {
+      "final_sha256": "e08f4791659eb408a1e549716c3e3f403c7356464fa2cb30c04fbeeefa63305c",
+      "input_sha256": "6a92afa1ad8b41b6b2db773729f8db70aacfd0a9f6654ba2a51aa655b1abe4b1"
+    },
+    "python/lib/thread3.0.4/libthread3.0.4.dylib": {
+      "final_sha256": "26554fe53a8858861fe469a24393b02a1d3d45e8d5162db94092d94fe41adca1",
+      "input_sha256": "9eff90e7fc853ecc0ccd3c3972ab1a82a5012e9fe01d38ab844f4ad5fde0eaa2"
+    },
+    "python/site-packages/_cffi_backend.cpython-312-darwin.so": {
+      "final_sha256": "d2e90509c85a766b4b8f6698f0513e22fb4697386a27935cadb0828ea417c3e4",
+      "input_sha256": "90177c34e639a067ee1f5a2028320b3af2940d47dfaf9583727b59abf0b3263f"
+    },
+    "python/site-packages/cffi-2.1.1.dist-info/RECORD": {
+      "final_sha256": "d459a42e123fd535bb6108a1d1462c271f1c70d1e8ce4d26818f44a5b1a7193b",
+      "input_sha256": "21b045fb24fa8074722c2e849cf94d499b3574c13afa9566622bb322bf4651c6"
+    },
+    "python/site-packages/cryptography-50.0.1.dist-info/RECORD": {
+      "final_sha256": "9c4bd363efc23f7c52a59b27301d3bbc9b0123116d880fd72814fe84c9e32095",
+      "input_sha256": "10b9bca5927a3d82232aeecdab62a913dad749a46ffdc34768b5a7dc85c5ef8c"
+    },
+    "python/site-packages/cryptography/hazmat/bindings/_rust.abi3.so": {
+      "final_sha256": "b6dd1582bcff9bfe62131635b2bb4e2d5d4edfc40ccef2840dd8a31e41f49989",
+      "input_sha256": "423e6969b5c515ebcbc526db40891ce524ed53622afddb3fbaa28f84f724e3db"
+    },
+    "python/site-packages/pydantic_core-2.46.5.dist-info/RECORD": {
+      "final_sha256": "720df9df7a96a5d7ce8cb1082b877647db7131dd4652bbb69db1607b42e3b506",
+      "input_sha256": "4aae010e8596e417ea5ff683e6a66f41f92d31dcaf5529796fb4a5ae6d46e874"
+    },
+    "python/site-packages/pydantic_core/_pydantic_core.cpython-312-darwin.so": {
+      "final_sha256": "56e144b7e57a0bf6704417ff8bfbb736ffb2b38a64f5b308ebf8c84f167b4ed4",
+      "input_sha256": "99f6e390f31a425535161fdb7720ee26643331b08732ba2509bb885a412f2e61"
+    },
+    "python/site-packages/rpds/rpds.cpython-312-darwin.so": {
+      "final_sha256": "38009d639ad3fc4aaa05a0dae892f6731b3b7b3a3e28a3a6f6f8e29e9b515741",
+      "input_sha256": "c3bf158b853dd34cac6667bb8b57e7228a15c7006fe259a55ce0f575bd36fc03"
+    },
+    "python/site-packages/rpds_py-2026.6.3.dist-info/RECORD": {
+      "final_sha256": "fee34a04a7124ca3e7cb6e6c7ac0f9ea920edc6d77ef30bc481020c0ba65d6a8",
+      "input_sha256": "ec73abdcf2a4aa31fa3672372ce7cc64d3d2470d264bb089026c08d608aeff59"
+    }
+  },
+  "upstream_wheels": [
+    {
+      "bytes": 13427,
+      "filename": "annotated_types-0.8.0-py3-none-any.whl",
+      "sha256": "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0"
+    },
+    {
+      "bytes": 132079,
+      "filename": "anyio-4.15.1-py3-none-any.whl",
+      "sha256": "6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101"
+    },
+    {
+      "bytes": 67548,
+      "filename": "attrs-26.1.0-py3-none-any.whl",
+      "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309"
+    },
+    {
+      "bytes": 136983,
+      "filename": "certifi-2026.7.22-py3-none-any.whl",
+      "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775"
+    },
+    {
+      "bytes": 184719,
+      "filename": "cffi-2.1.1-cp312-cp312-macosx_11_0_arm64.whl",
+      "sha256": "f81b3b8f3d4e343550fa4baa0e479bba9f2d29ce9c2e9b51d1ce1718d7442fcf"
+    },
+    {
+      "bytes": 125251,
+      "filename": "click-8.5.0-py3-none-any.whl",
+      "sha256": "255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360"
+    },
+    {
+      "bytes": 4010153,
+      "filename": "cryptography-50.0.1-cp311-abi3-macosx_11_0_arm64.whl",
+      "sha256": "b8f852c65863251b9e3a1b8c150ce21e59b522dbb6a7d4bc80e680d38388e986"
+    },
+    {
+      "bytes": 37515,
+      "filename": "h11-0.16.0-py3-none-any.whl",
+      "sha256": "63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86"
+    },
+    {
+      "bytes": 78784,
+      "filename": "httpcore-1.0.9-py3-none-any.whl",
+      "sha256": "2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55"
+    },
+    {
+      "bytes": 73517,
+      "filename": "httpx-0.28.1-py3-none-any.whl",
+      "sha256": "d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad"
+    },
+    {
+      "bytes": 8960,
+      "filename": "httpx_sse-0.4.3-py3-none-any.whl",
+      "sha256": "0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc"
+    },
+    {
+      "bytes": 69583,
+      "filename": "idna-3.20-py3-none-any.whl",
+      "sha256": "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c"
+    },
+    {
+      "bytes": 90630,
+      "filename": "jsonschema-4.26.0-py3-none-any.whl",
+      "sha256": "d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce"
+    },
+    {
+      "bytes": 18437,
+      "filename": "jsonschema_specifications-2025.9.1-py3-none-any.whl",
+      "sha256": "98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe"
+    },
+    {
+      "bytes": 234581,
+      "filename": "mcp-1.30.0-py3-none-any.whl",
+      "sha256": "666edb5009503e1047c9d60346a756f94b261f05cc2625f23d41c728ffc484d0"
+    },
+    {
+      "bytes": 129956,
+      "filename": "packaging-26.3-py3-none-any.whl",
+      "sha256": "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c"
+    },
+    {
+      "bytes": 48172,
+      "filename": "pycparser-3.0-py3-none-any.whl",
+      "sha256": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992"
+    },
+    {
+      "bytes": 472589,
+      "filename": "pydantic-2.13.5-py3-none-any.whl",
+      "sha256": "346a034f080da3755d8e9cb5e00e8b07de1d39e4f6e2c87d8ab7cafa0b269a73"
+    },
+    {
+      "bytes": 1922874,
+      "filename": "pydantic_core-2.46.5-cp312-cp312-macosx_11_0_arm64.whl",
+      "sha256": "a39ac25a9a2fa4072efdb429833c4a4c8009a51ff9eea3eeae131713cd27991e"
+    },
+    {
+      "bytes": 69413,
+      "filename": "pydantic_settings-2.15.0-py3-none-any.whl",
+      "sha256": "0ba092c291c94baceb5eff768aa0d56400a457585bc0175925a5a5510303da42"
+    },
+    {
+      "bytes": 33860,
+      "filename": "pyjwt-2.15.1-py3-none-any.whl",
+      "sha256": "42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193"
+    },
+    {
+      "bytes": 22780,
+      "filename": "python_dotenv-1.2.3-py3-none-any.whl",
+      "sha256": "904552145e8bfed22162c09dab1c2b9b54fefa7b23ba780f4f26ca0316b0f0d9"
+    },
+    {
+      "bytes": 30042,
+      "filename": "python_multipart-0.0.32-py3-none-any.whl",
+      "sha256": "ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23"
+    },
+    {
+      "bytes": 26766,
+      "filename": "referencing-0.37.0-py3-none-any.whl",
+      "sha256": "381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231"
+    },
+    {
+      "bytes": 338542,
+      "filename": "rpds_py-2026.6.3-cp312-cp312-macosx_11_0_arm64.whl",
+      "sha256": "538949e262e46caa31ac01bdb3c1e8f642622922cacbabbae6a8445d9dc33eaf"
+    },
+    {
+      "bytes": 17407,
+      "filename": "sse_starlette-3.5.0-py3-none-any.whl",
+      "sha256": "3e6e1070df3f0f5d9cea81496de92dbb72f6721871d99748ece67441dd8b7997"
+    },
+    {
+      "bytes": 78980,
+      "filename": "starlette-1.7.0-py3-none-any.whl",
+      "sha256": "67f8e99895493dd2911a03f11314af6ceebeae4e704bb9f43dfc6a9db151c93e"
+    },
+    {
+      "bytes": 45571,
+      "filename": "typing_extensions-4.16.0-py3-none-any.whl",
+      "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
+    },
+    {
+      "bytes": 14750,
+      "filename": "typing_inspection-0.4.4-py3-none-any.whl",
+      "sha256": "65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147"
+    },
+    {
+      "bytes": 87427,
+      "filename": "uvicorn-0.54.0-py3-none-any.whl",
+      "sha256": "505bdb0f318731d45f1f712071fc781a8981f6847a31c902c9f5e652d4f67faf"
+    }
+  ]
+}

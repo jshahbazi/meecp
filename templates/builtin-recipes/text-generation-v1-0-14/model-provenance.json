@@ -1,0 +1,15 @@
+{
+  "bytes": 491400032,
+  "embedded_template_sha256": "d5495a1e5db0611132a97e46a65dbb64a642a499421228b9c8b93229097fa9a4",
+  "engine_build": "11146-7fe450e19305b828c199d602c23a8337aaa1f03b",
+  "engine_template_sha256": "4e9918361c284a93880606d182d64da6a9fe97cdc1f5c5a78c1c8840444246fc",
+  "filename": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+  "license": "Apache-2.0",
+  "license_sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e",
+  "profile": "CPU only; exact pinned fixture; no other GGUF or Metal acceptance",
+  "repository": "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+  "revision": "9217f5db79a29953eb74d5343926648285ec7e67",
+  "sha256": "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
+  "tokenizer_sha256": "c828d4ced3ffa97554baf70310ae1b232a03bb63eff517952a9222567b44b5b8",
+  "url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/9217f5db79a29953eb74d5343926648285ec7e67/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+}

@@ -27,6 +27,10 @@ from .contracts import LOCK_NAME, MANIFEST_NAME, PackageError, package_relative_
 from .private import PrivateStateError, _check_ancestors, check_private_file, ensure_private_directory, snapshot_package
 
 IMPORT_SCHEMA_VERSION = 1
+# Durable job authority requires a reader that understands execution grants.
+# Keep saved draft contracts at version 1; older hosts must reject the database
+# before they can reinterpret a new granted job as an owner-authorized job.
+IMPORT_DB_SCHEMA_VERSION = 2
 MAX_SOURCE_FILES = 2048
 MAX_SCANNED_ENTRIES = 10000
 MAX_SOURCE_FILE_BYTES = 16 * 1024 * 1024
@@ -162,7 +166,7 @@ def _choices(data: dict[str, Any]) -> None:
                                    "secret_references": references if isinstance(references, dict) else {}})
     except SettingsError:
         raise ImportError("invalid_import_requirements") from None
-    if requirements.get("profile") not in (None, "mcp-stdio", "mcp-http", "model-service"):
+    if requirements.get("profile") not in (None, "mcp-stdio", "mcp-http", "model-service", "host-command"):
         raise ImportError("invalid_import_requirements")
     if requirements.get("engine_profile") not in (None, "jevk5-llamacpp-v1"):
         raise ImportError("unsupported_model_profile")
@@ -344,6 +348,15 @@ def _attachment(package) -> dict[str, Any]:
 
 def _model_return(draft: dict[str, Any], package) -> None:
     """A returned model package must contain the exact selected binary artifacts."""
+    captured = (draft["source"].get("collection")
+                if draft["source"]["kind"] == "captured_artifact_collection"
+                else draft.get("captured_artifacts", {}).get("collection"))
+    if captured is not None:
+        from .preparation_artifacts import CapturedArtifactCollectionV1
+        collection = CapturedArtifactCollectionV1.model_validate(captured)
+        locked = {(item.sha256, item.size) for item in package.lock.artifacts}
+        if any((item.sha256, item.size) not in locked for item in collection.entries):
+            raise ImportError("captured_artifact_mismatch")
     if draft["source"]["kind"] != "artifact_collection":
         return
     from .model_intake import ENGINE_BUILD, MODEL, PROFILE
@@ -462,23 +475,22 @@ class ImportStore:
             self._connection.row_factory = sqlite3.Row
             self._connection.execute("PRAGMA journal_mode=DELETE")
             self._connection.execute("PRAGMA synchronous=FULL")
-            version = self._connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, IMPORT_SCHEMA_VERSION):
-                raise ImportError("unsupported_import_schema")
-            self._connection.executescript("""
-                CREATE TABLE IF NOT EXISTS drafts (
+            with self._transaction():
+                version = self._connection.execute("PRAGMA user_version").fetchone()[0]
+                if version not in (0, 1, IMPORT_DB_SCHEMA_VERSION):
+                    raise ImportError("unsupported_import_schema")
+                self._connection.execute("""CREATE TABLE IF NOT EXISTS drafts (
                     draft_id TEXT PRIMARY KEY,
                     revision INTEGER NOT NULL,
                     data TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS revisions (
+                )""")
+                self._connection.execute("""CREATE TABLE IF NOT EXISTS revisions (
                     draft_id TEXT NOT NULL,
                     revision INTEGER NOT NULL,
                     data TEXT NOT NULL,
                     PRIMARY KEY(draft_id, revision)
-                );
-                PRAGMA user_version=1;
-            """)
+                )""")
+                self._connection.execute("PRAGMA user_version=2")
             self._recover_inactive_staging()
             self._recover_attachment_staging()
         except (sqlite3.Error, ImportError, OSError, ValueError, UnicodeError) as error:
@@ -635,7 +647,9 @@ class ImportStore:
 
     def create(self, source: Path, *, name: str, intent: str = "", document_role: str | None = None,
                files: list[str] | None = None, start: bool = False, start_policy: str = "manual",
-               model_engine: Path | None = None) -> dict[str, Any]:
+               model_engine: Path | None = None, source_mode: str = "legacy") -> dict[str, Any]:
+        if type(source_mode) is not str or source_mode not in {"legacy", "automatic"}:
+            raise ImportError("invalid_source_selection")
         now = time.time()
         draft = {"schema_version": IMPORT_SCHEMA_VERSION, "draft_id": str(uuid.uuid4()), "revision": 1,
                  "name": name, "intent": intent, "document_role": document_role, "start": start,
@@ -648,6 +662,8 @@ class ImportStore:
         try:
             source = Path(source).absolute()
             model_source = source.suffix.lower() == ".gguf"
+            automatic_snapshot = (source_mode == "automatic" and not model_source
+                and not (source.is_dir() and (source / MANIFEST_NAME).exists()))
             if model_engine is not None and not model_source:
                 raise ImportError("invalid_source_selection")
             if model_source:
@@ -660,11 +676,16 @@ class ImportStore:
                     draft["source"] = snapshot_model(source, directory / "source", Path(model_engine) if model_engine is not None else None)
                 except ModelIntakeError as error:
                     raise ImportError(error.code) from None
+            if automatic_snapshot:
+                # New bounded binary intake never holds SQLite while copying.
+                from .preparation_application_source import snapshot_application_directory
+                ensure_private_directory(directory)
+                draft["source"] = snapshot_application_directory(source, directory / "source", files)
             with self._transaction():
                 if self._connection.execute("SELECT count(*) FROM drafts").fetchone()[0] >= MAX_DRAFTS:
                     raise ImportError("import_limit_exceeded")
                 ensure_private_directory(directory)
-                if model_source:
+                if model_source or automatic_snapshot:
                     pass
                 elif source.is_dir() and (source / MANIFEST_NAME).exists():
                     if files is not None:
@@ -689,13 +710,100 @@ class ImportStore:
                 shutil.rmtree(directory)
             raise
 
+    def create_service(self, source: dict, **choices) -> dict[str, Any]:
+        from .preparation_service_source import create
+        return create(self, source, **choices)
+
+    def revise_service(self, draft_id: str, revision: int, source: dict) -> dict[str, Any]:
+        from .preparation_service_source import revise
+        return revise(self, draft_id, revision, source)
+
     def inspect(self, draft_id: str) -> dict[str, Any]:
         with self._lock:
             return self._get(draft_id)
 
+    def _admit_captured(self, collection, *, choices: dict[str, Any] | None = None,
+                        draft_id: str | None = None, revision: int | None = None) -> dict[str, Any]:
+        """Admit a host-verified collection inside the capture transaction.
+
+        This metadata-only seam is called by the capture coordinator after its
+        owned verification barrier. The coordinator acquires the resulting draft
+        reference and records success in this same transaction. External routes
+        must submit local selections to that coordinator, never a manifest here.
+        """
+        from .preparation_artifacts import CapturedArtifactCollectionV1
+        if not self._connection.in_transaction or not isinstance(collection, CapturedArtifactCollectionV1):
+            raise ImportError("capture_admission_required")
+        reference = {"schema_version": 1, "kind": "captured_artifact_collection",
+                     "digest": collection.digest, "collection": collection.model_dump(mode="json")}
+        now = time.time()
+        if draft_id is None:
+            if revision is not None or not isinstance(choices, dict) or set(choices) - {
+                    "name", "intent", "document_role", "start", "start_policy", "requirements"}:
+                raise ImportError("invalid_capture_target")
+            if self._connection.execute("SELECT count(*) FROM drafts").fetchone()[0] >= MAX_DRAFTS:
+                raise ImportError("import_limit_exceeded")
+            draft = {"schema_version": IMPORT_SCHEMA_VERSION, "draft_id": str(uuid.uuid4()), "revision": 1,
+                     "name": choices.get("name"), "intent": choices.get("intent", ""),
+                     "document_role": choices.get("document_role"), "start": choices.get("start", False),
+                     "start_policy": choices.get("start_policy", "manual"),
+                     "requirements": choices.get("requirements", {}), "attachment": None,
+                     "state": "needs_information", "blockers": [], "operation_id": None,
+                     "operation_status": None, "result_slot_id": None, "created_at": now,
+                     "updated_at": now, "expires_at": now + RETENTION_SECONDS}
+            draft["source"] = {"kind": "captured_artifact_collection", "contract_version": 1,
+                               "digest": collection.digest, "revision": "sha256:" + collection.digest,
+                               "collection": reference["collection"], "files": [],
+                               "file_inventory": "captured-artifact-collection-v1",
+                               "artifact_count": len(collection.entries),
+                               "bytes": sum(item.size for item in collection.entries)}
+        else:
+            if choices is not None or type(revision) is not int:
+                raise ImportError("invalid_capture_target")
+            draft = self._get(draft_id, revision)
+            self._mutable(draft)
+            if draft["source"]["kind"] not in {"local_folder", "document", "captured_artifact_collection"}:
+                raise ImportError("unsupported_capture_target")
+            if draft["source"]["kind"] == "captured_artifact_collection":
+                draft["source"] = {"kind": "captured_artifact_collection", "contract_version": 1,
+                                   "digest": collection.digest, "revision": "sha256:" + collection.digest,
+                                   "collection": reference["collection"], "files": [],
+                                   "file_inventory": "captured-artifact-collection-v1",
+                                   "artifact_count": len(collection.entries),
+                                   "bytes": sum(item.size for item in collection.entries)}
+            else:
+                # Supplemental binaries change preparation inputs, not the
+                # original folder's byte identity or immutable snapshot.
+                draft["captured_artifacts"] = reference
+            draft["revision"] += 1
+            draft["attachment"] = None
+            draft["expires_at"] = now + RETENTION_SECONDS
+        _choices(draft)
+        self._save(draft)
+        return draft
+
     def list(self) -> list[dict[str, Any]]:
         with self._lock:
             return [json.loads(row["data"]) for row in self._connection.execute("SELECT data FROM drafts ORDER BY rowid")]
+
+    def discard_previous_capture_attachment(self, draft_id: str, revision: int) -> None:
+        """Collect only the superseded attachment after capture admission commits."""
+        _identity(draft_id)
+        if type(revision) is not int or revision < 1:
+            raise ImportError("invalid_import_revision")
+        with self._lock:
+            current = self._get(draft_id)
+            row = self._connection.execute("SELECT data FROM revisions WHERE draft_id=? AND revision=?",
+                                           (draft_id, revision - 1)).fetchone()
+            previous = json.loads(row[0])["attachment"] if row is not None else None
+            if (previous is None or current["revision"] < revision
+                    or previous["path"] == current["source"].get("snapshot_path")
+                    or current["attachment"] is not None and previous["path"] == current["attachment"]["path"]):
+                return
+            path = Path(previous["path"])
+            if not path.is_relative_to(self.staging / draft_id):
+                raise ImportError("imports_unavailable")
+        _remove_attachment_tree(path)
 
     def list_summaries(self) -> list[dict[str, Any]]:
         """Bound UI discovery without repeating every file, schema, and intent."""
@@ -760,7 +868,7 @@ class ImportStore:
                     raise ImportError("invalid_import_requirements")
             draft["expires_at"] = time.time() + RETENTION_SECONDS
             self._save(draft)
-        if not carry_attachment and previous_attachment is not None and previous_attachment["path"] != draft["source"]["snapshot_path"]:
+        if not carry_attachment and previous_attachment is not None and previous_attachment["path"] != draft["source"].get("snapshot_path"):
             previous_path = Path(previous_attachment["path"])
             _remove_attachment_tree(previous_path)
         return draft
@@ -804,9 +912,14 @@ class ImportStore:
             specification = json.loads(json.dumps(draft))
             specification["template_ids"] = TEMPLATE_IDS.copy()
             specification["retention_seconds"] = RETENTION_SECONDS
+            source_instruction = (f"Use the source snapshot at {draft['source']['snapshot_path']}; its resolved source identity is "
+                                  if "snapshot_path" in draft["source"] else
+                                  "Use the selected versioned service connection; its resolved source identity is "
+                                  if draft["source"]["kind"] == "service_connection" else
+                                  "Use the selected captured artifact collection; its resolved source identity is ")
             specification["agent_instructions"] = (
                 f"Prepare a sealed mcpme package for import {draft_id}, revision {revision}. "
-                f"Use the source snapshot at {draft['source']['snapshot_path']}; its resolved source identity is "
+                + source_instruction +
                 f"{draft['source']['revision']}. Read the structured intent and requirements in this specification. "
                 "Use a separate workspace, locked dependencies, license/provenance records, and nonsecret synthetic "
                 "validation fixtures. Supported preparation templates: " + ", ".join(TEMPLATE_IDS) + ". "
@@ -836,6 +949,13 @@ class ImportStore:
                     "package manifest and lock automatically. Engine artifacts and the explicit engine profile, "
                     "model-service profile, and exact JevK5 tools must be selected first. Intake, attachment and "
                     "planning never execute the source or engine."
+                )
+            if draft["source"]["kind"] == "captured_artifact_collection" or "captured_artifacts" in draft:
+                specification["agent_instructions"] += (
+                    " Captured artifacts have a separate version-1 collection identity and exact license references. "
+                    "Original paths are unavailable. Materialize only through host-verified captured file descriptors; "
+                    "do not decode model weights as text or substitute uncaptured files. Intake establishes bytes "
+                    "and retention, while the selected recipe must establish runtime and model compatibility."
                 )
             return specification
 
@@ -981,6 +1101,8 @@ class ImportStore:
                             raise ImportError("package_digest_mismatch")
                         if admission is not None:
                             admission(draft, sealed)
+                        elif draft["source"]["kind"] == "service_connection":
+                            raise ImportError("service_preparation_receipt_required")
                         if existing is None:
                             if target_identity is None:
                                 ensure_private_directory(final.parent)
@@ -990,6 +1112,11 @@ class ImportStore:
                             attachment = _attachment(sealed)
                             attachment["path"] = str(final)
                             draft["attachment"] = attachment
+                            if draft["source"]["kind"] == "service_connection":
+                                from .preparation_service_source import checked_source
+                                connection = checked_source(draft).connection
+                                draft["requirements"] = {**draft["requirements"],
+                                    "secret_references": connection.secret_references.model_dump()}
                             self._save(draft)
                 if not retry:
                     committed = True

@@ -44,7 +44,7 @@ MAX_TOOLCHAIN_MANIFEST_BYTES = 8 * 1024 * 1024
 MAX_DEPENDENCY_FILES = 65536
 MAX_DEPENDENCY_BYTES = 2 * 1024 * 1024 * 1024
 _OPERATIONS = frozenset({"dependency_export", "dependency_install", "private_python_version", "private_uv_version",
-                         "private_python_metadata"})
+                         "private_python_metadata", "onnx_model_validation"})
 
 
 @dataclass(frozen=True)
@@ -521,10 +521,22 @@ def _runtime(destination: Path, dependency_project: Path, toolchain: PrivateTool
 
 def prepare_bound(descriptor, draft: dict, toolchain: PrivateToolchain, output: Path,
                   run: Callable[[CommandSpec], str], check_canceled: Callable[[], None], *,
-                  acquire_wheels: Callable[[tuple[WheelRequest, ...], Path, Callable[[], None]], None] | None = None):
+                  acquire_wheels: Callable[[tuple[WheelRequest, ...], Path, Callable[[], None]], None] | None = None,
+                  resolved=None):
     """Build one validated candidate. Job receipt/probing/attachment stay runner-owned."""
     try:
-        value = descriptor if isinstance(descriptor, PreparationDescriptor) else parse_descriptor(descriptor)
+        from .preparation_inputs import parse_preparation_descriptor, descriptor_tools
+        value = parse_preparation_descriptor(descriptor)
+        candidate = None
+        if value.schema_version == 2:
+            from .preparation_resolved_python import resolved_input, validate_resolution
+            if resolved is None:
+                raise PreparationError("resolution_result_unavailable")
+            result, derived_path = resolved
+            selected_input = resolved_input(value)
+            candidate = validate_resolution(value, draft, result)
+            if result.request.runtime.digest != toolchain.identity or value.artifacts:
+                raise PreparationError("resolution_runtime_mismatch")
         if not output.is_absolute() or output.parent.resolve() != output.parent or output.exists() or output.parent.is_symlink():
             raise PreparationError("private_preparation_workspace_required")
         check_canceled()
@@ -538,7 +550,7 @@ def prepare_bound(descriptor, draft: dict, toolchain: PrivateToolchain, output: 
         exported.write_text(json.dumps({"api_version": 1, "draft_id": draft["draft_id"], "revision": draft["revision"],
                                        "source": draft["source"], "requirements": draft["requirements"]}) + "\n")
         tool_spec = work / "tools.json"
-        tool_spec.write_text(json.dumps([tool.model_dump(exclude_none=True) for tool in value.interface.tools]) + "\n")
+        tool_spec.write_text(json.dumps([tool.model_dump(exclude_none=True) for tool in descriptor_tools(value)]) + "\n")
         access_spec = work / "access.json"
         access_spec.write_text(json.dumps(value.access.model_dump()) + "\n")
         validation_spec = work / "validation.json"
@@ -560,18 +572,60 @@ def prepare_bound(descriptor, draft: dict, toolchain: PrivateToolchain, output: 
         # Importlib's source loader can create __pycache__ beside the sealed
         # implementation. Execute its already verified source without a cache.
         exec(compile(implementation, str(toolchain.root / "templates/prepare.py"), "exec"), generator.__dict__)
-        interface = value.interface
-        args = argparse.Namespace(template="python-function" if interface.kind == "python-callable" else "existing-mcp",
+        if (draft["source"].get("kind") == "application_directory"
+                and type(draft["source"].get("contract_version")) is int
+                and draft["source"]["contract_version"] == 2):
+            from .preparation_application_builder import copy_application_snapshot
+            # The published generator retains its v1 identity semantics. Only
+            # this trusted host binding may select the validated v2 adapter.
+            generator.source_snapshot = copy_application_snapshot
+        if candidate is None:
+            kind, module, function = value.interface.kind, value.interface.module, getattr(value.interface, "function", None)
+            source_license, project = value.source_license, output / "source" / value.dependencies.project
+            lock_digest = value.dependencies.lock_sha256
+        else:
+            kind, module, function = candidate["kind"], candidate["module"], candidate.get("function")
+            source_license, project = selected_input.source_license, work / "derived"
+            project.mkdir(mode=0o700)
+            from .preparation_resolution import RESULT_FILES
+            from .recipes import _read
+            for item in result.derived_inputs:
+                check_canceled()
+                name = RESULT_FILES[item.role]
+                data = _read(derived_path / name, 16 * 1024 * 1024)
+                if len(data) != item.size or hashlib.sha256(data).hexdigest() != item.sha256:
+                    raise PreparationError("resolution_result_changed")
+                (project / name).write_bytes(data)
+            lock_digest = next(item.sha256 for item in result.derived_inputs if item.role == "dependency-lock")
+            if kind == "python-mcp":
+                original_launcher = generator.write_launcher
+                def resolved_launcher(destination, **kwargs):
+                    original_launcher(destination, **kwargs)
+                    bootstrap = destination / "bootstrap.py"
+                    lines = bootstrap.read_text().splitlines()
+                    # The same exact declared foreground entry used by SDK
+                    # discovery; the original source tree remains untouched.
+                    lines = lines[:-1]
+                    lines += ["sys.path.insert(1, str(root / 'source' / " + repr(candidate["root"]) + "))",
+                        "os.chdir(root / 'source' / " + repr(candidate["root"]) + ")"]
+                    pieces = candidate["declared_entrypoint"].split(":")
+                    if len(pieces) == 2:
+                        lines += ["import importlib", "getattr(importlib.import_module(" + repr(pieces[0]) + "), " + repr(pieces[1]) + ")()"]
+                    else:
+                        lines += ["runpy.run_module(" + repr(pieces[0]) + ", run_name='__main__', alter_sys=True)"]
+                    bootstrap.write_text("\n".join(lines) + "\n")
+                generator.write_launcher = resolved_launcher
+        args = argparse.Namespace(template="python-function" if kind == "python-callable" else "existing-mcp",
             setup_export=exported, tool_spec=tool_spec, output=output, package_id=value.package.id,
-            name=value.package.name, version=value.package.version, source_license=value.source_license,
-            dependency_project=output / "source" / value.dependencies.project,
+            name=value.package.name, version=value.package.version, source_license=source_license,
+            dependency_project=project,
             memory_mb=value.resources.memory_mb, max_sessions=value.lifecycle.max_sessions,
             timeout_seconds=value.lifecycle.operation_timeout_seconds, access_spec=access_spec,
             configuration_spec=None, validation_spec=validation_spec, entrypoint_arg=[], extra_executable=[],
-            module=interface.module, function=getattr(interface, "function", None), script=None, executable=None,
+            module=module, function=function, script=None, executable=None,
             http_factory=None)
         def build_runtime(destination, project):
-            if _digest(project / "uv.lock", check_canceled) != value.dependencies.lock_sha256:
+            if _digest(project / "uv.lock", check_canceled) != lock_digest:
                 raise PreparationError("dependency_lock_mismatch")
             return _runtime(destination, project, current, run, check_canceled, work, acquire_wheels)
         package = generator.prepare(args, runtime_builder=build_runtime, check_canceled=check_canceled,

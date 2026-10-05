@@ -1,0 +1,75 @@
+--- a/backend/mcpme/recipes.py
++++ b/backend/mcpme/recipes.py
+@@ -45,10 +45,11 @@
+     paths = {"python-function-v1": root / "templates/python-function-v1/adapter.py",
+              "existing-mcp-v1": root / "templates/prepare.py"}
+     from .preparation_resolved_python import component_catalog
++    from .preparation_agent_adapter import component_catalog as agent_adapter_components
+     from .preparation_onnx import builtin_onnx_components
+     from .preparation_textgen import builtin_textgen_components
+     from .preparation_command import component_catalog as command_components
+-    return {**component_catalog(), **builtin_onnx_components(), **builtin_textgen_components(), **command_components(), **{name + "@1.0.0": {"digest": hashlib.sha256(path.read_bytes()).hexdigest(),
++    return {**component_catalog(), **agent_adapter_components(), **builtin_onnx_components(), **builtin_textgen_components(), **command_components(), **{name + "@1.0.0": {"digest": hashlib.sha256(path.read_bytes()).hexdigest(),
+                               "input_schema": {"type": "object", "additionalProperties": False},
+                               "dependencies": []} for name, path in paths.items()}}
+
+--- a/backend/mcpme/supervisor.py
++++ b/backend/mcpme/supervisor.py
+@@ -215,12 +215,16 @@
+             except ValueError:
+                 raise HostError("invalid_artifact_storage_policy") from None
+             self.captures = ArtifactCaptureStore(self.imports, self.artifacts, storage_policy=storage_policy)
++            from .preparation_agent_adapter import AgentPythonAdapterFamily
++            from .preparation_agent_adapter_store import AgentAdapterDerivationStore
++            self.agent_adapter_derivations = AgentAdapterDerivationStore(self.imports, self.recipes)
+             from .preparation_onnx import OnnxPreparationFamily
+             from .preparation_textgen import TextGenerationFamily
+             from .preparation_command_registration import shipped_command_family
+             command_family = shipped_command_family(self.reaper.parent.parent)
+             self.preparations = PreparationStore(self.imports, self.recipes, resolutions=self.resolutions,
+                 families=(OnnxPreparationFamily(self.captures), TextGenerationFamily(self.captures),
++                          AgentPythonAdapterFamily(self.agent_adapter_derivations),
+                           *((command_family,) if command_family is not None else ())))
+             from .preparation_forms import PreparationForms
+             self.preparation_forms = PreparationForms(self.preparations, preferred_recipes=tuple(
+--- a/templates/builtin-recipes/catalog.json
++++ b/templates/builtin-recipes/catalog.json
+@@ -29,6 +29,12 @@
+       "directory": "native-command-v1",
+       "recipe_id": "mcpme.native-command",
+       "version": "1.0.0"
++    },
++    {
++      "digest": "ed6413e202c9f9e8de682c324b2e46695c9c59e1bb44d15db6a5f423dce3cc04",
++      "directory": "agent-python-adapter-v1-0-0",
++      "recipe_id": "mcpme.agent-python-adapter",
++      "version": "1.0.0"
+     }
+   ],
+   "schema_version": 1
+--- a/backend/mcpme/preparations.py
++++ b/backend/mcpme/preparations.py
+@@ -468,6 +468,23 @@
+         recipe = binding["recipe"]
+         self.recipes.assert_admissible(recipe["id"], recipe["version"], recipe["digest"],
+             existing_job=job["execution_started_at"] is not None if job.get("managed") else job["state"] != "queued")
++        if job.get("managed"):
++            row = self.db.execute("SELECT data FROM preparation_job_inputs WHERE job_id=?", (job["job_id"],)).fetchone()
++            if row is None:
++                raise PreparationError("preparation_authority_required")
++            raw = json.loads(row["data"])["descriptor"]
++            if raw["schema_version"] == 2:
++                value = parse_preparation_descriptor(raw)
++                checker = getattr(self.family_for(value), "check_current", None)
++                if checker is not None:
++                    import inspect
++                    if not callable(checker) or inspect.iscoroutinefunction(checker):
++                        raise PreparationError("preparation_family_current_inputs_denied")
++                    checked = checker(value, draft)
++                    if checked is not True:
++                        if inspect.iscoroutine(checked):
++                            checked.close()
++                        raise PreparationError("preparation_family_current_inputs_denied")
+
+     def transition(self, job_id, state, *, ownership_settled: bool | None = None, error_code: str | None = None):
+         if ownership_settled is not None and type(ownership_settled) is not bool:

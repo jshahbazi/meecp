@@ -151,12 +151,18 @@ def test_bundled_model_generator_has_licensed_source_closure_without_checkout(tm
     assert not list(assets.rglob("*.pyc")) and not list(assets.rglob("__pycache__"))
 
 
-def test_host_build_preserves_nested_document_links_and_binds_all_document_hashes(monkeypatch, tmp_path):
+@pytest.mark.parametrize("with_engine", [False, True])
+def test_host_build_preserves_nested_document_links_and_binds_all_document_hashes(monkeypatch, tmp_path, with_engine):
     source = tmp_path / "source"
     files = {"pyproject.toml": '[project]\nversion = "0.1.0"\n', "uv.lock": "synthetic lock",
-             "backend/mcpme/service.py": "synthetic source", "backend/mcpme_local_transport.py": "synthetic transport",
+             "backend/mcpme/service.py": "synthetic source", "backend/mcpme_service/__init__.py": "synthetic service runtime",
+             "backend/mcpme_local_transport.py": "synthetic transport",
              "README.md": "synthetic readme", "THIRD_PARTY_NOTICES.md": "synthetic notices",
+             "scripts/mcpme-command-reap.c": "synthetic helper source",
+             "scripts/mcpme-command-resource-reap.c": "synthetic monitor source",
+             "scripts/mcpme-command-resource-v1.h": "synthetic monitor header",
              "assets/brand/source.svg": "synthetic branding", "templates/catalog.json": "{}",
+             "templates/task/.venv/private-input.txt": "excluded local environment",
              "docs/AUTOMATIC_PREPARATION.md": "[Review](reviews/DIRECTORY_ONBOARDING_REVIEW.md)\n",
              "docs/reviews/DIRECTORY_ONBOARDING_REVIEW.md": "# Directory onboarding review\n",
              "docs/reviews/figure.svg": "synthetic documentation figure",
@@ -180,7 +186,7 @@ def test_host_build_preserves_nested_document_links_and_binds_all_document_hashe
             Path(arguments[arguments.index("-o") + 1]).write_bytes(b"synthetic native reaper")
         if arguments[:2] == ("uv", "export"):
             Path(arguments[arguments.index("--output-file") + 1]).write_text("synthetic requirements")
-        if arguments[0] == "/usr/bin/codesign":
+        if arguments[0] == "/usr/bin/codesign" and "--sign" in arguments:
             reaper = Path(arguments[-1])
             reaper.write_bytes(reaper.read_bytes() + b" signed")
         if arguments[0] == "/usr/bin/cc" and "--version" in arguments:
@@ -196,15 +202,156 @@ def test_host_build_preserves_nested_document_links_and_binds_all_document_hashe
     monkeypatch.setattr(host_builder.platform, "machine", lambda: "arm64")
     monkeypatch.setattr(host_builder, "run", run)
     monkeypatch.setattr(host_builder, "bundle_model_template_assets", lambda destination: None)
-    monkeypatch.setattr(host_builder, "bundle_preparation_toolchain", lambda destination, runtime: None)
-    host = host_builder.build(tmp_path / "host")
+    monkeypatch.setattr(host_builder, "bundle_textgen_backend", lambda destination: None)
+    def toolchain(destination, runtime):
+        (destination / "preparation-toolchain").mkdir()
+        (destination / "preparation-toolchain/toolchain.json").write_text("synthetic toolchain")
+    monkeypatch.setattr(host_builder, "bundle_preparation_toolchain", toolchain)
+    engine = tmp_path / "explicit-engine"
+    def bundle_engine(destination, selected):
+        assert selected == engine and (destination / "preparation-toolchain/toolchain.json").is_file()
+        (destination / "preparation-toolchain/engine").write_bytes(b"synthetic exact engine")
+    monkeypatch.setattr(host_builder, "bundle_textgen_toolchain", bundle_engine)
+    host = host_builder.build(tmp_path / "host", textgen_engine=engine if with_engine else None)
     receipt = json.loads((host / "build.json").read_text())
+    service_runtime = "backend/mcpme_service/__init__.py"
+    assert (host / service_runtime).read_bytes() == (source / service_runtime).read_bytes()
+    assert receipt["artifact_sha256"][service_runtime] == hashlib.sha256((source / service_runtime).read_bytes()).hexdigest()
     included = {"docs/AUTOMATIC_PREPARATION.md", "docs/reviews/DIRECTORY_ONBOARDING_REVIEW.md", "docs/reviews/figure.svg"}
     for relative in included:
         assert (host / relative).read_bytes() == (source / relative).read_bytes()
         assert receipt["artifact_sha256"][relative] == hashlib.sha256((source / relative).read_bytes()).hexdigest()
     assert {name for name in receipt["artifact_sha256"] if name.startswith("docs/")} == included
     assert not list((host / "docs").rglob("__pycache__")) and not list((host / "docs").rglob("*.pyc"))
-    assert receipt["signing"] == "ad_hoc_reaper_only"
+    assert not list((host / "templates").rglob(".venv"))
+    assert ("preparation-toolchain/engine" in receipt["artifact_sha256"]) is with_engine
+    if with_engine:
+        assert receipt["artifact_sha256"]["preparation-toolchain/engine"] == hashlib.sha256(b"synthetic exact engine").hexdigest()
+    assert receipt["signing"] == "ad_hoc_native_helpers"
     assert receipt["artifact_sha256"]["bin/mcpme-reap"] == hashlib.sha256((host / "bin/mcpme-reap").read_bytes()).hexdigest()
-    assert len([call for call in calls if call[0] == "/usr/bin/codesign"]) == 1
+    assert len([call for call in calls if call[0] == "/usr/bin/codesign" and "--sign" in call]) == 3
+    resource = json.loads((host / "command-resource-execution.json").read_bytes())
+    assert resource["receipt_format"] == 4
+    assert resource["production_admission"] == "disabled"
+    assert resource["configuration_authority"] == "inventory-only"
+    assert all(resource[key] is False for key in ("lifetime_coverage_complete", "hard_aggregate_enforced", "result_admissible"))
+    for key, relative in (("helper_source_sha256", "scripts/mcpme-command-resource-reap.c"),
+                          ("helper_header_sha256", "scripts/mcpme-command-resource-v1.h")):
+        assert resource[key] == hashlib.sha256((source / relative).read_bytes()).hexdigest()
+    assert resource["helper_sha256"] == receipt["artifact_sha256"][resource["helper"]]
+    assert receipt["artifact_sha256"]["command-resource-execution.json"] == hashlib.sha256((host / "command-resource-execution.json").read_bytes()).hexdigest()
+    metadata = json.loads((host / "command-execution.json").read_bytes())
+    assert metadata["production_admission"] == "disabled" and metadata["configuration_authority"] == "inventory-only"
+    assert metadata["receipt_format"] == 3 and metadata["package_schema"] == 2
+    assert metadata["helper_sha256"] == hashlib.sha256((host / metadata["helper"]).read_bytes()).hexdigest()
+    for name in (metadata["helper"], "command-execution.json"):
+        assert receipt["artifact_sha256"][name] == hashlib.sha256((host / name).read_bytes()).hexdigest()
+    assert set(receipt["artifact_sha256"]) == {path.relative_to(host).as_posix() for path in host.rglob("*")
+                                             if path.is_file() and path != host / "build.json"}
+    assert {"python/bin/python3.12", "bin/mcpme", "licenses/python-LICENSE.txt"} <= receipt["artifact_sha256"].keys()
+    helper = host / metadata["helper"]
+    helper.write_bytes(helper.read_bytes() + b" distribution signature")
+    host_builder.refresh_command_inventory(host)
+    refreshed = json.loads((host / "command-execution.json").read_bytes())
+    assert refreshed == {**metadata, "helper_sha256": hashlib.sha256(helper.read_bytes()).hexdigest()}
+    refreshed["production_admission"] = "enabled"
+    (host / "command-execution.json").write_text(json.dumps(refreshed))
+    with pytest.raises(ValueError, match="command_inventory_invalid"):
+        host_builder.refresh_command_inventory(host)
+
+
+def test_private_runtime_copy_dereferences_internal_files_and_excludes_bytecode(tmp_path):
+    source = tmp_path / "runtime"; source.mkdir()
+    (source / "python").write_bytes(b"synthetic runtime")
+    (source / "python").chmod(0o755)
+    (source / "python3").symlink_to("python")
+    (source / "__pycache__").mkdir()
+    (source / "__pycache__/ignored.pyc").write_bytes(b"ignored")
+    (source / "ignored.pyc").write_bytes(b"ignored")
+    target = tmp_path / "copied"
+    host_builder.copy_private_runtime(source, target)
+    assert (target / "python3").read_bytes() == b"synthetic runtime"
+    assert not (target / "python3").is_symlink()
+    assert (target / "python3").stat().st_mode & 0o111
+    assert {path.name for path in target.iterdir()} == {"python", "python3"}
+
+
+@pytest.mark.parametrize("kind", ["escape", "directory", "size", "count"])
+def test_private_runtime_copy_rejects_unbounded_or_external_closure_before_copy(tmp_path, monkeypatch, kind):
+    source = tmp_path / "runtime"; source.mkdir()
+    (source / "python").write_bytes(b"synthetic runtime")
+    if kind == "escape":
+        outside = tmp_path / "outside"; outside.write_bytes(b"unadmitted")
+        (source / "link").symlink_to(outside)
+    elif kind == "directory":
+        (source / "directory").mkdir(); (source / "link").symlink_to("directory")
+    elif kind == "size":
+        monkeypatch.setattr(host_builder, "MAX_RUNTIME_BYTES", 1)
+    else:
+        monkeypatch.setattr(host_builder, "MAX_RUNTIME_FILES", 0)
+    target = tmp_path / "copied"
+    with pytest.raises(ValueError, match="private_python_runtime_"):
+        host_builder.copy_private_runtime(source, target)
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("replacement", ["fifo", "regular_inode", "same_inode_write"])
+def test_private_runtime_copy_rejects_concurrent_source_substitution_without_blocking(tmp_path, replacement):
+    # Exercise the actual replacement in an owned bounded subprocess, so the
+    # previous blocking FIFO behavior fails within the test deadline.
+    source = tmp_path / "runtime"; source.mkdir()
+    (source / "python").write_bytes(b"original")
+    code = "\n".join([
+        "import os, sys", "from pathlib import Path", "sys.path.insert(0, sys.argv[1])",
+        "import build_mcpme_host as builder", "source = Path(sys.argv[2])", "original = os.open",
+        "def replace(path, flags, *args, **kwargs):",
+        "    if Path(path) == source / 'python':",
+        "        if sys.argv[4] == 'fifo':",
+        "            Path(path).unlink(); os.mkfifo(path)",
+        "        elif sys.argv[4] == 'regular_inode':",
+        "            other = source / 'replacement'; other.write_bytes(b'original'); other.replace(path)",
+        "        else: Path(path).write_bytes(b'modified')",
+        "    return original(path, flags, *args, **kwargs)",
+        "os.open = replace",
+        "try: builder.copy_private_runtime(source, Path(sys.argv[3]))",
+        "except ValueError as error: assert str(error) == 'private_python_runtime_changed'",
+        "else: raise AssertionError('source replacement accepted')",
+    ])
+    result = subprocess.run([sys.executable, "-c", code, str(SCRIPTS), str(source), str(tmp_path / "copy"), replacement],
+                            capture_output=True, timeout=3)
+    assert result.returncode == 0
+    assert not (tmp_path / "copy/python").exists()
+
+
+@pytest.mark.parametrize("cycle_root", [False, True])
+def test_private_runtime_cycle_has_fixed_diagnostic_before_copy(tmp_path, cycle_root):
+    source = tmp_path / SECRET
+    if cycle_root:
+        source.symlink_to(source.name)
+    else:
+        source.mkdir(); (source / SECRET).symlink_to(SECRET)
+    target = tmp_path / "copy"
+    with pytest.raises(ValueError, match="^private_python_runtime_invalid$") as raised:
+        host_builder.copy_private_runtime(source, target)
+    assert raised.value.__suppress_context__ is True
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("cycle_root", [False, True])
+def test_host_cli_sanitizes_actual_runtime_cycle(monkeypatch, tmp_path, capsys, cycle_root):
+    source = tmp_path / SECRET
+    if cycle_root:
+        source.symlink_to(source.name)
+    else:
+        (source / "bin").mkdir(parents=True)
+        (source / "bin/python3.12").write_bytes(b"synthetic runtime")
+        (source / SECRET).symlink_to(SECRET)
+    monkeypatch.setattr(host_builder.subprocess, "check_output", lambda *args, **kwargs: str(source / "bin/python3.12"))
+    monkeypatch.setattr(host_builder.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(host_builder.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(sys, "argv", ["build_mcpme_host.py", "--output", str(tmp_path / "output")])
+    with pytest.raises(SystemExit) as raised:
+        runpy.run_path(str(SCRIPTS / "build_mcpme_host.py"), run_name="__main__")
+    assert raised.value.code == "host_build_failed"
+    assert raised.value.__suppress_context__ is True
+    assert capsys.readouterr() == ("", "")

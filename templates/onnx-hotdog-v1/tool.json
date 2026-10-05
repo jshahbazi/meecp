@@ -1,0 +1,124 @@
+{
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+  },
+  "description": "Detect COCO hot dog objects using the pinned YOLO11n ONNX model on CPU. Supply canonical base64 image bytes (JPEG, PNG, WebP, BMP or the first GIF frame), at most 1 MiB, 1,048,576 pixels and 4096 per dimension. No detections means not_hotdog, not a calibrated negative probability. No network access or image storage.",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "confidence": {
+        "default": 0.35,
+        "maximum": 0.95,
+        "minimum": 0.05,
+        "type": "number"
+      },
+      "image_base64": {
+        "maxLength": 1398104,
+        "minLength": 4,
+        "type": "string"
+      }
+    },
+    "required": [
+      "image_base64"
+    ],
+    "type": "object"
+  },
+  "name": "detect_hotdog",
+  "output_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "confidence": {
+        "anyOf": [
+          {
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "detections": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "box": {
+              "items": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "maxItems": 4,
+              "minItems": 4,
+              "type": "array"
+            },
+            "confidence": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "confidence",
+            "box"
+          ],
+          "type": "object"
+        },
+        "maxItems": 100,
+        "type": "array"
+      },
+      "hotdog": {
+        "type": "boolean"
+      },
+      "image": {
+        "additionalProperties": false,
+        "properties": {
+          "height": {
+            "maximum": 4096,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "width": {
+            "maximum": 4096,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "width",
+          "height"
+        ],
+        "type": "object"
+      },
+      "model": {
+        "const": "YOLO11n / COCO / ONNX CPU",
+        "type": "string"
+      },
+      "threshold": {
+        "maximum": 0.95,
+        "minimum": 0.05,
+        "type": "number"
+      },
+      "verdict": {
+        "enum": [
+          "hotdog",
+          "not_hotdog"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [
+      "verdict",
+      "hotdog",
+      "confidence",
+      "threshold",
+      "detections",
+      "image",
+      "model"
+    ],
+    "type": "object"
+  }
+}

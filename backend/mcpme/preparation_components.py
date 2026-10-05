@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any, Literal, Protocol
 
@@ -63,6 +63,13 @@ class PreparationDescriptorV2(Contract):
 
     @model_validator(mode="after")
     def consistency(self):
+        if any(selection.component.id == "host-command-json-v1" for selection in self.components):
+            # Reject costly selected validation keywords before general fixture
+            # evaluation. Component selection grants no execution capability.
+            from .preparation_command import structural_schema
+            for tool in self.tools:
+                structural_schema(tool.input_schema)
+                structural_schema(tool.output_schema)
         keys = [selection.component.key for selection in self.components]
         if len(set(keys)) != len(keys) or len({key[0] for key in keys}) != len(keys):
             raise PreparationError("duplicate_preparation_component")
@@ -108,7 +115,7 @@ class SnapshotFile:
     path: str
     sha256: str
     size: int
-    data: bytes
+    data: bytes = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -124,6 +131,12 @@ def source_records(draft: dict) -> tuple[dict, ...]:
     """Validate the original folder identity without changing its serialization."""
     try:
         source = draft["source"]
+        if source["kind"] == "application_directory":
+            from .preparation_application_source import application_source_records
+            try:
+                return application_source_records(draft)
+            except SourceError as error:
+                raise PreparationError(error.code) from None
         if source["kind"] not in {"local_folder", "document"}:
             raise PreparationError("unsupported_preparation_source")
         raw = source["files"]
@@ -152,8 +165,34 @@ def source_records(draft: dict) -> tuple[dict, ...]:
         raise PreparationError("invalid_source_identity") from None
 
 
+def original_file_records(draft):
+    """Original file metadata for either existing snapshot or captured source."""
+    source = draft["source"]
+    if source["kind"] == "application_directory":
+        from .preparation_application_source import application_source_records
+        try:
+            return application_source_records(draft)
+        except SourceError as error:
+            raise PreparationError(error.code) from None
+    if source["kind"] != "captured_artifact_collection":
+        return tuple(source.get("files", []))
+    from .preparation_artifacts import CapturedArtifactCollectionV1
+    collection = CapturedArtifactCollectionV1.model_validate(source["collection"])
+    if source.get("contract_version") != 1 or (source["digest"], source["revision"]) != (collection.digest, "sha256:" + collection.digest):
+        raise PreparationError("source_identity_mismatch")
+    return tuple({"path": item.path, "sha256": item.sha256, "size": item.size} for item in collection.entries)
+
+
 def read_snapshot(draft: dict) -> SourceSnapshot:
     """Read and recheck the exact bounded snapshot tree without importing it."""
+    if draft.get("source", {}).get("kind") == "application_directory":
+        from .preparation_application_source import read_application_snapshot
+        try:
+            files = read_application_snapshot(draft)
+            return SourceSnapshot(draft["source"]["revision"], tuple(
+                SnapshotFile(item.path, item.sha256, item.size, item.data) for item in files.values()))
+        except SourceError as error:
+            raise PreparationError(error.code) from None
     records = source_records(draft)
     try:
         root = Path(draft["source"]["snapshot_path"])
@@ -309,7 +348,7 @@ class ComponentRegistry:
             if (not isinstance(binding, SourceBinding) or binding.component_key != key
                     or binding.source_revision != draft["source"]["revision"]):
                 raise PreparationError("component_binding_mismatch")
-            records = {item["path"]: item for item in draft["source"].get("files", [])}
+            records = {item["path"]: item for item in original_file_records(draft)}
             if any(item.path not in records or (item.sha256, item.size) !=
                    (records[item.path]["sha256"], records[item.path]["size"]) for item in binding.files):
                 raise PreparationError("component_binding_mismatch")
@@ -362,4 +401,6 @@ def builtin_component_registry() -> ComponentRegistry:
         record = catalog[name + "@1.0.0"]
         components.append(PythonSourceComponent(ComponentReference(id=name, version="1.0.0", digest=record["digest"]),
                                                 interface_kind=kind))
+    from .preparation_resolved_python import ResolvedPythonComponent
+    components.append(ResolvedPythonComponent())
     return ComponentRegistry(tuple(components))

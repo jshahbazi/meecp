@@ -1,6 +1,6 @@
 # Preparation implementation: foundation
 
-This is the first implementation slice of the [automatic preparation plan and reviews](https://github.com/jshahbazi/mcpme/pull/23). It adds static recipe management, preparation contracts and atomic result admission. Automatic execution remains unavailable. A recipe showing `enabled` has passed metadata compatibility checks; its `runnable` value remains `false`.
+This implements the static foundation and controlled durable-job checkpoint of the [automatic preparation plan and reviews](https://github.com/jshahbazi/mcpme/pull/23). It includes recipe management, preparation contracts, a private Python builder, independent SDK verification and atomic result admission. Public automatic execution remains disabled until the full acceptance gates pass. A recipe showing `enabled` has passed metadata compatibility checks; its `runnable` value remains `false`.
 
 ## Implemented boundary
 
@@ -10,10 +10,10 @@ This is the first implementation slice of the [automatic preparation plan and re
 | Recipe bundle | Closed tree with `mcpme.recipe.json`, `mcpme.recipe.lock.json`, exact component pins, bounded input/form metadata and retained license/provenance files. Addition and inspection execute no recipe or source code. |
 | Recipe development kit | `recipes scaffold` produces a complete metadata example; `recipes lock` refreshes hashes after authoring; `recipes check` validates its closed tree without registering it. These operate locally. |
 | Registry | Immutable recipe ID/version/digest, static addition, enable/disable/deprecate/revoke/remove, evidence identity checks and retained bytes. Removing a revoked recipe preserves its revocation. |
-| Preparation planning | Checks the selected recipe, dependency lock, source license, module path, fixtures and import requirements. Reports the missing runner/verifier capability explicitly. |
-| Internal job contract | Durable identity, caller-key idempotency, transitions, cancellation, reservation settlement, interrupted recovery, locked receipts and exact-result admission. This contract is exercised with synthetic host fixtures; there is no execution endpoint. |
+| Preparation planning | Static inspection and metadata planning execute no source. Controlled execution plans additionally bind exact source/descriptor/recipe/policy, actual runner/verifier/native helper/dependency bytes and private runtime identity with an expiring single-use intention. |
+| Durable coordinator | Internally enabled verification runs the private builder, bounded wheel acquisition and real SDK probe, then attaches the matching sealed result. Job-bound authority, idempotency, reservations, native receipts, cancellation and restart reconciliation retain uncertain ownership. Production starts return `preparation_runner_unavailable`. |
 | Attachment | Package validation and copying occur outside the database write transaction. A short transaction chooses the admission winner and publishes the attachment. Owned staging and crash recovery protect live copies. |
-| Management | Owner-only recipe and preparation metadata routes; CLI access to these routes. Existing management grant scopes remain unchanged. |
+| Management | Owner-only recipe/preparation inspection, planning, start, cancellation and recovery routes with CLI access and bounded progress. Existing scoped management grants cannot call preparation routes. |
 
 Descriptor, recipe and job contracts have independent versions. New JSON identities use the domain-separated canonical serialization in [preparation_contracts.py](../backend/mcpme/preparation_contracts.py). Existing source identities and package schema/lock digests retain their original algorithms. Duplicate keys, nonfinite values, extra fields, credentials recognizable by the intake patterns, and excessive depth/size fail before persistence. Initial planning rejects regular-expression schema keywords, dynamic references and recursive references to bound static schema work.
 
@@ -21,7 +21,7 @@ Descriptor, recipe and job contracts have independent versions. New JSON identit
 
 Recipe state and preparation jobs use the existing import database, connection and transaction lock. Draft revision/state, sticky recipe revocation, job cancellation, verifier binding and exact package digest are checked in the same transaction that publishes the attachment and job success. An invalidation that commits first prevents a late result. Success that commits first remains successful when a later preparation cancellation arrives.
 
-Installation operations and installation grants retain their existing registry database and authorization rules. This slice creates no new preparation execution grant and delegates no owner credential. Only internal host code can record verification or invoke managed admission; recipe/API callers cannot report a passing gate. The runtime runner and verifier identities currently identify metadata-only contract versions and confer no runtime acceptance.
+Installation operations and installation grants retain their existing registry database and authorization rules. This checkpoint creates no new scoped preparation execution grant and delegates no owner credential. Only internal host code can record verification or invoke managed admission; recipe/API callers cannot report a passing gate. Managed execution identities hash actual implementation files, the compiled native helper and the loaded SDK's dependency closure. Legacy synthetic foundation jobs keep their metadata contract identities and cannot authorize real execution.
 
 Preparation receipts are ordinary locked artifacts named `mcpme.preparation.json`. They bind job/source/descriptor/recipe/policy identities, dependency/runtime and fixture identities. The final package digest lives in the job record, avoiding a digest cycle. The internal verifier must also compare the candidate's declared interface/access/resources/lifecycle with the selected descriptor. A receipt by itself establishes no runtime behavior.
 
@@ -46,7 +46,11 @@ The scaffold includes reusable bounded input/form metadata, synthetic fixture me
 
 IDs are namespaced and versions immutable. The same ID/version with different bytes fails. Explicit descriptors select their immutable recipe independently of overlapping variants. A new host capability or executable worker requires implementation and independent acceptance before it is available through this mechanism.
 
-The management API exposes `GET/POST /v1/recipes`, `POST /v1/recipes/{inspect|enable|disable|deprecate|revoke|remove}`, `POST /v1/preparations/plan`, `GET /v1/preparations`, `GET /v1/preparations/{job_id}` and `POST /v1/preparations/{job_id}/cancel`. Registry action bodies contain `recipe_id` and `version`; addition selects an absolute local `path`. Planning supplies `import_id`, `revision` and the descriptor object. There are no public start, verifier-evidence or result-admission routes.
+The management API exposes `GET/POST /v1/recipes`, `POST /v1/recipes/{inspect|enable|disable|deprecate|revoke|remove}`, `POST /v1/preparations/{plan|inspect-source|start}`, `GET /v1/preparations`, `GET /v1/preparations/{job_id}` and `POST /v1/preparations/{job_id}/{cancel|recover}`. Registry action bodies contain `recipe_id` and `version`; addition selects an absolute local `path`. Inspection selects `import_id` and `revision`. Planning additionally supplies a descriptor and optional `execution_policy`; start supplies `plan_id`, `plan_digest` and `idempotency_key`. Start is disabled in production. There are no verifier-evidence or result-admission routes. Recovery reconciles exact native completion receipts; it never replays a step or adopts a PID.
+
+For a controlled development host, CLI planning accepts `--policy /absolute/path/to/policy.json`; `preparations start` accepts `--plan`, `--plan-digest` and `--idempotency-key`. `preparations inspect-source` accepts `--import` and `--revision`; `preparations recover` accepts `--job-id`. Ordinary production hosts expose static inspection and retained metadata while refusing execution.
+
+The supervisor accounts retained build/probe reservations alongside running app memory and aggregate preparation disk demand. Execution has a whole-job deadline, bounded wheel sinks and private workspace monitoring. Native receipts are persisted before launch; native completion or a host-proven failed exec can settle them. Unknown launch or reaper loss retains the reservation. Hashing, copying and process cleanup remain owned across repeated cancellation, including verification publication and attachment admission. The process facility covers foreground workers and their same-group descendants. Memory observations cover foreground peaks after completion; OS-enforced memory and probe filesystem/network isolation remain separate activation gates.
 
 ## Verification and remaining release gates
 
@@ -57,7 +61,7 @@ Run `uv run --locked python -m pytest -q` for regression coverage. After buildin
 The full A0/A0R and first usable A1/A2 gates remain open. Next implementation packets can run in parallel against these contracts:
 
 1. Ship a pinned licensed private preparation toolchain that works without development PATH, checkout, `uv` or managed-Python cache. Resolve and verify every dependency's retained notices, including required supplements.
-2. Implement the owned builder and independent protocol/runtime verifier, including cancellation, full interface fidelity, relocation and restart checks. Test Python and existing MCP separately.
+2. Complete installed/native/API acceptance of the owned builder and independent protocol/runtime verifier, including cancellation, full interface fidelity, relocation and restart checks. Test Python and existing MCP separately.
 3. Add immutable binary-artifact intake and the exact CPU ONNX recipe, including weight/layout/class checks and measured maximum input resource limits.
 4. Build native generated forms, recipe management and real preparation progress, then complete the independently authored recipe through actual preparation, attachment and restart with zero host edits.
 

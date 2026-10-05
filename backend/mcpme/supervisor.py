@@ -35,13 +35,18 @@ from .activity import ACTIVITY_EVENTS, ACTIVITY_FRAME, Activity, timestamp
 from .imports import ImportError as ImportDraftError, ImportStore
 from .private import PrivateStateError, check_private_file, ensure_private_directory, read_private_json, snapshot_package, write_private_json
 from .ownership_receipts import prepare_receipt, verify_receipt
-from .processes import OwnedProcess, ProcessOwner
+from .processes import OwnedProcess, OwnershipLost, ProcessOwner, _await_ownership
 from .registry import Registry, RegistryError
 from .upgrade_host import UpgradeHost
 from .upgrades import UpgradeError, UpgradeStore
 from .grants import GrantError, GrantStore, plan_digest
-from .preparation_contracts import PreparationError
-from .preparations import PreparationStore
+from .preparation_contracts import ExecutionPolicy, PreparationError
+from .preparation_admission import PublicPreparationAdmission, public_preparation_admission
+from .preparation_artifacts import ArtifactError, ArtifactStore
+from .preparation_capture import (ArtifactCaptureCoordinator, ArtifactCaptureStore,
+                                  ArtifactStoragePolicyV1, AttachImportTargetV1, CapturePolicyV1)
+from .preparation_resolution import MAX_RESOLUTIONS, ResolutionPolicyV1, ResolutionRequestV1, ResolutionStore
+from .preparations import MAX_JOBS, PreparationStore
 from .recipes import RecipeStore
 from .settings import SecretStore, SettingsError, normalize_settings, settings_digest, validate_settings_choices
 
@@ -66,20 +71,27 @@ class HostServer(uvicorn.Server):
                 signal.signal(sig, handler)
 
 
-def capabilities() -> dict:
-    return {"api_version": 1, "host_version": "0.1.0", "package_schema_versions": [1],
+def capabilities(host=None) -> dict:
+    result = {"api_version": 1, "host_version": "0.1.0", "package_schema_versions": [1],
             "profiles": ["mcp-stdio", "mcp-http", "model-service"], "protocol_versions": ["2025-11-25"], "capabilities": ["tools"],
             "start_policies": ["manual", "host"], "platform": {"os": "macos", "architecture": "arm64", "minimum_version": "26.0"},
             "slot_actions": ["start", "stop", "restart", "remove"], "slot_settings": ["start_policy"],
             "limits": {"slots": 16, "request_bytes": DEFAULT_REQUEST_BYTES,
                        "max_request_bytes": MAX_REQUEST_BYTES, "idle_seconds": 300},
             "installation": "prepared_local_packages_and_imports", "management_credentials": "owner_and_scoped_grants",
-            "management_grant_modes": ["read", "prepare", "lifecycle", "install"], "management_mcp": "scoped_stdio",
-            "import_schema_versions": [1], "import_sources": ["local_folder", "markdown", "text", "prepared_package", "artifact_collection"],
+            "management_grant_modes": ["read", "prepare", "lifecycle", "install",
+                                       "recipe-management", "preparation-execution", "resolution-execution"],
+            "management_mcp": "scoped_stdio", "preparation_job_schema_versions": [1, 2], "resolution_job_schema_versions": [1, 2],
+            "import_schema_versions": [1], "import_sources": ["local_folder", "markdown", "text", "prepared_package", "artifact_collection", "captured_artifact_collection", "service_connection"],
+            "service_intake": {"contract_versions": [1], "credentials": "owner_only", "execution": False,
+                "protocols": ["openai-chat-completions-v1"], "transport": "loopback_http_bearer",
+                "remote_endpoints": False, "upstream_process_owned": False, "model_bytes_attested": False},
             "preparation_templates": ["python-function-v1", "existing-mcp-v1", "jevk5-llamacpp-v1"],
             "preparation_descriptor_schema_versions": [1], "recipe_bundle_schema_versions": [1],
             "recipe_management": "local_static_declarative", "recipe_execution": False,
             "automatic_preparation": False,
+            "preparation_resolution": {"schema_versions": [1], "credentials": "owner_and_exact_execution_grants", "execution": False,
+                                       "operations": ["resolve_dependencies", "discover_interface"]},
             "configuration": {"schema_versions": [1], "types": ["string", "integer", "boolean"],
                               "delivery": "private_inherited_descriptor", "mutable_installed_settings": True,
                               "updates": "reviewed_generation_upgrade"},
@@ -91,7 +103,62 @@ def capabilities() -> dict:
                          "rollback_policy": "before_exposure_only", "recovery": "selected_generation"},
             "model_intake": {"contract_versions": [1], "kind": "artifact_collection", "weights": ["gguf"],
                              "profiles": ["jevk5-llamacpp-v1"], "max_artifact_bytes": 64 * 1024**3},
+            "artifact_intake": {"contract_versions": [1], "credentials": "owner_only", "execution": False,
+                                "max_files": 64, "max_artifact_bytes": 32 * 1024**3},
             "unsupported": ["first_call", "reference_document_service", "integrated_preparation"]}
+    if host is None or host.closing or type(host.public_admission) is not PublicPreparationAdmission:
+        return result
+    try:
+        host.public_admission.check_current()
+    except PreparationError:
+        return result
+    from .host_command import HostCommandAdmission
+    from .preparation_release_command_admission import COMMAND_COMPONENT, ReleasedHostCommands
+    commands = host.commands
+    if (type(commands) is ReleasedHostCommands and type(commands.admission) is HostCommandAdmission
+            and host.public_admission.artifact is not None
+            and commands.artifact is host.public_admission.artifact
+            and COMMAND_COMPONENT in host.public_admission.families
+            and frozenset({COMMAND_COMPONENT}) in host.public_admission.recipe_component_sets
+            and commands._release_current()):
+        # Prepared-package support is independent of automatic recipe state.
+        result["package_schema_versions"].append(2)
+        result["profiles"].append("host-command")
+    from .preparation_runner import PreparationRunner
+    from .preparation_resolution_runner import OwnedResolutionRunner
+    from .preparation_agent_public_resolution import PublicAgentResolutionRunner
+    admission = host.public_admission
+    runner = host.preparation_runner
+    if (type(runner) is PreparationRunner and runner.public_admission is admission
+            and runner.enabled is True and not runner._closed):
+        records = [host.recipes.inspect(item["recipe_id"], item["version"]) for item in host.recipes.list_summaries()
+            if item["state"] == "enabled" and not item["revoked"]]
+        ready = [record for record in records if runner.execution_available_for_recipe(record)]
+        result["service_intake"]["execution"] = any(
+            getattr(family, "source_kind", None) == "service_connection"
+            and {(step["component"], step["version"], step["digest"]) for step in record["manifest"]["steps"]}
+                == {component.reference.key for component in family.components}
+            for record in ready for family in host.preparations.families.values())
+        if ready:
+            has_composite = any({(step["component"], step["version"], step["digest"])
+                for step in record["manifest"]["steps"]} == {component.reference.key
+                for component in getattr(family, "components", (family.component,))}
+                for record in ready for family in host.preparations.families.values())
+            result.update(recipe_execution=True, automatic_preparation=True,
+                preparation_descriptor_schema_versions=[1, 2] if has_composite else [1])
+            result["import_sources"].append("application_directory")
+            result["unsupported"].remove("integrated_preparation")
+            result["preparation_execution"] = {"admission_digest": admission.digest,
+                "families": [list(key) for key in sorted(runner.enabled_families)],
+                "recipe_component_sets": [sorted([list(key) for key in keys]) for keys in
+                    sorted(admission.recipe_component_sets, key=lambda keys: sorted(keys))]}
+    resolution = host.resolution_runner
+    if (type(resolution) in {OwnedResolutionRunner, PublicAgentResolutionRunner} and resolution.public_resolution_admission is admission
+            and host.resolutions.public_admission is admission and resolution.enabled is True
+            and not resolution._closed and admission.resolution_candidate_kinds):
+        result["preparation_resolution"].update(execution=True,
+            candidate_kinds=sorted(admission.resolution_candidate_kinds), producer_versions=["1.0.1"])
+    return result
 
 
 def bind_listener(port: int = 0) -> socket.socket:
@@ -142,7 +209,28 @@ class Resident:
 
 
 class Supervisor(UpgradeHost):
-    def __init__(self, state_dir: Path, reaper: Path):
+    def __init__(self, state_dir: Path, reaper: Path, *, preparation_runner_factory=None, resolution_runner_factory=None,
+                 command_admission=None, command_resource_admission=None, agent_preparation_factory=None,
+                 public_admission=None, agent_execution_admission=None):
+        from .preparation_release_policy import AgentExecutionAdmission
+        if agent_execution_admission is not None and (type(agent_execution_admission) is not AgentExecutionAdmission
+                or type(public_admission) is not PublicPreparationAdmission or preparation_runner_factory is not None
+                or resolution_runner_factory is not None or agent_preparation_factory is not None
+                or not agent_execution_admission.components <= public_admission.families
+                or any(frozenset({key}) not in public_admission.recipe_component_sets for key in agent_execution_admission.components)):
+            raise PreparationError("invalid_agent_execution_admission")
+        self.agent_execution_admission = agent_execution_admission
+        if public_admission is not None and (type(public_admission) is not PublicPreparationAdmission
+                or preparation_runner_factory is not None or resolution_runner_factory is not None
+                or agent_preparation_factory is not None):
+            raise PreparationError("invalid_public_preparation_admission")
+        self.public_admission = public_admission
+        if command_resource_admission is not None:
+            from .host_command import HostCommandAdmission
+            from .preparation_command_owner import CommandPreparationResourceAdmission
+            if (type(command_admission) is not HostCommandAdmission
+                    or type(command_resource_admission) is not CommandPreparationResourceAdmission):
+                raise PreparationError("command_preparation_not_admitted")
         self.root = ensure_private_directory(state_dir.absolute())
         self.lock_fd = os.open(self.root / "supervisor.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         try:
@@ -171,23 +259,129 @@ class Supervisor(UpgradeHost):
         self.residents: dict[str, dict[str, Resident]] = {}
         self.stopping_residents: set[str] = set()
         self.reservations: dict[str, dict] = {}
+        self.preparation_reservations: dict[str, dict] = {}
+        self.capture_reservations: dict[str, dict] = {}
+        self.resolution_reservations: dict[str, dict] = {}
         self.resource_lock = asyncio.Lock()
+        self._preparation_recovery_task: asyncio.Task | None = None
+        self._preparation_close_task: asyncio.Task | None = None
+        self._capture_recovery_task: asyncio.Task | None = None
+        self._resolution_recovery_task: asyncio.Task | None = None
         self.legacy_locks: dict[str, int] = {}
         self.migration_blocked: set[str] = set()
         self.package_cache: dict[str, tuple[object, tuple]] = {}
         self.plan_imports: dict[str, tuple[str, int]] = {}
         self.candidate_slots = {}
+        from .host_command import HostCommands
+        self.commands = HostCommands(self, command_admission)
+        if public_admission is not None and public_admission.artifact is not None and command_admission is not None:
+            from .preparation_release_command_admission import ReleasedHostCommands
+            self.commands = ReleasedHostCommands(self, command_admission, public_admission.artifact)
         self.upgrade_cancels = {}
         try:
             self.imports = ImportStore(self.root)
             self.recipes = RecipeStore(self.imports)
-            self.preparations = PreparationStore(self.imports, self.recipes)
-            self.preparations.recover()
+            from .preparation_agent_unlocked_store import AgentUnlockedInputStore
+            from .preparation_agent_unlocked_resolution import AgentUnlockedResolutionStore
+            self.agent_unlocked_inputs = AgentUnlockedInputStore(self.imports, self.recipes)
+            if agent_execution_admission is not None and agent_execution_admission.unlocked_resolution:
+                from .preparation_agent_public_resolution import PublicAgentResolutionStore
+                self.resolutions = PublicAgentResolutionStore(self.imports, self.agent_unlocked_inputs,
+                    public_admission=public_admission, agent_admission=agent_execution_admission,
+                    current_producer=lambda request: self.resolution_runner.producer_for(request))
+            else:
+                self.resolutions = (ResolutionStore(self.imports, public_admission=public_admission,
+                    current_producer=lambda: self.resolution_runner._producer_sync()) if public_admission is not None
+                    else AgentUnlockedResolutionStore(self.imports, self.agent_unlocked_inputs))
+            from .preparation_builtin_recipes import seed_builtin_recipes
+            self.builtin_recipe_metadata = seed_builtin_recipes(self.recipes)
             self.grants = GrantStore(self.registry)
             self.resource_policy = self.load_resource_policy()
+            self.artifacts = ArtifactStore(self.root / "captured-artifacts")
+            storage_path = self.root / "artifact-storage-policy.json"
+            try:
+                if storage_path.exists():
+                    storage_policy = ArtifactStoragePolicyV1.model_validate(read_private_json(storage_path))
+                else:
+                    storage_policy = ArtifactStoragePolicyV1()
+                    write_private_json(storage_path, storage_policy.model_dump(mode="json"))
+            except ValueError:
+                raise HostError("invalid_artifact_storage_policy") from None
+            self.captures = ArtifactCaptureStore(self.imports, self.artifacts, storage_policy=storage_policy)
+            from .preparation_agent_adapter import AgentPythonAdapterFamily
+            from .preparation_agent_unlocked import AgentUnlockedPythonFamily
+            from .preparation_agent_adapter_store import AgentAdapterDerivationStore
+            self.agent_adapter_derivations = AgentAdapterDerivationStore(self.imports, self.recipes)
+            from .preparation_onnx import OnnxPreparationFamily
+            from .preparation_textgen import TextGenerationFamily
+            from .preparation_command_registration import shipped_command_family
+            from .preparation_service import ServicePreparationFamily
             self.secrets = SecretStore(self.root)
+            command_family = shipped_command_family(self.reaper.parent.parent)
+            self.preparations = PreparationStore(self.imports, self.recipes, resolutions=self.resolutions,
+                families=(OnnxPreparationFamily(self.captures), TextGenerationFamily(self.captures),
+                          ServicePreparationFamily(self.secrets),
+                          AgentPythonAdapterFamily(self.agent_adapter_derivations),
+                          AgentUnlockedPythonFamily(self.agent_unlocked_inputs, self.resolutions),
+                          *((command_family,) if command_family is not None else ())))
+            from .management_workflow_grants import WorkflowGrantStore
+            self.workflow_grants = WorkflowGrantStore(self.preparations, self.resolutions, self.recipes)
+            from .preparation_forms import PreparationForms
+            self.preparation_forms = PreparationForms(self.preparations, preferred_recipes=tuple(
+                record["recipe"] for record in self.builtin_recipe_metadata["recipes"] if record["ready"]),
+                execution_admission=lambda record: self.preparation_runner.execution_available_for_recipe(record))
+            self.preparations.recover()
+            self.capture_runner = ArtifactCaptureCoordinator(self.captures,
+                admit_target=self.admit_captured_target, validate_target=self.validate_capture_target,
+                reserve_resources=self.reserve_capture, release_resources=self.release_capture)
+            self.capture_reservations.update(self.capture_reservation_values())
+            self.resolution_reservation_root = ensure_private_directory(self.root / "resolution-reservations")
+            self.resolution_reservations.update(self.resolution_reservation_values())
+            self.preparation_reservation_root = ensure_private_directory(self.root / "preparation-reservations")
+            self.load_preparation_reservations()
+            runner_admissions = {}
+            if preparation_runner_factory is None:
+                from .preparation_runner import PreparationRunner
+                preparation_runner_factory = PreparationRunner
+                runner_admissions = {"command_admission": command_admission,
+                    "command_resource_admission": command_resource_admission}
+                if public_admission is not None:
+                    runner_admissions.update(public_admission=public_admission, enabled_families=public_admission.families)
+            elif command_resource_admission is not None:
+                runner_admissions = {"command_admission": command_admission,
+                    "command_resource_admission": command_resource_admission}
+            self.preparation_runner = preparation_runner_factory(
+                self.preparations, self.reaper.parent.parent, self.reaper,
+                reserve_resources=self.reserve_preparation, release_resources=self.release_preparation,
+                enabled=public_admission is not None and bool(public_admission.recipe_component_sets), **runner_admissions)
+            resolution_admissions = {}
+            if resolution_runner_factory is None:
+                if agent_execution_admission is not None and agent_execution_admission.unlocked_resolution:
+                    from .preparation_agent_public_resolution import PublicAgentResolutionRunner
+                    resolution_runner_factory = PublicAgentResolutionRunner
+                    resolution_admissions = {"public_admission": public_admission, "agent_admission": agent_execution_admission}
+                elif public_admission is not None:
+                    from .preparation_resolution_runner import OwnedResolutionRunner
+                    resolution_runner_factory = OwnedResolutionRunner
+                    resolution_admissions = {"public_admission": public_admission}
+                else:
+                    from .preparation_agent_unlocked_resolution import OwnedAgentUnlockedResolutionRunner
+                    resolution_runner_factory = OwnedAgentUnlockedResolutionRunner
+            self.resolution_runner = resolution_runner_factory(
+                self.resolutions, self.reaper.parent.parent, self.reaper,
+                reserve_resources=self.reserve_resolution, release_resources=self.release_resolution,
+                enabled=public_admission is not None and (bool(public_admission.resolution_candidate_kinds)
+                    or agent_execution_admission is not None and agent_execution_admission.unlocked_resolution), **resolution_admissions)
             self.downloads = DownloadManager(self.root)
             self.upgrades = UpgradeStore(self.root)
+            from .preparation_agent_host import AgentPreparationHost
+            from .preparation_agent_providers import AgentProviderRegistry
+            self.agent_provider_registry = AgentProviderRegistry(self.root / "agent-provider-config",
+                execution_admission=agent_execution_admission)
+            factory = agent_preparation_factory or AgentPreparationHost
+            self.agent_preparations = factory(self.preparations, self.root / "agent-preparations",
+                **({"provider_registry": self.agent_provider_registry, "execution_admission": agent_execution_admission}
+                    if agent_preparation_factory is None else {}))
         except BaseException:
             if hasattr(self, "imports"):
                 self.imports.close()
@@ -218,13 +412,322 @@ class Supervisor(UpgradeHost):
             raise HostError("invalid_resource_policy")
         return policy
 
-    async def static_work(self, function, *args):
+    def preparation_reservation(self, policy: ExecutionPolicy) -> dict:
+        return {"memory_mb": policy.memory_mb + self.resource_policy["headroom_mb"],
+                "disk_bytes": policy.disk_bytes, "policy_digest": policy.digest}
+
+    def load_preparation_reservations(self):
+        """Restore admission costs without adopting any recorded process identity."""
+        retained = {job["job_id"]: job for job in self.preparations.list() if job["reservation_retained"]}
+        for index, path in enumerate(self.preparation_reservation_root.iterdir()):
+            if index >= MAX_JOBS:
+                raise HostError("invalid_resource_reservation")
+            try:
+                job_id = path.stem
+                if path.name != job_id + ".json" or str(uuid.UUID(job_id)) != job_id:
+                    raise ValueError()
+                value = read_private_json(path)
+                if (set(value) != {"schema_version", "job_id", "execution_policy"}
+                        or type(value["schema_version"]) is not int or value["schema_version"] != 1 or value["job_id"] != job_id):
+                    raise ValueError()
+                from .preparation_service_contracts import parse_policy
+                policy = parse_policy(value["execution_policy"])
+                job = self.preparations.get(job_id)
+                if policy.digest != job["binding"]["policy_digest"]:
+                    raise ValueError()
+                if job_id in retained:
+                    self.preparation_reservations[job_id] = self.preparation_reservation(policy)
+                elif job["ownership_settled"]:
+                    path.unlink()
+                else:
+                    raise ValueError()
+            except (OSError, ValueError, TypeError, KeyError, PreparationError, PrivateStateError):
+                raise HostError("invalid_resource_reservation") from None
+        # The durable authority also covers a crash before the reservation file
+        # was published. Recovery can release these costs only after settling.
+        for job_id in retained.keys() - self.preparation_reservations.keys():
+            if not retained[job_id].get("managed"):
+                continue
+            policy = self.preparations.recovery_policy(job_id)
+            if policy is not None:
+                self.preparation_reservations[job_id] = self.preparation_reservation(policy)
+
+    async def recover_preparations(self):
+        if self.closing:
+            raise HostError("host_closing", 409)
+        if self._preparation_recovery_task is None or self._preparation_recovery_task.done():
+            # Coalesce concurrent readers, then poll again after reconciliation
+            # finishes so a late native completion can release held admission.
+            self._preparation_recovery_task = asyncio.create_task(self.preparation_runner.recover())
+        return await asyncio.shield(self._preparation_recovery_task)
+
+    def resolution_reservation(self, policy):
+        return {"memory_mb": policy.memory_mb + self.resource_policy["headroom_mb"],
+                "disk_bytes": policy.disk_bytes, "policy_digest": policy.digest}
+
+    def resolution_reservation_values(self):
+        """Restore exact costs; only joined settlement removes a persisted charge."""
+        result = {}
+        jobs = {job["job_id"]: job for job in self.resolutions.list()}
+        try:
+            for index, path in enumerate(self.resolution_reservation_root.iterdir()):
+                job_id = path.stem
+                if index >= MAX_RESOLUTIONS or path.name != job_id + ".json" or str(uuid.UUID(job_id)) != job_id:
+                    raise ValueError()
+                value = read_private_json(path, max_bytes=65536)
+                if (set(value) != {"schema_version", "job_id", "policy"}
+                        or type(value["schema_version"]) is not int or value["schema_version"] != 1 or value["job_id"] != job_id):
+                    raise ValueError()
+                policy = ResolutionPolicyV1.model_validate(value["policy"])
+                request = ResolutionRequestV1.model_validate(jobs[job_id]["request"])
+                if policy.digest != request.policy.digest:
+                    raise ValueError()
+                result[job_id] = self.resolution_reservation(policy)
+            for job_id, job in jobs.items():
+                if job["reservation_retained"]:
+                    request = ResolutionRequestV1.model_validate(job["request"])
+                    result[job_id] = self.resolution_reservation(request.policy)
+        except (OSError, ValueError, TypeError, KeyError, PreparationError, PrivateStateError):
+            raise HostError("invalid_resource_reservation") from None
+        return result
+
+    async def refresh_resolution_reservations(self):
+        values = await self.capture_work(self.resolution_reservation_values)
+        self.resolution_reservations.update(values)
+
+    @staticmethod
+    def resolution_resource_id(resource_id):
+        try:
+            if not isinstance(resource_id, str) or not resource_id.startswith("resolution:"):
+                raise ValueError()
+            job_id = resource_id.removeprefix("resolution:")
+            if str(uuid.UUID(job_id)) != job_id:
+                raise ValueError()
+            return job_id
+        except (ValueError, TypeError, AttributeError):
+            raise PreparationError("invalid_resolution_identity") from None
+
+    async def reserve_resolution(self, resource_id, policy):
+        job_id = self.resolution_resource_id(resource_id)
+        if not isinstance(policy, ResolutionPolicyV1):
+            raise PreparationError("invalid_resolution_policy")
+        async with self.resource_lock:
+            job = await self.capture_work(self.resolutions.get, job_id)
+            request = ResolutionRequestV1.model_validate(job["request"])
+            if request.policy.digest != policy.digest:
+                raise PreparationError("resolution_policy_mismatch")
+            await self.refresh_capture_reservations()
+            await self.refresh_resolution_reservations()
+            reservation = self.resolution_reservation(policy)
+            previous = self.resolution_reservations.get(job_id)
+            if previous is not None:
+                if previous != reservation:
+                    raise PreparationError("resolution_policy_mismatch")
+                if job["state"] != "queued":
+                    return
+            if self.closing:
+                raise HostError("host_closing", 409)
+            if job["state"] != "queued" and not job["reservation_retained"]:
+                raise PreparationError("resolution_authority_mismatch")
+            memory = sum(value["memory_mb"] for value in [*self.reservations.values(),
+                *self.preparation_reservations.values(), *self.capture_reservations.values(), *self.resolution_reservations.values()])
+            disk = sum(value["disk_bytes"] for value in [*self.preparation_reservations.values(),
+                *self.capture_reservations.values(), *self.resolution_reservations.values()])
+            if (memory + (0 if previous is not None else reservation["memory_mb"]) > self.resource_policy["memory_budget_mb"]
+                    or disk + (0 if previous is not None else reservation["disk_bytes"]) + 256 * 1024**2 > shutil.disk_usage(self.root).free):
+                raise HostError("resource_blocked", 409)
+            if previous is not None:
+                return
+            await self.capture_work(write_private_json, self.resolution_reservation_root / (job_id + ".json"),
+                {"schema_version": 1, "job_id": job_id, "policy": policy.model_dump(mode="json")})
+            self.resolution_reservations[job_id] = reservation
+
+    async def release_resolution(self, resource_id, *, ownership_settled=True):
+        job_id = self.resolution_resource_id(resource_id)
+        async with self.resource_lock:
+            job = await self.capture_work(self.resolutions.get, job_id, settlement=True)
+            if not ownership_settled or not job["ownership_settled"] or job["reservation_retained"]:
+                return
+            await self.capture_work((self.resolution_reservation_root / (job_id + ".json")).unlink, True, settlement=True)
+            self.resolution_reservations.pop(job_id, None)
+
+    async def recover_resolutions(self):
+        if self.closing:
+            raise HostError("host_closing", 409)
+        if self._resolution_recovery_task is None or self._resolution_recovery_task.done():
+            self._resolution_recovery_task = asyncio.create_task(self.resolution_runner.recover())
+        return await asyncio.shield(self._resolution_recovery_task)
+
+    def validate_capture_target(self, target):
+        if isinstance(target, AttachImportTargetV1):
+            draft = self.imports._get(target.import_id, target.revision)
+            self.imports._mutable(draft)
+            if draft["source"]["kind"] not in {"local_folder", "document", "captured_artifact_collection"}:
+                raise ArtifactError("artifact_capture_target_unsupported")
+
+    def admit_captured_target(self, target, collection, capture_id):
+        # The coordinator invokes this after verification, inside its import
+        # transaction. Its reference and success record commit with this draft.
+        if isinstance(target, AttachImportTargetV1):
+            draft = self.imports._admit_captured(collection, draft_id=target.import_id, revision=target.revision)
+        else:
+            choices = target.model_dump(mode="json", exclude={"kind"})
+            draft = self.imports._admit_captured(collection, choices=choices)
+        self.captures._reconcile_draft_references()
+        return {"import_id": draft["draft_id"], "revision": draft["revision"]}
+
+    async def recover_captures(self):
+        if self.closing:
+            raise HostError("host_closing", 409)
+        if self._capture_recovery_task is None or self._capture_recovery_task.done():
+            self._capture_recovery_task = asyncio.create_task(self.capture_runner.recover())
+        return await asyncio.shield(self._capture_recovery_task)
+
+    def capture_reservation_values(self):
+        result = {}
+        for value in self.captures.unsettled_reservations():
+            policy = CapturePolicyV1.model_validate(value["policy"])
+            result[value["capture_id"]] = {
+                "memory_mb": policy.memory_mb + self.resource_policy["headroom_mb"],
+                "disk_bytes": policy.disk_ceiling_bytes, "policy_digest": policy.digest}
+        return result
+
+    async def capture_work(self, function, *args, settlement=False):
+        """Keep capture metadata and file work joined under caller locks."""
+        # Already-owned capture settlement cannot be refused by new-work capacity.
+        # The coordinator bounds capture attempts and joins these tracked tasks.
+        if not settlement and len(self.static_tasks) >= 4:
+            raise HostError("static_work_busy", 429)
+        task = asyncio.create_task(asyncio.to_thread(function, *args))
+        self.static_tasks.add(task)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # The admission lock cannot be released while its metadata lookup
+            # still runs. A worker returns data; only this loop mutates budgets.
+            with contextlib.suppress(Exception):
+                await _await_ownership(task)
+            raise
+        finally:
+            if task.done():
+                self.static_tasks.discard(task)
+
+    async def refresh_capture_reservations(self):
+        values = await self.capture_work(self.capture_reservation_values)
+        self.capture_reservations.update(values)
+
+    async def reserve_capture(self, capture_id, policy):
+        if not isinstance(policy, CapturePolicyV1):
+            raise ArtifactError("artifact_capture_policy_invalid")
+        async with self.resource_lock:
+            def authority():
+                return self.captures.get(capture_id), self.captures.recovery_policy(capture_id).digest
+            record, actual_digest = await self.capture_work(authority)
+            if not record["reservation_retained"] or actual_digest != policy.digest:
+                raise ArtifactError("artifact_capture_scope_mismatch")
+            previous = self.capture_reservations.get(capture_id)
+            await self.refresh_capture_reservations()
+            await self.refresh_resolution_reservations()
+            reservation = self.capture_reservations[capture_id]
+            if previous is not None:
+                if previous != reservation:
+                    raise ArtifactError("artifact_capture_scope_mismatch")
+            if self.closing:
+                raise HostError("host_closing", 409)
+            memory = sum(value["memory_mb"] for value in [*self.reservations.values(),
+                *self.preparation_reservations.values(), *self.capture_reservations.values(), *self.resolution_reservations.values()])
+            disk = sum(value["disk_bytes"] for value in [*self.preparation_reservations.values(),
+                *self.capture_reservations.values(), *self.resolution_reservations.values()])
+            if memory > self.resource_policy["memory_budget_mb"] or disk + 256 * 1024**2 > shutil.disk_usage(self.root).free:
+                raise HostError("resource_blocked", 409)
+
+    async def release_capture(self, capture_id, *, ownership_settled=True):
+        record = await self.capture_work(self.captures.get, capture_id, settlement=True)
+        if ownership_settled and record["ownership_settled"] and record["state"] == "succeeded" and record["result"] is not None:
+            result = record["result"]
+            await self.capture_work(self.imports.discard_previous_capture_attachment, result["import_id"], result["revision"], settlement=True)
+        async with self.resource_lock:
+            record = await self.capture_work(self.captures.get, capture_id, settlement=True)
+            if ownership_settled and record["ownership_settled"] and not record["reservation_retained"]:
+                self.capture_reservations.pop(capture_id, None)
+                if record["state"] == "succeeded" and record["result"] is not None:
+                    self.invalidate_import_plans(record["result"]["import_id"])
+
+    def inspect_preparation_source(self, import_id, revision):
+        if type(revision) is not int or revision < 1:
+            raise PreparationError("invalid_import_revision")
+        with self.imports._lock:
+            draft = self.imports._get(import_id, revision)
+            self.imports._mutable(draft)
+        result = self.preparations.inspect_source(draft)
+        with self.imports._lock:
+            current = self.imports._get(import_id, revision)
+            self.imports._mutable(current)
+            if current["source"] != draft["source"]:
+                raise PreparationError("source_binding_changed")
+        return {"import_id": import_id, "revision": revision, **result}
+
+    def import_preparation_views(self, drafts):
+        """Project job status without changing the draft's persisted identity."""
+        latest = {job["import_id"]: job for job in self.preparations.list_summaries()}
+        latest_resolution = {job["import_id"]: job for job in self.resolutions.list_summaries()}
+        return [{**draft, "resolution": (latest_resolution[draft["draft_id"]]
+                    if draft["draft_id"] in latest_resolution and latest_resolution[draft["draft_id"]]["source_revision"] == draft["source"]["revision"] else None),
+                 "preparation": ({key: value for key, value in latest[draft["draft_id"]].items()
+                                          if key != "import_id"} if draft["draft_id"] in latest else None)}
+                for draft in drafts]
+
+    async def plan_preparation_form(self, payload):
+        """Resolve opaque answers, persist their revision, then review authority."""
+        from .preparation_inputs import descriptor_tools
+        from .preparation_runner import _policy
+        available = self.preparation_runner.enabled is True
+        value, context = await self.static_work(lambda: self.preparation_forms.resolve(
+            payload["import_id"], payload["revision"], candidate_id=payload["candidate_id"],
+            recipe=payload["recipe"], form_digest=payload["form_digest"], answers=payload["answers"],
+            execution_available=available, resolution_digest=payload.get("resolution_digest"),
+            resolution_available=self.resolution_runner.enabled is True))
+        supplied_policy = payload.get("execution_policy")
+        if value.schema_version == 2:
+            family = self.preparations.family_for(value)
+            if hasattr(family, "execution_policy"):
+                supplied_policy = await self.static_work(lambda: family.execution_policy(value, context.draft, supplied_policy))
+        policy = _policy(supplied_policy, value)
+        draft = await self.static_work(lambda: self.preparations.select_descriptor(
+            payload["import_id"], payload["revision"], value.model_dump(mode="json", exclude_none=True),
+            candidate_id=payload["candidate_id"], form_digest=context.form.form_digest,
+            resolution_digest=context.form.resolution_digest))
+        await self.capture_work(self.captures.reconcile_draft_references)
+        self.invalidate_import_plans(payload["import_id"])
+        plan, blockers = None, ["preparation_runner_unavailable", "independent_runtime_verifier_unavailable"]
+        if available:
+            try:
+                plan = await self.preparation_runner.plan(payload["import_id"], draft["revision"],
+                    value.model_dump(mode="json", exclude_none=True), policy)
+                blockers = []
+            except PreparationError as error:
+                blockers = [error.code]
+        with self.imports._lock:
+            current = self.imports._get(payload["import_id"], draft["revision"])
+            self.imports._mutable(current)
+            self.preparations._check_selection(value, current)
+        return {"schema_version": 1, "import_id": payload["import_id"], "revision": current["revision"],
+            "source_revision": current["source"]["revision"], "form_digest": context.form.form_digest,
+            "recipe": value.recipe.model_dump(), "descriptor_digest": value.digest,
+            "execution_available": plan is not None, "plan_id": plan["plan_id"] if plan else None,
+            "plan_digest": plan["plan_digest"] if plan else None, "expires_at": plan["expires_at"] if plan else None,
+            "tools": [tool.model_dump(mode="json", exclude_none=True) for tool in descriptor_tools(value)],
+            "access": value.access.model_dump(), "resources": value.resources.model_dump(),
+            "downloads": [], "execution_policy": policy.model_dump(), "blockers": blockers,
+            "draft": self.import_preparation_views([current])[0]}
+
+    async def static_work(self, function, *args, **kwargs):
         """Keep bounded file work owned until its thread has actually settled."""
         if self.closing:
             raise HostError("host_closing", 409)
         if len(self.static_tasks) >= 4:
             raise HostError("static_work_busy", 429)
-        task = asyncio.create_task(asyncio.to_thread(function, *args))
+        task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
         self.static_tasks.add(task)
         def completed(result):
             self.static_tasks.discard(result)
@@ -500,19 +1003,60 @@ class Supervisor(UpgradeHost):
 
     async def reserve_model(self, slot, package):
         async with self.resource_lock:
+            await self.refresh_capture_reservations()
+            await self.refresh_resolution_reservations()
             if slot.id in self.reservations:
                 return
             memory = package.manifest.resources.memory_mb + self.resource_policy["headroom_mb"]
             gpu = package.manifest.resources.gpu
-            if (sum(value["memory_mb"] for value in self.reservations.values()) + memory > self.resource_policy["memory_budget_mb"]
+            if (sum(value["memory_mb"] for value in [*self.reservations.values(), *self.preparation_reservations.values(),
+                    *self.capture_reservations.values(), *self.resolution_reservations.values()])
+                    + memory > self.resource_policy["memory_budget_mb"]
                     or gpu and any(value["gpu"] for value in self.reservations.values())):
                 raise HostError("resource_blocked", 409)
             reservation = {"memory_mb": memory, "gpu": gpu}
             write_private_json(self.slot_directory(slot.id) / "reservation.json", reservation)
             self.reservations[slot.id] = reservation
 
+    async def reserve_preparation(self, job_id: str, policy: ExecutionPolicy):
+        if not isinstance(policy, ExecutionPolicy):
+            raise PreparationError("invalid_preparation_policy")
+        async with self.resource_lock:
+            await self.refresh_capture_reservations()
+            await self.refresh_resolution_reservations()
+            job = self.preparations.get(job_id)
+            if not job.get("managed") or policy.digest != job["binding"]["policy_digest"] or not job["reservation_retained"]:
+                raise PreparationError("preparation_authority_mismatch")
+            reservation = self.preparation_reservation(policy)
+            if job_id in self.preparation_reservations:
+                if self.preparation_reservations[job_id] != reservation:
+                    raise PreparationError("preparation_policy_mismatch")
+                return
+            if self.closing:
+                raise HostError("host_closing", 409)
+            memory = sum(value["memory_mb"] for value in [*self.reservations.values(), *self.preparation_reservations.values(),
+                *self.capture_reservations.values(), *self.resolution_reservations.values()])
+            disk = sum(value["disk_bytes"] for value in [*self.preparation_reservations.values(),
+                *self.capture_reservations.values(), *self.resolution_reservations.values()])
+            if (memory + reservation["memory_mb"] > self.resource_policy["memory_budget_mb"]
+                    or disk + reservation["disk_bytes"] + 256 * 1024**2 > shutil.disk_usage(self.root).free):
+                raise HostError("resource_blocked", 409)
+            write_private_json(self.preparation_reservation_root / (job_id + ".json"),
+                               {"schema_version": 1, "job_id": job_id, "execution_policy": policy.model_dump()})
+            self.preparation_reservations[job_id] = reservation
+
+    async def release_preparation(self, job_id: str, *, ownership_settled=True):
+        async with self.resource_lock:
+            job = self.preparations.get(job_id)
+            if not ownership_settled or not job["ownership_settled"] or job["reservation_retained"]:
+                return
+            (self.preparation_reservation_root / (job_id + ".json")).unlink(missing_ok=True)
+            self.preparation_reservations.pop(job_id, None)
+
     async def release_model(self, slot_id: str):
         async with self.resource_lock:
+            if self.commands.pending(slot_id):
+                return
             if any(process.ownership_lost for process in self.owner(slot_id).instances.values()):
                 return
             if self.residents.get(slot_id):
@@ -728,6 +1272,9 @@ class Supervisor(UpgradeHost):
 
     async def check_candidate(self, slot, *, business_smoke: bool = True):
         package = self.package(slot)
+        if package.manifest.profile == "host-command":
+            await self.commands.verify(slot, business_smoke)
+            return
         if package.manifest.profile in {"model-service", "mcp-http"}:
             await self.start_residents(slot, business_smoke=business_smoke)
             return
@@ -903,7 +1450,7 @@ class Supervisor(UpgradeHost):
                         if self.workers.get(slot.id) is not worker or worker.closing or not self.activation(slot.id).get("legacy_jev"):
                             raise HostError("invalid_control")
                         response = await self.legacy_model_control(slot.id, request["control"])
-                    elif (package.manifest.profile == "mcp-stdio" and set(request) == {"action", "session_id"}
+                    elif (package.manifest.profile in {"mcp-stdio", "host-command"} and set(request) == {"action", "session_id"}
                           and request["action"] == "launch_session"):
                         session_id = request["session_id"]
                         if not isinstance(session_id, str) or not 16 <= len(session_id) <= 128 or session_id in session_ids:
@@ -914,19 +1461,20 @@ class Supervisor(UpgradeHost):
                         if len(instances) >= package.manifest.lifecycle.max_sessions:
                             raise HostError("session_limit")
                         session_ids.add(session_id)
-                        process = await self.package_process(slot, io_mode="fds")
+                        process = (await self.commands.session(slot) if package.manifest.profile == "host-command"
+                                   else await self.package_process(slot, io_mode="fds"))
                         instances[process.instance_id] = process
                         instance_sessions[process.instance_id] = session_id
                         # Recheck after launch acknowledgment before exporting capabilities.
                         if worker.closing or self.registry.get_slot(slot.id).generation != slot.generation:
-                            await self.reap(slot.id, process)
+                            await self.close_session_handle(slot.id, process)
                             raise HostError("slot_stopped")
                         response = {"instance_id": process.instance_id}
                         fds = [process.stdin_fd, process.stdout_fd]
                     elif set(request) == {"action", "instance_id"} and request["action"] == "close_session":
                         target = instances.get(request["instance_id"])
                         if target:
-                            await self.reap(slot.id, target)
+                            await self.close_session_handle(slot.id, target)
                             instances.pop(target.instance_id, None)
                             session_ids.discard(instance_sessions.pop(target.instance_id, ""))
                         response = {"closed": True}
@@ -943,7 +1491,7 @@ class Supervisor(UpgradeHost):
         finally:
             for process in list(instances.values()):
                 with contextlib.suppress(Exception):
-                    await self.reap(slot.id, process)
+                    await self.close_session_handle(slot.id, process)
             if not worker.closing and not self.closing:
                 async def channel_lost():
                     if self.registry.get_slot(slot.id).error_code != "ownership_lost":
@@ -951,6 +1499,13 @@ class Supervisor(UpgradeHost):
                     with contextlib.suppress(Exception):
                         await self.stop_gateway(slot.id)
                 self.track(asyncio.create_task(channel_lost()))
+
+    async def close_session_handle(self, slot_id, handle):
+        from .host_command import CommandSession
+        if isinstance(handle, CommandSession):
+            await handle.close()
+        else:
+            await self.reap(slot_id, handle)
 
     async def monitor_gateway(self, slot_id: str, worker: Worker):
         try:
@@ -975,6 +1530,10 @@ class Supervisor(UpgradeHost):
             self.registry.update_slot(slot_id, observed_state="ownership_lost" if code == "ownership_lost" else "failed", error_code=code)
 
     async def stop_gateway(self, slot_id: str, *, stop_runtime: bool = True):
+        worker = self.workers.get(slot_id)
+        if worker is not None:
+            worker.closing = True
+        await self.commands.stop(slot_id)
         worker = self.workers.pop(slot_id, None)
         if worker is None:
             if stop_runtime:
@@ -1059,7 +1618,7 @@ class Supervisor(UpgradeHost):
         owner = self.owner(slot.id)
         for process in list(owner.instances.values()):
             await self.reap(slot.id, process)
-        if owner.instances or self.ledger(slot.id) or owner.persistence_failed:
+        if owner.instances or self.ledger(slot.id) or owner.persistence_failed or self.commands.pending(slot.id):
             raise HostError("ownership_lost" if any(process.ownership_lost for process in owner.instances.values())
                             else "shutdown_unconfirmed", 409)
         await self.release_model(slot.id)
@@ -1076,6 +1635,7 @@ class Supervisor(UpgradeHost):
         from .migrations import retire_transfer
         retire_transfer(self, slot.id, operation_id)
         self.registry.update_slot(slot.id, observed_state="stopped", error_code=None)
+        await self.commands.retire(slot.id)
         self.registry.complete_removal(slot.id, operation_id, expected_generation=slot.generation)
         await owner.close()
         self.owners.pop(slot.id, None)
@@ -1110,6 +1670,8 @@ class Supervisor(UpgradeHost):
             self.registry.update_slot(slot_id, observed_state="draining")
             await self.stop_gateway(slot_id)
             await self.stop_residents(slot_id)
+            if self.commands.pending(slot_id):
+                raise HostError("command_ownership_unsettled", 409)
             slot = self.registry.update_slot(slot_id, generation=slot.generation + 1, error_code=None,
                 desired_state="stopped" if action == "stop" else "running", observed_state="stopped" if action == "stop" else "starting",
                 wake_suppressed=action == "stop")
@@ -1187,7 +1749,14 @@ class Supervisor(UpgradeHost):
             return {"status": await self.legacy_status(slot_id), "runtime": self.model_runtime(slot_id)}
 
     async def initialize(self):
+        # Exact command receipts/reservations settle before any gateway opens.
+        for slot in self.registry.list_slots():
+            self.commands.recover(slot)
+        await self.recover_captures()
+        await self.recover_resolutions()
+        await self.recover_preparations()
         self.reconcile_imports()
+        await self.capture_work(self.captures.reconcile_draft_references)
         await self.reconcile_owned_receipts()
         try:
             from .migrations import initialize_transfers
@@ -1202,10 +1771,13 @@ class Supervisor(UpgradeHost):
                 if (set(reservation) != {"memory_mb", "gpu"} or type(reservation["memory_mb"]) is not int
                         or reservation["memory_mb"] < 1 or type(reservation["gpu"]) is not bool):
                     raise HostError("invalid_resource_reservation")
-                if self.ledger(slot.id):
+                if self.ledger(slot.id) or self.commands.pending(slot.id):
                     self.reservations[slot.id] = reservation
                 else:
                     path.unlink()
+                    self.reservations.pop(slot.id, None)
+            elif not self.ledger(slot.id) and not self.commands.pending(slot.id):
+                self.reservations.pop(slot.id, None)
         interrupted = set()
         for operation in self.registry.list_unfinished_operations():
             if operation.status in {"pending", "running"}:
@@ -1217,7 +1789,7 @@ class Supervisor(UpgradeHost):
         for operation in self.registry.list_unfinished_operations():
             if operation.action != "remove":
                 continue
-            if self.ledger(operation.slot_id):
+            if self.ledger(operation.slot_id) or self.commands.pending(operation.slot_id):
                 self.registry.update_operation(operation.id, "recovery_required", error_code="ownership_lost")
                 continue
             await self.execute_control(operation)
@@ -1228,7 +1800,7 @@ class Supervisor(UpgradeHost):
             if operation.action != "upgrade":
                 continue
             recovered_upgrades.add(operation.slot_id)
-            if self.ledger(operation.slot_id):
+            if self.ledger(operation.slot_id) or self.commands.pending(operation.slot_id):
                 self.registry.update_slot(operation.slot_id, observed_state="ownership_lost", error_code="ownership_lost")
                 self.registry.update_operation(operation.id, "recovery_required", error_code="ownership_lost")
                 continue
@@ -1242,7 +1814,7 @@ class Supervisor(UpgradeHost):
                 # launched a new held gateway. Do not treat its fresh ledger
                 # as an unresolved owner from the previous supervisor.
                 continue
-            if self.ledger(slot.id):
+            if self.ledger(slot.id) or self.commands.pending(slot.id):
                 self.registry.update_slot(slot.id, observed_state="ownership_lost", error_code="ownership_lost")
                 continue
             if slot.id in pending_removals:
@@ -1352,6 +1924,9 @@ class Supervisor(UpgradeHost):
         if start_policy not in {"manual", "host"} or type(payload.get("start", False)) is not bool:
             raise HostError("unsupported_start_policy")
         package = _prepared or validate_package(Path(payload["package"]))
+        if (package.manifest.profile == "host-command" and (self.commands.admission is None
+                or package.manifest.command.helper_sha256 != self.commands.admission.helper_sha256)):
+            raise HostError("host_command_not_admitted", 409)
         settings = normalize_settings(package.manifest, payload.get("settings"))
         self.secrets.resolve(settings["secret_references"])
         name = payload.get("name", package.manifest.name)
@@ -1537,6 +2112,36 @@ class Supervisor(UpgradeHost):
 
     async def close(self):
         self.closing = True
+        preparation_error = None
+        if (self._preparation_close_task is None or self._preparation_close_task.done()
+                and (self._preparation_close_task.cancelled() or self._preparation_close_task.exception() is not None)):
+            async def close_preparations():
+                for task in (self._preparation_recovery_task, self._capture_recovery_task, self._resolution_recovery_task):
+                    if task is not None:
+                        # Join the prior attempt; runners must reconcile afresh
+                        # during close rather than replay its terminal failure.
+                        with contextlib.suppress(Exception, asyncio.CancelledError):
+                            await _await_ownership(task)
+                failures = []
+                for runner in (self.agent_preparations, self.preparation_runner, self.capture_runner, self.resolution_runner):
+                    try:
+                        await runner.close()
+                    except (OwnershipLost, ArtifactError, PreparationError) as error:
+                        failures.append(error)
+                    except Exception:
+                        failures.append(HostError("preparation_shutdown_failed", 409))
+                if failures:
+                    raise failures[0]
+            self._preparation_close_task = asyncio.create_task(close_preparations())
+        try:
+            await asyncio.shield(self._preparation_close_task)
+        except asyncio.CancelledError:
+            # Finish native ownership cleanup even under repeated cancellation;
+            # retain the database/lock for a later full shutdown retry.
+            await _await_ownership(self._preparation_close_task)
+            raise
+        except (OwnershipLost, ArtifactError, PreparationError, HostError) as error:
+            preparation_error = error
         # Downloads own network and extraction work independently of callers.
         # Keep the state lock until every owned writer has settled.
         download_error = None
@@ -1563,6 +2168,7 @@ class Supervisor(UpgradeHost):
         for slot_id in list(self.residents):
             with contextlib.suppress(Exception):
                 await self.stop_residents(slot_id)
+        await self.commands.close()
         for slot_id, owner in self.owners.items():
             for process in list(owner.instances.values()):
                 if not process.ownership_lost:
@@ -1575,6 +2181,10 @@ class Supervisor(UpgradeHost):
         for descriptor in self.legacy_locks.values():
             os.close(descriptor)
         self.legacy_locks.clear()
+        if preparation_error is not None:
+            # An uncertain native receipt still owns admission costs and the
+            # host lock. A second supervisor must not overlap that ownership.
+            raise preparation_error
         self.imports.close()
         self.registry.close()
         os.close(self.lock_fd)
@@ -1593,27 +2203,52 @@ def management_app(host: Supervisor, token: str, port: int):
         try:
             return host.grants.authenticate(authorization[7:])
         except GrantError as error:
+            if error.code != "unauthorized":
+                raise AuthenticationError(error.code) from None
+        try:
+            return host.workflow_grants.authenticate(authorization[7:])
+        except GrantError as error:
             raise AuthenticationError(error.code) from None
 
     async def dispatch(request: Request):
         try:
             route = request.url.path
             grant_id = request.scope["mcpme.principal"].get("grant_id")
+            workflow_grant = request.scope["mcpme.principal"].get("workflow_grant") is True
             payload = None
             if request.method != "GET":
                 payload = load_json(await request.body())
                 if not isinstance(payload, dict):
                     raise HostError("invalid_request")
             if grant_id is not None:
-                if (route.startswith(("/v1/recipes", "/v1/preparations", "/v1/downloads", "/v1/secrets", "/v1/upgrade"))
+                if (route.startswith(("/v1/downloads", "/v1/secrets", "/v1/upgrade", "/v1/artifact-captures", "/v1/artifacts"))
                         or route.startswith("/v1/operations/") and request.method != "GET"):
-                    # Existing metadata/attachment grants retain their scope.
-                    # This foundation introduces no scoped execution authority.
+                    # Workflow execution grants do not confer owner-only
+                    # acquisition, secret-store or installation administration.
                     raise GrantError("grant_scope", 403)
-                host.grants.authorize_route(grant_id, request.method, route, payload)
+                grants = host.workflow_grants if workflow_grant else host.grants
+                grants.authorize_route(grant_id, request.method, route, payload)
+            if (route == "/v1/service-connectors" or route == "/v1/imports/service"
+                    or route.startswith("/v1/imports/") and request.path_params.get("action") == "service"):
+                if request.scope["mcpme.principal"].get("owner") is not True:
+                    raise GrantError("grant_scope", 403)
+                from . import preparation_service_routes as service_routes
+                if route == "/v1/service-connectors" and request.method == "GET":
+                    result = await host.static_work(service_routes.registry)
+                elif route == "/v1/imports/service" and request.method == "POST":
+                    result = await host.static_work(lambda: service_routes.create(host, payload))
+                elif request.method == "POST":
+                    result = await host.static_work(lambda: service_routes.revise(host, request.path_params["draft_id"], payload))
+                else:
+                    raise HostError("invalid_request")
+                return JSONResponse({"api_version": 1, **result})
             if request.method == "GET":
                 if route == "/v1/capabilities":
-                    result = capabilities()
+                    result = capabilities(host)
+                elif route == "/v1/recipes/schema":
+                    from .preparation_contracts import RecipeManifest, RecipeLock
+                    result = {"schema_version": 1, "manifest": RecipeManifest.model_json_schema(),
+                              "lock": RecipeLock.model_json_schema()}
                 elif route == "/v1/recipes":
                     result = {"recipes": host.recipes.list_summaries()}
                 elif route == "/v1/downloads":
@@ -1624,33 +2259,57 @@ def management_app(host: Supervisor, token: str, port: int):
                     result = host.secrets.get(request.path_params["secret_id"])
                 elif route.startswith("/v1/downloads/"):
                     result = host.downloads.get(request.path_params["download_id"])
+                elif route == "/v1/artifact-captures":
+                    await host.recover_captures()
+                    result = {"captures": await host.capture_work(host.captures.list_summaries)}
+                elif route.startswith("/v1/artifact-captures/"):
+                    await host.recover_captures()
+                    result = await host.capture_work(host.captures.get, request.path_params["capture_id"])
+                elif route == "/v1/resolutions":
+                    await host.recover_resolutions()
+                    result = {"resolutions": await host.capture_work(host.resolutions.list_summaries)}
+                    if workflow_grant:
+                        result["resolutions"] = host.workflow_grants.filter_jobs(grant_id, result["resolutions"])
+                elif route.startswith("/v1/resolutions/"):
+                    await host.recover_resolutions()
+                    result = await host.capture_work(host.resolutions.get, request.path_params["job_id"])
                 elif route == "/v1/preparations":
+                    await host.recover_preparations()
                     result = {"preparations": host.preparations.list_summaries()}
+                    if workflow_grant:
+                        result["preparations"] = host.workflow_grants.filter_jobs(grant_id, result["preparations"])
                 elif route.startswith("/v1/preparations/"):
+                    await host.recover_preparations()
                     result = host.preparations.get(request.path_params["job_id"])
                 elif route == "/v1/status":
                     result = {"supervisor_pid": os.getpid(), "slots": [host.slot_snapshot(slot) for slot in host.registry.list_slots()],
                               "operations": [host.operation_snapshot(operation) for operation in host.registry.list_operations()],
                               "resource_policy": host.resource_policy,
-                              "reservations": {slot_id: dict(value) for slot_id, value in host.reservations.items()}}
+                              "reservations": {slot_id: dict(value) for slot_id, value in host.reservations.items()},
+                              "preparation_reservations": {job_id: dict(value) for job_id, value in host.preparation_reservations.items()},
+                              "capture_reservations": {capture_id: dict(value) for capture_id, value in host.capture_reservations.items()},
+                              "resolution_reservations": {job_id: dict(value) for job_id, value in host.resolution_reservations.items()}}
                 elif route == "/v1/slots":
                     result = {"slots": [host.slot_snapshot(slot) for slot in host.registry.list_slots()]}
                     if grant_id is not None:
                         result["slots"] = host.grants.filter_slots(grant_id, result["slots"])
                 elif route == "/v1/grants":
-                    result = host.grants.list()
+                    legacy, workflow = host.grants.list(), host.workflow_grants.list()
+                    result = {"grants": sorted(legacy["grants"] + workflow["grants"],
+                        key=lambda item: item["created_at"], reverse=True)[:100], "total": legacy["total"] + workflow["total"]}
                 elif route.startswith("/v1/grants/"):
-                    result = host.grants.inspect(request.path_params["grant_id"])
+                    identifier = request.path_params["grant_id"]
+                    result = (host.workflow_grants if host.workflow_grants.contains(identifier) else host.grants).inspect(identifier)
                 elif route.startswith("/v1/plans/"):
                     result = await asyncio.to_thread(host.inspect_plan, request.path_params["plan_id"])
                 elif route.startswith("/v1/upgrade/plans/"):
                     result = await host.static_work(host.inspect_upgrade_plan, request.path_params["plan_id"])
                 elif route == "/v1/imports":
                     host.reconcile_imports()
-                    result = {"imports": host.imports.list_summaries()}
+                    result = {"imports": host.import_preparation_views(host.imports.list_summaries())}
                 elif route.startswith("/v1/imports/"):
                     host.reconcile_imports()
-                    result = host.imports.inspect(request.path_params["draft_id"])
+                    result = host.import_preparation_views([host.imports.inspect(request.path_params["draft_id"])])[0]
                 elif route.endswith("/details"):
                     slot = host.registry.get_slot(request.path_params["slot_id"])
                     package = await asyncio.to_thread(host.package, slot)
@@ -1685,32 +2344,120 @@ def management_app(host: Supervisor, token: str, port: int):
                 elif route.startswith("/v1/secrets/"):
                     if payload:
                         raise SettingsError("invalid_secret")
-                    result = host.secrets.revoke(request.path_params["secret_id"])
+                    from .preparation_service_routes import revoke
+                    result = await revoke(host, request.path_params["secret_id"])
                 elif route == "/v1/downloads":
                     result = await host.downloads.start(payload)
                 elif route.startswith("/v1/downloads/"):
                     if payload:
                         raise HostError("invalid_download_spec")
                     result = await host.downloads.cancel(request.path_params["download_id"])
+                elif route == "/v1/artifact-captures":
+                    if set(payload) != {"request", "policy", "target", "idempotency_key"}:
+                        raise ArtifactError("artifact_capture_contract_invalid")
+                    result = await host.capture_runner.start(payload["request"], payload["policy"], payload["target"], payload["idempotency_key"])
+                elif route.startswith("/v1/artifact-captures/"):
+                    if payload:
+                        raise ArtifactError("artifact_capture_contract_invalid")
+                    if route.endswith("/cancel"):
+                        result = await host.capture_runner.cancel(request.path_params["capture_id"])
+                    else:
+                        await host.capture_work(host.captures.get, request.path_params["capture_id"])
+                        await host.recover_captures()
+                        result = await host.capture_work(host.captures.get, request.path_params["capture_id"])
+                elif "collection_digest" in request.path_params and route.endswith("/collect"):
+                    if payload:
+                        raise ArtifactError("artifact_capture_contract_invalid")
+                    await host.capture_work(host.captures.reconcile_draft_references)
+                    await host.static_work(host.captures.collect, request.path_params["collection_digest"])
+                    result = {"collection_digest": request.path_params["collection_digest"], "collected": True}
+                elif route == "/v1/resolutions/plan":
+                    if set(payload) != {"import_id", "revision", "candidate_id", "policy"}:
+                        raise HostError("invalid_resolution_request")
+                    await host.recover_resolutions()
+                    result = {**await host.resolution_runner.plan(payload["import_id"], payload["revision"],
+                        payload["candidate_id"], payload["policy"]), "execution_available": host.resolution_runner.enabled is True}
+                elif route == "/v1/resolutions/start":
+                    if set(payload) != {"plan_id", "plan_digest", "idempotency_key"}:
+                        raise HostError("invalid_resolution_request")
+                    result = await host.resolution_runner.start(payload["plan_id"], payload["plan_digest"], payload["idempotency_key"],
+                        **({"grant_id": grant_id} if workflow_grant else {}))
+                elif route.startswith("/v1/resolutions/"):
+                    if payload:
+                        raise HostError("invalid_resolution_request")
+                    job_id = request.path_params["job_id"]
+                    if route.endswith("/cancel"):
+                        result = await host.resolution_runner.cancel(job_id)
+                    else:
+                        await host.capture_work(host.resolutions.get, job_id)
+                        await host.recover_resolutions()
+                        result = await host.capture_work(host.resolutions.get, job_id)
                 elif route == "/v1/recipes":
                     if set(payload) != {"path"} or not isinstance(payload["path"], str) or not Path(payload["path"]).is_absolute():
                         raise HostError("invalid_recipe_request")
-                    result = await host.static_work(host.recipes.add, Path(payload["path"]))
+                    result = await host.static_work(host.recipes.add, Path(payload["path"]),
+                        **({"admit": lambda record: host.workflow_grants.recipe_admit(grant_id, "register", record)} if workflow_grant else {}))
                 elif route.startswith("/v1/recipes/"):
                     action = request.path_params["action"]
                     if (action not in {"inspect", "enable", "disable", "revoke", "remove", "deprecate"}
                             or set(payload) != {"recipe_id", "version"}):
                         raise HostError("invalid_recipe_request")
-                    result = await host.static_work(getattr(host.recipes, action), payload["recipe_id"], payload["version"])
-                elif route == "/v1/preparations/plan":
-                    if set(payload) != {"import_id", "revision", "descriptor"}:
+                    result = await host.static_work(getattr(host.recipes, action), payload["recipe_id"], payload["version"],
+                        **({"admit": lambda record: host.workflow_grants.recipe_admit(grant_id, action, record)}
+                           if workflow_grant and action != "inspect" else {}))
+                elif route == "/v1/preparations/form":
+                    if ({"import_id", "revision"} - set(payload) or
+                            set(payload) - {"import_id", "revision", "candidate_id", "recipe", "resolution_digest"}):
                         raise HostError("invalid_preparation_request")
-                    result = await host.static_work(host.preparations.plan, payload["import_id"], payload["revision"], payload["descriptor"])
+                    await host.recover_preparations()
+                    result = await host.static_work(lambda: host.preparation_forms.form(
+                        payload["import_id"], payload["revision"], candidate_id=payload.get("candidate_id"),
+                        recipe=payload.get("recipe"), execution_available=host.preparation_runner.enabled is True,
+                        resolution_digest=payload.get("resolution_digest"),
+                        resolution_available=host.resolution_runner.enabled is True))
+                elif route == "/v1/preparations/plan-form":
+                    required = {"import_id", "revision", "candidate_id", "recipe", "form_digest", "answers"}
+                    if required - set(payload) or set(payload) - (required | {"execution_policy", "resolution_digest"}):
+                        raise HostError("invalid_preparation_request")
+                    await host.recover_preparations()
+                    result = await host.plan_preparation_form(payload)
+                elif route == "/v1/preparations/plan":
+                    if set(payload) not in ({"import_id", "revision", "descriptor"},
+                                            {"import_id", "revision", "descriptor", "execution_policy"}):
+                        raise HostError("invalid_preparation_request")
+                    await host.recover_preparations()
+                    if "execution_policy" in payload:
+                        result = await host.preparation_runner.plan(payload["import_id"], payload["revision"],
+                                                                     payload["descriptor"], payload["execution_policy"])
+                    else:
+                        result = await host.static_work(host.preparations.plan, payload["import_id"], payload["revision"], payload["descriptor"])
+                elif route == "/v1/preparations/inspect-source":
+                    if set(payload) != {"import_id", "revision"}:
+                        raise HostError("invalid_preparation_request")
+                    await host.recover_preparations()
+                    result = await host.static_work(host.inspect_preparation_source, payload["import_id"], payload["revision"])
+                elif route == "/v1/preparations/start":
+                    if set(payload) != {"plan_id", "plan_digest", "idempotency_key"}:
+                        raise HostError("invalid_preparation_request")
+                    await host.recover_preparations()
+                    result = await host.preparation_runner.start(payload["plan_id"], payload["plan_digest"], payload["idempotency_key"],
+                        **({"grant_id": grant_id} if workflow_grant else {}))
                 elif route.endswith("/cancel") and "job_id" in request.path_params:
                     if payload:
                         raise HostError("invalid_preparation_request")
-                    result = host.preparations.cancel(request.path_params["job_id"])
+                    await host.recover_preparations()
+                    result = await host.preparation_runner.cancel(request.path_params["job_id"])
+                elif route.endswith("/recover") and "job_id" in request.path_params:
+                    if payload:
+                        raise HostError("invalid_preparation_request")
+                    host.preparations.get(request.path_params["job_id"])
+                    await host.recover_preparations()
+                    result = host.preparations.get(request.path_params["job_id"])
                 elif route == "/v1/grants":
+                    from .management_workflow_grants import MODES
+                    if payload.get("mode") in MODES:
+                        result = await host.static_work(host.workflow_grants.issue, payload)
+                        return JSONResponse({"api_version": 1, **result})
                     plan = None
                     if payload.get("mode") == "install":
                         plan_id = payload.get("plan_id")
@@ -1722,11 +2469,20 @@ def management_app(host: Supervisor, token: str, port: int):
                             host.imports.validate_binding(plan["import_id"], plan["import_revision"], plan["import_digest"])
                     result = host.grants.issue(payload, plan=plan)
                 elif route.endswith("/revoke") and "grant_id" in request.path_params and not payload:
-                    result = host.grants.revoke(request.path_params["grant_id"])
+                    identifier = request.path_params["grant_id"]
+                    if host.workflow_grants.contains(identifier):
+                        result = host.workflow_grants.revoke(identifier)
+                        cleanup = host.workflow_grants.cleanup_job(identifier)
+                        if cleanup is not None:
+                            kind, job_id = cleanup
+                            runner = host.preparation_runner if kind == "preparation" else host.resolution_runner
+                            await runner.cancel(job_id)
+                    else:
+                        result = host.grants.revoke(identifier)
                 elif request.method == "PATCH" and "slot_id" in request.path_params:
                     result = await host.update_settings(request.path_params["slot_id"], payload)
                 elif route == "/v1/imports":
-                    if set(payload) - {"source", "name", "intent", "document_role", "files", "start", "start_policy", "model_engine"}:
+                    if set(payload) - {"source", "name", "intent", "document_role", "files", "start", "start_policy", "model_engine", "source_mode"}:
                         raise HostError("invalid_import_request")
                     if not isinstance(payload.get("source"), str) or not isinstance(payload.get("name"), str):
                         raise HostError("invalid_import_request")
@@ -1747,6 +2503,7 @@ def management_app(host: Supervisor, token: str, port: int):
                         if "revision" not in payload:
                             raise HostError("invalid_import_request")
                         result = host.imports.revise(draft_id, revision, **{key: value for key, value in payload.items() if key != "revision"})
+                        await host.capture_work(host.captures.reconcile_draft_references)
                         host.invalidate_import_plans(draft_id)
                     elif action == "attach" and set(payload) == {"revision", "package"} and isinstance(payload["package"], str):
                         result = await host.static_work(host.imports.attach, draft_id, revision, Path(payload["package"]))
@@ -1758,6 +2515,7 @@ def management_app(host: Supervisor, token: str, port: int):
                     elif action in {"export", "cancel", "expire"} and set(payload) == {"revision"}:
                         result = getattr(host.imports, action)(draft_id, revision)
                         if action in {"cancel", "expire"}:
+                            await host.capture_work(host.captures.reconcile_draft_references)
                             host.invalidate_import_plans(draft_id)
                     else:
                         raise HostError("invalid_import_request")
@@ -1786,7 +2544,8 @@ def management_app(host: Supervisor, token: str, port: int):
                     raise HostError("invalid_request")
             return JSONResponse({"api_version": 1, **result})
         except (HostError, PackageError, RegistryError, ImportDraftError, GrantError, PreparationError, DownloadError, SettingsError, UpgradeError) as error:
-            return JSONResponse({"api_version": 1, "error": {"code": error.code}}, status_code=getattr(error, "status", 400))
+            status = 409 if error.code in {"preparation_runner_unavailable", "resolution_runner_unavailable"} else getattr(error, "status", 400)
+            return JSONResponse({"api_version": 1, "error": {"code": error.code}}, status_code=status)
         except Exception:
             return JSONResponse({"api_version": 1, "error": {"code": "invalid_request"}}, status_code=400)
 
@@ -1794,15 +2553,32 @@ def management_app(host: Supervisor, token: str, port: int):
         Route("/v1/downloads", dispatch, methods=["GET", "POST"]),
         Route("/v1/downloads/{download_id}", dispatch),
         Route("/v1/downloads/{download_id}/cancel", dispatch, methods=["POST"]),
+        Route("/v1/artifact-captures", dispatch, methods=["GET", "POST"]),
+        Route("/v1/artifact-captures/{capture_id}", dispatch),
+        Route("/v1/artifact-captures/{capture_id}/cancel", dispatch, methods=["POST"]),
+        Route("/v1/artifact-captures/{capture_id}/recover", dispatch, methods=["POST"]),
+        Route("/v1/artifacts/{collection_digest}/collect", dispatch, methods=["POST"]),
+        Route("/v1/resolutions", dispatch),
+        Route("/v1/resolutions/plan", dispatch, methods=["POST"]),
+        Route("/v1/resolutions/start", dispatch, methods=["POST"]),
+        Route("/v1/resolutions/{job_id}", dispatch),
+        Route("/v1/resolutions/{job_id}/cancel", dispatch, methods=["POST"]),
+        Route("/v1/resolutions/{job_id}/recover", dispatch, methods=["POST"]),
         Route("/v1/secrets", dispatch, methods=["GET", "POST"]),
         Route("/v1/secrets/{secret_id}", dispatch),
         Route("/v1/secrets/{secret_id}/revoke", dispatch, methods=["POST"]),
         Route("/v1/recipes", dispatch, methods=["GET", "POST"]),
+        Route("/v1/recipes/schema", dispatch),
         Route("/v1/recipes/{action}", dispatch, methods=["POST"]),
         Route("/v1/preparations", dispatch),
+        Route("/v1/preparations/form", dispatch, methods=["POST"]),
+        Route("/v1/preparations/plan-form", dispatch, methods=["POST"]),
         Route("/v1/preparations/plan", dispatch, methods=["POST"]),
+        Route("/v1/preparations/inspect-source", dispatch, methods=["POST"]),
+        Route("/v1/preparations/start", dispatch, methods=["POST"]),
         Route("/v1/preparations/{job_id}", dispatch),
         Route("/v1/preparations/{job_id}/cancel", dispatch, methods=["POST"]),
+        Route("/v1/preparations/{job_id}/recover", dispatch, methods=["POST"]),
         Route("/v1/grants", dispatch, methods=["GET", "POST"]),
         Route("/v1/grants/{grant_id}", dispatch), Route("/v1/grants/{grant_id}/revoke", dispatch, methods=["POST"]),
         Route("/v1/plans/{plan_id}", dispatch),
@@ -1812,6 +2588,8 @@ def management_app(host: Supervisor, token: str, port: int):
         Route("/v1/slots/{slot_id}/details", dispatch),
         Route("/v1/slots/{slot_id}", dispatch, methods=["GET", "PATCH"]), Route("/v1/operations/{operation_id}", dispatch),
         Route("/v1/operations/{operation_id}/{action}", dispatch, methods=["POST"]),
+        Route("/v1/service-connectors", dispatch),
+        Route("/v1/imports/service", dispatch, methods=["POST"]),
         Route("/v1/imports", dispatch, methods=["GET", "POST"]),
         Route("/v1/imports/{draft_id}", dispatch),
         Route("/v1/imports/{draft_id}/{action}", dispatch, methods=["POST"]),
@@ -1821,13 +2599,27 @@ def management_app(host: Supervisor, token: str, port: int):
         Route("/v1/migrations/{transfer_id}/rollback", dispatch, methods=["POST"]),
         Route("/v1/migrations/{transfer_id}/recover", dispatch, methods=["POST"]),
         Route("/v1/slots/{slot_id}/{action}", dispatch, methods=["POST"])])
-    return LocalPolicy(app, token=token, port=port, authenticate=authenticate)
+    from .preparation_agent_host import agent_preparation_routes
+    from .preparation_agent_providers import agent_provider_routes
+    policy = agent_preparation_routes(LocalPolicy(app, token=token, port=port, authenticate=authenticate), host.agent_preparations)
+    return agent_provider_routes(policy, host.agent_provider_registry)
 
 
-async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None):
+async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None, *, preparation_runner_factory=None, resolution_runner_factory=None, agent_preparation_factory=None):
     if platform.system() != "Darwin" or platform.machine() != "arm64" or int(platform.mac_ver()[0].split(".")[0]) < 26:
         raise HostError("unsupported_platform")
-    host = Supervisor(state_dir, reaper)
+    # Trusted development acceptance may inject an explicitly enabled runner.
+    # The CLI and ordinary native launch supply no factory; production remains
+    # disabled by the reviewed source hook. No payload or environment selects one.
+    if all(factory is None for factory in (preparation_runner_factory, resolution_runner_factory, agent_preparation_factory)):
+        from .preparation_release_policy import load_release_admissions
+        admission, agent_admission, commands = await load_release_admissions()
+    else:
+        admission, agent_admission, commands = None, None, (None, None)
+    host = Supervisor(state_dir, reaper, preparation_runner_factory=preparation_runner_factory,
+                      resolution_runner_factory=resolution_runner_factory, agent_preparation_factory=agent_preparation_factory,
+                      public_admission=admission, agent_execution_admission=agent_admission,
+                      command_admission=commands[0], command_resource_admission=commands[1])
     listener = bind_listener()
     token = secrets.token_urlsafe(32)
     port = listener.getsockname()[1]

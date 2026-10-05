@@ -46,7 +46,7 @@ def policy():
                            disk_bytes=1024 * 1024 * 1024, memory_mb=128)
 
 
-@pytest.mark.parametrize("component", ["python-function-v1", "existing-mcp-v1"])
+@pytest.mark.parametrize("component", ["python-function-v1", "existing-mcp-v1", "resolved-python-v1"])
 async def test_scaffold_and_check_are_offline_with_closed_license_and_fixture_closure(tmp_path, monkeypatch, component):
     async def forbidden(*args, **kwargs):
         pytest.fail("offline recipe authoring must not access management or execution")
@@ -119,8 +119,7 @@ async def test_edit_relock_check_and_add_new_immutable_version_without_host_chan
         assert second["version"] == "2.0.0" and second["digest"] == checked["digest"]
         assert host.recipes.resolve("local.authored", "1.0.0", first["digest"], existing_job=True)["digest"] == first["digest"]
         assert host.registry.list_slots() == []
-    assert "future generated native forms" in (root / "README.md").read_text()
-    assert "Native recipe forms are not implemented" in (root / "README.md").read_text()
+    assert "rendered in generated native forms" in (root / "README.md").read_text()
 
 
 def test_lock_main_emits_static_metadata_and_retains_production_private_umask(tmp_path, capsys):
@@ -280,6 +279,10 @@ async def test_owner_add_enable_variant_and_restart_through_private_cli(tmp_path
     first = scaffold_recipe(first_path, "local.first")
     second = scaffold_recipe(second_path, "local.second")
     async with private_manager(tmp_path) as host:
+        defaults = {record["recipe_id"] for record in host.recipes.list()}
+        assert defaults == {"mcpme.python-callable", "mcpme.resolved-python", "mcpme.onnx-hotdog",
+                            "mcpme.text-generation", "mcpme.native-command", "mcpme.local-openai-text",
+                            "mcpme.agent-python-adapter", "mcpme.agent-unlocked-python-adapter"}
         for path, entry in ((first_path, first), (second_path, second)):
             added = await execute(host.root, "recipes", "add", "--path", path)
             assert added["digest"] == entry["digest"] and added["state"] == "proposed"
@@ -287,7 +290,8 @@ async def test_owner_add_enable_variant_and_restart_through_private_cli(tmp_path
             assert enabled["state"] == "enabled" and enabled["runnable"] is False
             assert host.recipes.resolve(entry["recipe_id"], "1.0.0", entry["digest"])["digest"] == entry["digest"]
         listing = await execute(host.root, "recipes", "list")
-        assert len(listing["recipes"]) == 2 and host.registry.list_slots() == []
+        assert {record["recipe_id"] for record in listing["recipes"]} == defaults | {"local.first", "local.second"}
+        assert host.registry.list_slots() == []
     async with private_manager(tmp_path) as host:
         restored = await execute(host.root, "recipes", "inspect", "--id", "local.first", "--version", "1.0.0")
         assert restored["digest"] == first["digest"] and restored["state"] == "enabled"
@@ -295,18 +299,22 @@ async def test_owner_add_enable_variant_and_restart_through_private_cli(tmp_path
 
 
 @pytest.mark.parametrize("mode", ["read", "prepare"])
-async def test_existing_scoped_grants_cannot_manage_recipes_or_preparation_jobs(tmp_path, mode):
+async def test_existing_scoped_grants_review_metadata_but_cannot_mutate_recipes_or_start_jobs(tmp_path, mode):
     path = tmp_path / "recipe"
     scaffold_recipe(path, "local.owner")
     async with private_manager(tmp_path) as host:
+        baseline = host.recipes.list()
         grant = await execute(host.root, "authorize", "--read-only" if mode == "read" else "--prepare")
         scoped = ("--credential-file", grant["credential_file"])
-        for command in (("recipes", "list"), ("recipes", "add", "--path", path),
+        assert (await execute(host.root, *scoped, "recipes", "list"))["recipes"] == host.recipes.list_summaries()
+        assert (await execute(host.root, *scoped, "preparations", "list"))["preparations"] == []
+        for command in (("recipes", "add", "--path", path),
                         ("recipes", "enable", "--id", "local.owner", "--version", "1.0.0"),
-                        ("preparations", "list")):
+                        ("preparations", "start", "--plan", str(uuid.uuid4()),
+                         "--plan-digest", "a" * 64, "--idempotency-key", str(uuid.uuid4()))):
             denied = await execute(host.root, *scoped, *command)
             assert denied["error"]["code"] == "grant_scope"
-        assert host.recipes.list() == [] and host.preparations.list() == []
+        assert host.recipes.list() == baseline and host.preparations.list() == []
 
 
 async def test_owner_preparation_plan_get_cancel_and_unknown_descriptor_fields(tmp_path):

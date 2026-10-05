@@ -187,7 +187,8 @@ class UpgradeHost:
         await self.stop_residents(slot_id)
         for process in list(self.owner(slot_id).instances.values()):
             await self.reap(slot_id, process)
-        if self.ledger(slot_id) or self.owner(slot_id).instances or self.owner(slot_id).persistence_failed:
+        if (self.ledger(slot_id) or self.owner(slot_id).instances or self.owner(slot_id).persistence_failed
+                or self.commands.pending(slot_id)):
             raise UpgradeError("ownership_lost")
 
     async def execute_upgrade(self, operation_id: str, plan: dict, *, recovery: bool = False):
@@ -314,7 +315,8 @@ class UpgradeHost:
             pass
         slot = self.registry.get_slot(operation.slot_id)
         lost = (slot.observed_state == "ownership_lost" or bool(self.ledger(slot.id))
-                or bool(self.owner(slot.id).instances) or self.owner(slot.id).persistence_failed)
+                or bool(self.owner(slot.id).instances) or self.owner(slot.id).persistence_failed
+                or self.commands.pending(slot.id))
         self.registry.update_slot(slot.id, observed_state="ownership_lost" if lost else "failed",
             error_code="ownership_lost" if lost else "upgrade_recovery_required")
         self.registry.update_operation(operation.id, "recovery_required", error_code="ownership_lost" if lost else code)
@@ -370,6 +372,7 @@ class UpgradeHost:
             current = self.registry.get_slot(operation.slot_id)
             lost = (isinstance(error, OwnershipLost) or getattr(error, "code", None) == "ownership_lost"
                     or current.observed_state == "ownership_lost"
+                    or self.commands.pending(operation.slot_id)
                     or any(process.ownership_lost for process in self.owner(operation.slot_id).instances.values())
                     or any(value.get("state") == "ownership_lost" for value in self.ledger(operation.slot_id).values()))
             failure = "ownership_lost" if lost else "upgrade_recovery_required"

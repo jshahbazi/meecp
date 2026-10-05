@@ -77,7 +77,14 @@ result. The prompt shows the destination. A single running installation in
 `/Applications/mcpme.app` is preferred, then an existing personal copy. A new
 copy goes in `/Applications` when writable and `~/Applications` otherwise.
 An unwritable existing system installation requires a manual Finder copy with
-administrator authorization. A refused quit or timeout prevents replacement.
+administrator authorization. Active Phase 3 release admission requires the
+bundle files and embedded host to be owned by the running user; an
+administrator-owned `/Applications` ancestor is allowed. Root-owned bundle
+members fail startup and do not receive development authority. A user-owned
+`~/Applications/mcpme.app` is supported. Because destination selection prefers
+an existing system copy, quit and remove that copy before selecting a personal
+installation. Updates also require a writable destination parent and a
+user-owned installer lock. A refused quit or timeout prevents replacement.
 A confirmed launch failure restores the prior bundle. An unconfirmed launch
 retains the installed candidate and a recovery folder beside it; read that
 folder's `RECOVERY.md` before restoring its previous bundle. Normal startup

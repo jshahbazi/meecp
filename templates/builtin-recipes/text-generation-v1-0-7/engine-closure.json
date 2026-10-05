@@ -1,0 +1,86 @@
+{
+  "licenses/ggml-LICENSE": {
+    "bytes": 1078,
+    "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d"
+  },
+  "licenses/libomp-LICENSE.TXT": {
+    "bytes": 15141,
+    "sha256": "8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee"
+  },
+  "licenses/llama.cpp-LICENSE": {
+    "bytes": 1078,
+    "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d"
+  },
+  "licenses/openssl-LICENSE.txt": {
+    "bytes": 10175,
+    "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a"
+  },
+  "licenses/python-LICENSE.txt": {
+    "bytes": 13936,
+    "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf"
+  },
+  "llama/lib/libcrypto.3.dylib": {
+    "bytes": 4862416,
+    "sha256": "f9563883fdbb4f2b367c708a6abd786119c935d3f9cd01fa8e11c34666775d1b"
+  },
+  "llama/lib/libggml-base.0.dylib": {
+    "bytes": 522992,
+    "sha256": "045e9778c75a3790ae1f5d02d19c85e966b277216578d226d776d85cd7d97333"
+  },
+  "llama/lib/libggml.0.dylib": {
+    "bytes": 77968,
+    "sha256": "7b262216670ab6bcc198b486777fe3b723b045660b369d8123e785e8594d9a4d"
+  },
+  "llama/lib/libllama-common.0.dylib": {
+    "bytes": 4885120,
+    "sha256": "ea16c90d3fc4087309df244a11ac4b7e041ae9029d3749c3aded51ebdf19f200"
+  },
+  "llama/lib/libllama-server-impl.dylib": {
+    "bytes": 3150752,
+    "sha256": "5175db0f6e7e501b0bf3b779342e0ac3f177ff706be9e0589ecc4743df9c5c1b"
+  },
+  "llama/lib/libllama.0.dylib": {
+    "bytes": 2956256,
+    "sha256": "555ad4924da7fdd6e8567cea75bfb8bc92642b219ad72fab5af5f2a036544e3c"
+  },
+  "llama/lib/libmtmd.0.dylib": {
+    "bytes": 1168448,
+    "sha256": "42c27b4bcbebd7e13e80c155a41397e2104a0d1d0d5ae30f70c52d3bbc2ade05"
+  },
+  "llama/lib/libomp.dylib": {
+    "bytes": 739760,
+    "sha256": "7fd28cb0ea6020f4d7c90339a046296c6a3f9955bdafb6ec4f8dc1d93de787eb"
+  },
+  "llama/lib/libssl.3.dylib": {
+    "bytes": 901744,
+    "sha256": "7e89651576fc4dfe9461f65de448fc99990dc5c32c06c413d86bdbbfc11e9774"
+  },
+  "llama/llama-server": {
+    "bytes": 52080,
+    "sha256": "cb29d514a50b1589b31a57dcd4cd7a327f46b90aa7342c69b060a153f0f2d53a"
+  },
+  "llama/llama-server.real": {
+    "bytes": 51424,
+    "sha256": "f88d172551ef370aca9a38a9284ba8d6d35b287212b80080461f15f5074c550c"
+  },
+  "llama/plugins/libggml-blas.so": {
+    "bytes": 76544,
+    "sha256": "0571889bbc32bae0648fe8efd2d39a6f42a171aa786e672736f181114fe751cb"
+  },
+  "llama/plugins/libggml-cpu-apple_m1.so": {
+    "bytes": 618720,
+    "sha256": "6072198ba5851ce0870f28f5042ea6a79afbcfff99375a9f73984d6e878f872a"
+  },
+  "llama/plugins/libggml-cpu-apple_m2_m3.so": {
+    "bytes": 618752,
+    "sha256": "28a7104df79f5082ba94dbf643a62ead476c70370cf644b73863685ac901a75e"
+  },
+  "llama/plugins/libggml-cpu-apple_m4.so": {
+    "bytes": 618736,
+    "sha256": "cc7a568c84ecdda5a7408776f467f149a4c06807ab0429ac2e10e81faa028921"
+  },
+  "llama/plugins/libggml-metal.so": {
+    "bytes": 2182208,
+    "sha256": "80bff4685cb0feb395a8a3ebdd6507506535f5400cd5e391f3e2a3799b3e4432"
+  }
+}

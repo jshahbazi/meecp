@@ -2,34 +2,66 @@
 
 Objective: complete [automatic and agent-assisted app preparation](AUTOMATIC_PREPARATION.md), verify each implementation checkpoint, then run and remediate an independent adversarial review of the complete result. Phase 3 remains in progress. This ledger does not replace or reduce the plan's acceptance gates.
 
-## Current checkpoint: components and controlled preparation primitives
+The [trust and resource scope](PHASE3_TRUST_AND_RESOURCE_SCOPE.md) preserves the
+original same-user execution target and distinguishes measured acceptance from
+later stronger CLI resource conditions. All original acceptance gates remain.
 
-The common component registry resolves exact ID, version and implementation digest. Source-specific validation belongs to a host-owned component. The existing schema-1 planner uses that seam for Python source validation; its descriptor digest is unchanged. A separate closed schema-2 envelope and a synthetic native component exercise routing without Python dependency/module fields. Schema 2 is not yet a public planning or execution capability. See [component details](PHASE3_COMPONENTS.md).
+## Components and controlled preparation primitives
+
+The common component registry resolves exact ID, version and implementation digest. Source-specific validation belongs to a host-owned component. The existing schema-1 planner uses that seam for Python source validation; its descriptor digest is unchanged. The closed schema-2 envelope now selects the host-owned resolved Python component and binds exact original and derived inputs. Additional families enter through reviewed host objects. Public execution remains disabled. See [component details](PHASE3_COMPONENTS.md) and [derived preparation](DERIVED_PREPARATION_BUILD.md).
 
 Static inspection reads the selected immutable snapshot, verifies its original file identity and proposes bounded Python callable or declared MCP candidates. It does not import source, invoke matching hooks, resolve dependencies or claim a verified interface. Ambiguous roots, missing expected results, unresolved effects, missing locks and dynamic interface discovery stay visible.
 
 The distribution builder includes a pinned private uv executable, its upstream licenses, a copied private CPython runtime, trusted generator templates and a closed artifact manifest. Signing refreshes packaged hashes before the app's outer signature and host receipt are sealed. The managed builder uses injected host-selected commands, hash-locked wheels, offline installation and retained distribution notices. It has no global executable or cache fallback.
 
-Wheel acquisition uses the existing proxy-independent, public-address-pinned HTTPS transport with a separately bound exact host allowlist. Redirects and credentials are rejected. Each sink enforces expected bytes/hash, a disk ceiling, cancellation and elapsed deadline, and deletes failed attempt files through its held directory descriptor. The coordinator still needs aggregate reservations and durable job integration.
+Wheel acquisition uses the existing proxy-independent, public-address-pinned HTTPS transport with a separately bound exact host allowlist. Redirects and credentials are rejected. Each sink enforces expected bytes/hash, a disk ceiling, cancellation and elapsed deadline, and deletes failed attempt files through its held directory descriptor. The macOS transport uses local platform trust and disables certificate issuer/revocation network fetching; these additional requests cannot bypass the selected socket and origin scope.
 
 The preparation executor launches reviewed foreground steps in an opt-in native process group. The native wrapper holds its unreaped leader identity through same-group cleanup, including natural exit, cancellation, timeout and parent death. Repeated asyncio and AnyIO cancellation cannot abandon launch acknowledgement or cleanup. Observed wrapper loss interrupts blocked stream/protocol waits and retains the process reservation. Daemonizing or group-escaping executable workers remain unsupported; this facility does not establish arbitrary descendant-tree isolation.
 
-The independent probe uses a real locked MCP SDK client, full tool definition comparison, coverage of declared tools by synthetic fixtures, strict JSON fixture comparison, post-shutdown package revalidation and native foreground peak RSS measurement. An observed peak above the descriptor's reservation fails. The measurement is the foreground target's peak, not aggregate simultaneous descendant memory or an OS-enforced memory ceiling. Filesystem/network denial, whole-job resource admission and installed-host integration remain separate acceptance work.
+The independent probe uses a real locked MCP SDK client, full tool definition comparison, coverage of declared tools by synthetic fixtures, strict JSON fixture comparison, post-shutdown package revalidation and native foreground peak RSS measurement. An observed peak above the descriptor's reservation fails. The measurement is the foreground target's peak, not aggregate simultaneous descendant memory or an OS-enforced memory ceiling. Filesystem/network denial and installed-host integration remain separate acceptance work.
+
+## Previous checkpoint: durable controlled execution
+
+An internally enabled coordinator now connects immutable inputs, the private builder, bounded wheel acquisition, SDK verification and same-revision attachment. An execution plan binds exact source/descriptor/recipe/policy and actual runner, verifier, compiled reaper, dependency closure and private-toolchain bytes. A single-use expiring intention creates a durable idempotent attempt. Execution has a whole-job deadline, private workspace disk monitoring and supervisor reservations alongside app memory and aggregate preparation disk demand. This checkpoint creates no scoped management execution grant or installation authority.
+
+Owner-only API and CLI operations cover static inspection, plan/start, bounded progress, cancellation and receipt reconciliation. Production execution remains disabled. New routes cannot be called with old scoped management grants. Native ownership journals are persisted before launch; exact native completion or a proven failure to exec settles them. Unknown ownership keeps resources and the host lock. Recovery never adopts a PID or replays a step. It can reconcile completion arriving after a previous recovery attempt, and failed shutdown can be retried after ownership is resolved.
+
+Threads that inspect, hash, copy or publish results remain owned until joined across repeated cancellation. Verification publication and attachment admission hold reservations through off-loop full-package validation. A short database transaction chooses the winner between valid attachment, cancellation, draft invalidation and recipe revocation. Full SDK reports must match the sealed package, declared tool/fixture counts, protocol and foreground memory declaration. Static recipe enablement cannot manufacture that report.
+
+## Previous checkpoint: generated setup and immutable artifacts
+
+Owner-only generated questions now bind source identity, candidate, enabled recipe inventory, typed fields and defaults through an exact form digest. Opaque answers resolve into a host-validated descriptor; a short transaction records the selection and advances the draft revision. Saved candidates, recipes and answers survive restart, while later app renames and memory limits take precedence. Changed selections invalidate earlier plans. Unknown fields, stale forms, invalid primitive types and incomplete required recipe metadata fail explicitly. See [the form contract](PREPARATION_NATIVE_FORMS.md).
+
+A cold host seeds a closed, pinned Python callable recipe for ordinary setup. Users do not author a recipe bundle to get supported questions. Host-supplied preferred references resolve that default among compatible third-party recipes; explicit and saved choices take precedence. Separate seed records preserve disable, revoke, remove, immutable version collisions and restart tombstones. Metadata enablement never enables execution. See [bundled defaults](BUILTIN_PREPARATION_RECIPES.md).
+
+The native workspace renders generic typed questions, manages recipe lifecycle, adopts reviewed draft revisions atomically, starts only exact reviewed plans, and polls actual host stages/counters. Same-source jobs remain visible through attachment revisions. Source-filtered summaries prevent a stale-source job from masking current work. The review presents tools, access, memory and preparation budgets in human language. Closing a window leaves durable work owned by the host; cancellation explicitly targets its job.
+
+Local binary intake has a separate immutable capture store with FD-relative no-follow reads, original and copied byte verification, exact license references, streaming use, bounded disk/deadline/cancellation and atomic no-replace publication. A crash cannot leave a partial digest claim. Late cancellation rejects the caller's result while retaining complete committed bytes for other users of that object. Unknown staging ownership remains retained for reconciliation. See [artifact capture](PREPARATION_ARTIFACT_CAPTURE.md).
+
+Separate family-neutral input, derivation, builder-result and receipt contracts preserve schema-1 identities and distinguish original source from derived locks/interfaces. They grant no runtime capability. Real binary, CLI, LLM, service-only and agent integrations still require their own implementations and acceptance evidence. See [common bindings](PREPARATION_COMMON_INPUTS.md).
+
+## Current checkpoint: durable owned artifact intake
+
+Owner-only capture APIs now journal exact request, policy and target bindings before copying. Idempotent attempts serialize through a coordinator with OS leases, bounded storage, shared model/preparation reservations and joined cancellation. Recovery validates recorded ownership and identities; it does not replay copying, adopt an unknown directory or attach a result to a stale revision. Capture policy and reference work runs off the management event loop and remains joined while admission locks are held. See [the coordinator contract](PREPARATION_CAPTURE_COORDINATOR.md).
+
+Verified capture can create a `captured_artifact_collection` draft or supplement an exact folder/document revision. Captured-only draft identities bind the portable manifest. Folder source identities stay unchanged; supplements advance the revision and invalidate earlier attachment and plans. Export and native draft parsing accept captured-only inputs without requiring an original locator. Returned packages must contain every captured payload and applicable license identity before attachment.
+
+Draft, job and reader references protect committed objects. Draft changes transfer references to the current revision; inactive drafts release their references. Reader leases require exact OS ownership proof before recovery releases a pin. Retention collection journals quarantine and deletion of known, unreferenced objects and preserves unknown ownership for reconciliation. Superseded attachment cleanup happens after admission commits. The ONNX adapter, recipe and actual inference acceptance remain open.
 
 ## Full acceptance scope
 
 | Gate | Evidence required by the original plan | Current state |
 | --- | --- | --- |
-| A0 | Strict contracts and identities; legacy compatibility; no inspection execution; exact receipts; old grants cannot run code | Component/inspection and existing foundation regression checks available; complete integrated job/receipt audit remains open |
-| A0R | Independently authored recipe added through CLI/native forms, prepared, attached and retained after restart with no host edits; lifecycle/race gates | Static extension foundation exists; actual preparation/native/restart gate remains open |
-| A1 | Separate Python callable and foreground MCP native/API paths; private closure; full MCP probes; relocation; matching attachment; install/invoke/restart; cancellation/crash/revision races | Private builder and owned SDK primitives implemented; durable coordinator, generated forms and end-to-end gate remain open |
-| A2 | Explicit ONNX artifact; exact CPU detector compatibility; real inference; tensor tests; complete notices; maximum image limits measured | Existing external hotdog baseline only; automatic binary intake/recipe/native/measurement gate remains open |
-| A3 | Bounded supervised CLI; argv/input/output/exit contract; descendants, cancellation, crash/restart and closure | Process-group primitive tested; CLI integration and complete topology acceptance remain open |
-| A4 | Pinned general model/engine/template; actual inference; token limits; shared serialized queue; resource/cancellation settlement; JevK5 parity | Open |
-| A5 | Concrete programmatic agent backend; unfamiliar source end to end; scoped transfer/execution; bounded usage; parallel integration; cancellation/restart; stale-result rejection | Open |
+| A0 | Strict contracts and identities; legacy compatibility; no inspection execution; exact receipts; old grants cannot run code | Complete on the frozen 7344a55 development host and unchanged producer composition: 203 independent packaged checks, six native self-tests, relocated CLI/restart/authority checks, 2,978 Python passes and 18 Swift passes. All 11 common criteria and exact skip/artifact boundaries are recorded in [A0 acceptance](A0_ACCEPTANCE.md). Family, signed-installation and public release gates remain open |
+| A0R | Independently authored recipe, generated forms, exact identities, lifecycle races, capability blockers and restart retention | Complete on frozen509b807: ten actual native/API lifecycle cases, independent installed HTTP/stdio and final scope review; [A0R acceptance](A0R_ACCEPTANCE.md). Signed a8ec7b6 lifecycle recheck also passes; final release rechecks remain |
+| A1 | Separate callable and foreground MCP native/API paths, private closure, full MCP probes, attachment, install/invoke/restart and relocation | Complete on recorded Developer ID signed a8ec7b6 app: callable, dynamic MCP and mixed Python/PNG/binary cases; 203 common guards and ten signed lifecycle races. See [A1/A2 acceptance](A1_A2_ACCEPTANCE.md). Public activation/final combined release retain their gates |
+| A2 | Explicit ONNX input, exact CPU detector/runtime/notices, actual inference, tensor/eligibility controls and measured maximum image limits | Complete on the same signed a8ec7b6 app: captured and folder-supplement cases, installed HTTP/stdio, source removal/restart/confined relocation, max workloads and 30 locked detector controls. See [A1/A2 acceptance](A1_A2_ACCEPTANCE.md). Public activation/final combined release retain their gates |
+| A3 | Bounded supervised CLI; argv/input/output/exit contract; descendants, cancellation, crash/restart and closure | Host-owned installed CLI and automatic directory/forms/native-probe checkpoints are integrated; the authority/recovery packet passed 119 independent checks. Default family and recipe metadata now register from a closed packaged format-3 inventory, with 102 independent static/form/lifecycle checks and zero external creation in cold form resolution. Format-4 lifetime coverage, hard aggregate enforcement and positive result admission remain false. Resource release enforcement and final installed/native acceptance remain open |
+| A4 | Pinned general model/engine/template; actual inference; token limits; shared serialized queue; resource/cancellation settlement; JevK5 parity | The clean 68a7533 combined host passed actual native captured and folder-supplement preparation, matching attachment, installed HTTP/stdio inference, shared queue limits, official SDK cancellation, restart and source-free relocation. All 4,782 host artifacts and native/model/harness hashes matched before and after. Historical failed runs are retained separately. Later combined-host, shared isolation/resource and signed-app gates remain open |
+| A5 | Concrete programmatic agent backend; unfamiliar source end to end; scoped transfer/execution; bounded usage; parallel integration; cancellation/restart; stale-result rejection | Additive provider backend/coordinator checkpoint has simulated transport and real local journal/race tests in an isolated branch. No configured credential for a concrete live run; unfamiliar-source generation and host/native integration remain open |
 | A6 | Each additional runtime/provider/family has its own compatibility and authority evidence before advertisement | Schema-2 fake component is a contract test; no additional runtime/provider capability advertised |
 
-The first automatic capability remains disabled until A0, A0R, A1 and A2 pass from the installed/relocated artifact. CLI, generic LLM and integrated agents retain their independent gates. Current public preparation routes remain metadata-only.
+The first automatic capability remains disabled until A0, A0R, A1 and A2 pass from the installed/relocated artifact. CLI, generic LLM and integrated agents retain their independent gates. Public starts currently fail with `preparation_runner_unavailable`; static inspection, metadata and recovery remain available.
 
 ## Independent checkpoint findings and repairs
 
@@ -46,6 +78,89 @@ An independent reviewer reproduced six failures that existing focused tests miss
 
 Final adversarial review is still required after the full Phase 3 implementation and acceptance evidence exist.
 
+## October 3 integration checkpoints
+
+The [native text-generation acceptance](NATIVE_INSTALLED_TEXTGEN_ACCEPTANCE.md)
+passed against the immutable 68a7533 host and native binary. Captured and folder
+cases took 206.084 and 228.420 seconds. Both cases joined all owned children,
+removed their selected inputs and captured state, and successfully verified an
+independently relocated installed package. This is installed-flow evidence for
+the pinned CPU model, with public preparation still disabled.
+
+The [fixed foreground graph](FIXED_PROCESS_GRAPH_ACCOUNTING_V1.md) adds optional
+typed ownership and terminal RSS recording to the existing native owner. An
+independent recheck matched all 15 frozen packet hashes and all five unchanged
+native/resource control files, then passed 45 actual owner/graph, synthetic A4
+and public-Mach checks. Generic synchronous native-boundary admission can fence
+managed execution without enabling graph reporting. Separate maxima do not
+establish simultaneous aggregate footprint, lifetime descendant accounting or
+a hard memory cap. The actual owned-self footprint API returned
+`KERN_NO_ACCESS`; [the API checkpoint](PUBLIC_FOOTPRINT_API_CHECKPOINT.md)
+preserves that negative evidence.
+
+The [default command registration](COMMAND_DEFAULT_REGISTRATION.md) passed 82
+producer checks and 102 independent registration, generated-form and lifecycle
+checks. Review caught an intake fixture using legacy source mode and an inventory
+comparison accepting a nested floating-point platform version. Both reproductions
+now reject or resolve as intended. An additional static check matched the actual
+compiled format-3 helper in the frozen 68a7533 host with all external-creation
+entrypoints forbidden. Metadata registration supplies no command execution or
+verified-attachment capability.
+
+These additive backend integrations change the text-generation producer identity.
+The next combined checkpoint must mint a new immutable recipe and rerun its
+complete catalog checks before building another host. Published 1.0.5 and earlier
+recipe bytes, their historical evidence and user lifecycle choices are preserved.
+
+## Application-directory and shared-control checkpoints
+
+Automatic intake now retains bounded regular text, binary and unknown-name
+files under an explicit version-2 source identity. Source flags, private
+snapshot bytes and complete membership are independently checked. The legacy
+text-only capture identity and published generators remain unchanged.
+
+The [mixed Python builder checkpoint](MIXED_PYTHON_BUILD_CHECKPOINT.md) adds a
+versioned builder adapter and ResolvedPython 1.0.1 default. Its independently
+reviewed native run deleted the original four-file directory before resolution,
+prepared five commands/29 wheels, probed one fixture, attached revision 2,
+installed and exercised HTTP/stdio plus restart. A first resource-denied attempt
+is preserved as inconclusive capacity evidence; the passing attempt used
+unchanged budgets. Existing recipe lifecycle choices and old published bytes
+remain preserved.
+
+The [probe confinement checkpoint](PREPARATION_PROBE_CONFINEMENT.md) adds an
+optional host-created policy for the exact private Python/ONNX launchers.
+Actual private-runtime controls deny outside file reads/stat, package writes,
+TCP/UDP/Unix connections and fork/spawn/group escapes. The retained real mixed
+package also passed the restricted SDK probe after original-source deletion.
+Ordinary caller behavior and public admission remain unchanged; actual default
+policy integration and complete combined installed acceptance are still needed.
+
+The [resource monitor checkpoint](COMMAND_RESOURCE_MONITOR_V1.md) adds native
+held-group footprint/count/own-CPU sampling, threshold cleanup and format-4
+settlement proofs without changing format 3. The independent 146-case packet
+and 2,048 held-leader windows passed. Sampled windows do not prove full lifetime
+coverage or a hard physical-memory ceiling. Its report-only executor remains
+unregistered and cannot supply a positive preparation result.
+
+The combined backend and immutable TextGen 1.0.5 recipe passed 2,540 Python
+checks with 12 skips and no failures. Swift passed 18 checks with three opt-in
+installer skips. After adding the inert format-4 helper packaging and native
+TextGen acceptance driver, the 119 affected packaging/signing/launcher/harness
+checks passed; the secret scanner and diff check also passed. These are source
+checkpoint results, before the fresh combined installed-artifact run.
+
+An independent mint review verified the exact 74 implementation and ten asset
+hashes, seven new recipe files and 35 historical TextGen files. All 34 real-store
+upgrade/lifecycle cases passed without creating a process or enabling execution.
+The independent packaging review passed 96 bounded checks and verified unchanged
+format-3 and backend bytes. A separate native-harness review found no remaining
+actionable gap after checking its transitive clean-host guard and private imports.
+Public/default admission, resource enforcement and whole-phase acceptance remain
+open.
+
+The durable-job review additionally reproduced pre-execution recipe disable bypass, missing-wrapper ownership that could never settle, cached recovery/failed shutdown that missed later completion, cancellation during attachment and publication hashes, and initial/post-probe verifier hashing that outlived cancellation. Repairs add first-execution fencing, explicit proven-nonlaunch receipts, refreshable recovery/shutdown, and owned thread barriers. Each has a checked-in regression case; independent reproductions also exercise the publication responsiveness and cancellation winners. This review covers the checkpoint and does not replace the final complete Phase 3 review.
+
 ## Checkpoint verification
 
 The complete Python regression suite passed 1,617 tests with one case-insensitive-filesystem skip. Swift verification passed 18 tests with three opt-in native installer lifecycle tests skipped. The independent reviewer reran the original six failure reproductions, confirmed each repair, and passed 42 process/verifier/acquisition regression checks. These results verify this checkpoint's primitives; they do not close the native/API A1 or ONNX A2 gates.
@@ -56,6 +171,85 @@ The committed checkpoint at `0b47eea16ebbb59b4214e7fa3c1c3f8c27630a23` produced 
 
 The development DMG from the same clean commit passed image checksum, mounted/copied app signature, read-only mount, minimal-environment private runtime and eject checks. Its SHA-256 was `610be6e3df156d844a3c27482a3789bf55615585fccd07757fb3331a185d8f3d`; signing was ad hoc and notarization was not requested. The hotdog example passed 45 tests, all three native self-tests passed, and the credential scan passed. An additional independent signing review passed 69 focused tests and separate ad hoc/Developer ID fixtures that changed nested tool bytes and verified manifest/host receipt refresh before the outer seal. These fixtures verify ordering, not a notarized release or live Developer ID signing.
 
-## Next checkpoint
+## Durable checkpoint verification
 
-Connect the private builder, acquisition and independent verifier to durable job execution, job-bound authority, reservations, receipts and atomic attachment. Add plan/start/source-inspection API and CLI operations, then native generated selection/forms and real stage polling. Verify Python callable and existing MCP independently from a relocated host with an empty preparation cache before promoting any capability. Continue ONNX artifacts/recipes and remaining gates in parallel as their dependencies become available.
+The durable checkpoint's final Python regression run passed 1,690 tests with six skips (one case-insensitive-filesystem case and five opt-in private-host cases). Those five private-host cases were exercised separately in the 50-test runner/executor/verifier run. Swift passed 18 tests with three opt-in installer lifecycle skips; all three native contract self-tests and the credential scan passed. The independent reviewer passed 12 adversarial contract/race reproductions. A legacy gateway test now waits for owner cleanup and capacity release after child exit; the baseline failed and the corrected test passed under the same independently injected cleanup delay. Gateway runtime code is unchanged.
+
+Clean commit `5629ac2eea695f60d725c31bf30cc33bfbaa2ed5` produced a development CLI host with all 1,554 artifact hashes matching. `scripts/verify_phase3_durable_runner.py` imported that host's actual implementation, SDK and native helper and used its private toolchain with global tools excluded from PATH. The default run passed in 35.928 seconds: callable and tools-only existing MCP preparation each used five commands, 30 wheels, 8,621,296 acquired dependency bytes and one full-schema SDK fixture before atomic same-revision attachment. Probe foreground peaks were 68,698,112 and 69,173,248 bytes against 128 MiB declarations. Peak observed temporary workspace size was 245,732,962 bytes. Real probe cancellation and native completion reconciliation without replay also passed; all owned work, pending receipts and reservations settled. Source/state/builder inputs were removed, two packages passed relocation validation, and temporary artifacts were deleted. This directly enables the private coordinator for development verification; it does not exercise native onboarding or install/invoke a slot.
+
+An initial harness run returned an unclassified failure. Two fresh runs of the same frozen host passed, including the default cleanup path. The cause remains unknown; the harness now emits only bounded stage/case/exception-type diagnostics for unexpected failures, without messages, tracebacks or source payloads. This observation remains separate from the passing regression and host checks and from the still-open activation gates.
+
+## Generated setup and artifact checkpoint verification
+
+Frozen source commit `891646bb689f17c4b2cb5d06b7cad0a0772aad88` passed 1,873 Python tests with six skips (one case-insensitive-filesystem case and five opt-in private-host tests). Swift ran 21 tests: 18 passed and three opt-in installer lifecycle tests skipped. All four native contract/UI self-tests and the credential scan passed. An independent review reran the form/seed/selection/publication defects and found one additional late verification handoff gap. Four explicit budget checks and five new cancellation/deadline tests repair it; the reviewer independently reproduced both original failures as correct rejection and passed all 103 artifact tests.
+
+The same clean source commit produced a development CLI host with all 1,576 recorded artifact hashes matching. Its actual backend and bundled dependencies passed owner HTTP intake, automatic default-recipe selection, generated questions and revision-2 form review without creating a job or slot. A native self-test consumed that built-host form/review response through the real draft-adoption callback. This verifies packaged contract integration; the UI self-test uses a fixture request callback and does not prove a live native-to-host preparation session.
+
+The private durable runner harness passed against that frozen host in 36.891 seconds. Callable and foreground MCP cases each used five owned commands, 30 pinned wheels, 8,621,296 dependency bytes and a full-schema SDK fixture before same-revision attachment. Measured probe foreground peaks were 68,681,728 and 69,156,864 bytes; peak workspace size was 245,741,155 bytes. Actual cancellation, exact native receipt reconciliation without replay, source/state/builder removal and two relocated packages passed. Zero owned steps, pending receipts or retained reservations remained. This harness explicitly supplies descriptors and enables the private coordinator; it does not close native discovery, installation or public activation gates.
+
+## Durable artifact intake checkpoint verification
+
+Frozen source commit `9e735806b19f370d7a5539dd6b98af61ca6dac51` passed 1,919 Python tests with six skips (one case-insensitive-filesystem case and five opt-in private-host tests). The capture/API/preparation integration run passed 57 tests. Swift ran 21 tests: 18 passed and three opt-in installer lifecycle tests skipped. The native contract self-test and credential scan passed.
+
+An independent reviewer ran nine API and reproduction checks and confirmed repairs for event-loop blocking and cleanup saturation. A controlled 200 ms policy lookup originally delayed a 10 ms heartbeat to 211 ms; the repair measured 12 ms. Four active static threads originally caused settled capture to retain a resource charge. Already-owned settlement now uses tracked, joined work that cannot be refused by new-work capacity. The regression retains the charge while cleanup is paused and releases it before the unrelated static threads finish. Repeated cancellation keeps the admission lock until the metadata worker joins.
+
+The same clean commit produced a fresh development CLI host with all 1,578 recorded artifact hashes matching. A relocated copy ran with a private temporary home and global development tools excluded from PATH. Actual owner HTTP over its private socket passed capture, exact idempotency, external-origin rejection, captured-only draft admission and restart after deleting original selections. The relocated bundled runtime then opened and verified both captured payload and license through the actual artifact-store FD API. No capture reservation remained; no slot was installed and automatic preparation stayed disabled. The synthetic artifact tests ownership and byte survival; it supplies no ONNX compatibility or inference evidence.
+
+## Owned resolution checkpoint verification
+
+Frozen source commit `e717eaee41d32c511fe267e3cceee0b2461b607a` passed 1,971 Python tests with 12 skips: one case-insensitive-filesystem case and 11 opt-in private-host cases. The separately enabled private-host run passed all 61 tests across the derived-build, resolution and durable-runner suites in 136.64 seconds, including those 11 cases. Swift passed 18 tests with three opt-in installer lifecycle skips. Preparation, management and native contract self-tests and the credential scan passed.
+
+An independent reviewer passed 72 focused checks and reran the original recovery/shutdown and start/recovery races against that frozen source. A transient recovery-removal failure and a completed worker cleanup failure now permit a fresh shutdown retry without replaying stale task errors. A status request during paused post-commit start remains responsive and cannot interrupt the pending worker. Repeated shutdown cancellation preserves database and host-lock ownership until joined settlement. Unproven native ownership retains workspace and resource charges; a valid proof permits cleanup and restart. Queued capture and resolution records reject aggregate overflow even when their costs were previously hydrated.
+
+The same clean commit produced a development CLI host with all 1,595 recorded artifact hashes matching. The opt-in tests use its sealed private toolchain and native reaper with the checkout's owned implementation. An ordinary callable directory has neither a project file nor a lock; the declared `worker:main` MCP source discovers two tools through the real SDK. Both resolve, answer generated forms, build, pass full SDK fixture verification, attach and pass relocation verification after original source and attachment removal. This evidence does not establish a live native-to-host session or installation/invocation/restart acceptance. The native acceptance driver is implemented for that next gate; public preparation and resolution remain disabled.
+
+New recipe evidence binds exact selected and transitive components. Independently checked legacy-default regressions preserve original schema-1 evidence, epoch and lifecycle state when the catalog adds the resolved component. Changed selected component bytes or unknown historical catalog identities still fail closed. The checkpoint review found no remaining blocker in its reviewed scope; the final full Phase 3 adversarial review remains required.
+
+## Native TLS checkpoint
+
+Live native acceptance exposed a packaged TLS failure under a minimal environment: the private OpenSSL runtime could not establish the managed certificate chain without an inherited CA-file setting. The platform trust evaluator accepts the same chain through local macOS trust. The repair uses a private, exact-wheel truststore 0.10.4 fork, with the complete MIT license and original source hashes retained in `backend/mcpme/_native_tls`.
+
+The independent review reproduced an additional network-scope defect in upstream native trust: an untrusted peer with a missing intermediate caused a loopback HTTP issuer fetch before certificate rejection. The fork disables native network fetching with a checked OSStatus before trust evaluation. It removes the upstream global SSL injection helpers and creates a fresh context per transfer. Resolution producer identities bind the complete Python implementation; host receipts bind the source, license and provenance.
+
+The repaired transport independently passed trusted and untrusted missing-intermediate checks with zero issuer/application requests, a valid full-chain positive control, wrong-hostname/expired/untrusted negative checks, 16 concurrent transfers using distinct verified contexts, and a native policy-set failure that stops before evaluation. Existing real TLS framing tests use the production context with a private fixture anchor. The checked-in native TLS suite preserves these certificate, policy-failure and concurrent-transfer cases. Packaged/native installed acceptance remains the next gate; this source checkpoint does not enable public preparation or complete Phase 3.
+
+## Modular ONNX integration checkpoint
+
+The cold host registers the pinned CPU ONNX runtime and YOLO11 detector as two
+independent components with an exact dependency. The additive default recipe
+preserves previous recipe evidence and user lifecycle decisions. Folder/document
+inspection merges eligible Python and captured-model candidates; component
+bindings retain original snapshot files and bind captured model bytes separately.
+The generated detector form preserves app renames and reduced memory ceilings.
+Native progress parsing accepts the detector validation stage.
+
+The ONNX builder streams captured FDs, retains model and dependency licenses,
+validates the exact graph in the owned runtime, and seals a relocatable MCP app.
+Its development harness uses actual default Supervisor registration and resource
+reservation callbacks. Public automatic execution remains disabled. Native ONNX
+installation/invocation/restart and the broader containment gates remain open.
+
+Installed native Python acceptance is recorded in
+[Native installed onboarding acceptance](NATIVE_INSTALLED_ONBOARDING_ACCEPTANCE.md).
+It covers ordinary callable, declared foreground MCP and independently scaffolded
+recipe paths through resolve, build, attach, installation, HTTP/stdio invocation,
+source removal and restart against the exact recorded host/native pair. That
+receipt belongs to its stated immutable checkpoint and does not close ONNX or
+other-family acceptance.
+
+## Next acceptance work
+
+Recheck callable and foreground MCP against later integrated installed artifacts.
+Owned dependency and MCP interface resolution allow ordinary directories to reach
+generated forms and package construction without hand-authored descriptors or locks.
+Their recorded native checkpoint passes; containment/resource/race requirements
+remain independently gated.
+
+Freeze the repaired complete host and recheck captured and folder-supplement LLM
+construction, installation and invocation, then run native acceptance. Independently
+recheck Python and ONNX against that same combined artifact. Preserve legacy
+GGUF and folder identities. Integrate the separately reviewed CLI checkpoint
+with fresh immutable component identities, then complete its aggregate resource
+and final bundle gates. Run actual unfamiliar-directory preparation with a
+configured provider and finish common recipe, isolation, crash and race gates.
+Full Phase 3 and its final adversarial review remain required.

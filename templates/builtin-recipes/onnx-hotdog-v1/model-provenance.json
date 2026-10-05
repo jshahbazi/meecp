@@ -1,0 +1,36 @@
+{
+  "model": "Ultralytics YOLO11n",
+  "task": "COCO object detection",
+  "class": {
+    "id": 52,
+    "name": "hot dog"
+  },
+  "license": "AGPL-3.0",
+  "source": {
+    "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt",
+    "sha256": "0ebbc80d4a7680d14987a577cd21342b65ecfd94632bd9a8da63ae6417644ee1",
+    "bytes": 5613764
+  },
+  "onnx": {
+    "path": "models/yolo11n.onnx",
+    "sha256": "121b1f682e2df1aff1c16dacb7ce4bedc26df016a500b18743349c16724ad85d",
+    "bytes": 10701557
+  },
+  "export": {
+    "format": "onnx",
+    "imgsz": 640,
+    "batch": 1,
+    "dynamic": false,
+    "simplify": false,
+    "opset": 17,
+    "nms": false,
+    "device": "cpu"
+  },
+  "toolchain": {
+    "ultralytics": "8.3.221",
+    "torch": "2.14.1",
+    "torchvision": "0.29.1",
+    "onnx": "1.22.0"
+  },
+  "docs": "https://docs.ultralytics.com/models/yolo11/"
+}

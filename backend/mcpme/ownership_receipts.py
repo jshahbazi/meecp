@@ -1,9 +1,10 @@
-"""Private identity-bound proof that a native reaper settled its owned child.
+"""Private identity-bound proof of child settlement or proven nonlaunch.
 
 The supervisor journals opaque instance/nonce metadata before launch. A native
 reaper inherits only a pre-opened file capability; it never resolves a receipt
-path. A complete frame proves waitpid settled the held child, or that parsing
-failed before any child existed. Pending/missing receipts prove nothing.
+path. Its C frame proves waitpid settled the held child, or parsing failed
+before any child existed. The owner's N frame separately proves a native
+wrapper never executed. Pending/missing receipts prove nothing.
 """
 from __future__ import annotations
 
@@ -108,6 +109,24 @@ def validate_receipt_descriptor(descriptor: int, instance_id: str, nonce: str) -
         return False
 
 
+def acknowledge_nonlaunch(descriptor: int, instance_id: str, nonce: str) -> None:
+    """Record host proof that ProcessOwner never executed a native wrapper.
+
+    Only the owner's prelaunch validation or proven exec failure may invoke
+    this acknowledgement. Empty instance maps and absent PIDs prove nothing.
+    The distinct N frame cannot be confused with native reaping evidence.
+    """
+    if not validate_receipt_descriptor(descriptor, instance_id, nonce):
+        raise PrivateStateError("ownership_receipt_unavailable")
+    try:
+        data = _frame(instance_id, nonce, b"N")
+        if os.pwrite(descriptor, data, 0) != len(data):
+            raise OSError()
+        os.fsync(descriptor)
+    except OSError:
+        raise PrivateStateError("ownership_receipt_unavailable") from None
+
+
 def verify_receipt(slot_directory: Path, metadata: dict[str, Any]) -> bool:
     """Return true only for a complete stable frame bound to this journal entry.
 
@@ -138,6 +157,7 @@ def verify_receipt(slot_directory: Path, metadata: dict[str, Any]) -> bool:
         _private_directory(slot)
         _private_directory(directory)
         check_private_file(path)
-        return frame == _frame(metadata["instance_id"], metadata["nonce"], b"C")
+        return frame in (_frame(metadata["instance_id"], metadata["nonce"], b"C"),
+                         _frame(metadata["instance_id"], metadata["nonce"], b"N"))
     except (OSError, ValueError, TypeError, PrivateStateError):
         return False

@@ -14,6 +14,7 @@ import json
 import os
 import socket
 import struct
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -120,6 +121,8 @@ class OwnedProcess:
                         raise ValueError
                     if event["event"] == "spawn" and self.pid is None and value > 1:
                         self.pid = value
+                        if self.owner.graph_accounting is not None:
+                            self.owner.graph_accounting.record(self.instance_id, "active")
                         if not self._spawned.done():
                             self._spawned.set_result(True)
                     elif event["event"] == "peak_memory" and self.peak_memory_bytes is None and 0 <= value <= 2**63 - 1:
@@ -136,6 +139,8 @@ class OwnedProcess:
         finally:
             self._control.close()
             await self.wrapper.wait()
+            if self.owner.graph_accounting is not None:
+                self.owner.graph_accounting.record(self.instance_id, "settled" if exited else "unknown", self.peak_memory_bytes)
             if not exited:
                 self.ownership_lost = True
                 if not self._spawned.done():
@@ -207,18 +212,69 @@ class ProcessOwner:
     def __init__(
         self, reaper: Path,
         on_ownership_lost: Callable[[OwnedProcess], Awaitable[None] | None] | None = None,
+        *, graph_accounting=None, graph_admission_check=None,
     ) -> None:
+        if graph_accounting is not None:
+            from .process_graph_accounting_v1 import FixedProcessGraphV1
+            if type(graph_accounting) is not FixedProcessGraphV1:
+                raise ProcessError("invalid_process_graph")
+            if not callable(graph_admission_check):
+                raise ProcessError("process_graph_admission_required")
+            graph_accounting.bind_owner(self)
+        elif graph_admission_check is not None:
+            raise ProcessError("invalid_process_graph")
+        self.graph_accounting = graph_accounting
+        self.graph_admission_check = graph_admission_check
+        self._graph_admission_identity = graph_admission_check
+        self._graph_identity = graph_accounting
+        self._graph_contract = graph_accounting.contract_digest if graph_accounting is not None else None
         self.reaper = Path(reaper).absolute()
+        self._graph_reaper = self.reaper
         self.on_ownership_lost = on_ownership_lost
         self.instances: dict[str, OwnedProcess] = {}
         self.persistence_failed = False
         self._closed = False
         self._launches: set[asyncio.Task[OwnedProcess]] = set()
         self._pending_ids: set[str] = set()
+        self._graph_checks: set[asyncio.Task] = set()
+
+    def _check_graph_admission(self, deadline):
+        if self._graph_identity is None:
+            return
+        def check_binding():
+            if (self._closed or self.graph_accounting is not self._graph_identity or
+                    self.graph_admission_check is not self._graph_admission_identity or
+                    self.graph_accounting.contract_digest != self._graph_contract or time.monotonic() >= deadline):
+                raise ProcessError("process_graph_not_admitted")
+            if self.reaper != self._graph_reaper:
+                raise ProcessError("native_reaper_changed")
+        check_binding()
+        try:
+            accepted = self.graph_admission_check()
+            if inspect.iscoroutine(accepted):
+                accepted.close()
+            if accepted is not True:
+                raise ProcessError("process_graph_not_admitted")
+        except Exception:
+            raise ProcessError("process_graph_not_admitted") from None
+        check_binding()
+
+    @staticmethod
+    def _check_admit(admit):
+        if admit is None:
+            return
+        try:
+            accepted = admit()
+            if inspect.iscoroutine(accepted):
+                accepted.close()
+            if accepted is not True:
+                raise ProcessError("launch_not_admitted")
+        except Exception:
+            raise ProcessError("launch_not_admitted") from None
 
     def holds_live_instances(self, identifiers: set[str]) -> bool:
         """Confirm current capabilities without discovering or adopting PIDs."""
-        if (self._closed or self.persistence_failed or self._launches or self._pending_ids
+        if (self._closed or self.persistence_failed or self._launches or self._pending_ids or self._graph_checks
                 or identifiers != set(self.instances)):
             return False
         return all(process.owner is self and process.instance_id == identifier
@@ -227,14 +283,8 @@ class ProcessOwner:
                    and not process._done.done() and not process._monitor.done()
                    for identifier, process in self.instances.items())
 
-    async def launch(
-        self, executable: Path, args: list[str], cwd: Path, env: dict[str, str], *,
-        instance_id: str | None = None, io_mode: str = "streams",
-        inherited_fds: tuple[int, ...] = (), startup_timeout: float = 10,
-        stop_grace: float = 2, completion_fd: int | None = None,
-        completion_nonce: str | None = None,
-        owned_group: bool = False,
-    ) -> OwnedProcess:
+    def _preflight(self, identifier, io_mode, inherited_fds, startup_timeout, stop_grace,
+                   completion_fd, completion_nonce, owned_group):
         if self._closed:
             raise ProcessError("owner_closed")
         if any(p.ownership_lost for p in self.instances.values()):
@@ -243,7 +293,6 @@ class ProcessOwner:
             raise ProcessError("invalid_launch")
         if not 0 < startup_timeout <= 120:
             raise ProcessError("invalid_launch")
-        identifier = instance_id or uuid.uuid4().hex
         if identifier in self.instances or identifier in self._pending_ids:
             raise ProcessError("duplicate_instance")
         if completion_fd is None and completion_nonce is not None:
@@ -252,15 +301,61 @@ class ProcessOwner:
             from .ownership_receipts import validate_receipt_descriptor
             if (completion_fd in inherited_fds or not validate_receipt_descriptor(completion_fd, identifier, completion_nonce)):
                 raise ProcessError("invalid_launch")
+
+    async def launch(
+        self, executable: Path, args: list[str], cwd: Path, env: dict[str, str], *,
+        instance_id: str | None = None, io_mode: str = "streams",
+        inherited_fds: tuple[int, ...] = (), startup_timeout: float = 10,
+        stop_grace: float = 2, completion_fd: int | None = None,
+        completion_nonce: str | None = None, owned_group: bool = False,
+        nonlaunch_callback=None, expected_reaper: Path | None = None,
+        graph_role: str | None = None,
+        admit: Callable[[], bool] | None = None,
+    ) -> OwnedProcess:
+        if nonlaunch_callback is not None and not callable(nonlaunch_callback):
+            raise ProcessError("invalid_launch")
+        identifier = instance_id or uuid.uuid4().hex
+        launch_status = {"attempted": False, "not_started": False}
+        graph_reserved = False
+        try:
+            if admit is not None and not callable(admit):
+                raise ProcessError("launch_not_admitted")
+            if self.graph_accounting is not None:
+                self.graph_accounting.reserve(graph_role, identifier, executable)
+                graph_reserved = True
+            elif graph_role is not None:
+                raise ProcessError("invalid_process_graph")
+            self._preflight(identifier, io_mode, inherited_fds, startup_timeout, stop_grace,
+                            completion_fd, completion_nonce, owned_group)
+            if expected_reaper is not None and Path(expected_reaper) != self.reaper:
+                raise ProcessError("native_reaper_changed")
+            inputs = (Path(executable).absolute(), list(args), Path(cwd).absolute(), dict(env),
+                      identifier, io_mode, tuple(inherited_fds), startup_timeout, stop_grace,
+                      completion_fd, completion_nonce, owned_group, launch_status,
+                      None if expected_reaper is None else Path(expected_reaper),
+                      time.monotonic() + startup_timeout if graph_reserved else None, admit)
+            if graph_reserved:
+                verification = asyncio.create_task(asyncio.to_thread(self.graph_accounting.verify_executable, graph_role))
+                self._graph_checks.add(verification)
+                try:
+                    await asyncio.shield(verification)
+                finally:
+                    await _await_ownership(asyncio.gather(verification, return_exceptions=True))
+                    self._graph_checks.discard(verification)
+                self._check_graph_admission(inputs[-2])
+                self._check_admit(admit)
+        except BaseException:
+            if graph_reserved:
+                self.graph_accounting.record(identifier, "nonlaunch")
+            # No native creation task exists at this point. This proof is
+            # independent of any unrelated instance still owned by the host.
+            if nonlaunch_callback is not None:
+                nonlaunch_callback()
+            raise
         # Shield creation through acknowledgment so cancellation cannot orphan a
         # subprocess between OS spawn and Python receiving its owned handle.
         self._pending_ids.add(identifier)
-        task = asyncio.create_task(self._launch(
-            Path(executable).absolute(), list(args), Path(cwd).absolute(), dict(env),
-            identifier, io_mode, tuple(inherited_fds), startup_timeout, stop_grace,
-            completion_fd, completion_nonce,
-            owned_group,
-        ))
+        task = asyncio.create_task(self._launch(*inputs))
         self._launches.add(task)
         try:
             return await asyncio.shield(task)
@@ -272,9 +367,17 @@ class ProcessOwner:
             else:
                 await _await_ownership(process.stop())
             raise
+        except BaseException:
+            if graph_reserved:
+                self.graph_accounting.record(identifier, "nonlaunch" if launch_status["not_started"] or not launch_status["attempted"] else "unknown")
+            raise
         finally:
             self._pending_ids.discard(identifier)
             self._launches.discard(task)
+            if graph_reserved and (not launch_status["attempted"] or launch_status["not_started"]):
+                self.graph_accounting.record(identifier, "nonlaunch")
+            if nonlaunch_callback is not None and (not launch_status["attempted"] or launch_status["not_started"]):
+                nonlaunch_callback()
 
     async def _launch(
         self, executable: Path, args: list[str], cwd: Path, env: dict[str, str],
@@ -282,9 +385,15 @@ class ProcessOwner:
         startup_timeout: float, stop_grace: float,
         completion_fd: int | None, completion_nonce: str | None,
         owned_group: bool,
+        launch_status: dict,
+        expected_reaper: Path | None = None,
+        graph_deadline: float | None = None,
+        admit: Callable[[], bool] | None = None,
     ) -> OwnedProcess:
         if any(not isinstance(v, str) or "\0" in v for v in args):
             raise ProcessError("invalid_launch")
+        if expected_reaper is not None and self.reaper != expected_reaper:
+            raise ProcessError("native_reaper_changed")
         environment = []
         for key, value in env.items():
             if not isinstance(key, str) or not isinstance(value, str) or not key or "=" in key or "\0" in key + value:
@@ -329,14 +438,30 @@ class ProcessOwner:
                 string(value)
             if len(payload) > 1024 * 1024:
                 raise ProcessError("invalid_launch")
-            wrapper = await asyncio.create_subprocess_exec(
-                str(self.reaper), str(spec_child.fileno()), str(control_child.fileno()), str(os.getpid()),
-                *([str(completion_fd)] if completion_fd is not None else []),
-                stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL, env={},
-                pass_fds=(spec_child.fileno(), control_child.fileno(), input_read, output_write, *inherited_fds,
-                          *((completion_fd,) if completion_fd is not None else ())),
-            )
+            if self.graph_accounting is not None:
+                self._check_graph_admission(graph_deadline)
+                self.graph_accounting.check_launch(identifier)
+            self._check_admit(admit)
+            if self._closed:
+                raise ProcessError("owner_closed")
+            if expected_reaper is not None and self.reaper != expected_reaper:
+                raise ProcessError("native_reaper_changed")
+            launch_status["attempted"] = True
+            try:
+                wrapper = await asyncio.create_subprocess_exec(
+                    str(self.reaper if expected_reaper is None else expected_reaper),
+                    str(spec_child.fileno()), str(control_child.fileno()), str(os.getpid()),
+                    *([str(completion_fd)] if completion_fd is not None else []),
+                    stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL, env={},
+                    pass_fds=(spec_child.fileno(), control_child.fileno(), input_read, output_write, *inherited_fds,
+                              *((completion_fd,) if completion_fd is not None else ())),
+                )
+            except (FileNotFoundError, PermissionError):
+                # POSIX exec failure means the requested native wrapper never
+                # ran. Other creation errors and cancellation remain unknown.
+                launch_status["not_started"] = True
+                raise
             control_parent.setblocking(False)
             process = OwnedProcess(self, identifier, wrapper, control_parent, input_write, output_read, stop_grace)
             self.instances[identifier] = process
@@ -376,6 +501,8 @@ class ProcessOwner:
 
     async def close(self) -> None:
         self._closed = True
+        if self._graph_checks:
+            await _await_ownership(asyncio.gather(*list(self._graph_checks), return_exceptions=True))
         if self._launches:
             await _await_ownership(asyncio.gather(*list(self._launches), return_exceptions=True))
         results = await _await_ownership(asyncio.gather(

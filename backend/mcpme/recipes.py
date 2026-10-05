@@ -35,15 +35,25 @@ MAX_FILES = 2048
 MAX_ENTRIES = 4096
 MAX_RECIPES = 1024
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
+# Recognized shipped v1 catalog, used only to verify old evidence unchanged.
+# This is a migration identity, never a runtime dispatch or recipe-name rule.
+LEGACY_COMPONENT_KEYS = ("python-function-v1@1.0.0", "existing-mcp-v1@1.0.0")
 
 
 def builtin_components() -> dict:
     root = Path(__file__).resolve().parents[2]
     paths = {"python-function-v1": root / "templates/python-function-v1/adapter.py",
              "existing-mcp-v1": root / "templates/prepare.py"}
-    return {name + "@1.0.0": {"digest": hashlib.sha256(path.read_bytes()).hexdigest(),
+    from .preparation_resolved_python import component_catalog
+    from .preparation_agent_adapter import component_catalog as agent_adapter_components
+    from .preparation_agent_unlocked import component_catalog as agent_unlocked_components
+    from .preparation_onnx import builtin_onnx_components
+    from .preparation_textgen import builtin_textgen_components
+    from .preparation_command import component_catalog as command_components
+    from .preparation_service import component_catalog as service_components
+    return {**component_catalog(), **agent_adapter_components(), **agent_unlocked_components(), **builtin_onnx_components(), **builtin_textgen_components(), **command_components(), **service_components(), **{name + "@1.0.0": {"digest": hashlib.sha256(path.read_bytes()).hexdigest(),
                               "input_schema": {"type": "object", "additionalProperties": False},
-                              "dependencies": []} for name, path in paths.items()}
+                              "dependencies": []} for name, path in paths.items()}}
 
 
 class RecipeError(PreparationError):
@@ -236,9 +246,9 @@ class RecipeStore:
             blockers.append("unsupported_recipe_kind")
         requirements = manifest["requirements"]
         if (requirements["os"] != "macos" or requirements["architecture"] != "arm64"
-                or requirements["package_schema"] != 1 or requirements["protocol"] != "2025-11-25"):
+                or requirements["package_schema"] not in {1, 2} or requirements["protocol"] != "2025-11-25"):
             blockers.append("recipe_incompatible")
-        if set(requirements.get("capabilities", [])) - {"declarative-composition", "python-function-v1", "existing-mcp-v1"}:
+        if set(requirements.get("capabilities", [])) - {"declarative-composition", *(key.split("@", 1)[0] for key in self.component_catalog)}:
             blockers.append("recipe_capability_unavailable")
         visited = set()
         visiting = set()
@@ -249,6 +259,10 @@ class RecipeStore:
                 raise RecipeError("recipe_component_unavailable")
             if reference["digest"] != component.get("digest"):
                 raise RecipeError("recipe_component_digest_mismatch")
+            # New package contracts require an explicit trusted component
+            # declaration. Existing catalogs retain schema-1 semantics.
+            if requirements["package_schema"] not in component.get("package_schemas", [1]):
+                raise RecipeError("recipe_incompatible")
             if key in visiting:
                 raise RecipeError("recipe_dependency_cycle")
             if key in visited:
@@ -270,7 +284,7 @@ class RecipeStore:
             blockers.append("invalid_recipe_component_config")
         return blockers
 
-    def add(self, path: Path) -> dict:
+    def add(self, path: Path, *, admit=None) -> dict:
         bundle = validate_bundle(path)
         manifest = bundle["manifest"]
         digest = bundle["digest"]
@@ -297,6 +311,8 @@ class RecipeStore:
                       "epoch": 1, "revoked": False, "runnable": False, "evidence": None, "created_at": now, "updated_at": now,
                       "blockers": self._compatibility(manifest)}
             with self.imports._transaction():
+                if admit is not None:
+                    admit(record)
                 existing = self.imports._connection.execute("SELECT data FROM recipes WHERE recipe_id=? AND version=?",
                     (manifest["id"], manifest["version"])).fetchone()
                 if existing is not None:
@@ -337,7 +353,7 @@ class RecipeStore:
         with self.imports._lock:
             return self._get(recipe_id, version)
 
-    def enable(self, recipe_id: str, version: str) -> dict:
+    def enable(self, recipe_id: str, version: str, *, admit=None) -> dict:
         before = self.inspect(recipe_id, version)
         bundle = validate_bundle(Path(before["path"]))
         if bundle["digest"] != before["digest"]:
@@ -347,19 +363,20 @@ class RecipeStore:
             raise RecipeError(blockers[0])
         with self.imports._transaction():
             record = self._get(recipe_id, version)
+            if admit is not None:
+                admit(record)
             if record["state"] == "removed" or record.get("revoked"):
                 raise RecipeError("recipe_unavailable")
             record.update(state="enabled", epoch=record["epoch"] + 1, updated_at=time.time(), blockers=[],
-                          evidence={"schema_version": 1, "recipe_digest": record["digest"],
-                                    "component_catalog_digest": canonical_digest("recipe-components-v1", self.component_catalog),
-                                    "identities": self.identities, "gate": "static-declarative-compatibility-v1",
-                                    "outcome": "passed", "runnable": False})
+                          evidence=self.static_evidence(record))
             self._save(record)
             return record
 
-    def _change(self, recipe_id: str, version: str, state: str) -> dict:
+    def _change(self, recipe_id: str, version: str, state: str, *, admit=None) -> dict:
         with self.imports._transaction():
             record = self._get(recipe_id, version)
+            if admit is not None:
+                admit(record)
             if record["state"] == state:
                 return record
             if record.get("revoked") and state != "removed":
@@ -371,18 +388,59 @@ class RecipeStore:
             self._save(record)
             return record
 
-    def disable(self, recipe_id: str, version: str) -> dict:
-        return self._change(recipe_id, version, "disabled")
+    def disable(self, recipe_id: str, version: str, *, admit=None) -> dict:
+        return self._change(recipe_id, version, "disabled", admit=admit)
 
-    def revoke(self, recipe_id: str, version: str) -> dict:
-        return self._change(recipe_id, version, "revoked")
+    def revoke(self, recipe_id: str, version: str, *, admit=None) -> dict:
+        return self._change(recipe_id, version, "revoked", admit=admit)
 
-    def remove(self, recipe_id: str, version: str) -> dict:
+    def remove(self, recipe_id: str, version: str, *, admit=None) -> dict:
         # Retain bytes and evidence; generated packages/jobs may still reference them.
-        return self._change(recipe_id, version, "removed")
+        return self._change(recipe_id, version, "removed", admit=admit)
 
-    def deprecate(self, recipe_id: str, version: str) -> dict:
-        return self._change(recipe_id, version, "deprecated")
+    def deprecate(self, recipe_id: str, version: str, *, admit=None) -> dict:
+        return self._change(recipe_id, version, "deprecated", admit=admit)
+
+    def _component_closure(self, manifest):
+        pending, closure = list(manifest["steps"]), {}
+        while pending:
+            reference = pending.pop()
+            key = reference["component"] + "@" + reference["version"]
+            component = self.component_catalog.get(key)
+            if component is None or component.get("digest") != reference["digest"]:
+                raise RecipeError("recipe_evidence_stale")
+            if key in closure:
+                continue
+            closure[key] = component
+            if len(closure) > 128:
+                raise RecipeError("recipe_evidence_stale")
+            pending.extend(component.get("dependencies", []))
+        return closure
+
+    def static_evidence(self, record):
+        """Exact selected/transitive implementations, independent of additions."""
+        return {"schema_version": 2, "recipe_digest": record["digest"],
+            "component_closure_digest": canonical_digest("recipe-component-closure-v1", self._component_closure(record["manifest"])),
+            "identities": self.identities, "gate": "static-declarative-compatibility-v2",
+            "outcome": "passed", "runnable": False}
+
+    def _evidence_matches(self, record):
+        evidence = record.get("evidence")
+        if not isinstance(evidence, dict):
+            return False
+        if evidence.get("schema_version") == 2:
+            return evidence == self.static_evidence(record)
+        closure = self._component_closure(record["manifest"])
+        accepted = {canonical_digest("recipe-components-v1", self.component_catalog)}
+        # Old arbitrary catalogs cannot be guessed from a digest. Only the
+        # known shipped v1 catalog can be reconstructed and checked exactly.
+        if set(closure) <= set(LEGACY_COMPONENT_KEYS) and all(key in self.component_catalog for key in LEGACY_COMPONENT_KEYS):
+            legacy = {key: self.component_catalog[key] for key in LEGACY_COMPONENT_KEYS}
+            accepted.add(canonical_digest("recipe-components-v1", legacy))
+        return any(evidence == {"schema_version": 1, "recipe_digest": record["digest"],
+            "component_catalog_digest": digest, "identities": self.identities,
+            "gate": "static-declarative-compatibility-v1", "outcome": "passed", "runnable": False}
+            for digest in accepted)
 
     def assert_admissible(self, recipe_id: str, version: str, digest: str, *, existing_job: bool = False) -> dict:
         """Metadata-only check suitable inside the caller's admission transaction."""
@@ -395,9 +453,7 @@ class RecipeStore:
             allowed = {"enabled", "disabled", "deprecated", "removed"} if existing_job else {"enabled"}
             if record["state"] not in allowed:
                 raise RecipeError("recipe_disabled")
-            evidence = record.get("evidence")
-            if (evidence is None or evidence.get("identities") != self.identities
-                    or evidence.get("component_catalog_digest") != canonical_digest("recipe-components-v1", self.component_catalog)):
+            if not self._evidence_matches(record):
                 raise RecipeError("recipe_evidence_stale")
             return record
 

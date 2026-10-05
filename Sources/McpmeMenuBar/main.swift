@@ -119,7 +119,8 @@ private struct Project: Equatable {
 }
 
 private func managementRequestTimeout(_ path: String, method: String) -> TimeInterval {
-    let preparesFiles = path == "v1/imports" || ["/plan", "/attach", "/engine"].contains { path.hasSuffix($0) }
+    let preparesFiles = path == "v1/imports" || path == "v1/preparations/plan-form" || path == "v1/agent-preparations/plans" || path == "v1/agent-preparations/start" ||
+        ["/plan", "/attach", "/engine"].contains { path.hasSuffix($0) }
     return method == "POST" && preparesFiles ? 300 : 30
 }
 
@@ -182,6 +183,7 @@ private struct ImportDraft {
     let name: String
     let sourcePath: String
     let sourceKind: String
+    let sourceRevision: String?
     let sourceSnapshotPath: String?
     let intent: String
     let documentRole: String?
@@ -203,15 +205,17 @@ private struct ImportDraft {
               let name = object["name"] as? String, !name.isEmpty, name.count <= 256,
               !name.unicodeScalars.contains(where: { $0.value < 32 }),
               let source = object["source"] as? [String: Any],
-              let path = source["locator"] as? String ?? (summary ? "" : nil),
-              (summary || path.hasPrefix("/")), !path.contains("\0"),
               let kind = safeCode(source["kind"]),
+              let path = source["locator"] as? String ?? ((summary || ["captured_artifact_collection", "service_connection"].contains(kind)) ? "" : nil),
+              (summary || path.hasPrefix("/") || (["captured_artifact_collection", "service_connection"].contains(kind) && path.isEmpty)),
+              !path.contains("\0"),
               let policy = object["start_policy"] as? String, ["manual", "host"].contains(policy),
               let start = object["start"] as? Bool else { return nil }
         let intent = object["intent"] as? String ?? ""
         guard intent.count <= 16384, !intent.contains("\0") else { return nil }
         self.id = id; self.revision = revision; self.state = state; self.name = name
         self.sourcePath = path; self.sourceKind = kind; self.intent = intent
+        self.sourceRevision = preparationText(source["revision"], maximum: 256)
         let snapshot = source["snapshot_path"] as? String
         self.sourceSnapshotPath = snapshot?.hasPrefix("/") == true ? snapshot : nil
         self.documentRole = safeCode(object["document_role"]); self.start = start; self.policy = policy
@@ -364,6 +368,13 @@ private enum PrivateFile {
 final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate, NSTextViewDelegate {
     private var statusItem: NSStatusItem!
     private var process: Process?
+    // Assigned only by the explicit native acceptance command. The normal app
+    // continues to require its own live host Process and matching connection.
+    private var nativeAcceptanceConnection: ManagerConnection?
+    // Only the scoped development driver assigns these fences. They also guard
+    // the ordinary source-selection handler used by that driver.
+    private var nativeAcceptanceScope: (() -> Bool)?
+    private var nativeAcceptanceRoute: ((String, String) -> Bool)?
     private var generation: UInt64 = 0
     private var quitting = false
     private var installing = false
@@ -419,6 +430,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private var cancelDraftButton: NSButton?
     private var detailsWindow: NSWindow?
     private let configurationView = SetupConfigurationView()
+    private let artifactCaptureView = ArtifactCaptureView()
     private var setupSettings: [String: Any] = ["schema_version": 1, "configuration": [String: Any](), "secret_references": [String: String]()]
     private var secrets: [SetupSecret] = []
     private var upgradeTarget: String?
@@ -440,6 +452,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private var operationStopButton: NSButton?
     private var modelEngineButton: NSButton?
     private var modelProfileButton: NSButton?
+    private var recipesWindow: NSWindow?
+    private let recipesView = PreparationRecipesView()
+    private let preparationView = PreparationWorkspaceView()
+    private let serviceConnectionView = ServiceConnectionView()
+    private let agentPreparationView = AgentPreparationView()
     private let stateDirectory: URL = {
         if let configured = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"], configured.hasPrefix("/") {
             return URL(fileURLWithPath: configured, isDirectory: true)
@@ -531,6 +548,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        agentPreparationView.clearCredentialEntry()
         if installing { return .terminateCancel }
         if quitting { return .terminateLater }
         quitting = true; timer?.invalidate(); timer = nil
@@ -548,6 +566,9 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private func resetHostRequestState() {
         pollInFlight = false; importsPollInFlight = false; downloadsPolling = false
         setupRequest = false; detailRequests = []; pendingAppRequests = []
+        preparationView.invalidate(); recipesView.invalidate(); agentPreparationView.invalidate()
+        agentPreparationView.resetProviderConnection()
+        serviceConnectionView.connectionReset()
     }
 
     private func startHost() {
@@ -594,6 +615,12 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
 
     private func connection() -> ManagerConnection? {
         guard !uiPreviewMode else { return nil }
+        if let accepted = nativeAcceptanceConnection {
+            guard let object = PrivateFile.read(stateDirectory.appendingPathComponent("manager-connection.json")),
+                  let current = ManagerConnection(object), current.pid == accepted.pid,
+                  current.endpoint == accepted.endpoint, current.token == accepted.token else { return nil }
+            return current
+        }
         guard let process = process, process.isRunning,
               let object = PrivateFile.read(stateDirectory.appendingPathComponent("manager-connection.json")),
               let connection = ManagerConnection(object), connection.pid == process.processIdentifier else { return nil }
@@ -602,7 +629,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
 
     private func request(_ path: String, method: String = "GET", body: [String: Any]? = nil,
                          completion: @escaping ([String: Any]?, String?) -> Void) {
-        guard !uiPreviewMode, !quitting, !stopping, let process = process, process.isRunning, let connection = connection() else {
+        let process = self.process
+        guard nativeAcceptanceScope?() != false, nativeAcceptanceRoute?(path, method) != false else {
+            completion(nil, "native_acceptance_scope_stale"); return
+        }
+        guard !uiPreviewMode, !quitting, !stopping, process?.isRunning == true || nativeAcceptanceConnection != nil, let connection = connection() else {
             completion(nil, "host_unavailable"); return
         }
         var request = URLRequest(url: connection.endpoint.appendingPathComponent(path))
@@ -624,7 +655,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                 else if let response = response, (200...299).contains(response.statusCode) { object = parsed }
             }
             DispatchQueue.main.async {
-                guard let self = self, self.generation == expectedGeneration, self.process === process, process.isRunning else { return }
+                guard let self = self, self.generation == expectedGeneration, self.process === process,
+                      process?.isRunning == true || self.nativeAcceptanceConnection?.pid == connection.pid else { return }
+                guard self.nativeAcceptanceScope?() != false else {
+                    completion(nil, "native_acceptance_scope_stale"); return
+                }
                 completion(object, object == nil ? code : nil)
             }
         }
@@ -655,7 +690,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             self.hostAvailable = true
             self.projects = parsed.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }; self.operations = operations.compactMap(Operation.init)
             self.hostMessage = "\(parsed.filter { $0.state == "ready" }.count) ready / \(parsed.count) installed"
-            self.rebuildMenu(); self.refreshWindow(); self.pollTrackedOperations(); self.pollImports(); self.pollDownloads()
+            self.rebuildMenu(); self.refreshWindow(); self.pollTrackedOperations(); self.pollImports(); self.pollDownloads(); self.preparationView.poll(); self.artifactCaptureView.poll(); self.agentPreparationView.poll()
             if Date().timeIntervalSince(self.lastDetailRefresh) >= 6 {
                 var selected: Set<String> = []
                 if self.dashboard.isVisible, let id = self.dashboard.selectedID { selected.insert(id) }
@@ -879,6 +914,20 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                                        views: [starterLabel, starter])
         content.addArrangedSubview(starterCard); workspaceFill(starterCard, in: content, inset: 28)
 
+        serviceConnectionView.request = { [weak self] path, method, body, completion in
+            self?.request(path, method: method, body: body, completion: completion)
+        }
+        serviceConnectionView.available = { [weak self] in self?.intakeEnabled == true }
+        serviceConnectionView.beforeCreate = { [weak self] completion in self?.saveDraftBeforeNavigation(completion: completion) }
+        serviceConnectionView.onCreated = { [weak self] object in
+            guard let self, self.intakeEnabled, let draft = ImportDraft(object), draft.editable,
+                  draft.sourceKind == "service_connection", draft.packagePath == nil else { return }
+            self.displayDraft(draft); self.pollImports()
+        }
+        serviceConnectionView.onCreateSecret = { [weak self] in self?.createSecret("Local service credential") }
+        let serviceCard = workspaceCard("Connect a local service", subtitle: "Use an authenticated service on this Mac without a source folder.", views: [serviceConnectionView])
+        content.addArrangedSubview(serviceCard); workspaceFill(serviceCard, in: content, inset: 28)
+
         let drop = SourceDropView(frame: .zero)
         drop.wantsLayer = true; drop.layer?.borderWidth = 1; drop.layer?.cornerRadius = 8
         drop.layer?.borderColor = NSColor.separatorColor.cgColor
@@ -919,6 +968,39 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let sourceCard = workspaceCard("1. Choose your source", subtitle: "Choose your app's directory, a setup brief, or an already prepared app. Source apps currently use your coding agent for preparation.",
             views: [drop, settings, workspaceLabel("What should your assistant be able to do?", size: 12, weight: .medium), intentScroll, role])
 
+        artifactCaptureView.available = { [weak self] in
+            guard let self else { return false }
+            return !uiPreviewMode && self.connection() != nil && self.hostAvailable && !self.setupRequest && !self.stopping && !self.quitting && (!self.agentPreparationView.blocksNavigation || self.artifactCaptureView.blocksNavigation)
+        }
+        artifactCaptureView.request = { [weak self] path, method, body, completion in self?.request(path, method: method, body: body, completion: completion) }
+        artifactCaptureView.beforeCapture = { [weak self] completion in self?.saveDraftBeforeNavigation(completion: completion) }
+        artifactCaptureView.choices = { [weak self] in
+            guard let self else { return [:] }
+            var choices: [String: Any] = ["intent": self.intentField?.string ?? "", "start": self.startCheck?.state == .on, "start_policy": self.selectedPolicy]
+            if let name = self.nameField?.stringValue, !name.isEmpty { choices["name"] = name }
+            return choices
+        }
+        artifactCaptureView.onAdopt = { [weak self] object, target in
+            guard let self, !self.draftDirty, !self.setupRequest, let draft = ImportDraft(object), draft.editable,
+                  draft.packagePath == nil else { return false }
+            if let target {
+                guard draft.id == target.importID, draft.revision == target.revision + 1 else { return false }
+                if let current = self.currentDraft {
+                    guard current.id == target.importID,
+                          (current.revision == target.revision && (target.sourceRevision.isEmpty || current.sourceRevision == target.sourceRevision) ||
+                           current.revision == draft.revision && current.sourceRevision == draft.sourceRevision) else { return false }
+                }
+            }
+            if !self.drafts.contains(where: { $0.id == draft.id }) { self.drafts.insert(draft, at: 0) }
+            self.displayDraft(draft); self.preparationView.refreshForm(); return true
+        }
+        artifactCaptureView.onStateChange = { [weak self] in self?.refreshWindow() }
+        artifactCaptureView.onJobChanged = { [weak self] id in
+            if let id { self?.savedSetup["capture_id"] = id } else { self?.savedSetup.removeValue(forKey: "capture_id") }
+            self?.persistSetup()
+        }
+        let captureCard = workspaceCard("Choose a local model", subtitle: "Capture model weights with their license, then continue with the detected app setup. Selecting files does not run the model.", views: [artifactCaptureView])
+
         let download = button("Enter Package Link…", action: #selector(beginDownload)); self.downloadStartButton = download
         let downloads = NSPopUpButton(); downloads.addItem(withTitle: "No saved downloads")
         downloads.target = self; downloads.action = #selector(selectDownload); downloads.setAccessibilityLabel("Saved package downloads"); self.downloadPicker = downloads
@@ -943,8 +1025,48 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let engine = button("Choose Model Engine…", action: #selector(chooseModelEngine)); self.modelEngineButton = engine
         let profile = button("Use JevK5 Decision Tools", action: #selector(selectModelProfile)); self.modelProfileButton = profile
         let modelControls = workspaceStack([engine, profile], horizontal: true)
-        let prepareCard = workspaceCard("2. Prepare the app", subtitle: "If your source needs an adapter, give the instructions to your coding agent, then import its prepared package.",
-                                        views: [handoff, handoffReturn, modelControls])
+        let recipes = button("Manage Recipes…", action: #selector(showPreparationRecipes))
+        preparationView.available = { [weak self] in
+            guard let self else { return false }
+            return !uiPreviewMode && self.connection() != nil && self.hostAvailable && !self.setupRequest && !self.stopping && !self.quitting && (!self.agentPreparationView.blocksNavigation || self.preparationView.hasActiveJob)
+        }
+        preparationView.request = { [weak self] path, method, body, completion in self?.request(path, method: method, body: body, completion: completion) }
+        preparationView.onUpdatedDraft = { [weak self] object in
+            guard let self, !self.draftDirty, !self.setupRequest, let current = self.currentDraft, let updated = ImportDraft(object),
+                  updated.id == current.id, updated.revision >= current.revision, updated.sourceRevision == current.sourceRevision else { return false }
+            self.displayDraft(updated); return true
+        }
+        preparationView.onStateChange = { [weak self] in self?.refreshWindow() }
+        preparationView.onAttached = { [weak self] in self?.pollImports() }
+        agentPreparationView.available = { [weak self] in
+            guard let self else { return false }
+            return !uiPreviewMode && self.connection() != nil && self.hostAvailable && !self.setupRequest && !self.stopping && !self.quitting &&
+                (self.agentPreparationView.blocksNavigation || !self.preparationView.busy && !self.preparationView.hasActiveJob && !self.artifactCaptureView.blocksNavigation)
+        }
+        agentPreparationView.request = { [weak self] path, method, body, completion in
+            guard let self else { completion(nil, "manager_request_failed"); return }
+            self.refreshWindow()
+            self.request(path, method: method, body: body, completion: completion)
+        }
+        agentPreparationView.onUpdatedDraft = { [weak self] object in
+            guard let self, !self.draftDirty, !self.setupRequest, let current = self.currentDraft, let updated = ImportDraft(object),
+                  updated.id == current.id, updated.revision == current.revision + 1, updated.sourceRevision == current.sourceRevision else { return false }
+            self.displayDraft(updated); self.preparationView.refreshAvailability(); return true
+        }
+        agentPreparationView.onStateChange = { [weak self] in self?.refreshWindow() }
+        agentPreparationView.onReviewPreparation = { [weak self] context in
+            guard let self, !uiPreviewMode, self.connection() != nil, self.hostAvailable,
+                  !self.draftDirty, !self.setupRequest, !self.stopping, !self.quitting,
+                  !self.artifactCaptureView.blocksNavigation, !self.agentPreparationView.blocksNavigation,
+                  !self.preparationView.busy, !self.preparationView.hasActiveJob,
+                  let draft = self.currentDraft, draft.editable, draft.packagePath == nil,
+                  ["local_folder", "application_directory"].contains(draft.sourceKind),
+                  PreparationContext(importID: draft.id, revision: draft.revision, sourceRevision: draft.sourceRevision ?? "") == context else { return false }
+            return self.preparationView.reviewAgentProposal(context)
+        }
+        recipesView.onRegistryChange = { [weak self] in self?.preparationView.registryChanged(); self?.agentPreparationView.registryChanged() }
+        let prepareCard = workspaceCard("2. Prepare the app", subtitle: "Answer the detected questions and review the preparation plan. You can also export instructions for your coding agent.",
+                                        views: [recipes, preparationView, workspaceCard("Agent assistance", subtitle: "Review the exact captured files and configured provider before transfer. Candidate selection requires ordinary preparation review.", views: [agentPreparationView]), handoff, handoffReturn, modelControls])
         configurationView.onChange = { [weak self] in self?.setupChanged() }
         configurationView.onCreateSecret = { [weak self] name in self?.createSecret(name) }
         let configureCard = workspaceCard("Configure the prepared app", subtitle: "Choose nonsecret settings and saved secret references before reviewing the exact plan.", views: [configurationView])
@@ -971,7 +1093,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         stopOperation.toolTip = "Stop the exposed candidate and preserve its saved data while recovery remains required"
         let reviewCard = workspaceCard("3. Review and install", subtitle: "Check the tools, declared access, and startup choices before adding this app.",
                                        views: [label, reviewScroll, actions, workspaceStack([cancelOperation, stopOperation, recoverOperation], horizontal: true), showInstalled])
-        for card in [sourceCard, publisherToggle, downloadCard, prepareCard, configureCard, reviewCard] {
+        for card in [sourceCard, captureCard, publisherToggle, downloadCard, prepareCard, configureCard, reviewCard] {
             content.addArrangedSubview(card); workspaceFill(card, in: content, inset: 28)
         }
         return page
@@ -987,6 +1109,25 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private func refreshWindow() {
+        serviceConnectionView.refreshAvailability()
+        let captureContext = currentDraft.flatMap { draft -> ArtifactCaptureContext? in
+            guard draft.editable, draft.packagePath == nil, !draftDirty,
+                  ["local_folder", "document", "captured_artifact_collection"].contains(draft.sourceKind),
+                  let source = draft.sourceRevision else { return nil }
+            return ArtifactCaptureContext(importID: draft.id, revision: draft.revision, sourceRevision: source)
+        }
+        artifactCaptureView.bind(captureContext); artifactCaptureView.refreshAvailability()
+        recipesView.refreshAvailability()
+        let preparationContext = currentDraft.flatMap { draft in
+            draft.sourceRevision.flatMap { PreparationContext(importID: draft.id, revision: draft.revision, sourceRevision: $0) }
+        }
+        preparationView.bind(preparationContext, saved: !draftDirty, eligible: currentDraft?.editable == true && currentDraft?.packagePath == nil)
+        preparationView.refreshAvailability()
+        let agentContext = currentDraft.flatMap { draft -> PreparationContext? in
+            guard draft.editable, draft.packagePath == nil, ["local_folder", "application_directory"].contains(draft.sourceKind) else { return nil }
+            return preparationContext
+        }
+        agentPreparationView.bind(agentContext, saved: !draftDirty); agentPreparationView.refreshAvailability()
         refreshActionButtons()
         if let id = pendingInstalledSelection, projects.contains(where: { $0.id == id }), management != nil {
             pendingInstalledSelection = nil; management?.select(id: id)
@@ -996,13 +1137,13 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let operation = setupOperation.flatMap { id in operations.first { $0.id == id } }
         let active = operation.map { $0.active || $0.status == "recovery_required" } ?? (setupOperation != nil)
         let enabled = process?.isRunning == true && connection() != nil && !stopping && !quitting && !setupRequest && !active
-        let editable = enabled && (currentDraft?.editable ?? true)
-        chooseButton?.isEnabled = intakeEnabled; newDraftButton?.isEnabled = !setupRequest && connection() != nil
+        let editable = enabled && (currentDraft?.editable ?? true) && !preparationView.busy && !preparationView.hasActiveJob && !artifactCaptureView.blocksNavigation && !agentPreparationView.blocksNavigation
+        chooseButton?.isEnabled = intakeEnabled; newDraftButton?.isEnabled = intakeEnabled
         starterButton?.isEnabled = intakeEnabled && bundledStarterPackage != nil
         starterLabel?.stringValue = bundledStarterPackage == nil ? "The included app is unavailable in this copy of mcpme." :
             "Included with mcpme. Review its tool and access before adding it."
         publisherDownloadCard?.isHidden = publisherDownloadToggle?.state != .on && downloadRows.isEmpty
-        draftField?.isEnabled = !setupRequest && connection() != nil
+        draftField?.isEnabled = intakeEnabled
         nameField?.isEnabled = editable; policyField?.isEnabled = editable; startCheck?.isEnabled = editable
         if upgradeTarget != nil { nameField?.isEnabled = false; policyField?.isEnabled = false; startCheck?.isEnabled = false }
         configurationView.setEditable(editable)
@@ -1012,7 +1153,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         copyInstructionsButton?.isEnabled = editable && currentDraft != nil
         exportDraftButton?.isEnabled = editable && currentDraft != nil
         attachButton?.isEnabled = editable && currentDraft != nil
-        cancelDraftButton?.isEnabled = editable && currentDraft != nil
+        cancelDraftButton?.isEnabled = enabled && currentDraft?.editable == true && !preparationView.busy && !artifactCaptureView.blocksNavigation && !agentPreparationView.blocksNavigation
         reviewButton?.isEnabled = editable && (currentDraft?.packagePath != nil || currentDraft == nil && !(pathField?.stringValue.isEmpty ?? true))
         installButton?.isEnabled = enabled && setupPlan != nil && setupOperation == nil && !draftDirty
         planDetailsButton?.isEnabled = setupPlan != nil
@@ -1055,7 +1196,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private var intakeEnabled: Bool {
-        !uiPreviewMode && !setupRequest && !stopping && !quitting && connection() != nil
+        !uiPreviewMode && !setupRequest && !stopping && !quitting && !artifactCaptureView.blocksNavigation && !agentPreparationView.blocksNavigation && connection() != nil
     }
 
     private var bundledStarterPackage: URL? {
@@ -1084,6 +1225,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             guard let self, let rows = object?["secrets"] as? [[String: Any]] else { return }
             self.secrets = rows.compactMap(SetupSecret.init)
             self.configurationView.updateSecrets(self.secrets)
+            self.serviceConnectionView.updateSecrets(self.secrets.map { (id: $0.id, name: $0.name) })
         }
     }
 
@@ -1110,6 +1252,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                         self.setupLabel?.stringValue = "Secret could not be saved (\(code ?? "invalid_secret"))."; self.refreshWindow(); return
                     }
                     self.secrets.append(secret)
+                    self.serviceConnectionView.updateSecrets(self.secrets.map { (id: $0.id, name: $0.name) })
                     if generation == self.importViewGeneration { self.configurationView.selectSecret(secret, for: logicalName) }
                     self.refreshWindow()
                 }
@@ -1263,7 +1406,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private func showAppOperation(_ id: String) {
         let related = operations.filter { $0.projectID == id && ["install", "upgrade"].contains($0.action) }
         guard let operation = related.first(where: { $0.status == "recovery_required" }) ?? related.first else { return }
-        saveCurrentDraft { [weak self] saved in
+        saveDraftBeforeNavigation { [weak self] saved in
             guard let self, saved else { return }; self.clearDraft(); self.showManagement(); self.selectWorkspace(1)
             self.setupOperation = operation.id; self.trackedOperations.insert(operation.id)
             self.setupLabel?.stringValue = operation.label + (operation.exposed ? " Candidate was exposed; recovery preserves its saved data." : "")
@@ -1552,6 +1695,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     func windowWillClose(_ notification: Notification) {
+        if notification.object as? NSWindow === window { agentPreparationView.clearCredentialEntry() }
         if notification.object as? NSWindow === window, draftDirty, currentDraft?.editable == true, !setupRequest {
             saveCurrentDraft { _ in }
         }
@@ -1571,7 +1715,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
 
     private func pollImports() {
         guard !uiPreviewMode else { return }
-        guard !importsPollInFlight, !setupRequest, connection() != nil else { return }
+        guard !importsPollInFlight, !setupRequest, !preparationView.busy, connection() != nil else { return }
         importsPollInFlight = true
         let expectedViewGeneration = importViewGeneration
         request("v1/imports") { [weak self] object, _ in
@@ -1581,12 +1725,12 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             guard drafts.count == rows.count, Set(drafts.map(\.id)).count == drafts.count else { return }
             self.drafts = drafts; self.updateDraftPicker()
             let selectedID = self.currentDraft?.id ?? self.savedSetup["import_id"] as? String
-            if let id = selectedID, let draft = drafts.first(where: { $0.id == id }), !self.draftDirty, !self.setupRequest,
+            if let id = selectedID, let draft = drafts.first(where: { $0.id == id }), !self.draftDirty, !self.setupRequest, !self.preparationView.busy,
                expectedViewGeneration == self.importViewGeneration {
                 let previous = self.currentDraft
                 if previous == nil || previous?.revision != draft.revision || previous?.state != draft.state || previous?.packageDigest != draft.packageDigest || previous?.operationID != draft.operationID {
                     self.request("v1/imports/" + id) { [weak self] object, _ in
-                        guard let self = self, !self.draftDirty, !self.setupRequest,
+                        guard let self = self, !self.draftDirty, !self.setupRequest, !self.preparationView.busy,
                               expectedViewGeneration == self.importViewGeneration,
                               self.currentDraft?.id == id || (self.currentDraft == nil && self.savedSetup["import_id"] as? String == id),
                               let object = object, let complete = ImportDraft(object), complete.revision >= draft.revision else { return }
@@ -1620,12 +1764,14 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private func displayDraft(_ draft: ImportDraft) {
+        serviceConnectionView.invalidate()
         restoringDraft = true; defer { restoringDraft = false }
         importViewGeneration &+= 1
         let changed = currentDraft?.id != draft.id || currentDraft?.revision != draft.revision || currentDraft?.packageDigest != draft.packageDigest
         currentDraft = draft; draftDirty = false
         upgradeTarget = nil
-        pathField?.stringValue = draft.sourcePath; nameField?.stringValue = draft.name; intentField?.string = draft.intent
+        pathField?.stringValue = draft.sourceKind == "service_connection" ? "Local service connection" : draft.sourceKind == "captured_artifact_collection" ? "Captured artifacts" : draft.sourcePath
+        nameField?.stringValue = draft.name; intentField?.string = draft.intent
         policyField?.selectItem(at: draft.policy == "host" ? 1 : 0)
         startCheck?.state = draft.start ? .on : .off
         documentRoleField?.selectItem(at: draft.documentRole == "reference" ? 1 : draft.documentRole == "instructions" ? 2 : 0)
@@ -1693,6 +1839,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     @objc private func newDraft() { saveDraftBeforeNavigation { [weak self] saved in if saved { self?.clearDraft() } } }
 
     private func clearDraft() {
+        serviceConnectionView.invalidate()
         importViewGeneration &+= 1
         currentDraft = nil; draftDirty = false; setupPlan = nil; setupOperation = nil
         upgradeTarget = nil; setupSettings = ["schema_version": 1, "configuration": [String: Any](), "secret_references": [String: String]()]
@@ -1721,7 +1868,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             let directory = (try? source.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
             let name = suppliedName ?? (directory ? source.lastPathComponent : source.deletingPathExtension().lastPathComponent)
             self.setupRequest = true; self.setupLabel?.stringValue = "Inspecting selected source…"; self.refreshWindow()
-            self.request("v1/imports", method: "POST", body: ["source": source.path, "name": name, "start": false, "start_policy": "manual"]) { [weak self] object, code in
+            self.request("v1/imports", method: "POST", body: ["source": source.path, "source_mode": "automatic", "name": name, "start": false, "start_policy": "manual"]) { [weak self] object, code in
                 guard let self = self else { return }; self.setupRequest = false
                 guard let object = object, let draft = ImportDraft(object) else {
                     self.setupLabel?.stringValue = self.draftError(code ?? "invalid_draft"); self.refreshWindow(); return
@@ -1823,9 +1970,13 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private func saveDraftBeforeNavigation(completion: @escaping (Bool) -> Void) {
+        guard !agentPreparationView.blocksNavigation else {
+            updateDraftPicker(); completion(false); return
+        }
         saveCurrentDraft { [weak self] saved in
+            guard let self, !self.agentPreparationView.blocksNavigation else { completion(false); return }
             guard !saved else { completion(true); return }
-            guard let self, self.draftDirty, !self.setupRequest, let draft = self.currentDraft,
+            guard self.draftDirty, !self.setupRequest, let draft = self.currentDraft,
                   draft.editable, let window = self.window else { completion(false); return }
             let expectedView = self.importViewGeneration
             let alert = NSAlert(); alert.messageText = "Keep editing this draft?"
@@ -1833,7 +1984,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             alert.addButton(withTitle: "Keep Editing"); alert.addButton(withTitle: "Discard Edits and Continue")
             alert.beginSheetModal(for: window) { [weak self] response in
                 guard let self, self.importViewGeneration == expectedView, self.currentDraft?.id == draft.id,
-                      self.currentDraft?.revision == draft.revision, !self.setupRequest else { completion(false); return }
+                      self.currentDraft?.revision == draft.revision, !self.setupRequest,
+                      !self.agentPreparationView.blocksNavigation else { completion(false); return }
                 guard response == .alertSecondButtonReturn else {
                     self.updateDraftPicker(); completion(false); return
                 }
@@ -1970,7 +2122,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         var sections: [String] = []
         if let name = object["name"] as? String { sections.append("App: " + name) }
         if let draft = currentDraft {
-            sections.append("Source: " + draft.sourcePath)
+            sections.append("Source: " + (draft.sourceKind == "captured_artifact_collection" ? "Captured artifacts" : draft.sourcePath))
             if !draft.intent.isEmpty { sections.append("Requested capabilities\n" + draft.intent) }
         }
         if let package = object["package"] as? [String: Any] {
@@ -2014,6 +2166,27 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
               let text = String(data: data, encoding: .utf8) else { return "Unavailable" }; return text
     }
 
+    @objc private func showPreparationRecipes() {
+        if recipesWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 510),
+                                  styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+            window.title = "Manage Recipes"; window.contentMinSize = NSSize(width: 680, height: 510)
+            window.isReleasedWhenClosed = false; window.center()
+            let container = NSView(); window.contentView = container
+            recipesView.translatesAutoresizingMaskIntoConstraints = false; container.addSubview(recipesView)
+            NSLayoutConstraint.activate([recipesView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+                recipesView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+                recipesView.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
+                recipesView.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -20)])
+            recipesView.available = { [weak self] in self?.connection() != nil && self?.hostAvailable == true }
+            recipesView.request = { [weak self] path, method, body, completion in
+                self?.request(path, method: method, body: body, completion: completion)
+            }
+            recipesWindow = window
+        }
+        recipesView.refreshRecipes(); recipesWindow?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+    }
+
     private func persistSetup() {
         guard !uiPreviewMode else { return }
         var object: [String: Any] = ["schema_version": 1,
@@ -2030,6 +2203,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         if let operation = setupOperation { object["operation_id"] = operation }
         if let target = upgradeTarget { object["upgrade_slot_id"] = target }
         if let id = selectedDownload?["download_id"] as? String ?? savedSetup["download_id"] as? String, validUUID(id) { object["download_id"] = id }
+        if let id = artifactCaptureView.job?.id ?? savedSetup["capture_id"] as? String, validUUID(id) { object["capture_id"] = id }
         if let choices = try? configurationView.settings() { object["settings"] = choices }
         PrivateFile.write(object, to: setupFile)
         savedSetup = object
@@ -2039,6 +2213,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         guard !uiPreviewMode else { return }
         guard let object = PrivateFile.read(setupFile), integer(object["schema_version"]) == 1 else { return }
         savedSetup = object
+        if let id = preparationUUID(object["capture_id"]) { artifactCaptureView.restore(id) }
         if let id = object["upgrade_slot_id"] as? String, validUUID(id) { upgradeTarget = id }
         setupSettings = object["settings"] as? [String: Any] ?? setupSettings
         pathField?.stringValue = object["package"] as? String ?? ""; nameField?.stringValue = object["name"] as? String ?? ""
@@ -2098,6 +2273,13 @@ private func nativeSelfTest() -> Bool {
           managementRequestTimeout("v1/imports", method: "GET") == 30,
           managementRequestTimeout("v1/operations/" + id + "/recover", method: "POST") == 30 else { return false }
     let recoveryID = "99999999-2222-4333-8444-555555555555"
+    let captured: [String: Any] = ["draft_id": id, "revision": 1, "state": "needs_information",
+        "name": "Synthetic detector", "source": ["kind": "captured_artifact_collection", "revision": "sha256:" + String(repeating: "a", count: 64)],
+        "start_policy": "manual", "start": false]
+    guard let capturedDraft = ImportDraft(captured), capturedDraft.sourcePath.isEmpty,
+          capturedDraft.sourceSnapshotPath == nil, capturedDraft.editable else { return false }
+    var missingFolderLocator = captured; missingFolderLocator["source"] = ["kind": "local_folder"]
+    guard ImportDraft(missingFolderLocator) == nil else { return false }
     guard let ordinary = Project(good), projectCanControl(ordinary, action: "remove", operations: []) else { return false }
     for action in ["install", "upgrade"] {
         var blocked = good; blocked["observed_state"] = "failed"; blocked["error_code"] = action == "install" ? "installation_recovery_required" : "upgrade_recovery_required"
@@ -2158,7 +2340,821 @@ private func nativeSelfTest() -> Bool {
     return true
 }
 
+private func nativeRecipeCanonicalPath(_ path: String) -> String? {
+    guard path.hasPrefix("/"), path.utf8.count <= 4096, !path.contains("\0"),
+          let resolved = realpath(path, nil) else { return nil }
+    defer { free(resolved) }
+    return String(validatingUTF8: resolved)
+}
+
+private struct NativeRecipeDirectoryIdentity: Equatable {
+    let device: UInt64
+    let inode: UInt64
+
+    init?(_ url: URL) {
+        guard url.isFileURL, nativeRecipeCanonicalPath(url.path) == url.path else { return nil }
+        let fd = open(url.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { return nil }; defer { close(fd) }
+        var opened = stat(), named = stat()
+        guard fstat(fd, &opened) == 0, lstat(url.path, &named) == 0,
+              (opened.st_mode & S_IFMT) == S_IFDIR, opened.st_uid == getuid(), (opened.st_mode & 0o777) == 0o700,
+              opened.st_dev == named.st_dev, opened.st_ino == named.st_ino, opened.st_mode == named.st_mode,
+              opened.st_uid == named.st_uid else { return nil }
+        device = UInt64(opened.st_dev); inode = UInt64(opened.st_ino)
+    }
+}
+
+private struct NativeRecipeFileIdentity: Equatable {
+    let values: [String: Int]
+
+    init?(_ url: URL) {
+        let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { return nil }; defer { close(fd) }
+        var before = stat(), after = stat(), named = stat()
+        guard fstat(fd, &before) == 0, lstat(url.path, &named) == 0,
+              (before.st_mode & S_IFMT) == S_IFREG, before.st_uid == getuid(), before.st_nlink == 1,
+              (before.st_mode & 0o777) == 0o600, before.st_size > 0, before.st_size <= 262144,
+              fstat(fd, &after) == 0 else { return nil }
+        func identity(_ info: stat) -> [String: Int] {
+            ["device": Int(info.st_dev), "inode": Int(info.st_ino), "bytes": Int(info.st_size), "mode": Int(info.st_mode & 0o777),
+             "modified_seconds": Int(info.st_mtimespec.tv_sec), "modified_nanoseconds": Int(info.st_mtimespec.tv_nsec),
+             "changed_seconds": Int(info.st_ctimespec.tv_sec), "changed_nanoseconds": Int(info.st_ctimespec.tv_nsec)]
+        }
+        let value = identity(before)
+        guard value == identity(after), value == identity(named), nativeRecipeCanonicalPath(url.path) == url.path else { return nil }
+        values = value
+    }
+
+    func matches(_ object: [String: Any]) -> Bool {
+        Set(object.keys) == Set(values.keys) && values.allSatisfy { preparationInteger(object[$0.key]) == $0.value }
+    }
+}
+
+private struct NativeDirectoryAcceptanceContext {
+    let fixture: URL
+    let state: URL
+    let output: URL
+    let source: URL
+    let nonce: String
+    let marker: URL
+    let expiry: Int
+    let fixtureIdentity: NativeRecipeFileIdentity
+    let markerIdentity: NativeRecipeFileIdentity
+    let managerIdentity: NativeRecipeFileIdentity
+    let rootIdentity: NativeRecipeDirectoryIdentity
+    let stateIdentity: NativeRecipeDirectoryIdentity
+    let workspaceIdentity: NativeRecipeDirectoryIdentity
+    let sourceIdentity: NativeRecipeDirectoryIdentity
+    let object: [String: Any]
+    let publicPython: Bool
+
+    init?(fixture: URL, publicPython: Bool = false) {
+        guard let fixtureIdentity = NativeRecipeFileIdentity(fixture),
+              let object = PrivateFile.read(fixture, limit: 262144),
+              Set(object.keys) == ["schema_version", "state_dir", "output_path", "source_directory", "fixture_nonce", "answers_by_label"],
+              preparationInteger(object["schema_version"]) == 1,
+              let nonce = preparationUUID(object["fixture_nonce"]),
+              let statePath = preparationText(object["state_dir"], maximum: 4096),
+              let outputPath = preparationText(object["output_path"], maximum: 4096),
+              let sourcePath = preparationText(object["source_directory"], maximum: 4096),
+              let answers = object["answers_by_label"] as? [String: Any], answers.count <= 256,
+              preparationJSON(answers, maximum: 262144) != nil else { return nil }
+        let state = URL(fileURLWithPath: statePath), output = URL(fileURLWithPath: outputPath), source = URL(fileURLWithPath: sourcePath)
+        let root = fixture.deletingLastPathComponent(), workspace = root.deletingLastPathComponent()
+        var outputInfo = stat()
+        guard workspace.lastPathComponent.hasPrefix("mcpme-native-onboarding-"),
+              let workspaceIdentity = NativeRecipeDirectoryIdentity(workspace), let rootIdentity = NativeRecipeDirectoryIdentity(root),
+              state.path == root.appendingPathComponent("state").path, let stateIdentity = NativeRecipeDirectoryIdentity(state),
+              source.deletingLastPathComponent().path == root.path, source.path != state.path,
+              let sourceIdentity = NativeRecipeDirectoryIdentity(source),
+              output.deletingLastPathComponent().path == root.path, output.lastPathComponent.count <= 128,
+              output.path != fixture.path, lstat(output.path, &outputInfo) != 0, errno == ENOENT else { return nil }
+        let marker = state.appendingPathComponent((publicPython ? "native-public-directory-" : "native-directory-") + nonce + ".json")
+        guard let markerIdentity = NativeRecipeFileIdentity(marker), let proof = PrivateFile.read(marker, limit: 8192),
+              Set(proof.keys) == ["schema_version", "fixture_nonce", "expires_at", "manager_file", "source_directory"],
+              preparationInteger(proof["schema_version"]) == 1, preparationUUID(proof["fixture_nonce"]) == nonce,
+              let expiry = preparationInteger(proof["expires_at"]), expiry > Int(Date().timeIntervalSince1970), expiry <= Int(Date().timeIntervalSince1970) + 300,
+              let expectedManager = proof["manager_file"] as? [String: Any],
+              let managerIdentity = NativeRecipeFileIdentity(state.appendingPathComponent("manager-connection.json")),
+              managerIdentity.matches(expectedManager), let expectedSource = proof["source_directory"] as? [String: Any],
+              Set(expectedSource.keys) == ["device", "inode"],
+              preparationInteger(expectedSource["device"]) == Int(sourceIdentity.device),
+              preparationInteger(expectedSource["inode"]) == Int(sourceIdentity.inode),
+              NativeRecipeFileIdentity(fixture) == fixtureIdentity, NativeRecipeFileIdentity(marker) == markerIdentity else { return nil }
+        self.fixture = fixture; self.state = state; self.output = output; self.source = source; self.nonce = nonce
+        self.marker = marker; self.expiry = expiry; self.fixtureIdentity = fixtureIdentity; self.markerIdentity = markerIdentity
+        self.managerIdentity = managerIdentity; self.rootIdentity = rootIdentity; self.stateIdentity = stateIdentity
+        self.workspaceIdentity = workspaceIdentity; self.sourceIdentity = sourceIdentity; self.object = object
+        self.publicPython = publicPython
+    }
+
+    func current() -> Bool {
+        Int(Date().timeIntervalSince1970) < expiry && NativeRecipeDirectoryIdentity(state) == stateIdentity &&
+            NativeRecipeDirectoryIdentity(fixture.deletingLastPathComponent()) == rootIdentity &&
+            NativeRecipeDirectoryIdentity(fixture.deletingLastPathComponent().deletingLastPathComponent()) == workspaceIdentity &&
+            NativeRecipeDirectoryIdentity(source) == sourceIdentity && NativeRecipeFileIdentity(fixture) == fixtureIdentity &&
+            NativeRecipeFileIdentity(marker) == markerIdentity && NativeRecipeFileIdentity(state.appendingPathComponent("manager-connection.json")) == managerIdentity
+    }
+
+    func claim() -> Bool {
+        guard current() else { return false }
+        let path = marker.deletingPathExtension().appendingPathExtension("claimed")
+        let fd = open(path.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else { return false }; defer { close(fd) }
+        let bytes = Array("claimed\n".utf8)
+        return bytes.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) == $0.count } && fsync(fd) == 0 && current()
+    }
+
+    func report(_ receipt: [String: Any]) -> Bool {
+        guard current(), let data = try? JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]), data.count <= 262144 else { return false }
+        let fd = open(output.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else { return false }; defer { close(fd) }
+        return data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) == $0.count } && fsync(fd) == 0 && current()
+    }
+}
+
+private struct NativeRecipeAcceptanceContext {
+    let fixture: URL
+    let state: URL
+    let output: URL
+    let nonce: String
+    let marker: URL
+    let expiry: Int
+    let fixtureIdentity: NativeRecipeFileIdentity
+    let markerIdentity: NativeRecipeFileIdentity
+    let managerIdentity: NativeRecipeFileIdentity
+    let rootIdentity: NativeRecipeDirectoryIdentity
+    let stateIdentity: NativeRecipeDirectoryIdentity
+    let workspaceIdentity: NativeRecipeDirectoryIdentity
+    let object: [String: Any]
+
+    static func privateDirectory(_ url: URL) -> Bool {
+        NativeRecipeDirectoryIdentity(url) != nil
+    }
+
+    init?(fixture: URL, agent: Bool = false, service: Bool = false, liveAgent: Bool = false) {
+        guard (!liveAgent || agent), !(agent && service), let fixtureIdentity = NativeRecipeFileIdentity(fixture),
+              Self.privateDirectory(fixture.deletingLastPathComponent()), let object = PrivateFile.read(fixture, limit: 262144),
+              Set(object.keys) == (agent ? ["schema_version", "state_dir", "output_path", "fixture_nonce", "draft_id", "agent_scope", "answers_by_label"] :
+                  service ? ["schema_version", "state_dir", "output_path", "fixture_nonce", "service", "answers_by_label"] :
+                  ["schema_version", "state_dir", "output_path", "fixture_nonce", "recipes", "forms"]),
+              preparationInteger(object["schema_version"]) == 1,
+              let nonce = preparationUUID(object["fixture_nonce"]),
+              let statePath = preparationText(object["state_dir"], maximum: 4096), statePath.hasPrefix("/"),
+              let outputPath = preparationText(object["output_path"], maximum: 4096), outputPath.hasPrefix("/") else { return nil }
+        let state = URL(fileURLWithPath: statePath), output = URL(fileURLWithPath: outputPath)
+        let root = fixture.deletingLastPathComponent()
+        let workspace = root.deletingLastPathComponent()
+        var outputInfo = stat()
+        guard workspace.lastPathComponent.hasPrefix("mcpme-native-onboarding-"), let workspaceIdentity = NativeRecipeDirectoryIdentity(workspace),
+              let rootIdentity = NativeRecipeDirectoryIdentity(root),
+              state.path == root.appendingPathComponent("state").path, let stateIdentity = NativeRecipeDirectoryIdentity(state),
+              output.deletingLastPathComponent().path == root.path, output.lastPathComponent.count <= 128,
+              output.path != fixture.path, lstat(output.path, &outputInfo) != 0, errno == ENOENT else { return nil }
+        if service {
+            guard let selected = object["service"] as? [String: Any],
+                  Set(selected.keys) == ["name", "model", "port", "secret_reference"],
+                  preparationText(selected["name"], maximum: 256) != nil,
+                  let model = preparationText(selected["model"], maximum: 128),
+                  model.range(of: "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$", options: .regularExpression) != nil,
+                  let port = preparationInteger(selected["port"]), (1...65535).contains(port),
+                  preparationUUID(selected["secret_reference"]) != nil,
+                  let answers = object["answers_by_label"] as? [String: Any],
+                  Set(answers.keys).isSubset(of: ["App name"]) else { return nil }
+        } else if agent {
+            guard preparationUUID(object["draft_id"]) != nil,
+                  let scope = object["agent_scope"] as? [String: Any],
+                  AgentPreparationView.acceptanceScopeValid(scope, live: liveAgent),
+                  let answers = object["answers_by_label"] as? [String: Any], answers.count <= 256 else { return nil }
+        } else {
+            guard let recipes = object["recipes"] as? [[String: Any]], recipes.count <= 8,
+                  let forms = object["forms"] as? [[String: Any]], forms.count <= 16, !recipes.isEmpty || !forms.isEmpty else { return nil }
+        }
+        let marker = state.appendingPathComponent((agent ? (liveAgent ? "native-agent-live-" : "native-agent-") : service ? "native-service-" : "native-recipes-") + nonce + ".json")
+        guard let markerIdentity = NativeRecipeFileIdentity(marker), let proof = PrivateFile.read(marker, limit: 8192),
+              Set(proof.keys) == ["schema_version", "fixture_nonce", "expires_at", "manager_file"],
+              preparationInteger(proof["schema_version"]) == 1, preparationUUID(proof["fixture_nonce"]) == nonce,
+              let expiry = preparationInteger(proof["expires_at"]), expiry > Int(Date().timeIntervalSince1970), expiry <= Int(Date().timeIntervalSince1970) + 300,
+              let expectedManager = proof["manager_file"] as? [String: Any],
+              let managerIdentity = NativeRecipeFileIdentity(state.appendingPathComponent("manager-connection.json")),
+              managerIdentity.matches(expectedManager), NativeRecipeFileIdentity(fixture) == fixtureIdentity,
+              NativeRecipeFileIdentity(marker) == markerIdentity else { return nil }
+        self.fixture = fixture; self.state = state; self.output = output; self.nonce = nonce; self.marker = marker; self.expiry = expiry
+        self.fixtureIdentity = fixtureIdentity; self.markerIdentity = markerIdentity; self.managerIdentity = managerIdentity; self.object = object
+        self.rootIdentity = rootIdentity; self.stateIdentity = stateIdentity; self.workspaceIdentity = workspaceIdentity
+    }
+
+    func current() -> Bool {
+        Int(Date().timeIntervalSince1970) < expiry && NativeRecipeDirectoryIdentity(state) == stateIdentity &&
+            NativeRecipeDirectoryIdentity(fixture.deletingLastPathComponent()) == rootIdentity &&
+            NativeRecipeDirectoryIdentity(fixture.deletingLastPathComponent().deletingLastPathComponent()) == workspaceIdentity &&
+            NativeRecipeFileIdentity(fixture) == fixtureIdentity &&
+            NativeRecipeFileIdentity(marker) == markerIdentity && NativeRecipeFileIdentity(state.appendingPathComponent("manager-connection.json")) == managerIdentity
+    }
+
+    func claim() -> Bool {
+        guard current() else { return false }
+        let path = marker.deletingPathExtension().appendingPathExtension("claimed")
+        let fd = open(path.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else { return false }; defer { close(fd) }
+        let bytes = Array("claimed\n".utf8)
+        return bytes.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) == $0.count } && fsync(fd) == 0 && current()
+    }
+
+    func report(_ data: Data) -> Bool {
+        guard current(), data.count <= 262144 else { return false }
+        let fd = open(output.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else { return false }; defer { close(fd) }
+        return data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) == $0.count } && fsync(fd) == 0 && current()
+    }
+
+    static func contractSelfTest() -> Bool {
+        guard let temporary = nativeRecipeCanonicalPath(FileManager.default.temporaryDirectory.path) else { return false }
+        let workspace = URL(fileURLWithPath: temporary).appendingPathComponent("mcpme-native-onboarding-" + UUID().uuidString)
+        let root = workspace.appendingPathComponent("context-test"), state = root.appendingPathComponent("state")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        do {
+            for directory in [workspace, root, state] {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            }
+            func save(_ value: [String: Any], to url: URL, replace: Bool = false) throws {
+                let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+                try data.write(to: url, options: replace ? .atomic : .withoutOverwriting)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            }
+            let manager = state.appendingPathComponent("manager-connection.json")
+            try save(["synthetic": true], to: manager)
+            guard let identity = NativeRecipeFileIdentity(manager) else { return false }
+            let nonce = UUID().uuidString.lowercased(), marker = state.appendingPathComponent("native-recipes-" + nonce + ".json")
+            try save(["schema_version": 1, "fixture_nonce": nonce, "expires_at": Int(Date().timeIntervalSince1970) + 120, "manager_file": identity.values], to: marker)
+            let fixture = root.appendingPathComponent("case.json")
+            try save(["schema_version": 1, "fixture_nonce": nonce, "state_dir": state.path,
+                "output_path": root.appendingPathComponent("receipt.json").path, "recipes": [], "forms": [["synthetic": true]]], to: fixture)
+            guard let context = Self(fixture: fixture), context.current(), context.claim(), !context.claim() else { return false }
+            let priorRoot = workspace.appendingPathComponent("prior-context-test")
+            try FileManager.default.moveItem(at: root, to: priorRoot)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            for child in try FileManager.default.contentsOfDirectory(at: priorRoot, includingPropertiesForKeys: nil) {
+                try FileManager.default.moveItem(at: child, to: root.appendingPathComponent(child.lastPathComponent))
+            }
+            guard !context.current() else { return false }
+            for child in try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) {
+                try FileManager.default.moveItem(at: child, to: priorRoot.appendingPathComponent(child.lastPathComponent))
+            }
+            try FileManager.default.removeItem(at: root)
+            try FileManager.default.moveItem(at: priorRoot, to: root)
+            guard let restoredContext = Self(fixture: fixture), restoredContext.current() else { return false }
+            try save(["synthetic": true], to: manager, replace: true)
+            guard !restoredContext.current(), Self(fixture: fixture) == nil else { return false }
+            try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: fixture.path)
+            guard NativeRecipeFileIdentity(fixture) == nil else { return false }
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fixture.path)
+            let link = root.appendingPathComponent("linked-case.json")
+            guard Darwin.link(fixture.path, link.path) == 0, NativeRecipeFileIdentity(fixture) == nil else { return false }
+            try FileManager.default.removeItem(at: link)
+            let symlink = root.appendingPathComponent("symlinked-case.json")
+            try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: fixture)
+            return NativeRecipeFileIdentity(symlink) == nil
+        } catch { return false }
+    }
+}
+
 extension McpmeApp {
+    /// Developer-only acceptance: dialog choices are simulated by an owned
+    /// fixture; production handlers and authenticated owner socket are real.
+    fileprivate static func recipesNativeAcceptance(fixture: URL) -> Bool {
+        guard let context = NativeRecipeAcceptanceContext(fixture: fixture),
+              let rows = context.object["recipes"] as? [[String: Any]], let formRows = context.object["forms"] as? [[String: Any]] else { return false }
+        struct RecipeCase {
+            let identity: PreparationRecipeIdentity
+            let folder: URL?
+            let folderIdentity: NativeRecipeDirectoryIdentity?
+            let operations: [(action: String, state: String)]
+        }
+        var cases: [RecipeCase] = []
+        for row in rows {
+            guard Set(row.keys) == ["folder", "recipe", "operations"], let reference = row["recipe"] as? [String: Any],
+                  Set(reference.keys) == ["recipe_id", "version", "digest"], let identity = PreparationRecipeIdentity(reference),
+                  identity.id.range(of: "^[a-z0-9]+(?:[.-][a-z0-9]+)+$", options: .regularExpression) != nil,
+                  identity.version.range(of: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[A-Za-z0-9.-]+)?$", options: .regularExpression) != nil,
+                  let operations = row["operations"] as? [[String: Any]], !operations.isEmpty, operations.count <= 16 else { return false }
+            var folder: URL?
+            if !(row["folder"] is NSNull) {
+                guard let path = preparationText(row["folder"], maximum: 4096) else { return false }
+                let selected = URL(fileURLWithPath: path)
+                guard selected.path.hasPrefix(fixture.deletingLastPathComponent().path + "/"), NativeRecipeAcceptanceContext.privateDirectory(selected) else { return false }
+                folder = selected
+            }
+            var steps: [(action: String, state: String)] = []
+            for operation in operations {
+                guard Set(operation.keys) == ["action", "expected_state"], let action = operation["action"] as? String,
+                      ["add", "inspect", "refresh", "enable", "disable", "deprecate", "revoke", "remove"].contains(action),
+                      let state = operation["expected_state"] as? String,
+                      ["proposed", "enabled", "disabled", "deprecated", "revoked", "removed"].contains(state), action != "add" || folder != nil else { return false }
+                steps.append((action, state))
+            }
+            cases.append(RecipeCase(identity: identity, folder: folder, folderIdentity: folder.flatMap(NativeRecipeDirectoryIdentity.init), operations: steps))
+        }
+        for row in formRows {
+            guard Set(row.keys) == ["draft_id", "expected_recipe", "choose_recipe", "expected_blockers"],
+                  preparationUUID(row["draft_id"]) != nil, let blockers = row["expected_blockers"] as? [String], blockers.count <= 128,
+                  blockers.allSatisfy({ preparationCode($0) != nil }) else { return false }
+            for key in ["expected_recipe", "choose_recipe"] {
+                guard row[key] is NSNull || (row[key] as? [String: Any]).flatMap(PreparationRecipeReference.init) != nil else { return false }
+            }
+        }
+        guard context.claim(), let connectionObject = PrivateFile.read(context.state.appendingPathComponent("manager-connection.json")),
+              let connection = ManagerConnection(connectionObject) else { return false }
+        let prior = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"]
+        setenv("MCPME_STATE_DIR", context.state.path, 1)
+        defer { if let prior { setenv("MCPME_STATE_DIR", prior, 1) } else { unsetenv("MCPME_STATE_DIR") } }
+        let app = McpmeApp(); _ = app.makeSetupWorkspace()
+        app.nativeAcceptanceConnection = connection; app.hostAvailable = true
+        let view = app.recipesView
+        var pending = 0, sent = 0, completed = 0, changes = 0, formChecks = 0
+        var active: RecipeCase?, stage = "recipes_refresh", errorCode: String?
+        func awaitCondition(_ condition: () -> Bool) -> Bool {
+            let end = Date().addingTimeInterval(60)
+            while !condition(), Date() < end { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+            return condition()
+        }
+        let request: PreparationRequest = { path, method, body, callback in
+            guard context.current(), sent < 512 else { errorCode = "native_recipe_context_stale"; callback(nil, errorCode); return }
+            let staticRoute = path == "v1/recipes" && method == "GET" || path == "v1/recipes/inspect" && method == "POST" ||
+                path == "v1/preparations/form" && method == "POST" || method == "GET" && formRows.contains { path == "v1/imports/" + ($0["draft_id"] as? String ?? "") }
+            if !staticRoute {
+                guard let active else { errorCode = "native_recipe_action_rejected"; callback(nil, errorCode); return }
+                if path == "v1/recipes", method == "POST" {
+                    guard let folder = active.folder, NativeRecipeDirectoryIdentity(folder) == active.folderIdentity,
+                          Set(body?.keys.map { $0 } ?? []) == ["path"], body?["path"] as? String == folder.path else { errorCode = "native_recipe_action_rejected"; callback(nil, errorCode); return }
+                } else {
+                    guard method == "POST", ["enable", "disable", "deprecate", "revoke", "remove"].contains(path.components(separatedBy: "/").last ?? ""),
+                          path == "v1/recipes/" + (path.components(separatedBy: "/").last ?? ""),
+                          Set(body?.keys.map { $0 } ?? []) == ["recipe_id", "version"], body?["recipe_id"] as? String == active.identity.id,
+                          body?["version"] as? String == active.identity.version else { errorCode = "native_recipe_action_rejected"; callback(nil, errorCode); return }
+                }
+            }
+            pending += 1; sent += 1
+            app.request(path, method: method, body: body) { object, code in
+                pending -= 1; completed += 1
+                if let code { errorCode = preparationCode(code) ?? "native_recipe_request_failed" }
+                callback(object, code)
+            }
+        }
+        view.available = { context.current() }; view.request = request
+        app.preparationView.request = request
+        view.onRegistryChange = { changes += 1; app.preparationView.registryChanged() }
+        func report(_ passed: Bool) -> Bool {
+            let joined = awaitCondition { pending == 0 && !view.acceptanceBusy && !app.preparationView.busy }
+            view.invalidate(); app.preparationView.invalidate()
+            var receipt: [String: Any] = ["schema_version": 1, "passed": passed && joined, "stage": stage,
+                "recipe_cases": cases.count, "registry_changes": changes, "form_checks": formChecks,
+                "requests_sent": sent, "requests_completed": completed, "callbacks_joined": joined,
+                "simulated_dialog_folder_selection": true, "simulated_lifecycle_confirmation": true,
+                "production_handlers": true, "owner_private_socket": true, "fixture_nonce_consumed": true,
+                "execution_started_by_driver": false, "provider_calls": 0, "model_runs": 0]
+            if let errorCode { receipt["error_code"] = errorCode }
+            guard let data = try? JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]), data.count <= 262144 else { return false }
+            let fd = open(context.output.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+            guard fd >= 0 else { return false }; defer { close(fd) }
+            let written = data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) == $0.count }
+            return written && fsync(fd) == 0 && passed && joined
+        }
+        view.refreshRecipes()
+        guard awaitCondition({ pending == 0 && !view.acceptanceBusy }), errorCode == nil else { return report(false) }
+        for item in cases {
+            active = item
+            for operation in item.operations {
+                guard context.current(), errorCode == nil else { return report(false) }
+                stage = "recipe_" + operation.action
+                if operation.action == "add" {
+                    guard let folder = item.folder, NativeRecipeDirectoryIdentity(folder) == item.folderIdentity, view.acceptanceChooseRecipeFolder(folder) else { return report(false) }
+                } else {
+                    guard view.acceptanceSelectRecipe(item.identity), awaitCondition({ pending == 0 && !view.acceptanceBusy }),
+                          view.acceptanceIdentity == item.identity else { return report(false) }
+                    if operation.action == "refresh" { view.refreshRecipes() }
+                    else if operation.action != "inspect", !view.acceptanceConfirmedChange(operation.action, identity: item.identity) { return report(false) }
+                }
+                guard awaitCondition({ pending == 0 && !view.acceptanceBusy }), errorCode == nil,
+                      view.acceptanceIdentity == item.identity, view.acceptanceState == operation.state else { return report(false) }
+            }
+        }
+        active = nil; stage = "generated_forms"
+        for row in formRows {
+            let id = row["draft_id"] as! String
+            var draft: ImportDraft?, fetched = false
+            request("v1/imports/" + id, "GET", nil) { object, _ in draft = object.flatMap(ImportDraft.init); fetched = true }
+            guard awaitCondition({ fetched && pending == 0 }), let draft, draft.editable, draft.packagePath == nil else { return report(false) }
+            app.preparationView.invalidate(); app.displayDraft(draft); app.preparationView.refreshForm()
+            guard awaitCondition({ pending == 0 && !app.preparationView.busy }), var form = app.preparationView.form else { return report(false) }
+            if let choice = (row["choose_recipe"] as? [String: Any]).flatMap(PreparationRecipeReference.init) {
+                guard app.preparationView.acceptanceSelectExactRecipe(choice), awaitCondition({ pending == 0 && !app.preparationView.busy }),
+                      let chosen = app.preparationView.form else { return report(false) }
+                form = chosen
+            }
+            let expected = (row["expected_recipe"] as? [String: Any]).flatMap(PreparationRecipeReference.init)
+            guard form.recipe == expected, Set(form.blockers) == Set(row["expected_blockers"] as! [String]),
+                  expected != nil || !app.preparationView.acceptanceReviewEnabled else { return report(false) }
+            formChecks += 1
+        }
+        stage = "complete"
+        return report(errorCode == nil && context.current())
+    }
+
+    /// Runs the native form actions against an already launched, owner-only
+    /// host. Backend execution remains governed by that host's factory gates.
+    fileprivate static func preparationNativeAcceptance(fixture: URL, agent: Bool = false, liveAgent: Bool = false,
+                                                        directoryContext: NativeDirectoryAcceptanceContext? = nil,
+                                                        serviceContext: NativeRecipeAcceptanceContext? = nil) -> Bool {
+        let agentContext = agent ? NativeRecipeAcceptanceContext(fixture: fixture, agent: true, liveAgent: liveAgent) : nil
+        guard !liveAgent || agent, !agent || (agentContext != nil && directoryContext == nil && serviceContext == nil),
+              serviceContext == nil || directoryContext == nil, serviceContext?.current() != false,
+              directoryContext?.current() != false, fixture.isFileURL,
+              let data = try? Data(contentsOf: fixture), data.count <= 262144,
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              agent || serviceContext != nil || Set(object.keys).isSubset(of: directoryContext == nil
+                ? ["state_dir", "draft_id", "output_path", "answers_by_label", "candidate_id", "recipe_id", "capture_model_path", "capture_license_path", "capture_format"]
+                : ["schema_version", "state_dir", "output_path", "source_directory", "fixture_nonce", "answers_by_label"]),
+              let state = preparationText(object["state_dir"], maximum: 4096), state.hasPrefix("/"),
+              object["draft_id"] == nil || preparationUUID(object["draft_id"]) != nil,
+              let output = preparationText(object["output_path"], maximum: 4096), output.hasPrefix("/"),
+              !FileManager.default.fileExists(atPath: output),
+              let answers = object["answers_by_label"] as? [String: Any], answers.count <= 256,
+              preparationJSON(answers, maximum: 262144) != nil,
+              object["candidate_id"] == nil || preparationDigest(object["candidate_id"]) != nil,
+              object["recipe_id"] == nil || preparationText(object["recipe_id"], maximum: 128) != nil else { return false }
+        if let context = directoryContext {
+            guard context.current(), state == context.state.path, output == context.output.path,
+                  object["source_directory"] as? String == context.source.path else { return false }
+        }
+        let captured = object["capture_model_path"] != nil || object["capture_license_path"] != nil
+        let modelPath = preparationText(object["capture_model_path"], maximum: 4096)
+        let licensePath = preparationText(object["capture_license_path"], maximum: 4096)
+        let modelFormat = object["capture_format"] as? String ?? "onnx"
+        guard captured ? modelPath?.hasPrefix("/") == true && licensePath?.hasPrefix("/") == true && ["onnx", "gguf"].contains(modelFormat) : (object["draft_id"] != nil || directoryContext != nil || serviceContext != nil) && object["capture_format"] == nil else { return false }
+        if let serviceContext {
+            guard serviceContext.current(), state == serviceContext.state.path, output == serviceContext.output.path,
+                  NSDictionary(dictionary: object).isEqual(to: serviceContext.object) else { return false }
+        }
+        var draftID = preparationUUID(object["draft_id"])
+        let prior = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"]
+        setenv("MCPME_STATE_DIR", state, 1)
+        defer { if let prior { setenv("MCPME_STATE_DIR", prior, 1) } else { unsetenv("MCPME_STATE_DIR") } }
+        let app = McpmeApp(); _ = app.makeSetupWorkspace()
+        var stage = "connection", routes: [String] = [], pending = 0
+        var handoffProposal: AgentPreparationJob?
+        var receipt: [String: Any] = ["schema_version": 1]
+        if let draftID { receipt["draft_id"] = draftID }
+        func report(_ passed: Bool) -> Bool {
+            receipt["passed"] = passed; receipt["stage"] = stage; receipt["routes"] = routes
+            if agent, stage == "agent_handoff" {
+                receipt["handoff_postconditions"] = nativeAgentHandoffObservation(
+                    proposal: handoffProposal, form: app.preparationView.form, pending: pending,
+                    agentBusy: app.agentPreparationView.busy, ordinaryBusy: app.preparationView.busy,
+                    agentError: app.agentPreparationView.errorCode, ordinaryError: app.preparationView.formErrorCode,
+                    preparationJobPresent: app.preparationView.job != nil, resolutionJobPresent: app.preparationView.resolutionJob != nil)
+            }
+            if let code = app.agentPreparationView.errorCode ?? app.preparationView.formErrorCode ?? app.artifactCaptureView.errorCode ?? app.artifactCaptureView.job?.error ?? app.preparationView.job?.error ?? app.preparationView.resolutionJob?.error { receipt["error_code"] = code }
+            if let context = directoryContext { return context.report(receipt) && passed }
+            guard let result = try? JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]), result.count <= 262144 else { return false }
+            if let serviceContext { return serviceContext.report(result) && passed }
+            if let agentContext { return agentContext.report(result) && passed }
+            guard
+                  (try? result.write(to: URL(fileURLWithPath: output), options: .atomic)) != nil,
+                  (try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: output)) != nil else { return false }
+            return passed
+        }
+        var tracedStage: String?
+        func awaitCondition(_ seconds: Double = 330, _ condition: () -> Bool) -> Bool {
+            if agent && tracedStage != stage {
+                // Fixed stage codes only, consumed in RAM by the developer
+                // harness. No source, model, provider or request values.
+                print("native_agent_stage=" + stage); fflush(stdout); tracedStage = stage
+            }
+            let deadline = Date().addingTimeInterval(directoryContext == nil || directoryContext?.publicPython == true ? seconds : min(seconds, 30))
+            while !condition(), Date() < deadline, directoryContext?.current() != false,
+                  agentContext?.current() != false, serviceContext?.current() != false { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+            return directoryContext?.current() != false && agentContext?.current() != false && serviceContext?.current() != false && condition()
+        }
+        if let serviceContext, !serviceContext.claim() { return false }
+        if let agentContext, !agentContext.claim() { return false }
+        guard let connectionObject = PrivateFile.read(app.stateDirectory.appendingPathComponent("manager-connection.json")),
+              let connection = ManagerConnection(connectionObject) else { return report(false) }
+        app.nativeAcceptanceConnection = connection; app.hostAvailable = true
+        if let context = directoryContext {
+            var scopedRequests = 0
+            app.nativeAcceptanceScope = { context.current() }
+            app.nativeAcceptanceRoute = { path, method in
+                let parts = path.split(separator: "/")
+                let allowed = path == "v1/imports" && ["GET", "POST"].contains(method) ||
+                    path == "v1/preparations" && method == "GET" ||
+                    path == "v1/secrets" && method == "GET" ||
+                    parts.count == 3 && parts[0] == "v1" && parts[1] == "imports" && preparationUUID(String(parts[2])) != nil && method == "GET" ||
+                    parts.count == 4 && parts[0] == "v1" && parts[1] == "imports" && preparationUUID(String(parts[2])) != nil && parts[3] == "revise" && method == "POST" ||
+                    ["v1/preparations/form", "v1/preparations/plan-form", "v1/preparations/start"].contains(path) && method == "POST" ||
+                    parts.count == 3 && parts[0] == "v1" && parts[1] == "preparations" && preparationUUID(String(parts[2])) != nil && method == "GET"
+                let publicResolution = context.publicPython && (
+                    ["v1/resolutions/plan", "v1/resolutions/start"].contains(path) && method == "POST" ||
+                    path == "v1/resolutions" && method == "GET" ||
+                    parts.count == 3 && parts[0] == "v1" && parts[1] == "resolutions" && preparationUUID(String(parts[2])) != nil && method == "GET")
+                guard allowed || publicResolution, context.current(), scopedRequests < (context.publicPython ? 4096 : 512) else { return false }
+                scopedRequests += 1
+                let route = method + " " + path
+                if !routes.contains(route) { routes.append(route) }
+                return true
+            }
+            stage = "source_selection"
+            // beginImport is the exact handler invoked by Choose Files and drop.
+            // The private fixture supplies the NSOpenPanel selection, not clicks.
+            app.beginImport(context.source)
+            guard awaitCondition(30, { !app.setupRequest && app.currentDraft != nil }), let imported = app.currentDraft,
+                  imported.editable,
+                  (context.publicPython ? ["local_folder", "application_directory"].contains(imported.sourceKind) : imported.sourceKind == "application_directory"),
+                  imported.packagePath == nil,
+                  imported.sourcePath == context.source.path else { return report(false) }
+            draftID = imported.id; receipt["draft_id"] = imported.id
+            receipt["native_directory_selection"] = true; receipt["initial_revision"] = imported.revision
+            app.intentField?.string = context.publicPython ? "Expose the selected synthetic integer tools." : "Expose the selected bounded JSON command."
+            app.startCheck?.state = .on; app.policyField?.selectItem(at: 1); app.setupChanged()
+            var saved: Bool?
+            app.saveCurrentDraft { saved = $0 }
+            guard awaitCondition(30, { saved != nil }), saved == true else { return report(false) }
+            receipt["source_selection_revision"] = app.currentDraft?.revision
+        } else if let context = serviceContext {
+            var scopedRequests = 0
+            app.nativeAcceptanceScope = { context.current() }
+            app.nativeAcceptanceRoute = { path, method in
+                let parts = path.split(separator: "/")
+                let allowed = method == "GET" && ["v1/service-connectors", "v1/secrets", "v1/imports", "v1/preparations", "v1/resolutions"].contains(path) ||
+                    method == "POST" && ["v1/imports/service", "v1/preparations/form", "v1/preparations/plan-form", "v1/preparations/start"].contains(path) ||
+                    method == "GET" && parts.count == 3 && parts[0] == "v1" && ["imports", "preparations"].contains(String(parts[1])) && preparationUUID(String(parts[2])) != nil ||
+                    method == "POST" && parts.count == 4 && parts[0] == "v1" && parts[1] == "imports" && preparationUUID(String(parts[2])) != nil && parts[3] == "revise"
+                guard allowed, context.current(), scopedRequests < 4096 else { return false }
+                scopedRequests += 1
+                let route = method + " " + path
+                if !routes.contains(route) { routes.append(route) }
+                return true
+            }
+            stage = "service_selection"
+            guard let selected = object["service"] as? [String: Any], let secret = preparationUUID(selected["secret_reference"]) else { return report(false) }
+            func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap { descendants($0) } }
+            let views = descendants(app.serviceConnectionView)
+            let fields = views.compactMap { $0 as? NSTextField }
+            fields.first { $0.accessibilityLabel() == "Service app name" }?.stringValue = selected["name"] as? String ?? ""
+            fields.first { $0.accessibilityLabel() == "Service model ID" }?.stringValue = selected["model"] as? String ?? ""
+            fields.first { $0.accessibilityLabel() == "Service localhost port" }?.stringValue = String(preparationInteger(selected["port"]) ?? 0)
+            app.serviceConnectionView.updateSecrets([(id: secret, name: "Synthetic service credential")])
+            guard let picker = views.compactMap({ $0 as? NSPopUpButton }).first,
+                  let choice = picker.itemArray.first(where: { $0.representedObject as? String == secret }),
+                  let save = views.compactMap({ $0 as? NSButton }).first(where: { $0.title == "Save Service Connection" }) else { return report(false) }
+            picker.select(choice); app.serviceConnectionView.refreshAvailability()
+            guard save.isEnabled else { return report(false) }; save.performClick(nil)
+            guard awaitCondition(30, { app.currentDraft != nil }), let imported = app.currentDraft,
+                  imported.editable, imported.sourceKind == "service_connection", imported.sourcePath.isEmpty,
+                  imported.packagePath == nil else { return report(false) }
+            draftID = imported.id; receipt["draft_id"] = imported.id; receipt["initial_revision"] = imported.revision
+            receipt["native_service_selection"] = true
+            app.startCheck?.state = .on; app.policyField?.selectItem(at: 1); app.setupChanged()
+            var saved: Bool?
+            app.saveCurrentDraft { saved = $0 }
+            guard awaitCondition(30, { saved != nil }), saved == true else { return report(false) }
+        } else if let agentContext {
+            app.nativeAcceptanceScope = { agentContext.current() }
+            app.nativeAcceptanceRoute = { path, method in
+                if method == "POST" {
+                    return ["v1/agent-preparations/plans", "v1/agent-preparations/start", "v1/preparations/form",
+                        "v1/preparations/plan-form", "v1/preparations/start", "v1/resolutions/plan", "v1/resolutions/start"].contains(path)
+                }
+                guard method == "GET" else { return false }
+                return path == "v1/imports/" + (draftID ?? "") || ["v1/imports", "v1/resolutions", "v1/preparations"].contains(path) ||
+                    ["v1/agent-preparations/jobs/", "v1/preparations/", "v1/resolutions/"].contains { prefix in
+                        path.hasPrefix(prefix) && preparationUUID(String(path.dropFirst(prefix.count))) != nil
+                    }
+            }
+        }
+        let view = app.preparationView
+        var requestsSent = 0
+        let acceptedRequest: PreparationRequest = { path, method, body, complete in
+            guard agentContext?.current() != false else { complete(nil, "native_agent_context_stale"); return }
+            guard serviceContext?.current() != false else { complete(nil, "native_acceptance_context_stale"); return }
+            guard requestsSent < 8192 else { complete(nil, "native_acceptance_route_limit"); return }
+            requestsSent += 1
+            let route = method + " " + path
+            guard routes.contains(route) || routes.count < 512 else { complete(nil, "native_acceptance_route_limit"); return }
+            if !routes.contains(route) { routes.append(route) }
+            pending += 1
+            app.request(path, method: method, body: body) { object, code in
+                pending -= 1
+                guard agentContext?.current() != false else { complete(nil, "native_agent_context_stale"); return }
+            guard serviceContext?.current() != false else { complete(nil, "native_acceptance_context_stale"); return }
+                complete(object, code)
+            }
+        }
+        view.request = acceptedRequest; app.artifactCaptureView.request = acceptedRequest
+        app.agentPreparationView.request = acceptedRequest
+        func fetchDraft() -> ImportDraft? {
+            guard let draftID else { return nil }
+            var completed = false, received: ImportDraft?
+            acceptedRequest("v1/imports/" + draftID, "GET", nil) { object, _ in received = object.flatMap(ImportDraft.init); completed = true }
+            guard awaitCondition(330, { completed }) else { return nil }; return received
+        }
+        if captured {
+            stage = "capture_selection"
+            if draftID != nil {
+                guard let draft = fetchDraft(), draft.editable, draft.packagePath == nil else { return report(false) }
+                app.displayDraft(draft)
+            } else {
+                app.nameField?.stringValue = "Native captured model"
+                app.intentField?.string = "Expose the selected model through its detected tool."
+                app.startCheck?.state = .on; app.policyField?.selectItem(at: 1)
+            }
+            guard app.artifactCaptureView.select(model: URL(fileURLWithPath: modelPath!), license: URL(fileURLWithPath: licensePath!),
+                                                format: modelFormat, supplement: draftID != nil) else { return report(false) }
+            stage = "capture_start"; app.artifactCaptureView.startCapture()
+            stage = "capture_poll"
+            let deadline = Date().addingTimeInterval(360)
+            while !app.artifactCaptureView.adopted, Date() < deadline {
+                app.artifactCaptureView.poll()
+                guard awaitCondition(330, { pending == 0 && !app.artifactCaptureView.busy }) else { return report(false) }
+                if let job = app.artifactCaptureView.job, !job.active, job.state != "succeeded" { return report(false) }
+                if app.artifactCaptureView.errorCode != nil { return report(false) }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            }
+            guard app.artifactCaptureView.adopted, let capture = app.artifactCaptureView.job,
+                  capture.state == "succeeded", capture.settled, !capture.retained,
+                  let identity = capture.importID, let revision = capture.revision, let digest = capture.digest,
+                  app.currentDraft?.id == identity, app.currentDraft?.revision == revision else { return report(false) }
+            draftID = identity; receipt["draft_id"] = identity
+            receipt["capture_job_id"] = capture.id; receipt["capture_collection_digest"] = digest
+            receipt["captured_revision"] = revision; receipt["capture_target"] = capture.target == nil ? "create-import" : "attach-to-import"
+        }
+        stage = "initial_draft"
+        guard let draft = fetchDraft(), draft.editable, draft.packagePath == nil else { return report(false) }
+        app.displayDraft(draft)
+        if agent {
+            let agentView = app.agentPreparationView
+            stage = "agent_options"; agentView.loadOptions()
+            guard awaitCondition(30, { pending == 0 && !agentView.busy }),
+                  let scope = object["agent_scope"] as? [String: Any], agentView.acceptanceSelect(scope, live: liveAgent) else { return report(false) }
+            stage = "agent_review"; agentView.reviewScope()
+            guard awaitCondition(60, { pending == 0 && !agentView.busy }), agentView.acceptanceReviewed(live: liveAgent, generation: scope["provider_generation"] as? String) else { return report(false) }
+            stage = "agent_start"; agentView.startAnalysis()
+            guard awaitCondition(60, { pending == 0 && !agentView.busy }), agentView.job != nil else { return report(false) }
+            stage = "agent_poll"
+            let deadline = Date().addingTimeInterval(210)
+            while agentView.job?.active == true, Date() < deadline {
+                agentView.poll()
+                guard awaitCondition(30, { pending == 0 && !agentView.busy }) else { return report(false) }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            }
+            guard let proposal = agentView.job, proposal.state == "succeeded", proposal.settled,
+                  proposal.candidateDigest == nil, let digest = proposal.proposalDigest,
+                  proposal.context == PreparationContext(importID: draft.id, revision: draft.revision, sourceRevision: draft.sourceRevision ?? ""),
+                  app.currentDraft?.revision == draft.revision, view.job == nil, view.resolutionJob == nil else { return report(false) }
+            receipt["agent_job_id"] = proposal.id; receipt["proposal_digest"] = digest
+            receipt["agent_revision"] = proposal.context.revision; receipt["simulated_provider"] = !liveAgent
+            if liveAgent { receipt["provider_generation"] = scope["provider_generation"]; receipt["live_transport_selected"] = true }
+            handoffProposal = proposal
+            stage = "agent_handoff"; agentView.adoptCandidate()
+            guard awaitCondition(60, { pending == 0 && !view.busy }), agentView.errorCode == nil,
+                  let form = view.form, form.importID == proposal.context.importID,
+                  form.revision == proposal.context.revision, form.sourceRevision == proposal.context.sourceRevision, form.resolutionRequired,
+                  form.resolutionDigest == nil, view.job == nil, view.resolutionJob == nil else { return report(false) }
+            receipt["pending_proposal_handoff"] = true
+        } else {
+            stage = "initial_form"; view.refreshForm()
+        }
+        guard awaitCondition(330, { pending == 0 && !view.busy }), view.form != nil else { return report(false) }
+        if object["candidate_id"] != nil || object["recipe_id"] != nil {
+            guard view.acceptanceSelect(candidateID: object["candidate_id"] as? String, recipeID: object["recipe_id"] as? String),
+                  awaitCondition(330, { pending == 0 && !view.busy }), view.form != nil else { return report(false) }
+        }
+        guard let initial = view.form, let selectedCandidate = initial.candidateID else { return report(false) }
+        receipt["candidate_id"] = selectedCandidate; receipt["initial_form_digest"] = initial.digest
+        if initial.resolutionRequired {
+            stage = "resolution_review"; view.reviewResolution()
+            guard awaitCondition(330, { pending == 0 && !view.busy }), let review = view.resolutionReview, review.canStart() else { return report(false) }
+            receipt["resolution_plan_id"] = review.planID; receipt["resolution_plan_digest"] = review.planDigest
+            stage = "resolution_start"; view.startResolution()
+            guard awaitCondition(330, { pending == 0 && !view.busy }), view.resolutionJob != nil else { return report(false) }
+            stage = "resolution_poll"
+            let deadline = Date().addingTimeInterval(Double(review.policy.wallSeconds) + 60)
+            while view.resolutionJob?.active == true, Date() < deadline {
+                view.poll(); guard awaitCondition(330, { pending == 0 && !view.busy }) else { return report(false) }
+                if view.resolutionJob?.needsRecovery == true { stage = "resolution_recovery"; return report(false) }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            }
+            guard let resolved = view.resolutionJob, resolved.state == "succeeded", !resolved.active,
+                  let digest = resolved.resultDigest, view.form?.resolutionDigest == digest,
+                  view.form?.resolutionRequired == false else { return report(false) }
+            receipt["resolution_job_id"] = resolved.id; receipt["resolution_digest"] = digest; receipt["resolution_progress"] = resolved.progress
+        }
+        stage = "generated_answers"
+        guard let generated = view.form, generated.candidateID == selectedCandidate, generated.recipe != nil,
+              view.acceptanceAnswers(answers) else { return report(false) }
+        receipt["generated_form_digest"] = generated.digest
+        receipt["recipe_id"] = generated.recipe?.id; receipt["recipe_digest"] = generated.recipe?.digest
+        stage = "preparation_review"; view.reviewForm()
+        guard awaitCondition(330, { pending == 0 && !view.busy }), let review = view.review,
+              review.canStart(), app.currentDraft?.revision == review.context.revision else { return report(false) }
+        receipt["reviewed_revision"] = review.context.revision; receipt["preparation_plan_id"] = review.planID; receipt["preparation_plan_digest"] = review.planDigest
+        if serviceContext != nil {
+            stage = "service_review_only"
+            guard !routes.contains("POST v1/preparations/start"), !routes.contains("POST v1/resolutions/start"), view.job == nil else { return report(false) }
+            for (path, field) in [("v1/preparations", "preparations"), ("v1/resolutions", "resolutions")] {
+                var fetched = false, empty = false
+                acceptedRequest(path, "GET", nil) { object, _ in empty = (object?[field] as? [Any])?.isEmpty == true; fetched = true }
+                guard awaitCondition(30, { fetched && pending == 0 }), empty else { return report(false) }
+            }
+            receipt["review_created_no_jobs"] = true
+        }
+        stage = "preparation_start"; view.startPreparation()
+        guard awaitCondition(330, { pending == 0 && !view.busy }), view.job != nil else { return report(false) }
+        stage = "preparation_poll"
+        let deadline = Date().addingTimeInterval(directoryContext == nil ? 660 : 90)
+        while view.job?.active == true, Date() < deadline {
+            view.poll(); guard awaitCondition(330, { pending == 0 && !view.busy }) else { return report(false) }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        }
+        guard let job = view.job, job.state == "succeeded" else { return report(false) }
+        var jobFetched = false, expectedPackageDigest: String?
+        app.request("v1/preparations/" + job.id) { object, _ in
+            expectedPackageDigest = preparationDigest(object?["expected_package_digest"]); jobFetched = true
+        }
+        guard awaitCondition(330, { jobFetched }), let expectedPackageDigest, let final = fetchDraft(),
+              final.sourceRevision == draft.sourceRevision, final.revision == review.context.revision,
+              final.packagePath != nil, final.packageDigest == expectedPackageDigest else { return report(false) }
+        receipt["preparation_job_id"] = job.id; receipt["preparation_state"] = job.state; receipt["preparation_progress"] = job.progress
+        receipt["attached_revision"] = final.revision; receipt["source_revision"] = final.sourceRevision
+        receipt["attached_package_digest"] = expectedPackageDigest
+        stage = "attached"; return report(directoryContext?.current() != false && agentContext?.current() != false && serviceContext?.current() != false)
+    }
+
+    fileprivate static func captureAdoptionSelfTest() -> Bool {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("mcpme-capture-adoption-" + UUID().uuidString)
+        guard (try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])) != nil else { return false }
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let prior = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"]
+        setenv("MCPME_STATE_DIR", directory.path, 1)
+        defer { if let prior { setenv("MCPME_STATE_DIR", prior, 1) } else { unsetenv("MCPME_STATE_DIR") } }
+        let id = UUID().uuidString.lowercased(), other = UUID().uuidString.lowercased()
+        let original = "sha256:" + String(repeating: "b", count: 64), captured = "sha256:" + String(repeating: "a", count: 64)
+        func draft(_ identity: String, _ revision: Int, _ source: String) -> [String: Any] {
+            ["draft_id": identity, "revision": revision, "state": "waiting_for_agent", "name": "Synthetic captured model",
+             "source": ["kind": "captured_artifact_collection", "revision": source], "intent": "Synthetic model tool",
+             "start": false, "start_policy": "manual"]
+        }
+        let app = McpmeApp(); _ = app.makeSetupWorkspace()
+        let target = ArtifactCaptureContext(importID: id, revision: 3, sourceRevision: original)
+        let result = draft(id, 4, captured)
+        app.currentDraft = ImportDraft(draft(other, 4, captured))
+        guard app.artifactCaptureView.onAdopt?(result, target) == false, app.currentDraft?.id == other else { return false }
+        app.currentDraft = ImportDraft(draft(id, 5, captured))
+        guard app.artifactCaptureView.onAdopt?(result, target) == false else { return false }
+        app.currentDraft = ImportDraft(draft(id, 3, captured))
+        guard app.artifactCaptureView.onAdopt?(result, target) == false else { return false }
+        app.currentDraft = ImportDraft(draft(id, 3, original))
+        guard app.artifactCaptureView.onAdopt?(result, target) == true, app.currentDraft?.id == id,
+              app.currentDraft?.revision == 4, app.currentDraft?.sourceRevision == captured else { return false }
+        return app.artifactCaptureView.onAdopt?(result, target) == true
+    }
+
+    /// Exercises actual host form/review responses through the parent's draft callback.
+    fileprivate static func preparationBindingSelfTest(fixture: URL?) -> Bool {
+        guard let fixture else { return true }
+        guard let data = try? Data(contentsOf: fixture), data.count <= 1_048_576,
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
+        guard let formObject = object["form"] as? [String: Any], let reviewObject = object["review"] as? [String: Any] else { return true }
+        guard let form = OnboardingFormV1(formObject), let reviewed = PreparationReview(reviewObject, form: form) else { return false }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("mcpme-native-form-test-" + UUID().uuidString, isDirectory: true)
+        guard (try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])) != nil else { return false }
+        let prior = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"]
+        setenv("MCPME_STATE_DIR", directory.path, 1)
+        defer {
+            if let prior { setenv("MCPME_STATE_DIR", prior, 1) } else { unsetenv("MCPME_STATE_DIR") }
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let app = McpmeApp(); _ = app.makeSetupWorkspace()
+        var original = reviewed.draft; original["revision"] = form.revision
+        guard let draft = ImportDraft(original), draft.editable, draft.sourceRevision == form.sourceRevision else { return false }
+        app.currentDraft = draft; app.refreshWindow()
+        app.preparationView.available = { true }
+        var calls: [String] = []
+        app.preparationView.request = { path, method, _, complete in
+            calls.append(path)
+            guard method == "POST" else { complete(nil, "invalid_test_request"); return }
+            if path == "v1/preparations/form" { complete(formObject, nil) }
+            else if path == "v1/preparations/plan-form" { complete(reviewObject, nil) }
+            else { complete(nil, "invalid_test_request") }
+        }
+        app.preparationView.refreshForm(); app.preparationView.reviewForm()
+        return calls == ["v1/preparations/form", "v1/preparations/plan-form"]
+            && app.currentDraft?.revision == reviewed.context.revision
+            && app.preparationView.review?.context == reviewed.context
+            && app.preparationView.review?.formDigest == form.digest
+            && !app.preparationView.busy
+    }
+
     /// Checks the first-app route and opt-in publisher controls without contacting a host.
     fileprivate static func onboardingControlsSelfTest() -> Bool {
         let app = McpmeApp()
@@ -2294,8 +3290,165 @@ if CommandLine.arguments.dropFirst().first == "--dashboard-ui-self-test" {
 
 if CommandLine.arguments.dropFirst().first == "--management-ui-self-test" {
     _ = NSApplication.shared
-    let passed = managementViewSelfTest() && setupControlsSelfTest() && McpmeApp.recoveryControlsSelfTest() && McpmeApp.onboardingControlsSelfTest()
+    let passed = managementViewSelfTest() && setupControlsSelfTest() && McpmeApp.recoveryControlsSelfTest() && McpmeApp.onboardingControlsSelfTest() && preparationFormsSelfTest() && ArtifactCaptureView.selfTest() && McpmeApp.captureAdoptionSelfTest()
     print(passed ? "management_ui_contracts_passed" : "management_ui_contracts_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--agent-preparation-ui-self-test" {
+    _ = NSApplication.shared
+    let passed = runAgentPreparationContractSelfTest()
+    print(passed ? "agent_preparation_ui_contracts_passed" : "agent_preparation_ui_contracts_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--artifact-capture-ui-self-test" {
+    _ = NSApplication.shared
+    let passed = ArtifactCaptureView.selfTest() && McpmeApp.captureAdoptionSelfTest()
+    print(passed ? "artifact_capture_ui_contracts_passed" : "artifact_capture_ui_contracts_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--preparation-ui-self-test" {
+    _ = NSApplication.shared
+    let arguments = Array(CommandLine.arguments.dropFirst())
+    guard arguments.count <= 2, arguments.count == 1 || arguments[1].hasPrefix("/") else { exit(2) }
+    let fixture = arguments.count == 2 ? URL(fileURLWithPath: arguments[1]) : nil
+    let passed = preparationFormsSelfTest(fixture: fixture) && McpmeApp.preparationBindingSelfTest(fixture: fixture)
+    print(passed ? "preparation_ui_contracts_passed" : "preparation_ui_contracts_failed")
+    exit(passed ? 0 : 1)
+}
+
+/// Metadata for the explicit acceptance command; never a handoff authority gate.
+func nativeAgentHandoffObservation(proposal: AgentPreparationJob?, form: OnboardingFormV1?, pending: Int,
+    agentBusy: Bool, ordinaryBusy: Bool, agentError: String?, ordinaryError: String?,
+    preparationJobPresent: Bool, resolutionJobPresent: Bool) -> [String: Bool] {
+    let paired = proposal != nil && form != nil
+    return ["proposal_present": proposal != nil, "proposal_succeeded": proposal?.state == "succeeded",
+        "proposal_settled": proposal?.settled == true, "requests_complete": pending == 0,
+        "agent_idle": !agentBusy, "ordinary_idle": !ordinaryBusy,
+        "agent_error_absent": agentError == nil, "ordinary_error_absent": ordinaryError == nil,
+        "form_present": form != nil,
+        "form_import_matches": paired && form?.importID == proposal?.context.importID,
+        "form_revision_matches": paired && form?.revision == proposal?.context.revision,
+        "form_source_matches": paired && form?.sourceRevision == proposal?.context.sourceRevision,
+        "resolution_required": form?.resolutionRequired == true,
+        "resolution_result_absent": form != nil && form?.resolutionDigest == nil,
+        "preparation_job_absent": !preparationJobPresent, "resolution_job_absent": !resolutionJobPresent]
+}
+
+func nativeAgentHandoffObservationSelfTest() -> Bool {
+    let row: [String: Any] = ["schema_version": 1, "job_id": PreparationTestData.jobID,
+        "import_id": PreparationTestData.importID, "revision": 1, "source_revision": PreparationTestData.source,
+        "state": "succeeded", "local_io_settled": true, "proposal_digest": PreparationTestData.recipeDigest,
+        "candidate": NSNull(), "verification": NSNull(), "installed": false, "error_code": NSNull()]
+    guard let proposal = AgentPreparationJob(row), let form = OnboardingFormV1(PreparationTestData.resolutionForm()) else { return false }
+    func observe(_ proposal: AgentPreparationJob?, _ form: OnboardingFormV1?, pending: Int = 0,
+        agentBusy: Bool = false, ordinaryBusy: Bool = false, agentError: String? = nil, ordinaryError: String? = nil,
+        preparation: Bool = false, resolution: Bool = false) -> [String: Bool] {
+        nativeAgentHandoffObservation(proposal: proposal, form: form, pending: pending,
+            agentBusy: agentBusy, ordinaryBusy: ordinaryBusy, agentError: agentError, ordinaryError: ordinaryError,
+            preparationJobPresent: preparation, resolutionJobPresent: resolution)
+    }
+    let baseline = observe(proposal, form)
+    guard baseline.count == 16, baseline.values.allSatisfy({ $0 }),
+          observe(nil, nil)["form_import_matches"] == false, observe(nil, nil)["resolution_result_absent"] == false,
+          observe(proposal, nil)["form_present"] == false, observe(nil, form)["proposal_present"] == false else { return false }
+    for (key, result) in [("requests_complete", observe(proposal, form, pending: 1)),
+        ("agent_idle", observe(proposal, form, agentBusy: true)), ("ordinary_idle", observe(proposal, form, ordinaryBusy: true)),
+        ("agent_error_absent", observe(proposal, form, agentError: "agent_source_identity_mismatch")),
+        ("ordinary_error_absent", observe(proposal, form, ordinaryError: "preparation_form_unavailable")),
+        ("preparation_job_absent", observe(proposal, form, preparation: true)),
+        ("resolution_job_absent", observe(proposal, form, resolution: true))] {
+        guard result[key] == false, result.filter({ !$0.value }).count == 1 else { return false }
+    }
+    for (field, value, key) in [("import_id", "99999999-2222-4333-8444-555555555555" as Any, "form_import_matches"),
+        ("revision", 2 as Any, "form_revision_matches"), ("source_revision", String(repeating: "e", count: 64) as Any, "form_source_matches")] {
+        var changed = PreparationTestData.resolutionForm(); changed[field] = value
+        guard let mismatch = OnboardingFormV1(changed), observe(proposal, mismatch)[key] == false else { return false }
+    }
+    guard let resolved = OnboardingFormV1(PreparationTestData.resolutionForm(resolved: true)),
+          observe(proposal, resolved)["resolution_required"] == false,
+          observe(proposal, resolved)["resolution_result_absent"] == false else { return false }
+    return true
+}
+
+if CommandLine.arguments.dropFirst().first == "--agent-handoff-observation-self-test" {
+    guard CommandLine.arguments.count == 2 else { exit(2) }
+    let passed = nativeAgentHandoffObservationSelfTest()
+    print(passed ? "agent_handoff_observation_contracts_passed" : "agent_handoff_observation_contracts_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--preparation-form-error-self-test" {
+    guard CommandLine.arguments.count == 2 else { exit(2) }
+    _ = NSApplication.shared
+    let passed = PreparationWorkspaceView.formErrorObservationSelfTest()
+    print(passed ? "preparation_form_error_contracts_passed" : "preparation_form_error_contracts_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--agent-live-acceptance-preflight" {
+    guard CommandLine.arguments.count == 2 else { exit(2) }
+    print("agent_live_acceptance_preflight_v1"); exit(0)
+}
+
+if CommandLine.arguments.dropFirst().first == "--agent-live-acceptance-self-test" {
+    guard CommandLine.arguments.count == 2 else { exit(2) }
+    _ = NSApplication.shared
+    let passed = AgentPreparationView.liveAcceptanceSelfTest()
+    print(passed ? "agent_live_acceptance_contracts_passed" : "agent_live_acceptance_contracts_failed")
+    exit(passed ? 0 : 1)
+}
+
+if ["--preparation-native-acceptance", "--agent-native-acceptance", "--agent-live-native-acceptance"].contains(CommandLine.arguments.dropFirst().first ?? "") {
+    _ = NSApplication.shared
+    let arguments = Array(CommandLine.arguments.dropFirst())
+    guard arguments.count == 2, arguments[1].hasPrefix("/") else { exit(2) }
+    let passed = McpmeApp.preparationNativeAcceptance(fixture: URL(fileURLWithPath: arguments[1]), agent: arguments[0] != "--preparation-native-acceptance", liveAgent: arguments[0] == "--agent-live-native-acceptance")
+    print(passed ? "preparation_native_acceptance_passed" : "preparation_native_acceptance_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--directory-native-acceptance" {
+    _ = NSApplication.shared
+    let arguments = Array(CommandLine.arguments.dropFirst())
+    let context = arguments.count == 2 ? NativeDirectoryAcceptanceContext(fixture: URL(fileURLWithPath: arguments[1])) : nil
+    let passed = context.map { $0.claim() && McpmeApp.preparationNativeAcceptance(fixture: $0.fixture, directoryContext: $0) } ?? false
+    print(passed ? "directory_native_acceptance_passed" : "directory_native_acceptance_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--public-directory-native-acceptance" {
+    _ = NSApplication.shared
+    let arguments = Array(CommandLine.arguments.dropFirst())
+    let context = arguments.count == 2 ? NativeDirectoryAcceptanceContext(fixture: URL(fileURLWithPath: arguments[1]), publicPython: true) : nil
+    let passed = context.map { $0.claim() && McpmeApp.preparationNativeAcceptance(fixture: $0.fixture, directoryContext: $0) } ?? false
+    print(passed ? "public_directory_native_acceptance_passed" : "public_directory_native_acceptance_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--service-native-acceptance" {
+    _ = NSApplication.shared
+    let arguments = Array(CommandLine.arguments.dropFirst())
+    let context = arguments.count == 2 ? NativeRecipeAcceptanceContext(fixture: URL(fileURLWithPath: arguments[1]), service: true) : nil
+    let passed = context.map { McpmeApp.preparationNativeAcceptance(fixture: $0.fixture, serviceContext: $0) } ?? false
+    print(passed ? "service_native_acceptance_passed" : "service_native_acceptance_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--recipes-native-acceptance" {
+    _ = NSApplication.shared
+    let arguments = Array(CommandLine.arguments.dropFirst())
+    guard arguments.count == 2, arguments[1].hasPrefix("/") else { exit(2) }
+    let passed = McpmeApp.recipesNativeAcceptance(fixture: URL(fileURLWithPath: arguments[1]))
+    print(passed ? "recipes_native_acceptance_passed" : "recipes_native_acceptance_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--recipes-native-context-self-test" {
+    let passed = NativeRecipeAcceptanceContext.contractSelfTest()
+    print(passed ? "recipes_native_context_passed" : "recipes_native_context_failed")
     exit(passed ? 0 : 1)
 }
 

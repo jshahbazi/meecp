@@ -1,12 +1,14 @@
 # Phase 3 release authority
 
 Snapshot: 2026-10-04. **Supported Phase 3 source/runtime acceptance is complete;
-verified branch publication remains pending.** Runtime source is
+verified working-branch publication is complete.** Runtime source is
 24bae0f8fd0aa91ebaaba5ee2b0d7d4020cc9498, with TextGen recipe/components
 1.0.13. Current v10 management, selected live agent, CLI/cross-build upgrade,
 TextGen create/supplement and ten-case recipe lifecycle pass. Corrected complete
 artifact/signature/direct entitlement checks, final preservation and supported
-whole-phase review pass. D09 remains In progress until the remote SHA is verified.
+whole-phase review pass. D09 is Complete from first source/delivery publication
+77e2828e077403291c605544efac73aa6041b573, with exact origin/codex/phase3-public-acceptance
+SHA verified 2026-10-05 01:16:15 UTC at https://github.com/jshahbazi/mcpme.git.
 The documentation recording commit records this runtime anchor without
 rebuilding or rewriting its immutable artifact/receipt evidence.
 
@@ -55,7 +57,8 @@ retries and the full native/installed/source-free flow on exact current source.
 The earlier v9 cause remains unexplained; diagnostics do not establish a
 behavioral fix. Eight real calls are verified across the two successful batches,
 plus the failed batch whose count is unknown. Supported runtime acceptance is
-complete; verified branch publication and the separate capability gates remain.
+complete; verified branch publication is complete. The three additional
+capability gates remain separate.
 
 Credentials are explicit private owner state, excluded from release policy,
 review digests and public receipt content. Configuration/rotation does not add
@@ -231,7 +234,10 @@ lifecycle cases with source preservation, known-owned joins and zero external
 calls/timeouts/forced stop. Final full source/app/pinned-asset preservation passes: all 7,722 app files,
 811 source files, five pinned assets and strict signature remain exact with
 known-owned joins and zero provider calls. The final review clears qualified unchanged-scope evidence transfer and
-supported source/runtime acceptance; verified branch publication remains pending. Failed earlier receipts remain preserved.
+supported source/runtime acceptance. First verified working-branch publication
+is complete at 77e2828e077403291c605544efac73aa6041b573; remote SHA verified
+2026-10-05 01:16:15 UTC. This later documentation record does not claim its
+future commit was built/tested or passed remote CI. Failed earlier receipts remain preserved.
 
 A0R.06, A6.02 and A6.04 remain separate capabilities: executable preparation
 workers; additional providers including DeepSeek, GLM, Bedrock and local

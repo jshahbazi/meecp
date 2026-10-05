@@ -1,10 +1,10 @@
 # Phase 3 goals and subgoals
 
 Snapshot: 2026-10-04. **Supported Phase 3 source/runtime acceptance is complete;
-delivery publication remains pending.** The [final review](PHASE3_FINAL_REVIEW.md)
+verified working-branch publication is complete.** The [final review](PHASE3_FINAL_REVIEW.md)
 has no concrete blocking finding, and final app/source/pinned-asset preservation
-passes. The ledger has 100 in-scope Complete rows, D09 In progress pending a
-verified remote SHA, and three Separate gate rows. It does not mark all 104 rows
+passes. The ledger has 101 in-scope Complete rows, including D09, and three
+Separate gate rows. It does not mark all 104 rows
 Complete or admit additional providers/runtimes.
 
 Runtime/source anchor:
@@ -22,7 +22,7 @@ remain frozen.
 | --- | --- | --- |
 | Full Python v6 | 4,223 passed, zero failures, one filesystem skip; all 27 private opt-ins pass | Exact source 3ddaaddc/signed v9. Simulated private providers remain simulated. Not relabeled as a full 24bae/v10 rerun. |
 | Current Swift v6 | 21 passed, zero failures/skips | Source 24bae; synthetic installer fixtures are separate from actual signed workflow evidence. |
-| Scanner | 15 unit/eight actual new13 controls and full history/source pass | Exact public-value AND path exception; no broad bypass. Delivered documents retain their final scan step under D09. |
+| Scanner | 15 unit/eight actual new13 controls and full history/source pass; first delivery scan passes in 3.392 seconds | Exact public-value AND path exception; 813 tracked files/four staged documents at runtime source 24bae before first publication. |
 | V9 ordinary Python/MCP/ONNX | Five cases pass, 464.734s | Callable/dynamic MCP/mixed content/two CPU ONNX paths; actual native/probe/attachment/installed/source-free restart/relocation, with qualified transfer. |
 | V9 first service | Passes, 90.940s; zero real remote calls | Owned numeric-loopback fixture, no-folder intake, secret remap/revoke/drain and installed relocation. |
 | V9 native TLS | Eight cases pass; 22 evaluations/five owned errors/five releases/zero outstanding | Actual native positive/concurrent and trust/hostname/expiry/fetch-denial controls; zero AIA fetches or Keychain changes. |
@@ -51,12 +51,13 @@ f24145dcf9720f7cb4d63cacdf753174ad7b9b79f356664929f043bb011c7b0a.
 | A4: local text generation | Pinned CPU generation, queue/cancel/capacity and native/installed flows. | Complete in supported scope |
 | A5: integrated agent | Private locked/unlocked controls and sole selected real-provider public workflow. | Complete for exact accepted tuple |
 | A6: broader modular coverage | Component seams and first numeric-loopback service connector. | Initial scope complete; other providers/runtimes separately gated |
-| Delivery | Runtime/evidence/review complete; verified branch publication remains. | D09 In progress |
+| Delivery | Runtime/evidence/review and first verified branch publication complete. | D09 Complete |
 
 Exactly 104 original IDs/labels are retained: 71 acceptance, 24 cross-family and
 nine delivery. **Complete** means accepted within its recorded scope and limits.
-**Separate gate** means additional capability remains future. D09 becomes
-Complete only after the intended work is pushed and the remote SHA is verified.
+**Separate gate** means additional capability remains future. D09 is Complete
+from the verified first publication described below; it does not claim a rebuilt
+artifact, remote CI or notarized/public distribution.
 
 ## Acceptance goals
 
@@ -175,7 +176,25 @@ Complete only after the intended work is pushed and the remote SHA is verified.
 | D06 | First public automatic Python/MCP/ONNX capability | Complete | All five actual signed v9 ordinary Python/MCP/ONNX cases pass with final accepted unchanged-code/shared-helper transfer. |
 | D07 | Independent CLI, local LLM and agent capability enablement | Complete | Current signed v10 public CLI, local TextGen and sole selected agent independently pass capability/runtime acceptance; exact admission bounds are unchanged. |
 | D08 | Final independent whole-phase adversarial review and repairs | Complete | Final supported-scope whole-phase review has no blocking finding. Reviewer-authored areas retain independent checkpoint/root/peer clearance; no formal all-lines security scan or universal failure exclusion is claimed. |
-| D09 | Publish verified work to the working branch | In progress | Record the delivery documents, push codex/phase3-public-acceptance and verify the remote SHA before marking Complete. This snapshot does not claim publication. |
+| D09 | Publish verified work to the working branch | Complete | Source and delivery commit 77e2828e077403291c605544efac73aa6041b573 was pushed to origin/codex/phase3-public-acceptance and exact remote SHA verified 2026-10-05 01:16:15 UTC. This later recording update does not claim its own future commit was built/tested or that remote CI ran. |
+
+
+## Verified working-branch publication
+
+The first source/delivery commit 77e2828e077403291c605544efac73aa6041b573
+was pushed to codex/phase3-public-acceptance at
+[the selected origin repository](https://github.com/jshahbazi/mcpme).
+The exact remote SHA was verified 2026-10-05 01:16:15 UTC, closing D09.
+[Publication proof](/private/tmp/mcpme-phase3-first-publication-1791162975548487000.json)
+SHA-256 64ffc91a77d2ab9c403ffb1e163a05154160fbdb66ed9920edc266a7088766f2.
+The [first delivery scan](/private/tmp/mcpme-phase3-final-secret-scan-metadata.json)
+passes 813 tracked files/four staged documents at 24bae in 3.392 seconds,
+SHA-256 8ffab87bf5b9f9ac4b052bc4c4e8595291c0163b6f0824969a2f16d58bf5b1bb.
+
+This update is a later documentation recording step. Runtime/app evidence remains
+at frozen 24bae/signed v10; neither the published documentation commit nor this
+future recording commit is described as the built/tested runtime. Remote CI
+status is unclaimed. The final review retains its original review-time snapshot.
 
 ## Evidence-transfer limits
 
@@ -224,7 +243,8 @@ is preserved; separate collision controls retain their narrower coverage.
 
 Developer ID signing is verified. Notarization, public distribution and updating
 the user's installed /Applications/mcpme.app are unclaimed. Publication means
-pushing the verified working branch, with D09 still pending in this snapshot.
+pushing the verified working branch; D09 records its first exact remote verification.
+Later metadata recording retains the runtime anchor and requires no receipt rewrite.
 
 The final reviewer authored/supervised some repairs; independent checkpoint,
 root and peer controls supply those boundaries. No new formal all-lines security

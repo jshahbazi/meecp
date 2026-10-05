@@ -1,11 +1,11 @@
 # Phase 3 final acceptance evidence
 
 Snapshot: 2026-10-04. **Supported Phase 3 source/runtime acceptance is complete;
-publication remains pending.** All selected runtime workflows, final exact
+verified working-branch publication is complete.** All selected runtime workflows, final exact
 preservation and the supported-scope whole-phase review pass at
 24bae0f8fd0aa91ebaaba5ee2b0d7d4020cc9498/signed v10.
-The ledger has 100 in-scope rows Complete, D09 In progress pending a verified
-remote SHA and three Separate gate rows. The documentation recording commit
+The ledger has 101 in-scope rows Complete, including verified D09 publication,
+and three Separate gate rows. The documentation recording commit
 is distinct from this runtime anchor and does not rebuild/rewrite its receipts.
 
 The [durable final review](PHASE3_FINAL_REVIEW.md) records clearance and
@@ -80,7 +80,9 @@ not retroactively change the source built into v10, its native binary or seal.
 | Final preservation after all v10 flows | Accepted; all 7,722 app records exact/811 source clean/five pinned assets unchanged/strict signature/all known owned children joined; zero provider calls | [mcpme-signed10-final-preservation-v1.json](/private/tmp/mcpme-signed10-final-preservation-v1.json) | f24145dcf9720f7cb4d63cacdf753174ad7b9b79f356664929f043bb011c7b0a |
 | Retained investigative transfer negative | Full transfer rejected because newly compiled handoff body differs; valid negative evidence result, not a product finding | [mcpme-signed9-to-10-host-code-transfer-v1.json](/private/tmp/mcpme-signed9-to-10-host-code-transfer-v1.json) | ac51f69b07ea497eb880f8fc2ee20b653c0a67fc460d0d10b5f787916100fe8f |
 | Original final review Markdown | Supported source/runtime scope clear; no blocking finding; original private bytes before delivery punctuation/note | [mcpme-phase3-final-clearance-24bae-1791162132370021000.md](/private/tmp/mcpme-phase3-final-clearance-24bae-1791162132370021000.md) | e3410046199ab34c60a2436c3f41cd97aa4e75951642de262cd271a031285a37 |
-| Final review metadata packet | Accepted scope/independence/evidence limits; D09 publication remains | [mcpme-phase3-final-clearance-24bae-1791162132370021000.json](/private/tmp/mcpme-phase3-final-clearance-24bae-1791162132370021000.json) | f6817428c1081f978ef337f3b05949a9334e475fb8fd07bb1f126dabcd4dc367 |
+| Final review metadata packet | Accepted scope/independence/evidence limits; publication was pending at review time | [mcpme-phase3-final-clearance-24bae-1791162132370021000.json](/private/tmp/mcpme-phase3-final-clearance-24bae-1791162132370021000.json) | f6817428c1081f978ef337f3b05949a9334e475fb8fd07bb1f126dabcd4dc367 |
+| First verified working-branch publication | Commit 77e2828e077403291c605544efac73aa6041b573; selected origin/codex/phase3-public-acceptance; remote SHA verified 2026-10-05 01:16:15 UTC | [mcpme-phase3-first-publication-1791162975548487000.json](/private/tmp/mcpme-phase3-first-publication-1791162975548487000.json) | 64ffc91a77d2ab9c403ffb1e163a05154160fbdb66ed9920edc266a7088766f2 |
+| First source/delivery secret scan | Passed 3.392 seconds; 813 tracked files/four staged docs at frozen 24bae before first publication; not a future recording/CI result | [mcpme-phase3-final-secret-scan-metadata.json](/private/tmp/mcpme-phase3-final-secret-scan-metadata.json) | 8ffab87bf5b9f9ac4b052bc4c4e8595291c0163b6f0824969a2f16d58bf5b1bb |
 
 ## Additional terminal controls
 
@@ -171,19 +173,26 @@ Across the historical and current successful batches there are eight verified
 real calls, plus the failed v9 batch whose count remains unknown. Eight is not
 the exact total including that failed batch. No further provider calls are planned.
 
-## Supported-scope clearance and remaining delivery
+## Supported-scope clearance and verified publication
 
 The [final review](PHASE3_FINAL_REVIEW.md) clears supported Phase 3 source/runtime
 acceptance and final qualified evidence transfer. All five selected current v10
 workflows and final preservation pass. No concrete blocking review finding
-remains. This closes 100 in-scope rows while preserving all stated limits and
-three future capability gates.
+remains. Together with verified D09 publication, this closes 101 in-scope rows while
+preserving all stated limits and three future capability gates.
 
-Only delivery recording/publication remains under D09: commit the reconciled
-documents, push codex/phase3-public-acceptance and verify its remote SHA before
-marking that row Complete. Current publication is not inferred from runtime,
-signing or private receipt acceptance. Immutable runtime receipts remain bound
-to 24bae even when the documentation recording commit changes.
+D09 is Complete from the first exact remote verification: source/delivery
+commit 77e2828e077403291c605544efac73aa6041b573 was pushed to
+codex/phase3-public-acceptance on origin
+https://github.com/jshahbazi/mcpme.git and verified 2026-10-05 01:16:15 UTC.
+Publication is established by its explicit proof, not inferred from signing or
+runtime acceptance. The first delivery scan passes 813 tracked files/four staged
+documents at 24bae in 3.392 seconds.
+
+This update records that completed publication in a later documentation commit.
+It does not claim the future recording commit was built/tested, has already
+been pushed or passed remote CI. Frozen runtime/app receipts remain bound to
+24bae/signed v10. The final review keeps its historical review-time snapshot.
 
 ## Continuing capability boundaries
 

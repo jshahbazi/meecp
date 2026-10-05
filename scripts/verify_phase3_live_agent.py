@@ -85,10 +85,18 @@ def agent_call_metadata(job, draft, job_id):
     """Account durable reservations separately from remote provider execution."""
     unknown = {"known": False, "remote_calls_after_cancel": "unknown"}
     if (not isinstance(draft, dict) or not isinstance(draft.get("source"), dict)
-            or type(draft.get("revision")) is not int or not isinstance(job, dict)
+            or not isinstance(draft.get("draft_id"), str)
+            or re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", draft["draft_id"]) is None
+            or not isinstance(job_id, str)
+            or re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", job_id) is None
+            or not isinstance(draft["source"].get("revision"), str)
+            or re.fullmatch(r"(?:sha256:[0-9a-f]{64}|[0-9a-f]{40})", draft["source"]["revision"]) is None
+            or type(draft.get("revision")) is not int or draft["revision"] < 1 or not isinstance(job, dict)
             or job.get("job_id") != job_id or job.get("import_id") != draft.get("draft_id")
             or type(job.get("revision")) is not int
-            or job.get("revision") != draft["revision"] or job.get("source_revision") != draft["source"].get("revision")):
+            or job.get("revision") != draft["revision"] or job.get("source_revision") != draft["source"].get("revision")
+            or not isinstance(job.get("state"), str) or job["state"] not in JOB_STATES
+            or type(job.get("local_io_settled")) is not bool):
         return unknown
     calls = job.get("calls")
     if not isinstance(calls, list) or len(calls) > LIMITS["max_calls"]:
@@ -108,9 +116,7 @@ def agent_call_metadata(job, draft, job_id):
             return unknown
     if sum(call["transfer_bytes"] for call in calls) > LIMITS["max_transfer_bytes"]:
         return unknown
-    state = job.get("state")
-    return {"known": True, "state": state if isinstance(state, str) and state in JOB_STATES else "unknown",
-        "local_io_settled": job.get("local_io_settled") is True,
+    return {"known": True, "state": job["state"], "local_io_settled": job["local_io_settled"],
         "reserved_calls": len(calls), "usage_recorded_calls": sum(call.get("usage") is not None for call in calls),
         "remote_calls_after_cancel": "unknown"}
 

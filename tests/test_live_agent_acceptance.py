@@ -394,10 +394,10 @@ async def test_secondary_observation_failure_cannot_replace_original_case_error(
     "oversized_transfer", "bool_reservation", "wrong_reservation", "extra_usage_key", "bool_usage", "negative_usage", "oversized_usage", "missing_source"])
 def test_malformed_durable_call_records_remain_unknown(driver, fault):
     job_id, import_id = str(uuid.uuid4()), str(uuid.uuid4())
-    draft = {"draft_id": import_id, "revision": 1, "source": {"revision": "a" * 64}}
+    draft = {"draft_id": import_id, "revision": 1, "source": {"revision": "sha256:" + "a" * 64}}
     call = {"role": "interface", "transfer_bytes": 32, "reserved_output_tokens": driver.LIMITS["max_output_tokens"],
         "usage": {"input_tokens": 1, "output_tokens": 2}}
-    job = {"job_id": job_id, "import_id": import_id, "revision": 1, "source_revision": "a" * 64,
+    job = {"job_id": job_id, "import_id": import_id, "revision": 1, "source_revision": draft["source"]["revision"],
         "state": "failed", "local_io_settled": True, "calls": [call]}
     assert driver.agent_call_metadata(job, draft, job_id)["known"] is True
     if fault == "duplicate_role": job["calls"].append(copy.deepcopy(call))
@@ -414,6 +414,48 @@ def test_malformed_durable_call_records_remain_unknown(driver, fault):
     elif fault == "oversized_usage": call["usage"]["input_tokens"] = 10**9 + 1
     else: draft.pop("source")
     assert driver.agent_call_metadata(job, draft, job_id) == {"known": False, "remote_calls_after_cancel": "unknown"}
+
+
+@pytest.mark.parametrize("fault", ["missing_source_revision", "none_source_revision", "malformed_source_revision",
+    "missing_import", "none_import", "malformed_import", "malformed_job_id", "nonpositive_revision", "bool_revision",
+    "unknown_state", "missing_state", "none_state", "nonbool_settlement", "missing_settlement", "none_settlement", "bare_digest"])
+def test_paired_malformed_bindings_cannot_claim_known_call_accounting(driver, fault):
+    job_id, import_id = str(uuid.uuid4()), str(uuid.uuid4())
+    draft = {"draft_id": import_id, "revision": 1, "source": {"revision": "sha256:" + "a" * 64}}
+    job = {"job_id": job_id, "import_id": import_id, "revision": 1, "source_revision": draft["source"]["revision"],
+        "state": "failed", "local_io_settled": True, "calls": []}
+    assert driver.agent_call_metadata(job, draft, job_id)["known"] is True
+    # Both sides are deliberately corrupted alike: equality alone must never
+    # establish a valid original-source binding or metadata certainty.
+    if fault == "missing_source_revision": draft["source"].pop("revision"); job.pop("source_revision")
+    elif fault == "none_source_revision": draft["source"]["revision"] = job["source_revision"] = None
+    elif fault == "malformed_source_revision": draft["source"]["revision"] = job["source_revision"] = "not-a-digest"
+    elif fault == "missing_import": draft.pop("draft_id"); job.pop("import_id")
+    elif fault == "none_import": draft["draft_id"] = job["import_id"] = None
+    elif fault == "malformed_import": draft["draft_id"] = job["import_id"] = "not-a-uuid"
+    elif fault == "malformed_job_id": job_id = job["job_id"] = "not-a-uuid"
+    elif fault == "nonpositive_revision": draft["revision"] = job["revision"] = 0
+    elif fault == "bool_revision": draft["revision"] = job["revision"] = True
+    elif fault == "unknown_state": job["state"] = "not-a-state"
+    elif fault == "missing_state": job.pop("state")
+    elif fault == "none_state": job["state"] = None
+    elif fault == "nonbool_settlement": job["local_io_settled"] = 1
+    elif fault == "missing_settlement": job.pop("local_io_settled")
+    elif fault == "bare_digest": draft["source"]["revision"] = job["source_revision"] = "a" * 64
+    else: job["local_io_settled"] = None
+    assert driver.agent_call_metadata(job, draft, job_id) == {"known": False, "remote_calls_after_cancel": "unknown"}
+
+
+@pytest.mark.parametrize("source_revision", ["sha256:" + "a" * 64, "a" * 40])
+def test_call_accounting_accepts_exact_production_source_revision_domains(driver, source_revision):
+    from test_preparation_agent import request_for
+    request, _ = request_for(source_revision=source_revision)
+    job_id = str(uuid.uuid4())
+    draft = {"draft_id": request.import_id, "revision": request.revision, "source": {"revision": request.source_revision}}
+    job = {"job_id": job_id, "import_id": request.import_id, "revision": request.revision,
+        "source_revision": request.source_revision, "state": "analyzing", "local_io_settled": False, "calls": []}
+    assert driver.agent_call_metadata(job, draft, job_id) == {"known": True, "state": "analyzing",
+        "local_io_settled": False, "reserved_calls": 0, "usage_recorded_calls": 0, "remote_calls_after_cancel": "unknown"}
 
 
 @pytest.mark.parametrize("damage", ["absent", "unknown_code", "unknown_stage", "extra_condition", "integer_condition"])
@@ -457,7 +499,7 @@ async def test_failure_observation_reads_production_ledger_before_cleanup(driver
     from mcpme.preparation_agent_coordinator import AgentAttemptStore
     from mcpme.preparation_agent_host import AgentPreparationHost
     from mcpme.preparation_contracts import canonical_bytes
-    request, _ = request_for()
+    request, _ = request_for(source_revision="sha256:" + "a" * 64)
     store = AgentAttemptStore(tmp_path / "journal")
     try:
         attempt = store.create(request); attempt.update(state="running", local_io_settled=False); store.save(attempt)

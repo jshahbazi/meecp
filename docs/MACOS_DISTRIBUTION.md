@@ -33,11 +33,18 @@ as reported by `security find-identity -v -p codesigning`.
 
 ```sh
 uv run --locked python scripts/build_mcpme_dmg.py \
+  --command-signed-asset /path/to/command-native-v1.tar.gz \
   --sign-identity 'Developer ID Application: Your Name (TEAMID)' \
   --notary-profile mcpme-release \
   --keychain /path/to/release.keychain-db \
   --output dist/mcpme-release.dmg
 ```
+
+The active Phase 3 command policy requires the exact reviewed
+[signed command helper archive](SIGNED_COMMAND_HELPERS.md). The app signing
+certificate must match the archive's pinned certificate. The builder verifies
+and preserves the two helpers; recompiling or signing a replacement pair does
+not reproduce their immutable identity.
 
 `--keychain` scopes both signing identity lookup and notarization credentials to
 the selected Keychain. Omit it when the certificate and profile are accessible
@@ -48,8 +55,9 @@ The builder:
 
 1. Builds the Swift app and private host with the locked dependencies.
 2. Rejects escaping runtime symlinks and non-system absolute native dependencies.
-3. Signs every bundled Mach-O library, Python extension, interpreter, and native
-   helper before the outer app, using the selected Developer ID certificate,
+3. Preserves the reviewed command helper signatures and signs the remaining
+   bundled Mach-O libraries, Python extensions, interpreters, and native helpers
+   before the outer app, using the selected Developer ID certificate,
    hardened runtime, and secure timestamps. It verifies signatures against that
    exact certificate. It does not use `codesign --deep` to sign code.
 4. Refreshes host artifact hashes after signing and seals the application build

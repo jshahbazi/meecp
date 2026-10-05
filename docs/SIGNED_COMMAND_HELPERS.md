@@ -73,6 +73,18 @@ the caller's fresh owned staging area, which its build cleanup owns.
 
 ## Distribution integration
 
+The Signed installer workflow receives the exact archive through the
+`macos-release` environment secret `MCPME_COMMAND_SIGNED_ASSET_BASE64`.
+`.github/scripts/prepare_command_asset.py --output PATH` checks strict bounded
+base64, the fixed manifest size/hash, complete archive members and both signatures
+through `admit_archive` with a fresh private destination. It publishes only the
+verified archive to an absent mode-0600 output and emits its canonical path through
+`GITHUB_OUTPUT`. The workflow passes that exact path to
+`scripts/build_mcpme_dmg.py --command-signed-asset` before any signed build.
+The temporary admission stage is removed; the archive stays in `RUNNER_TEMP`
+for the build and is excluded from release asset uploads. This producer input
+does not select runtime authority or alter the reviewed manifest or helper bytes.
+
 The app producer must preflight the explicit reviewed archive before modifying
 its fresh staging host. It then removes only that stage's newly compiled command
 helper copies, calls `bundle`, and preserves exactly the returned paths while

@@ -64,8 +64,19 @@ Add these environment secrets under [Settings > Environments > macos-release](ht
 | `APPLE_API_KEY_P8_BASE64` | Base64-encoded private `.p8` key for the App Store Connect API. |
 | `APPLE_API_KEY_ID` | API key identifier. |
 | `APPLE_API_ISSUER_ID` | Issuer identifier for the API key. |
+| `MCPME_COMMAND_SIGNED_ASSET_BASE64` | Canonical base64 encoding of the exact reviewed `command-native-v1` signed helper archive. |
 
 Keep credentials out of Git and build logs. The helper writes credential files with owner-only permissions and captures credential-tool output. It registers the temporary signing keychain alongside the runner's existing user search list and checks signing before the app build. Unconditional cleanup restores the original search list, deletes the temporary keychain, and removes the private files. Missing or rejected credentials fail the release; the workflow does not fall back to an ad hoc signature.
+
+After the history scan, the workflow prepares the signed command archive before
+tests and Apple credential import. `.github/scripts/prepare_command_asset.py`
+bounds and decodes the environment input, checks the fixed manifest size/hash,
+and admits the complete archive and both signatures in a fresh private stage.
+It publishes a fresh mode-0600 archive under `RUNNER_TEMP`, supplies its canonical
+path to the DMG builder through `--command-signed-asset`, and removes the admission
+stage. Missing or invalid input fails with a fixed diagnostic; archive bytes and
+tool errors are never logged. Existing output is never overwritten. See
+[the signed helper contract](SIGNED_COMMAND_HELPERS.md#distribution-integration).
 
 To cut a release, open **Actions > Signed installer > Run workflow**, choose `main`, select **Version bump** (default `minor`), and approve the `macos-release` deployment. After both jobs succeed, download the DMG from the GitHub Release. Releases persist independently of the backup Actions artifact `mcpme-release-COMMIT`, which expires after thirty days. Rejection or timeout from Apple fails the run without publishing installer artifacts or a release.
 

@@ -54,6 +54,11 @@ jobs:
         run: uv run --locked python .github/scripts/publish_release.py prepare --bump "$VERSION_BUMP"
       - name: Scan history before importing credentials
         run: uv run --locked python .github/scripts/scan_secrets.py
+      - name: Prepare reviewed signed command helpers
+        id: command_asset
+        env:
+          MCPME_COMMAND_SIGNED_ASSET_BASE64: ${{ secrets.MCPME_COMMAND_SIGNED_ASSET_BASE64 }}
+        run: uv run --locked python .github/scripts/prepare_command_asset.py --output "$RUNNER_TEMP/mcpme-release-assets/command-native-v1.tar.gz"
       - name: Run tests before importing credentials
         run: uv run --locked python -m pytest -q
       - name: Import temporary Apple credentials
@@ -69,9 +74,11 @@ jobs:
         env:
           MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          COMMAND_SIGNED_ASSET: ${{ steps.command_asset.outputs.path }}
         run: |
           uv run --locked python scripts/build_mcpme_dmg.py \
             --version "$RELEASE_VERSION" \
+            --command-signed-asset "$COMMAND_SIGNED_ASSET" \
             --sign-identity "$MACOS_SIGNING_IDENTITY" \
             --keychain "$RUNNER_TEMP/mcpme-signing/signing.keychain-db" \
             --notary-profile mcpme-notary \

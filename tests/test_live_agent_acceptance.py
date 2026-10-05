@@ -365,23 +365,35 @@ def test_compiled_form_error_current_stale_malformed_and_recovery(native_recipe_
 
 
 @pytest.mark.asyncio
-async def test_secondary_observation_failure_cannot_replace_original_case_error(driver, tmp_path):
+@pytest.mark.parametrize("fault_stage", ["source_inspection", "native_run"])
+async def test_secondary_observation_failure_cannot_replace_original_case_error(driver, tmp_path, monkeypatch, fault_stage):
     harness = driver.LiveHarness(tmp_path, tmp_path, tmp_path, None, model="synthetic", credential_file=tmp_path / "not-read", report={})
     original = driver.common.AcceptanceError("synthetic_original_failure")
     joined = asyncio.Event()
-    async def start(*_, **kwargs):
-        assert kwargs == {"enabled": False}; return object()
-    async def configure(*_): return {"synthetic": True}
+    provider = {"provider_id": str(uuid.uuid4()), "generation": str(uuid.uuid4())}
+    async def start(state, *_, **kwargs):
+        assert kwargs == {"enabled": False}
+        driver.common.write_private_json(state / "manager-connection.json", {"synthetic": True})
+        return object()
+    async def configure(*_): return provider
     async def cli(_state, _environment, _home, *argv):
         if argv[:2] == ("imports", "create"):
             source = tmp_path / "scalar" / "unfamiliar source"
             return {"draft_id": str(uuid.uuid4()), "revision": 1,
                 "source": {"revision": "a" * 64, "files": [{"path": path.name, "sha256": driver.common.digest(path)} for path in source.iterdir()]}}
-        raise original
+        if fault_stage == "source_inspection": raise original
+        return {"candidates": []}
+    async def manager(*_):
+        return {"recipes": [{"id": driver.RECIPE, "version": "1.0.0", "digest": "a" * 64}],
+            "providers": [dict(provider, simulated=False)]}
+    async def run(*_, **_kwargs): raise original
+    def failed_count(*_): raise OSError("synthetic unavailable ledger")
     async def observe(*_): raise RuntimeError("synthetic secondary failure")
     async def shutdown(*_): joined.set()
     harness.start, harness.configure, harness.cli = start, configure, cli
+    harness.manager, harness.run = manager, run
     harness.observe_failure, harness.shutdown = observe, shutdown
+    monkeypatch.setattr(driver.native_common, "job_counts", failed_count)
     with pytest.raises(driver.common.AcceptanceError) as raised:
         await harness.case("scalar")
     assert raised.value is original and joined.is_set()

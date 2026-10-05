@@ -273,7 +273,10 @@ class LiveHarness(native_common.Harness):
             try:
                 code, _ = await self.run([str(self.native), "--agent-live-native-acceptance", str(fixture)], environment, home, timeout=360, capture=True)
             except common.AcceptanceError as error:
-                error.native_observation = native_common.job_counts(state)
+                try:
+                    error.native_observation = native_common.job_counts(state)
+                except BaseException:
+                    pass  # Optional diagnostics cannot replace the native failure.
                 raise
             common.require(output.is_file(), "native_agent_receipt_missing")
             native = common.private_json(output, 262144)

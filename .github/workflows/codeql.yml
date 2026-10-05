@@ -34,6 +34,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     permissions:
+      actions: read
       contents: read
       security-events: write
     strategy:

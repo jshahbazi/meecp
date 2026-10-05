@@ -20,6 +20,9 @@ from .preparation_contracts import PreparationError, canonical_bytes
 
 SANDBOX = Path("/usr/bin/sandbox-exec")
 _PYTHON = "python/bin/python3.12"
+# uv's standalone macOS interpreter embeds Python and exceeds 16 MiB.
+# Keep this larger bound specific to the interpreter binding.
+_INTERPRETER_MAX_BYTES = 32 * 1024**2
 _BOOTSTRAP = "bootstrap.py"
 _PREFIX = ('#!/bin/sh\nset -eu\n'
            'BIN=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\n'
@@ -146,7 +149,7 @@ class ProbeConfinementV1:
         if launcher not in _LAUNCHERS or (b'"$@"' not in launcher and entry.args):
             _failure("unsupported_preparation_probe_confinement")
         records = {artifact.path: artifact for artifact in package.lock.artifacts}
-        interpreter_hash, _ = _file(root / _PYTHON)
+        interpreter_hash, _ = _file(root / _PYTHON, maximum=_INTERPRETER_MAX_BYTES)
         bootstrap_hash, _ = _file(root / _BOOTSTRAP)
         for name, observed in ((entry.executable, launcher_hash), (_PYTHON, interpreter_hash), (_BOOTSTRAP, bootstrap_hash)):
             if name not in records or records[name].sha256 != observed:
@@ -209,9 +212,10 @@ class ProbeConfinementV1:
             _failure()
         if canonical_bytes(platform_identity()) != self.platform_json:
             _failure()
+        if _file(self.package_root / _PYTHON, maximum=_INTERPRETER_MAX_BYTES)[0] != self.interpreter_sha256:
+            _failure()
         for path, expected in ((self.reaper, self.reaper_sha256), (SANDBOX, self.sandbox_sha256),
                                (self.package_root / "bin/service", self.launcher_sha256),
-                               (self.package_root / _PYTHON, self.interpreter_sha256),
                                (self.package_root / _BOOTSTRAP, self.bootstrap_sha256)):
             if _file(path)[0] != expected:
                 _failure()

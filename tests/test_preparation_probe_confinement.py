@@ -133,6 +133,35 @@ def test_unknown_launcher_cannot_select_private_policy(private_runtime, probe_re
     assert not (workspace / "confined-home").exists()
 
 
+def test_large_private_interpreter_is_bound_and_rechecked(private_runtime, probe_reaper, tmp_path):
+    package, _, workspace = _private_fixture(tmp_path, private_runtime)
+    interpreter = package / "python/bin/python3.12"
+    # Model the standalone CI interpreter without launching synthetic bytes.
+    with interpreter.open("wb") as stream:
+        stream.truncate(16 * 1024**2 + 1)
+    _lock_all(package)
+    validated = validate_package(package)
+    plan = ProbeConfinementV1.capture(validated, workspace, probe_reaper)
+    plan.check(validated, probe_reaper)
+    with interpreter.open("r+b") as stream:
+        stream.write(b"changed")
+    with pytest.raises(PreparationError) as caught:
+        plan.check(validated, probe_reaper)
+    assert caught.value.code == "preparation_probe_confinement_mismatch"
+
+
+def test_oversized_private_interpreter_is_rejected(private_runtime, probe_reaper, tmp_path):
+    package, _, workspace = _private_fixture(tmp_path, private_runtime)
+    interpreter = package / "python/bin/python3.12"
+    with interpreter.open("wb") as stream:
+        stream.truncate(32 * 1024**2 + 1)
+    _lock_all(package)
+    with pytest.raises(PreparationError) as caught:
+        ProbeConfinementV1.capture(validate_package(package), workspace, probe_reaper)
+    assert caught.value.code == "preparation_probe_confinement_mismatch"
+    assert not (workspace / "confined-home").exists()
+
+
 def test_policy_cannot_be_widened_after_capture(private_runtime, probe_reaper, tmp_path):
     package, descriptor, workspace = _private_fixture(tmp_path, private_runtime)
     validated = validate_package(package)

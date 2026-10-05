@@ -1,17 +1,67 @@
-# Closed Phase 3 release authority
+# Phase 3 release authority
 
-This checkpoint implements distribution-owned admission and keeps every shipped
-gate closed. It does not record final public acceptance, enable a provider,
-select a model, or mint a TextGen recipe. Root integration must finish the
-backend closure before minting TextGen 1.0.9. Existing published components,
-recipes and signed runtime assets retain their original bytes.
+Snapshot: 2026-10-04. **Supported Phase 3 source/runtime acceptance is complete;
+verified branch publication remains pending.** Runtime source is
+24bae0f8fd0aa91ebaaba5ee2b0d7d4020cc9498, with TextGen recipe/components
+1.0.13. Current v10 management, selected live agent, CLI/cross-build upgrade,
+TextGen create/supplement and ten-case recipe lifecycle pass. Corrected complete
+artifact/signature/direct entitlement checks, final preservation and supported
+whole-phase review pass. D09 remains In progress until the remote SHA is verified.
+The documentation recording commit records this runtime anchor without
+rebuilding or rewriting its immutable artifact/receipt evidence.
 
-The fixed artifact is `templates/release-policies/phase3-v1.json`. It is outside
-the TextGen backend component closure, so an exact TextGen component key can be
-recorded after that closure freezes without making the digest self-referential.
-The artifact has no API, environment, state-setting, endpoint, executable-path,
-factory or latest-version selector. Changing it requires a new reviewed signed
-distribution. A running manager never reloads replacement authority.
+The exact shipped authority is templates/release-policies/phase3-v1.json,
+SHA-256 8a9a8fd69217352b49e0e338d4d652df8cebcac86609edae1190a88cd2d9a592.
+Changing this reviewed artifact requires a new signed distribution. A running
+manager does not reload replacement authority. There is no endpoint, environment,
+state-setting, executable path, provider factory or latest-version selector
+that grants public authority.
+
+Original published components/recipes, the signed TextGen runtime asset and
+fixed command helpers retain their recorded bytes. Current producer 13 engine,
+task and recipe bind the reviewed frozen backend closure. Catalog fingerprint
+scope is its explicit top-level implementation/asset inventory. Public admission
+also binds the complete verified host manifest, resolution producer files and
+held artifact fences, including nested native TLS; the narrower catalog hash
+alone is not a full nested-host closure claim.
+
+## Current admitted composition
+
+The current policy has six exact family heads and seven exact recipe closures:
+the ordinary Python/MCP, ONNX, CLI, TextGen and first service composition plus
+the sole unlocked Python agent component. Existing candidate kinds, command
+platform pins and service references retain their reviewed authority. Current
+TextGen engine/task/recipe references are 1.0.13.
+
+| Authority | Exact admitted value |
+| --- | --- |
+| Agent component | agent-unlocked-python-adapter-v1@1.0.0 |
+| Component digest | 7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f |
+| Provider adapter | openai-responses-v1 |
+| Adapter digest | f651b36ab4b3d4fe6479457e5a31f129b1339c41536e02bfb53cbbf4025cebc1 |
+| Sole model | gpt-6.1-sol |
+| Unlocked resolution | Strict Boolean true |
+| TextGen engine digest | 899aa082f51bbe079968ce4540fa801215adcb9f8a2fc622844e4e63ee133c9e |
+| TextGen task digest | 936c30b0ede738344713d37d62cb71dbfea59b7375dfa24ea023d9693bf9274a |
+| TextGen recipe digest | c5fff2ecc6d6018f61fe3c65f929be389381c572149d9dbebffc11c716123465 |
+
+Historical signed source 2fa verifies the selected OpenAI tuple with four real
+calls, zero retries and full native resolution/preparation/attachment/installed
+source-free acceptance. Its public_release_accepted=false scope remains
+historical. Earlier v9 failed at agent_handoff with unexplained cause and unknown
+remote-call count. The diagnostic-only current source adds bounded observation;
+the bounded v10 attempt independently passes four real calls, zero automatic
+retries and the full native/installed/source-free flow on exact current source.
+The earlier v9 cause remains unexplained; diagnostics do not establish a
+behavioral fix. Eight real calls are verified across the two successful batches,
+plus the failed batch whose count is unknown. Supported runtime acceptance is
+complete; verified branch publication and the separate capability gates remain.
+
+Credentials are explicit private owner state, excluded from release policy,
+review digests and public receipt content. Configuration/rotation does not add
+a provider, model, recipe, secret privilege or execution permission. The first
+runtime service connector is separately tested using an owned numeric-loopback
+OpenAI-compatible protocol fixture with zero real remote-provider/model calls.
 
 ## Exact JSON contract
 
@@ -21,7 +71,7 @@ the existing closed component schema. Duplicate references, component sets,
 adapter IDs, model IDs and candidate kinds are rejected.
 
 | Field | Type and bounds | Authority |
-|---|---|---|
+| --- | --- | --- |
 | `schema_version` | Integer `1`, not Boolean | Format only |
 | `policy_id` | 1–128 identifier characters | Reviewed policy identity |
 | `preparation.families` | At most 32 component references | Exact composite family implementations |
@@ -42,16 +92,14 @@ Every selected reference must match the current registered component digest.
 Every dependency must appear in its exact recipe closure. Agent components must
 also appear in preparation families and singleton recipe closures, and match
 registered closed guides. Provider policy alone cannot authorize any family.
-The first registered transport is OpenAI Responses; no other transport is
-advertised or implemented by this checkpoint. Credentials remain deliberately
-entered owner state and never appear in release policy or review digests.
+Only the exact accepted OpenAI Responses adapter and sole model above are
+admitted. Credentials never appear in release policy or review digests.
 
-Command records delegate to the separately authored
-`preparation_release_command_admission.py`. The command family cannot be
-advertised through a public preparation policy without both installed and
-measured-preparation admission. Inventory JSON remains byte identification, not
-authority. Hard aggregate enforcement and complete lifetime coverage remain
-false; the original measured same-user scope is unchanged.
+Command records delegate to `preparation_release_command_admission.py`. The
+command family cannot be advertised through a public preparation policy without
+both installed and measured-preparation admission. Inventory JSON identifies
+bytes and grants no authority. Hard aggregate enforcement and complete lifetime
+coverage remain false; the original measured same-user scope is unchanged.
 
 An otherwise valid signed distribution can run on a supported host OS whose
 exact kernel/product tuple has not passed command acceptance. The command gate
@@ -92,21 +140,32 @@ fallback. The app producer can package the closed policy before creating its
 manifest and seal without changing backend component bytes. Active-policy
 acceptance remains specific to the reviewed Developer ID distribution.
 
-The verified result retains an immutable baseline of host/app file and directory
-identities plus exact original policy bytes. Small synchronous fences check
-policy/build/outer-seal members at metadata commits. Joined off-loop full checks
-cover review, controlled execution, publication, resolution consumption and
-agent adoption. Replacements fail closed; checks never capture a new baseline.
-Startup inspection also joins repeated cancellation. These are checks within
-the existing same-user filesystem and process boundary, not a claim to resist
-that user replacing the running interpreter or privileged filesystem forgery.
+The verified result retains a fixed captured baseline of host/app file and
+directory identities plus exact original policy bytes. Small synchronous
+fences check policy/build/outer-seal members at metadata commits. Joined
+off-loop full checks cover review, controlled execution, publication,
+resolution consumption and agent adoption. Replacements fail closed; checks
+never capture a new baseline. Startup inspection also joins repeated
+cancellation. This baseline is enforced by the implementation, not by a
+language-level immutable-object guarantee.
+
+Only the exact validated enclosing app root may tolerate cosmetic ctime
+changes. Its held no-follow directory descriptor retains the original
+device/inode/type, UID/GID, permissions, link count, size, mtime, filesystem
+flags and ordered POSIX ACL identity. All descendants and files keep their
+strict ctime checks. ACL/flag/group, permission, inode and structure changes
+still revoke authority; inspection errors deny. No serialized field, client
+input or constructor flag selects this exception, and no failed check
+rebaselines it. These controls allow observed macOS root metadata changes
+without claiming protection against privileged forgery or an owner replacing
+the running interpreter.
 
 The complete canonical policy digest and exact verified host manifest digest
 bind both preparation and agent admission identities. This also binds the
 command adapter and other backend implementation bytes across host upgrades.
-Preparation/resolution producer identities and held agent plans
-therefore change when any release-authority record changes. Old reviews cannot
-gain authority through a restart with a different policy. Critical artifact
+Preparation/resolution producer identities and held agent plans therefore
+change when any release-authority record changes. Old reviews cannot gain
+authority through a restart with a different policy. Critical artifact
 replacement also suppresses current capability/provider availability metadata.
 
 ## One public resolution owner
@@ -125,25 +184,74 @@ reservation owner. Context-local producer selection resets after each task.
 Analysis and adoption still execute no source and resolve no dependencies.
 
 Provider list/review flags reflect source admission, exact adapter/model
-eligibility and current credential status. Adding credentials grants no
-authority. Rotation/removal changes existing provider-generation fences. The
-public host rejects mixing source admission with private simulated/live flags
-or injected providers. Test transports below are isolated test instrumentation.
+eligibility and current credential status. Rotation/removal changes existing
+provider-generation fences. The public host rejects mixing source admission
+with private simulated/live flags or injected providers. Private test transports
+remain isolated instrumentation and do not establish live compatibility.
 
-## Validation and remaining gates
+## Accepted validation and capability boundaries
 
-Focused controls cover closed/ambiguous policy input, file kinds and membership,
-signature metadata rejection, realistic large build inventories, held artifact
-replacement, cancellation joins, ordinary/proposal separation, current producer
-and source changes, recovery, publication and result consumption. A four-call
-request-inspecting mock transport produces an actual proposal and exercises
-adoption; it provides no live-provider evidence. Synthetic signature metadata
-controls provide no actual signed-app acceptance claim.
+Full producer 13 Python v6 passes 4,223 tests with zero failures and one
+filesystem-dependent casefold skip. All 27 actual private build, acquisition,
+resolution, SDK and confinement opt-ins pass; their simulated providers remain
+simulated evidence. Current Swift v6 passes 21, zero failures/skips. Diagnostic
+request/callback/privacy controls and scanner 15 unit/eight actual new13-bundle
+controls plus full history/source pass.
 
-Before activation, integration must compose the command admission module,
-centrally mint the new immutable TextGen closure, build a coherent signed app,
-and pass each family's final ordinary native/installed/relocated path under its
-draft exact policy. Final reviewed literal keys can then be committed in this
-external artifact without changing backend bytes. A5 live acceptance still
-requires the user's selected provider/model and explicitly entered credentials.
-Whole-phase adversarial review and public release remain open.
+The repaired native TLS ownership path has independent pure ABI/negative
+controls and eight actual signed v9 native cases: 22 actual Security evaluations,
+five returned owned CFErrorRefs/five matching releases, zero outstanding errors.
+Trust, hostname, expiry and fetch-denial controls pass without AIA fetches or
+Keychain trust changes. V9 ordinary Python/MCP/ONNX five-case and service
+acceptance also pass. The final review accepts those v9 receipts only within
+the independently verified unchanged scope. Current v10 native binary, manifests
+and signature are separately bound.
+
+Current signed v10 has complete corrected root/peer app/host/source/signature
+and actual direct entitlement checks. Source 24bae0f8 contains six approved
+diagnostic/scanner path changes from 3ddaaddc; all 805 other Git blobs, including
+backend, policy, templates and assets, match. That permits review of unchanged
+backend/runtime source evidence. It does not imply a full Python re-run at 24bae0f8 or byte-identical outer v9/v10
+apps. All host Python bytes, 162 effective requirements and nonartifact toolchain
+metadata match. Of 33 changed host Mach-O members, 32 loadable bodies match with
+CMS excluded; the newly compiled host/bin/mcpme-handoff body differs even when
+UUID is masked. Full 4,223 Python/all 27 host opt-ins remain source 3ddaaddc/signed v9
+receipts transferred only for unchanged code scope with independent input proof.
+They did not rerun on v10. Fresh current management/live/CLI/TextGen/lifecycle independently validate the
+current helper in their recorded runtime scopes.
+The retained failed investigative transfer receipt is a valid negative evidence
+result, not a product finding.
+
+Current v10 completed/revoked management runs pass exact grants, idempotency,
+restart association and selected revoke, with six SDK sessions exited and known
+owned work joined. The wrapper relocated_app_unchanged field is null; management
+relocated-app preservation is unclaimed. Live acceptance proves local functional
+and known-owned behavior, not remote cancellation or settlement. All five current v10 runtime workflows pass independently, including ten recipe
+lifecycle cases with source preservation, known-owned joins and zero external
+calls/timeouts/forced stop. Final full source/app/pinned-asset preservation passes: all 7,722 app files,
+811 source files, five pinned assets and strict signature remain exact with
+known-owned joins and zero provider calls. The final review clears qualified unchanged-scope evidence transfer and
+supported source/runtime acceptance; verified branch publication remains pending. Failed earlier receipts remain preserved.
+
+A0R.06, A6.02 and A6.04 remain separate capabilities: executable preparation
+workers; additional providers including DeepSeek, GLM, Bedrock and local
+services; broader runtimes/model families, GPU/Metal, resident vision and GUI
+automation. The selected OpenAI tuple and first runtime connector do not admit
+these extensions.
+
+Production native handler checks do not establish physical clicks. Functional
+SDK/tensor/generation/generated-adapter checks do not measure recognition or
+general model quality. Remote/unowned work settlement remains unknown;
+deliberate owner-loss tests retain state/charges for reconciliation. The existing
+same-user/trusted-engine scope, unproved wildcard-listener/hostile-worker
+containment, and false hard-aggregate/full-lifetime claims remain unchanged.
+Developer ID signing is verified; notarization, public distribution and updating
+the user's installed app are unclaimed.
+
+Current source/artifact/receipt bindings and accepted runtime gates are recorded
+in [final review](PHASE3_FINAL_REVIEW.md), [final acceptance](PHASE3_FINAL_ACCEPTANCE.md), [status](PHASE3_STATUS.md),
+[live acceptance](LIVE_AGENT_ACCEPTANCE.md) and
+[management acceptance](PHASE3_PUBLIC_MANAGEMENT_ACCEPTANCE.md). Historical
+1.0.12 policies/bundles and the selected12 policy SHA-256
+4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375
+remain immutable fixtures rather than current authority.

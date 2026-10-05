@@ -1,5 +1,9 @@
 # Phase 3 final acceptance evidence
 
+This index freezes the signed v10/TextGen 1.0.13 evidence. The
+[current source CI repair](PHASE3_RELEASE_POLICY.md#current-source-after-the-ci-repair)
+uses TextGen 1.0.14; signed live acceptance has not been rerun for that source.
+
 Snapshot: 2026-10-04. **Supported Phase 3 source/runtime acceptance is complete;
 verified working-branch publication is complete.** All selected runtime workflows, final exact
 preservation and the supported-scope whole-phase review pass at

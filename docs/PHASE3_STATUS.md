@@ -1,5 +1,9 @@
 # Phase 3 goals and subgoals
 
+The acceptance ledger below records signed v10/TextGen 1.0.13. The
+[current source CI repair](PHASE3_RELEASE_POLICY.md#current-source-after-the-ci-repair)
+uses TextGen 1.0.14; its fresh unit controls do not replace the recorded runtime receipts.
+
 Snapshot: 2026-10-04. **Supported Phase 3 source/runtime acceptance is complete;
 verified working-branch publication is complete.** The [final review](PHASE3_FINAL_REVIEW.md)
 has no concrete blocking finding, and final app/source/pinned-asset preservation

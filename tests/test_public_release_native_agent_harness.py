@@ -175,12 +175,12 @@ def test_actual_candidate_policy_requires_typed_exact_closed_record(driver, dama
         with pytest.raises(driver.common.AcceptanceError): driver.closed_release_policy(value)
 
 
-@pytest.mark.parametrize("previous_version", [None, "1.0.9", "1.0.10", "1.0.11"])
+@pytest.mark.parametrize("previous_version", [None, "1.0.9", "1.0.10", "1.0.11", "1.0.13"])
 def test_textgen_keys_bind_actual_current_producer_to_literal_policy(driver, monkeypatch, previous_version):
     from mcpme import preparation_textgen
     assert ENGINE[0] == preparation_textgen.ENGINE_ID == "llamacpp-cpu-v1"
     assert TASK[0] == preparation_textgen.TASK_ID == "text-generate-v1"
-    assert preparation_textgen.VERSION == "1.0.13"
+    assert preparation_textgen.VERSION == "1.0.14"
     if previous_version is None:
         with pytest.raises(driver.common.AcceptanceError, match="combined_textgen_version_changed"):
             driver.textgen_keys()
@@ -206,8 +206,7 @@ def test_historical_policy_literal_remains_frozen():
         "components": [], "providers": [], "unlocked_resolution": False}
 
 
-def test_current13_policy_changes_only_textgen_references():
-    from mcpme.preparation_release_policy import POLICY_PATH
+def test_historical13_policy_changes_only_textgen_references():
     selected12 = json.loads(selected12_fixture_bytes())
     expected = copy.deepcopy(selected12)
     expected["policy_id"] = "phase3-live-agent-acceptance-candidate-v1"
@@ -218,19 +217,38 @@ def test_current13_policy_changes_only_textgen_references():
          "digest": "899aa082f51bbe079968ce4540fa801215adcb9f8a2fc622844e4e63ee133c9e"},
         {"id": "text-generate-v1", "version": "1.0.13",
          "digest": "936c30b0ede738344713d37d62cb71dbfea59b7375dfa24ea023d9693bf9274a"}]
+    assert json.loads(historical13_fixture_bytes()) == expected
+
+
+def test_current14_policy_changes_only_textgen_references():
+    from mcpme.preparation_release_policy import POLICY_PATH
+    expected = json.loads(historical13_fixture_bytes())
+    expected["preparation"]["families"][3] = {"id": "text-generate-v1", "version": "1.0.14",
+        "digest": "923c7d2ad7f913ab5491a31119cbba6e4433cc12593605dba1f2f004f4d57934"}
+    expected["preparation"]["recipe_component_sets"][4] = [
+        {"id": "llamacpp-cpu-v1", "version": "1.0.14",
+         "digest": "ce71166c4c91139ff88532f5a51ac9a0e0f265606a6a7ab9ebe03228f30609f5"},
+        {"id": "text-generate-v1", "version": "1.0.14",
+         "digest": "923c7d2ad7f913ab5491a31119cbba6e4433cc12593605dba1f2f004f4d57934"}]
     policy_path = Path(__file__).resolve().parents[1] / POLICY_PATH
     assert json.loads(policy_path.read_bytes()) == expected
     assert hashlib.sha256(policy_path.read_bytes()).hexdigest() == (
-        "8a9a8fd69217352b49e0e338d4d652df8cebcac86609edae1190a88cd2d9a592")
+        "5bb20b7a8cde39368a5cc3d03a92a4ed3f69d92ac56c317b6f696432863925ea")
     from mcpme import preparation_textgen
     assert {item.key for item in preparation_textgen.references()} == {
-        ("llamacpp-cpu-v1", "1.0.13", "899aa082f51bbe079968ce4540fa801215adcb9f8a2fc622844e4e63ee133c9e"),
-        ("text-generate-v1", "1.0.13", "936c30b0ede738344713d37d62cb71dbfea59b7375dfa24ea023d9693bf9274a")}
+        ("llamacpp-cpu-v1", "1.0.14", "ce71166c4c91139ff88532f5a51ac9a0e0f265606a6a7ab9ebe03228f30609f5"),
+        ("text-generate-v1", "1.0.14", "923c7d2ad7f913ab5491a31119cbba6e4433cc12593605dba1f2f004f4d57934")}
+
+
+def historical13_fixture_bytes():
+    path = Path(__file__).resolve().parent / "fixtures/phase3-selected-textgen-1-0-13-policy.json"
+    raw = path.read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == "8a9a8fd69217352b49e0e338d4d652df8cebcac86609edae1190a88cd2d9a592"
+    return raw
 
 
 def selected12_fixture_bytes():
-    path = Path(__file__).resolve().parents[1] / "templates/release-policies/phase3-v1.json"
-    raw = path.read_bytes()
+    raw = historical13_fixture_bytes()
     for current, old in ((b"1.0.13", b"1.0.12"),
                          (b"899aa082f51bbe079968ce4540fa801215adcb9f8a2fc622844e4e63ee133c9e", b"7800e0d271ee220b6feff59b9df1959c22387d57b5485414473c302ba8c502fa"),
                          (b"936c30b0ede738344713d37d62cb71dbfea59b7375dfa24ea023d9693bf9274a", b"60ee19b6a5989e75481f1886d85b545f2f7948eca3496c0ab8b3cc3cb0d0fa2d")):
@@ -249,7 +267,8 @@ def test_lifecycle_policy_guard_accepts_historical_and_current_bytes(tmp_path, m
     policy_path.parent.mkdir(parents=True)
     for raw, expected_scope, expected in ((ROOT_POLICY_JSON.encode(), "closed", "c8fa615def941e66e85a68ac0e7cc46dd7caf1797918fc03fdd5277ac2326522"),
                           (selected12_fixture_bytes(), "selected_model_accepted", "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375"),
-                          ((Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes(), "selected_model_accepted", "8a9a8fd69217352b49e0e338d4d652df8cebcac86609edae1190a88cd2d9a592")):
+                          (historical13_fixture_bytes(), "selected_model_accepted", "8a9a8fd69217352b49e0e338d4d652df8cebcac86609edae1190a88cd2d9a592"),
+                          ((Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes(), "selected_model_accepted", "5bb20b7a8cde39368a5cc3d03a92a4ed3f69d92ac56c317b6f696432863925ea")):
         policy_path.write_bytes(raw)
         scope, observed = lifecycle.verify_lifecycle_policy(host)
         assert observed == expected and scope == expected_scope

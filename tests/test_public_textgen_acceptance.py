@@ -11,8 +11,8 @@ sys.path.insert(0, str(SCRIPTS))
 spec = importlib.util.spec_from_file_location("public_textgen_acceptance", SCRIPTS / "verify_phase3_public_textgen.py")
 driver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(driver)
-ENGINE = ("llamacpp-cpu-v1", "1.0.13", "b" * 64)
-TASK = ("text-generate-v1", "1.0.13", "c" * 64)
+ENGINE = ("llamacpp-cpu-v1", "1.0.14", "b" * 64)
+TASK = ("text-generate-v1", "1.0.14", "c" * 64)
 
 
 @pytest.mark.parametrize("requested", [False, True])
@@ -26,12 +26,12 @@ async def test_public_textgen_start_and_restart_use_ordinary_launcher(monkeypatc
     assert calls == [False]
 
 
-@pytest.mark.parametrize("previous_version", [None, "1.0.9", "1.0.10", "1.0.11"])
+@pytest.mark.parametrize("previous_version", [None, "1.0.9", "1.0.10", "1.0.11", "1.0.12", "1.0.13"])
 async def test_public_defaults_bind_actual_current_producer_before_start(monkeypatch, previous_version):
     from mcpme import preparation_textgen
     version = preparation_textgen.VERSION
     refs = {item.id: item.key for item in preparation_textgen.references()}
-    assert version == "1.0.13" and preparation_textgen.ENGINE_ID == "llamacpp-cpu-v1"
+    assert version == "1.0.14" and preparation_textgen.ENGINE_ID == "llamacpp-cpu-v1"
     started = []
     harness = object.__new__(driver.PublicTextgenHarness)
     harness.new_case = lambda label: ("base", "state", "home", {})

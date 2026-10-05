@@ -1,5 +1,35 @@
 # Phase 3 release authority
 
+## Current source after the CI repair
+
+The tracked source now uses TextGen engine/task/recipe 1.0.14. The probe
+confinement repair permits the trusted private interpreter up to 32 MiB while
+retaining the existing launcher/bootstrap/helper bounds, exact file identity checks and
+the existing total runtime bound. That backend change requires a new immutable
+TextGen component closure and recipe. The current release policy changes only
+the TextGen references; all other family, agent, service and command authority
+remains exact.
+
+| Current source binding | SHA-256 |
+| --- | --- |
+| Release policy | 5bb20b7a8cde39368a5cc3d03a92a4ed3f69d92ac56c317b6f696432863925ea |
+| TextGen engine | ce71166c4c91139ff88532f5a51ac9a0e0f265606a6a7ab9ebe03228f30609f5 |
+| TextGen task | 923c7d2ad7f913ab5491a31119cbba6e4433cc12593605dba1f2f004f4d57934 |
+| TextGen recipe | 6f643fa3a1cb89ef2c4aa3c4efe0a3941b1d70c416a363f2d6d16cd2f8c23f45 |
+
+The 1.0.14 recipe was generated with `write_textgen_recipe` using `uv run
+--locked` and contains nine files. Focused unit and acceptance-harness controls
+pass: 254 tests, with 144 opt-in scanner integrations skipped. Lifecycle
+coverage includes upgrades from 1.0.13 with retained enabled snapshots,
+disable/revoke/remove/deprecate choices and collected tombstones. All historical
+recipe files are preserved. The signed v10 runtime/live acceptance below belongs
+to its recorded source and TextGen 1.0.13; it has not been rerun for 1.0.14.
+The exact selected13 policy is retained at
+`tests/fixtures/phase3-selected-textgen-1-0-13-policy.json`, SHA-256
+8a9a8fd69217352b49e0e338d4d652df8cebcac86609edae1190a88cd2d9a592.
+
+## Recorded signed v10 acceptance
+
 Snapshot: 2026-10-04. **Supported Phase 3 source/runtime acceptance is complete;
 verified working-branch publication is complete.** Runtime source is
 24bae0f8fd0aa91ebaaba5ee2b0d7d4020cc9498, with TextGen recipe/components
@@ -12,7 +42,7 @@ SHA verified 2026-10-05 01:16:15 UTC at https://github.com/jshahbazi/mcpme.git.
 The documentation recording commit records this runtime anchor without
 rebuilding or rewriting its immutable artifact/receipt evidence.
 
-The exact shipped authority is templates/release-policies/phase3-v1.json,
+The exact recorded signed v10 authority used templates/release-policies/phase3-v1.json,
 SHA-256 8a9a8fd69217352b49e0e338d4d652df8cebcac86609edae1190a88cd2d9a592.
 Changing this reviewed artifact requires a new signed distribution. A running
 manager does not reload replacement authority. There is no endpoint, environment,
@@ -20,20 +50,20 @@ state-setting, executable path, provider factory or latest-version selector
 that grants public authority.
 
 Original published components/recipes, the signed TextGen runtime asset and
-fixed command helpers retain their recorded bytes. Current producer 13 engine,
+fixed command helpers retain their recorded bytes. Recorded producer 13 engine,
 task and recipe bind the reviewed frozen backend closure. Catalog fingerprint
 scope is its explicit top-level implementation/asset inventory. Public admission
 also binds the complete verified host manifest, resolution producer files and
 held artifact fences, including nested native TLS; the narrower catalog hash
 alone is not a full nested-host closure claim.
 
-## Current admitted composition
+## Recorded signed v10 admitted composition
 
-The current policy has six exact family heads and seven exact recipe closures:
+The recorded policy has six exact family heads and seven exact recipe closures:
 the ordinary Python/MCP, ONNX, CLI, TextGen and first service composition plus
 the sole unlocked Python agent component. Existing candidate kinds, command
-platform pins and service references retain their reviewed authority. Current
-TextGen engine/task/recipe references are 1.0.13.
+platform pins and service references retain their reviewed authority. The
+TextGen engine/task/recipe references in this acceptance record are 1.0.13.
 
 | Authority | Exact admitted value |
 | --- | --- |

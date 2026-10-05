@@ -1,5 +1,6 @@
 """Pinned helper fault variants exercise fail-closed native control paths."""
 from pathlib import Path
+import signal
 import subprocess
 
 import pytest
@@ -77,28 +78,30 @@ async def test_native_unknown_policy_fails_before_source_execution(binaries, tmp
 @pytest.mark.parametrize("fallback", [False, True])
 async def test_leader_exit_between_waitid_and_live_usage_read(binaries, tmp_path, fallback):
     header = (ROOT / "scripts/mcpme-command-resource-v1.h").read_text()
-    line = "        int result = resource_observe(m, first[i], leader, leader_exited && first[i] == leader, &footprint);"
-    assert header.count(line) == 1
-    # After a real first sample and source release, retain the outer live
-    # observation while the actual original child exits. Never synthesize
-    # cached counters, PID identity, or native exit status.
-    barrier = '''        if (m->report.samples && first[i] == leader && !leader_exited) {
-            siginfo_t proof = {0};
-            for (int n = 0; n < 60 && proof.si_pid != leader; ++n) {
-                if (waitid(P_PID, (id_t)leader, &proof, WEXITED | WNOHANG | WNOWAIT)) return resource_fail(m, RR_METRIC);
-                usleep(1000);
-            }
-            if (proof.si_pid != leader) return resource_fail(m, RR_METRIC);
-        }
-'''
-    header = header.replace(line, barrier + line)
     if not fallback:
         condition = "if ((result == RR_METRIC || result == RR_IDENTITY) && first[i] == leader && !leader_exited)"
         assert header.count(condition) == 1
         header = header.replace(condition, "if (0)")
     (tmp_path / "mcpme-command-resource-v1.h").write_text(header)
+    native = (ROOT / "scripts/mcpme-command-resource-reap.c").read_text()
+    line = "                resource_stopped = resource_sample(&monitor, child, exited);"
+    assert native.count(line) == 1
+    # After the first real sample and source release, terminate the original
+    # held child after outer waitid observed it live. Wait for its actual exit
+    # before the read window starts, retaining the stale live observation that
+    # exercises fallback. Race setup must not consume the sampler's budget.
+    barrier = '''                if (source_released && !exited) {
+                    siginfo_t proof = {0};
+                    if (kill(child, SIGTERM)) return 70;
+                    int waited;
+                    do {
+                        waited = waitid(P_PID, (id_t)child, &proof, WEXITED | WNOWAIT);
+                    } while (waited && errno == EINTR);
+                    if (waited || proof.si_pid != child) return 70;
+                }
+'''
     source = tmp_path / "helper.c"
-    source.write_bytes((ROOT / "scripts/mcpme-command-resource-reap.c").read_bytes())
+    source.write_text(native.replace(line, barrier + line))
     helper = tmp_path / "helper"
     compiled = subprocess.run(["clang", "-Wall", "-Wextra", "-Werror", "-O2", str(source), "-o", str(helper)],
         capture_output=True, timeout=30)
@@ -107,9 +110,11 @@ async def test_leader_exit_between_waitid_and_live_usage_read(binaries, tmp_path
     owner = executor(pair, tmp_path / "state")
     try:
         policy = ResourcePolicyV1(read_window_ns=100_000_000, sample_gap_ns=1_000_000_000)
-        result = await owner.execute(spec(pair, "echo", policy))
+        result = await owner.execute(spec(pair, "cpu", policy))
+        assert result.returncode == -signal.SIGTERM
         assert result.report.reason == ("exited" if fallback else "metric_unavailable")
         assert result.report.sample_windows_valid is fallback
+        assert result.report.samples >= (2 if fallback else 1)
         assert not result.result_admissible
         assert owner.reconcile()["pending"] == 0
     finally:

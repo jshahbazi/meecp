@@ -151,23 +151,26 @@ extension AgentPreparationView {
             else { completion(row("succeeded", candidate: true), nil) }
         }
         view.loadButton.performClick(nil)
-        guard view.fileControls.count == 1, view.metadataControls.count == 2, view.metadataControls[0].state == .off, !view.sendButton.isEnabled else { return false }
+        guard view.fileControls.count == 1, view.fileControls[0].state == .on,
+              view.metadataControls.count == 2, view.metadataControls[0].state == .on,
+              view.metadataControls[1].state == .off, view.metadataControls[1].isHidden, !view.sendButton.isEnabled else { return false }
         guard view.scopeRequest() == nil else { return false }
         guard view.recipePicker.selectedItem?.representedObject == nil else { return false }
         view.recipePicker.selectItem(at: 1)
-        view.fileControls[0].performClick(nil)
+        view.selectionChanged(view.recipePicker)
         view.metadataControls[1].performClick(nil)
         guard view.fileControls[0].state == .off, view.metadataControls[1].state == .on else { return false }
         view.fileControls[0].performClick(nil)
         guard view.metadataControls[1].state == .off, view.fileControls[0].state == .on else { return false }
-        view.metadataControls[0].performClick(nil)
+        view.modelPicker.selectItem(at: 0); view.selectionChanged(view.modelPicker)
         guard view.scopeRequest() == nil, !view.reviewButton.isEnabled else { return false }
         view.modelPicker.selectItem(withTitle: "configured-model"); view.selectionChanged(view.modelPicker)
         view.reviewButton.performClick(nil)
-        guard view.sendButton.isEnabled, view.reviewLabel.stringValue.contains("worker.py"),
-              view.reviewLabel.stringValue.contains("Identity-only transfer"), view.reviewLabel.stringValue.contains("uv.lock"),
-              view.reviewLabel.stringValue.contains("test.guide"),
-              view.reviewLabel.stringValue.contains("dollar ceiling"), view.reviewLabel.stringValue.contains("Simulated") else { return false }
+        guard view.sendButton.isEnabled, !view.sendButton.isHidden, view.reviewButton.isHidden,
+              view.reviewDetails.stringValue.contains("worker.py"),
+              view.reviewDetails.stringValue.contains("Identity-only transfer"), view.reviewDetails.stringValue.contains("uv.lock"),
+              view.reviewDetails.stringValue.contains("test.guide"),
+              view.reviewDetails.stringValue.contains("dollar ceiling"), view.reviewDetails.stringValue.contains("Simulated") else { return false }
         view.sendButton.performClick(nil)
         guard view.blocksNavigation, view.pendingStart != nil, starts.count == 1 else { return false }
         view.retryButton.performClick(nil)
@@ -242,10 +245,64 @@ func runAgentPreparationContractSelfTest() -> Bool {
     AgentProviderSettingsView.contractSelfTest() && AgentProviderSettingsView.duplicateProviderTitlesSelfTest() &&
         AgentPreparationView.providerOwnershipSelfTest() && AgentPreparationView.recipeChoiceSelfTest() &&
         AgentPreparationView.recipeRefreshOwnershipSelfTest() && AgentPreparationView.duplicatePickerTitlesSelfTest() &&
-        AgentPreparationView.proposalHandoffSelfTest() && PreparationWorkspaceView.agentProposalReviewSelfTest() && AgentPreparationView.contractSelfTest()
+        AgentPreparationView.folderDefaultsSelfTest() && AgentPreparationView.proposalHandoffSelfTest() &&
+        PreparationWorkspaceView.agentProposalReviewSelfTest() && AgentPreparationView.contractSelfTest()
 }
 
 extension AgentPreparationView {
+    static func folderDefaultsSelfTest() -> Bool {
+        let view = AgentPreparationView(), context = PreparationTestData.context
+        let recipe: [String: Any] = ["id": "test.agent", "version": "1.0.0", "digest": String(repeating: "a", count: 64)]
+        func file(_ path: String, size: Int = 32) -> [String: Any] {
+            ["path": path, "size": size, "sha256": String(repeating: "b", count: 64)]
+        }
+        var records = [file("app.py"), file("pyproject.toml")]
+        var metadata = records + [file("uv.lock", size: 32768)]
+        var models = ["test-model"], truncated = false, calls = 0
+        view.available = { true }; view.bind(context, saved: true)
+        view.request = { path, method, body, completion in
+            calls += 1
+            guard path == "v1/agent-preparations/plans", method == "POST", body?.count == 2,
+                  let context = view.context else { completion(nil, "unexpected_transfer"); return }
+            completion(["schema_version": 1, "import_id": context.importID, "revision": context.revision,
+                "source_revision": context.sourceRevision, "providers": [["provider_id": "configured", "models": models]],
+                "files": records, "metadata_files": metadata, "files_truncated": truncated,
+                "recipes": [recipe], "recipe_choices": [["recipe": recipe, "label": "Python app",
+                    "compatibility": "compatible", "recommended": true]]], nil)
+        }
+        for _ in 0..<3 { view.loadOptionsIfNeeded() }
+        guard calls == 1, let scope = view.scopeRequest(),
+              scope["selected_paths"] as? [String] == ["app.py", "pyproject.toml"],
+              scope["selected_metadata_paths"] as? [String] == ["uv.lock"],
+              view.reviewButton.isEnabled, !view.reviewButton.isHidden, view.sendButton.isHidden,
+              view.metadataControls.filter({ !$0.isHidden }).count == 1 else { return false }
+        // Reload preserves exclusions; it never silently re-adds a removed file.
+        view.fileControls[0].performClick(nil); view.loadOptions()
+        guard view.scopeRequest()?["selected_paths"] as? [String] == ["pyproject.toml"] else { return false }
+        // A removed saved model requires a fresh selection, even with one replacement.
+        models = ["replacement"]; view.loadOptions()
+        guard !view.reviewButton.isEnabled, view.status.stringValue.contains("Choose a model") else { return false }
+        view.loadOptions(); guard view.modelPicker.selectedItem?.representedObject == nil else { return false }
+        view.modelPicker.selectItem(at: 1); view.selectionChanged(view.modelPicker)
+        guard view.reviewButton.isEnabled else { return false }
+        func newFolder() {
+            let next = PreparationContext(importID: context.importID, revision: (view.context?.revision ?? 0) + 1, sourceRevision: context.sourceRevision)
+            view.bind(next, saved: true); view.loadOptionsIfNeeded()
+        }
+        records = (0..<33).map { file("file\($0).py") }; metadata = records; newFolder()
+        guard view.fileControls.allSatisfy({ $0.state == .on }), !view.reviewButton.isEnabled,
+              view.status.stringValue.contains("32 text files") else { return false }
+        // No silent subset when total content exceeds the host request budget.
+        records = (0..<9).map { file("file\($0).py", size: 16384) }; metadata = records; newFolder()
+        guard !view.reviewButton.isEnabled, view.status.stringValue.contains("128 KB") else { return false }
+        records = [file("app.py")]; metadata = records + (0..<33).map { file("data\($0).bin", size: 32768) }; newFolder()
+        guard !view.reviewButton.isEnabled else { return false }
+        metadata = records; truncated = true; newFolder()
+        guard !view.reviewButton.isEnabled, view.folderSummary.stringValue.contains("too large") else { return false }
+        truncated = false; newFolder()
+        return view.reviewButton.isEnabled && view.errorCode == nil && calls == 9
+    }
+
     static func proposalHandoffSelfTest() -> Bool {
         let context = PreparationTestData.context, digest = PreparationTestData.recipeDigest
         func row(_ state: String = "succeeded", settled: Bool = true, proposal: Bool = true) -> [String: Any] {
@@ -475,7 +532,7 @@ extension AgentPreparationView {
         view.loadButton.performClick(nil)
         guard (view.recipePicker.selectedItem?.representedObject as? [String: Any])?["id"] as? String == unlocked["id"] as? String,
               view.recipePicker.titleOfSelectedItem?.contains("Python app needing dependency resolution") == true,
-              view.modelPicker.selectedItem?.representedObject == nil, calls == 1 else { return false }
+              view.modelPicker.selectedItem?.representedObject as? String == "test-model", calls == 1 else { return false }
         // Explicit choice takes precedence over the recommended default.
         view.recipePicker.selectItem(at: 1); view.selectionChanged(view.recipePicker)
         view.loadOptions()
@@ -560,6 +617,9 @@ final class AgentPreparationView: NSStackView {
     private(set) var job: AgentPreparationJob?
     private(set) var errorCode: String?
     private var options: [String: Any]?
+    private var optionsRequested = false
+    private var selectionInitialized = false
+    private var requiresExplicitModelChoice = false
     private var plan: [String: Any]?
     private var preferredRecipe: [String: Any]?
     private var requiresExplicitRecipeChoice = false
@@ -572,7 +632,11 @@ final class AgentPreparationView: NSStackView {
     private var fileControls: [NSButton] = []
     private var metadataControls: [NSButton] = []
     private let files = NSStackView()
-    private let reviewLabel = NSTextField(wrappingLabelWithString: "Load configured providers and choose the captured files to review for transfer.")
+    private let folderSummary = NSTextField(wrappingLabelWithString: "The selected folder is included automatically.")
+    private let reviewLabel = NSTextField(wrappingLabelWithString: "Nothing is sent until you choose Analyze Folder.")
+    private let reviewDetails = NSTextField(wrappingLabelWithString: "")
+    private var detailsDisclosure: WorkspaceDisclosure!
+    private var recipeRow: NSStackView!
     private let status = NSTextField(wrappingLabelWithString: "")
     private let transfer = NSTextField(string: "524288")
     private let output = NSTextField(string: "4096")
@@ -596,9 +660,9 @@ final class AgentPreparationView: NSStackView {
             field.setAccessibilityLabel(label); field.target = self; field.action = #selector(selectionChanged)
         }
         files.orientation = .vertical; files.alignment = .leading; files.spacing = 4
-        loadButton = NSButton(title: "Load Agent Options", target: self, action: #selector(loadOptions))
-        reviewButton = NSButton(title: "Review Selected Transfer", target: self, action: #selector(reviewScope))
-        sendButton = NSButton(title: "Send Reviewed Files", target: self, action: #selector(startAnalysis))
+        loadButton = NSButton(title: "Reload", target: self, action: #selector(loadOptions))
+        reviewButton = NSButton(title: "Continue", target: self, action: #selector(reviewScope))
+        sendButton = NSButton(title: "Analyze Folder", target: self, action: #selector(startAnalysis))
         cancelButton = NSButton(title: "Cancel Analysis", target: self, action: #selector(cancelAnalysis))
         retryButton = NSButton(title: "Retry Analysis Status", target: self, action: #selector(retryStatus))
         adoptButton = NSButton(title: "Use Candidate in Preparation", target: self, action: #selector(adoptCandidate))
@@ -619,15 +683,22 @@ final class AgentPreparationView: NSStackView {
             self.refreshAvailability(); self.onStateChange?()
         }
         providerSettings.onRegistryChange = { [weak self] in self?.registryChanged() }
-        addArrangedSubview(workspaceStack([providerPicker, modelPicker, recipePicker], horizontal: true))
-        addArrangedSubview(files)
+        addArrangedSubview(workspaceStack([workspaceLabel("Provider", size: 12), providerPicker,
+                                           workspaceLabel("Model", size: 12), modelPicker], horizontal: true))
+        recipeRow = workspaceStack([workspaceLabel("Preparation path", size: 12), recipePicker], horizontal: true)
+        addArrangedSubview(recipeRow)
+        addArrangedSubview(folderSummary); workspaceFill(folderSummary, in: self)
+        addArrangedSubview(reviewLabel); workspaceFill(reviewLabel, in: self)
+        addArrangedSubview(status); workspaceFill(status, in: self)
+        addArrangedSubview(workspaceStack([reviewButton, sendButton, loadButton], horizontal: true))
+        addArrangedSubview(workspaceStack([cancelButton, retryButton, adoptButton], horizontal: true))
+        let fileDetails = WorkspaceDisclosure("Included files", views: [files])
+        addArrangedSubview(fileDetails); workspaceFill(fileDetails, in: self)
         let limits = WorkspaceDisclosure("Usage limits", views: [workspaceStack([workspaceLabel("Transfer bytes", size: 12), transfer,
             workspaceLabel("Output tokens/call", size: 12), output, workspaceLabel("Seconds", size: 12), deadline], horizontal: true)])
         addArrangedSubview(limits); workspaceFill(limits, in: self)
-        addArrangedSubview(reviewLabel); workspaceFill(reviewLabel, in: self)
-        addArrangedSubview(workspaceStack([loadButton, reviewButton, sendButton], horizontal: true))
-        addArrangedSubview(status); workspaceFill(status, in: self)
-        addArrangedSubview(workspaceStack([cancelButton, retryButton, adoptButton], horizontal: true))
+        detailsDisclosure = WorkspaceDisclosure("Transfer details", views: [reviewDetails])
+        addArrangedSubview(detailsDisclosure); workspaceFill(detailsDisclosure, in: self)
         refreshAvailability()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -699,8 +770,11 @@ final class AgentPreparationView: NSStackView {
             let contextChanged = next != context
             providerSettings.clearCredentialEntry()
             invalidateJobResponses()
-            epoch &+= 1; context = next; self.saved = saved; options = nil; plan = nil
-            if contextChanged { preferredRecipe = nil; requiresExplicitRecipeChoice = false }
+            epoch &+= 1; context = next; self.saved = saved; options = nil; plan = nil; optionsRequested = false
+            if contextChanged {
+                preferredRecipe = nil; requiresExplicitRecipeChoice = false
+                selectionInitialized = false; requiresExplicitModelChoice = false
+            }
             // Keep a known pending request/job across draft changes. The owner
             // remains visible and cancellable until the host reports settlement.
             if !blocksNavigation { job = nil; errorCode = nil }
@@ -708,11 +782,15 @@ final class AgentPreparationView: NSStackView {
         refreshAvailability()
     }
     private func invalidateJobResponses() { jobEpoch &+= 1; polling = false }
-    func invalidate() { invalidateJobResponses(); epoch &+= 1; options = nil; plan = nil; providerSettings.invalidate(); refreshAvailability() }
+    func invalidate() { invalidateJobResponses(); epoch &+= 1; options = nil; plan = nil; optionsRequested = false; providerSettings.invalidate(); refreshAvailability() }
     func clearCredentialEntry() { providerSettings.clearCredentialEntry() }
     func resetProviderConnection() { providerSettings.connectionReset() }
     func registryChanged() {
-        if !blocksNavigation { invalidateJobResponses(); epoch &+= 1; options = nil; plan = nil; refreshAvailability() }
+        if !blocksNavigation { invalidateJobResponses(); epoch &+= 1; options = nil; plan = nil; optionsRequested = false; refreshAvailability() }
+    }
+    /// Inventory is local. Entering this screen never starts a provider call.
+    func loadOptionsIfNeeded() {
+        if !optionsRequested { loadOptions() }
     }
     func refreshAvailability() {
         let online = available?() == true
@@ -730,6 +808,16 @@ final class AgentPreparationView: NSStackView {
         for control in [providerPicker, modelPicker, recipePicker, transfer, output, deadline] as [NSControl] { control.isEnabled = editable }
         fileControls.forEach { $0.isEnabled = editable }
         metadataControls.forEach { $0.isEnabled = editable }
+        reviewButton?.isHidden = currentPlan() || job?.active == true || pendingStart != nil
+        sendButton?.isHidden = !currentPlan() || job?.active == true || pendingStart != nil
+        loadButton?.isHidden = (options != nil && !providers.isEmpty && errorCode == nil) || busy || pendingStart != nil || job?.active == true
+        cancelButton?.isHidden = job?.active != true
+        retryButton?.isHidden = pendingStart == nil && job == nil
+        adoptButton?.isHidden = job?.state != "succeeded"
+        recipeRow?.isHidden = options == nil || (!requiresExplicitRecipeChoice && recipePicker.selectedItem?.representedObject != nil &&
+            (options?["recipe_choices"] as? [[String: Any]])?.filter { $0["compatibility"] as? String == "compatible" }.count == 1)
+        detailsDisclosure?.isHidden = plan == nil
+        refreshFolderSummary()
         providerSettings.refreshAvailability()
     }
     private func fail(_ code: String) {
@@ -754,8 +842,10 @@ final class AgentPreparationView: NSStackView {
                 fileControls.filter { $0.title == button.identifier?.rawValue }.forEach { $0.state = .off }
             }
         }
-        if senderProviderChanged() { reloadModels() }
-        plan = nil; reviewLabel.stringValue = "Review the exact files and provider before sending. Canceling cannot guarantee remote calls stop or avoid charges."
+        if sender === modelPicker { requiresExplicitModelChoice = modelPicker.selectedItem?.representedObject == nil }
+        if senderProviderChanged() { requiresExplicitModelChoice = false; reloadModels() }
+        plan = nil; errorCode = nil; reviewLabel.stringValue = "Nothing is sent until you choose Analyze Folder."
+        status.stringValue = readinessMessage()
         if let selected = recipePicker.selectedItem?.representedObject as? [String: Any], let choice = recipeChoice(selected), !choice.compatible {
             status.stringValue = "This preparation path is unresolved for the captured files. No source has been sent."
         }
@@ -769,7 +859,7 @@ final class AgentPreparationView: NSStackView {
               let object = choices.first(where: { ($0["recipe"] as? NSDictionary)?.isEqual(to: recipe) == true }) else { return nil }
         return AgentRecipeChoice(object, recipes: recipes)
     }
-    private func reloadModels() {
+    private func reloadModels(selectSingle: Bool = true) {
         modelPicker.removeAllItems(); modelProvider = providerPicker.selectedItem?.representedObject as? String
         modelPicker.addItem(withTitle: "Choose a model…")
         if let provider = providers.first(where: { $0["provider_id"] as? String == modelProvider }) {
@@ -779,6 +869,7 @@ final class AgentPreparationView: NSStackView {
                 let item = NSMenuItem(title: title, action: nil, keyEquivalent: ""); item.representedObject = model
                 modelPicker.menu?.addItem(item)
             }
+            if selectSingle && !requiresExplicitModelChoice && models.count == 1 { modelPicker.selectItem(at: 1) }
         }
     }
     @objc func loadOptions() {
@@ -787,7 +878,11 @@ final class AgentPreparationView: NSStackView {
         let previousProvider = providerPicker.selectedItem?.representedObject as? String
         let previousModel = modelPicker.selectedItem?.representedObject as? String
         let previouslyLoadedProviders = providerPicker.numberOfItems > 0
+        let selectedPaths = selectionInitialized ? Set(fileControls.filter { $0.state == .on }.map(\.title)) : nil
+        let selectedMetadata = selectionInitialized ? Set(metadataControls.filter { $0.state == .on }.compactMap { $0.identifier?.rawValue }) : nil
         plan = nil; options = nil
+        optionsRequested = true; errorCode = nil; status.stringValue = "Loading folder…"
+        reviewLabel.stringValue = "Nothing is sent until you choose Analyze Folder."
         busy = true; refreshAvailability(); let expected = epoch
         request("v1/agent-preparations/plans", "POST", ["import_id": context.importID, "revision": context.revision]) { [weak self] object, code in
             guard let self else { return }; self.finishRequest()
@@ -847,29 +942,33 @@ final class AgentPreparationView: NSStackView {
             } else if !self.requiresExplicitRecipeChoice, preparationBoolean(object["recipes_truncated"]) != true, let choice = choices.first(where: \.recommended), let index = recipes.firstIndex(where: { NSDictionary(dictionary: $0).isEqual(to: choice.recipe) }) {
                 self.recipePicker.selectItem(at: index + 1)
             }
-            self.reloadModels()
+            self.reloadModels(selectSingle: previousModel == nil)
             if self.providerPicker.selectedItem?.representedObject as? String == previousProvider, let previousModel,
                let index = self.modelPicker.itemArray.firstIndex(where: { $0.representedObject as? String == previousModel }) { self.modelPicker.selectItem(at: index) }
+            else if previousModel != nil { self.requiresExplicitModelChoice = true }
             self.fileControls.forEach { self.files.removeArrangedSubview($0); $0.removeFromSuperview() }; self.fileControls = []
             self.metadataControls.forEach { self.files.removeArrangedSubview($0); $0.removeFromSuperview() }; self.metadataControls = []
             for value in records {
                 let button = NSButton(checkboxWithTitle: value["path"] as! String, target: self, action: #selector(self.selectionChanged))
-                button.setAccessibilityLabel("Transfer " + button.title); button.state = .off
+                button.setAccessibilityLabel("Include " + button.title); button.state = selectedPaths?.contains(button.title) == false ? .off : .on
                 self.fileControls.append(button); self.files.addArrangedSubview(button)
             }
             let metadata = object["metadata_files"] as? [[String: Any]] ?? []
             guard metadata.count <= 256, metadata.allSatisfy({ preparationText($0["path"], maximum: 256) != nil && preparationDigest($0["sha256"]) != nil && (1...16777216).contains(preparationInteger($0["size"]) ?? 0) }) else { self.fail("agent_options_invalid"); return }
             for value in metadata {
                 let path = value["path"] as! String
-                let recommended = ["LICENSE", "LICENSE.txt", "LICENSE.md", "pyproject.toml", "uv.lock"].contains((path as NSString).lastPathComponent)
-                let button = NSButton(checkboxWithTitle: "Identity only: " + path + (recommended ? " (recommended)" : ""), target: self, action: #selector(self.selectionChanged))
+                let hasContent = records.contains { $0["path"] as? String == path }
+                let button = NSButton(checkboxWithTitle: path + " (details only)", target: self, action: #selector(self.selectionChanged))
                 button.identifier = NSUserInterfaceItemIdentifier(path)
                 button.setAccessibilityLabel(button.title + "; sends path, byte count and SHA-256, no contents")
-                button.state = .off
+                button.state = (selectedMetadata?.contains(path) ?? !hasContent) ? .on : .off
+                // One visible row per file. Content candidates need no duplicate identity row.
+                button.isHidden = hasContent
                 self.metadataControls.append(button); self.files.addArrangedSubview(button)
             }
+            self.selectionInitialized = true
             if let latest = object["latest_job"] as? [String: Any], let job = AgentPreparationJob(latest), job.context.importID == context.importID { self.job = job }
-            self.status.stringValue = providers.isEmpty ? "Set up a provider in Settings → LLM Providers, then load options again." : "Choose a model and files to transfer. Loading options sends no files."
+            self.status.stringValue = self.readinessMessage()
             if self.requiresExplicitRecipeChoice { self.status.stringValue += " Your previously selected preparation path is no longer available. Choose a current path explicitly." }
             if !choices.isEmpty, !choices.contains(where: \.recommended), self.preferredRecipe == nil {
                 self.status.stringValue += " No compatible preparation path was recommended for these captured files."
@@ -877,8 +976,45 @@ final class AgentPreparationView: NSStackView {
             if preparationBoolean(object["recipes_truncated"]) == true {
                 self.status.stringValue += " The enabled recipe list is incomplete. Manage enabled recipes to narrow the choices, then reload options."
             }
-            self.refreshAvailability()
+            self.refreshAvailability(); self.onStateChange?()
         }
+    }
+
+    private var selectedContentBytes: Int {
+        let selected = Set(fileControls.filter { $0.state == .on }.map(\.title))
+        return (options?["files"] as? [[String: Any]] ?? []).filter { selected.contains($0["path"] as? String ?? "") }
+            .reduce(0) { $0 + (preparationInteger($1["size"]) ?? 0) }
+    }
+    private func refreshFolderSummary() {
+        guard options != nil else { folderSummary.stringValue = "The selected folder is included automatically."; return }
+        let contentCount = fileControls.filter { $0.state == .on }.count
+        let metadataCount = metadataControls.filter { $0.state == .on }.count
+        let size = ByteCountFormatter.string(fromByteCount: Int64(selectedContentBytes), countStyle: .file)
+        folderSummary.stringValue = "Folder included: \(contentCount) text files (\(size))" +
+            (metadataCount > 0 ? ", plus details for \(metadataCount) other files." : ".") +
+            "\nBinary and large files are described without sending their contents."
+        if preparationBoolean(options?["files_truncated"]) == true || preparationBoolean(options?["metadata_files_truncated"]) == true {
+            folderSummary.stringValue += "\nThis folder is too large to list completely. Choose a smaller project folder."
+        }
+    }
+    private func readinessMessage() -> String {
+        if providers.isEmpty { return "Set up a provider in Settings → LLM Providers, then choose Reload." }
+        if providerPicker.selectedItem?.representedObject == nil { return "Choose a provider to continue." }
+        if modelPicker.selectedItem?.representedObject == nil { return "Choose a model to continue." }
+        if fileControls.filter({ $0.state == .on }).count > 32 || selectedContentBytes > 131072 || metadataControls.filter({ $0.state == .on }).count > 32 {
+            return "This folder exceeds the AI limit of 32 text files (128 KB) and 32 other files. Choose a smaller folder, or adjust Included files."
+        }
+        if fileControls.allSatisfy({ $0.state == .off }) { return "No text files are included. Choose files under Included files, or use a smaller source folder." }
+        guard let recipe = recipePicker.selectedItem?.representedObject as? [String: Any] else { return "Choose a preparation path to continue." }
+        if options?["recipe_choices"] != nil && recipeChoice(recipe)?.compatible != true {
+            return "This preparation path does not support the captured files. Choose another path or use your coding agent."
+        }
+        if Int(transfer.stringValue).map({ (1...2097152).contains($0) }) != true ||
+            Int(output.stringValue).map({ (64...16384).contains($0) }) != true ||
+            Int(deadline.stringValue).map({ (1...600).contains($0) }) != true {
+            return "Check Usage limits: transfer up to 2 MB, 64–16,384 output tokens, and 1–600 seconds."
+        }
+        return "Continue to review what will be shared."
     }
     private func scopeRequest() -> [String: Any]? {
         guard options != nil, let context, saved, let provider = providerPicker.selectedItem?.representedObject as? String,
@@ -889,7 +1025,9 @@ final class AgentPreparationView: NSStackView {
         if options?["recipe_choices"] != nil, recipeChoice(recipe)?.compatible != true { return nil }
         let paths = fileControls.filter { $0.state == .on }.map(\.title).sorted()
         let metadataPaths = metadataControls.filter { $0.state == .on }.compactMap { $0.identifier?.rawValue }.sorted()
-        guard (1...32).contains(paths.count) else { return nil }
+        guard (1...32).contains(paths.count), selectedContentBytes <= 131072,
+              preparationBoolean(options?["files_truncated"]) != true,
+              preparationBoolean(options?["metadata_files_truncated"]) != true else { return nil }
         guard metadataPaths.count <= 32, Set(paths).isDisjoint(with: metadataPaths) else { return nil }
         return ["import_id": context.importID, "revision": context.revision, "recipe": recipe,
             "provider_id": provider, "model": model, "selected_paths": paths,
@@ -930,8 +1068,12 @@ final class AgentPreparationView: NSStackView {
                 lines += ["Trusted proposal contract: " + id + " · " + (object["guide_digest"] as! String),
                     "The provider also receives the selected recipe identity, public output contract and task dependencies."]
             }
-            self.reviewLabel.stringValue = lines.joined(separator: "\n")
-            self.status.stringValue = preparationBoolean(object["execution_available"]) == true ? "Review this transfer scope, then choose Send Reviewed Files." : "Agent execution is disabled. This review sends nothing."
+            self.reviewDetails.stringValue = lines.joined(separator: "\n")
+            let providerName = self.providers.first(where: { $0["provider_id"] as? String == object["provider_id"] as? String })?["name"] as? String ?? object["provider_id"] as! String
+            self.reviewLabel.stringValue = "Analyze Folder will share the included files with \(providerName) (\(object["model"] as! String)). " +
+                "It may make up to four paid requests. Canceling may not stop charges."
+            if simulated { self.reviewLabel.stringValue = "This is a simulated analysis; no files will be sent to an external provider." }
+            self.status.stringValue = preparationBoolean(object["execution_available"]) == true ? "Ready to analyze. Nothing has been sent yet." : "AI analysis is unavailable on this host. Use guided setup or your coding agent."
             self.refreshAvailability()
         }
     }

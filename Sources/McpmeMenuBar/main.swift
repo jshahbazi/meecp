@@ -1113,7 +1113,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                                                    target: self, action: #selector(changePreparationMethod))
         preparationMethod.selectedSegment = 0; preparationMethod.setAccessibilityLabel("Preparation method")
         self.preparationMethod = preparationMethod
-        let assisted = workspaceStack([workspaceLabel("Choose the files to share with your configured provider. Review before sending.", size: 12, secondary: true), agentPreparationView])
+        let assisted = workspaceStack([workspaceLabel("Your folder is included automatically. Review once, then let your assistant analyze it.", size: 12, secondary: true), agentPreparationView])
         assistedPreparationView = assisted
         let external = workspaceStack([workspaceLabel("1. Copy the instructions into your coding agent.\n2. When it finishes, choose the prepared package it created.", size: 13), handoff,
                                        WorkspaceDisclosure("Export for developers", views: [export])])
@@ -1183,6 +1183,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             return preparationContext
         }
         agentPreparationView.bind(agentContext, saved: !draftDirty); agentPreparationView.refreshAvailability()
+        if preparationMethod?.selectedSegment == 1 { agentPreparationView.loadOptionsIfNeeded() }
         refreshActionButtons()
         if let id = pendingInstalledSelection, projects.contains(where: { $0.id == id }), management != nil {
             pendingInstalledSelection = nil; management?.select(id: id)

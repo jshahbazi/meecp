@@ -382,6 +382,8 @@ class Supervisor(UpgradeHost):
             self.agent_preparations = factory(self.preparations, self.root / "agent-preparations",
                 **({"provider_registry": self.agent_provider_registry, "execution_admission": agent_execution_admission}
                     if agent_preparation_factory is None else {}))
+            from .app_setup import AppSetupHost
+            self.app_setups = AppSetupHost(self)
         except BaseException:
             if hasattr(self, "imports"):
                 self.imports.close()
@@ -2123,7 +2125,7 @@ class Supervisor(UpgradeHost):
                         with contextlib.suppress(Exception, asyncio.CancelledError):
                             await _await_ownership(task)
                 failures = []
-                for runner in (self.agent_preparations, self.preparation_runner, self.capture_runner, self.resolution_runner):
+                for runner in (self.app_setups, self.preparation_runner, self.capture_runner, self.resolution_runner):
                     try:
                         await runner.close()
                     except (OwnershipLost, ArtifactError, PreparationError) as error:
@@ -2132,6 +2134,7 @@ class Supervisor(UpgradeHost):
                         failures.append(HostError("preparation_shutdown_failed", 409))
                 if failures:
                     raise failures[0]
+                await self.agent_preparations.close()
             self._preparation_close_task = asyncio.create_task(close_preparations())
         try:
             await asyncio.shield(self._preparation_close_task)
@@ -2610,8 +2613,10 @@ def management_app(host: Supervisor, token: str, port: int):
     from .preparation_agent_host import agent_preparation_routes
     from .preparation_agent_providers import agent_provider_routes
     from .preparation_provider_test import provider_test_routes
+    from .app_setup import app_setup_routes
     policy = agent_preparation_routes(LocalPolicy(app, token=token, port=port, authenticate=authenticate), host.agent_preparations)
     policy = agent_provider_routes(policy, host.agent_provider_registry)
+    policy = app_setup_routes(policy, host.app_setups)
     return provider_test_routes(policy, host.agent_provider_registry)
 
 

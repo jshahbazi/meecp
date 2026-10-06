@@ -203,6 +203,23 @@ class AgentAttemptStore:
             raise PreparationError("agent_proposal_identity_mismatch")
         return result
 
+    def repair_input(self, context):
+        """Read a previously published artifact by its exact reviewed identity.
+
+        The calling host separately checks the current draft/provider authority.
+        A repair may follow a descriptor-selection revision, so this method does
+        not pretend that the original attempt still has dispatch authority.
+        """
+        value = self.get(context.prior_attempt_id)
+        row = self.db.execute("SELECT data FROM artifacts WHERE id=?", (context.prior_attempt_id,)).fetchone()
+        if value["state"] != "succeeded" or row is None:
+            raise PreparationError("agent_proposal_unavailable")
+        result = AgentProposalV1.model_validate(json.loads(row["data"]))
+        if (result.digest != context.prior_proposal_digest or result.digest != value["proposal_digest"]
+                or result.attempt_id != context.prior_attempt_id or result.generation != value["generation"]):
+            raise PreparationError("agent_proposal_identity_mismatch")
+        return result
+
 
 class AgentCoordinator:
     def __init__(self, store: AgentAttemptStore, backend: AgentBackend,
@@ -218,9 +235,15 @@ class AgentCoordinator:
         self.validate_current(request)
 
     def create(self, request):
-        request = AnalysisRequestV1.model_validate(request.model_dump())
+        request = self._copy_request(request)
         self._authority(request)
         return self.store.create(request)
+
+    @staticmethod
+    def _copy_request(request):
+        from .app_setup_contracts import RepairAnalysisRequestV1
+        contract = RepairAnalysisRequestV1 if type(request) is RepairAnalysisRequestV1 else AnalysisRequestV1
+        return contract.model_validate(request.model_dump())
 
     async def cancel(self, attempt_id):
         value = self.store.cancel(attempt_id)
@@ -232,7 +255,7 @@ class AgentCoordinator:
 
     async def run(self, attempt_id, request, source):
         # Freeze caller-owned nested lists and source bytes before first await.
-        request = AnalysisRequestV1.model_validate(request.model_dump())
+        request = self._copy_request(request)
         selected = request.selected_source(dict(source))
         self._authority(request)
         with self.store.transaction():
@@ -269,6 +292,19 @@ class AgentCoordinator:
         try:
             async with asyncio.timeout(request.limits.wall_seconds):
                 roles = ("interface", "dependencies", "fixtures", "adapter")
+                if hasattr(request, "repair_context"):
+                    repair = request.repair_context
+                    previous = self.store.repair_input(repair)
+                    proposals = {item.role: item for item in previous.tasks}
+                    # Corrections are sequential: each sees earlier corrected
+                    # roles, and every role outside the explicit scope is kept
+                    # byte-for-byte. A build repair can only replace adapter.
+                    for role in repair.roles:
+                        proposals[role] = await execute(role, list(proposals.values()))
+                    result = AgentProposalV1(request_digest=request.digest, attempt_id=attempt_id,
+                        generation=generation, tasks=[proposals[role] for role in roles])
+                    self.store.publish(request, result, self.validate_current)
+                    return result
                 dependencies = ({item.role: item.depends_on for item in request.guide.roles}
                     if request.guide else {role: ([] if role != "adapter" else list(roles[:3])) for role in roles})
                 tasks = {}
@@ -289,11 +325,12 @@ class AgentCoordinator:
         except TimeoutError:
             failure = "agent_deadline"
             raise PreparationError("agent_deadline") from None
-        except Exception:
+        except Exception as error:
             # Error values supplied by backend/plugin code cannot enter logs or
             # status. Only this module's fixed public failure code is persisted.
-            failure = "agent_attempt_failed"
-            raise PreparationError("agent_attempt_failed") from None
+            from .app_setup_contracts import safe_code
+            failure = safe_code(error, "agent_attempt_failed")
+            raise PreparationError(failure) from None
         finally:
             for task in children:
                 if not task.done():

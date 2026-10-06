@@ -2,6 +2,8 @@
 
 Status: implementation design, 2026-09-30. First local build: Apple silicon, macOS 26 or newer (the bundled Homebrew runtime targets macOS 26). Repository: `/Users/johnshahbazian/development/jevk5-menubar`.
 
+The modular mcpme host's current Add App workflow is described in [Automatic app setup](AUTOMATIC_APP_SETUP.md), including provider configuration, host-owned preparation and repair, and the separate installation review.
+
 ## Purpose
 
 Provide a local decision model that stays available from the macOS menu bar and can be called by MCP clients. JevK5 scores supplied evidence against declared alternatives. It returns option probabilities, a boolean probability, or an expected score. It does not produce explanations or general chat completions.

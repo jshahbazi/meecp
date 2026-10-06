@@ -7,6 +7,7 @@ from pathlib import PurePosixPath
 import pytest
 
 from mcpme.preparation_agent_guides import python_adapter_guide
+from mcpme.preparation_agent_unlocked import COMPONENT_ID, VERSION, component_catalog
 from test_preparation_agent import backend, output, request_for, response
 
 
@@ -73,12 +74,12 @@ def request_only_unlocked_handler(request):
 ], ids=["scalar-no-import", "reviewed-humanize-import"])
 @pytest.mark.parametrize("license_reviewed", [False, True])
 async def test_unlocked_transport_derives_requirements_and_fixture_from_request(source, expected, license_reviewed):
-    reference = {"id": "agent-unlocked-python-adapter-v1", "version": "1.0.0",
-        "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"}
+    reference = {"id": COMPONENT_ID, "version": VERSION,
+        "digest": component_catalog()[COMPONENT_ID + "@" + VERSION]["digest"]}
     guide = python_adapter_guide(reference, unlocked=True)
     license_bytes = b"Synthetic original permission\n"
     request, captured = request_for(source={"worker.py": source}, recipe={
-        "id": "mcpme.agent-unlocked-python-adapter", "version": "1.0.0", "digest": "a" * 64},
+        "id": "mcpme.agent-unlocked-python-adapter", "version": VERSION, "digest": "a" * 64},
         guide=guide.model_dump(), selected_metadata=[{"path": "LICENSE", "bytes": len(license_bytes),
             "sha256": hashlib.sha256(license_bytes).hexdigest()}] if license_reviewed else [])
     transport = backend(request_only_unlocked_handler)

@@ -14,7 +14,7 @@ import pytest
 from mcpme.imports import ImportStore, ImportError as SourceError
 from mcpme.recipes import RecipeStore
 from mcpme.preparations import PreparationStore
-from mcpme.preparation_agent_adapter import (AgentPythonAdapterFamily, component_catalog, descriptor_for)
+from mcpme.preparation_agent_adapter import (AgentPythonAdapterFamily, component_catalog, descriptor_for, VERSION)
 from mcpme.preparation_agent_adapter_store import (AgentAdapterDerivationStore, CODE_PATH, MODULE)
 from mcpme.preparation_agent_host import AgentPreparationHost
 from mcpme.preparation_contracts import PreparationError
@@ -33,10 +33,10 @@ CODE = "from worker import double\ndef invoke(n: int) -> dict[str, int]:\n retur
 def bundle(path, catalog):
     path.mkdir()
     (path / "LICENSE").write_text("Synthetic recipe permission.\n")
-    ref = catalog["agent-python-adapter-v1@1.0.0"]
-    manifest = {"schema_version": 1, "id": "mcpme.agent-python-adapter", "version": "1.0.0", "kind": "declarative",
+    ref = catalog["agent-python-adapter-v1@" + VERSION]
+    manifest = {"schema_version": 1, "id": "mcpme.agent-python-adapter", "version": VERSION, "kind": "declarative",
         "worker_api_version": 1, "input_schema": {"type": "object", "additionalProperties": False, "properties": {}}, "form": [],
-        "steps": [{"component": "agent-python-adapter-v1", "version": "1.0.0", "digest": ref["digest"], "config": {}}],
+        "steps": [{"component": "agent-python-adapter-v1", "version": VERSION, "digest": ref["digest"], "config": {}}],
         "licenses": ["LICENSE"], "provenance": {"origin": "synthetic", "publisher": "test"},
         "requirements": {"host_api_version": 1, "package_schema": 1, "protocol": "2025-11-25", "os": "macos",
             "architecture": "arm64", "capabilities": ["declarative-composition"]}}
@@ -266,14 +266,45 @@ async def test_static_adoption_does_not_import_original_module(adapter_foundatio
         await host.close()
 
 
+async def test_locked_copy_preserves_binary_model_and_rechecks_full_tree(adapter_foundation, tmp_path, monkeypatch):
+    from mcpme.preparation_agent_adapter_builder import copy_adapter_snapshot
+    from mcpme import preparation_agent_adapter_builder as module
+    imports, _, _, _, _, family, _ = adapter_foundation
+    source = tmp_path / "binary-app"; source.mkdir()
+    for name in ("worker.py", "LICENSE", "pyproject.toml", "uv.lock"):
+        (source / name).write_bytes((tmp_path / "source" / name).read_bytes())
+    (source / "models").mkdir()
+    asset = b"\0\xffsynthetic model bytes\x80"
+    (source / "models/model.onnx").write_bytes(asset)
+    draft = imports.create(source, name="Binary app", intent="Wrap the scalar", source_mode="automatic")
+    updated = (*adapter_foundation[:3], draft, *adapter_foundation[4:])
+    host, _, job = await analyze(updated, tmp_path)
+    try:
+        descriptor, observed = host._candidate(host._job(job["job_id"]))
+        result, derived = family.component.result(descriptor, observed)
+        destination = tmp_path / "copied-source"
+        records = copy_adapter_snapshot(draft, destination, result, derived, lambda: None)
+        assert (destination / "models/model.onnx").read_bytes() == asset
+        assert (destination / CODE_PATH).read_text() == CODE
+        assert next(item for item in records if item["path"] == "models/model.onnx")["sha256"] == hashlib.sha256(asset).hexdigest()
+        original = module._write_file
+        def corrupted(root, name, data):
+            original(root, name, data + b"changed" if name == "models/model.onnx" else data)
+        monkeypatch.setattr(module, "_write_file", corrupted)
+        with pytest.raises(PreparationError, match="source_identity_mismatch"):
+            copy_adapter_snapshot(draft, tmp_path / "corrupt-copy", result, derived, lambda: None)
+    finally:
+        await host.close()
+
+
 def test_new_bundle_static_registration_preserves_nonexecution_boundary(adapter_foundation, tmp_path):
     _, recipes, _, _, _, family, _ = adapter_foundation
     root = Path(__file__).resolve().parents[1]
     with pytest.raises(PreparationError, match="recipe_version_collision"):
-        recipes.add(root / "templates/builtin-recipes/agent-python-adapter-v1-0-0")
+        recipes.add(root / "templates/builtin-recipes/agent-python-adapter-v1-0-1")
     with ImportStore(tmp_path / "new-state") as imports:
         actual = RecipeStore(imports)
-        registered = actual.add(root / "templates/builtin-recipes/agent-python-adapter-v1-0-0")
+        registered = actual.add(root / "templates/builtin-recipes/agent-python-adapter-v1-0-1")
         enabled = actual.enable(registered["recipe_id"], registered["version"])
         assert enabled["state"] == "enabled" and not enabled["runnable"]
         assert enabled["manifest"]["steps"] == [{"component": family.component.reference.id,
@@ -291,7 +322,7 @@ async def test_stale_or_changed_inputs_cannot_adopt(adapter_foundation, tmp_path
         elif mutation == "source":
             (Path(draft["source"]["snapshot_path"]) / "worker.py").write_text("def double(n): return n*3\n")
         elif mutation == "recipe":
-            recipes.disable("mcpme.agent-python-adapter", "1.0.0")
+            recipes.disable("mcpme.agent-python-adapter", VERSION)
         elif mutation == "revision":
             imports.revise(draft["draft_id"], 1, name="Changed")
         else:
@@ -326,7 +357,9 @@ async def test_closed_proposal_roles_static_eligibility_and_collision_blockers(a
     host, _, job = await analyze(adapter_foundation, tmp_path, changes=change)
     try:
         assert job["state"] == "succeeded" and job["candidate"] is None
-        assert job["blockers"] == ["agent_candidate_requires_review"]
+        expected = {"extra": "agent_adapter_proposal_invalid", "wrong-lock": "locked_dependency_project_required",
+            "top-level": "agent_adapter_static_eligibility_required"}.get(mutation, "agent_candidate_requires_review")
+        assert job["blockers"] == [expected]
         assert adapter_foundation[2].list() == []
     finally:
         await host.close()

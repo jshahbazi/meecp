@@ -30,7 +30,7 @@ def bundle(path, reference=REFERENCE):
     license_data = b"Synthetic recipe permission.\n"; (path/"LICENSE").write_bytes(license_data)
     manifest = {"schema_version": 1, "id": "mcpme.agent-unlocked-python-adapter", "version": "1.0.0", "kind": "declarative",
         "worker_api_version": 1, "input_schema": {"type": "object", "additionalProperties": False}, "form": [],
-        "steps": [{"component": COMPONENT, "version": "1.0.0", "digest": reference.digest, "config": {}}],
+        "steps": [{"component": COMPONENT, "version": reference.version, "digest": reference.digest, "config": {}}],
         "licenses": ["LICENSE"], "provenance": {"origin": "synthetic", "publisher": "test"},
         "requirements": {"host_api_version": 1, "package_schema": 1, "protocol": "2025-11-25", "os": "macos",
             "architecture": "arm64", "capabilities": ["declarative-composition"]}}

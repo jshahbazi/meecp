@@ -19,10 +19,27 @@ import uuid
 from .contracts import PackageError, validate_package, MAX_LOCK_METADATA_BYTES
 from .preparation_agent_adapter_store import CODE_PATH, _derived_draft, original_snapshot
 from .preparation_application_builder import _write_file, _private_directory
-from .preparation_application_source import _open_directory
+from .preparation_application_source import _open_directory, _digest
 from .preparation_builder import _runtime, load_private_toolchain
 from .preparation_contracts import PreparationError, canonical_bytes
 from .recipes import _read
+
+
+def _copied_draft(root, files):
+    """Validate the full private copy with the binary-aware source contract."""
+    records, metadata = [], []
+    for name, data in sorted(files.items()):
+        records.append({"path": name, "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)})
+        try:
+            data.decode("utf-8")
+            kind = "binary" if b"\0" in data else "text"
+        except UnicodeError:
+            kind = "binary"
+        metadata.append({"path": name, "executable": False, "kind": kind})
+    digest = _digest(records, metadata)
+    return {"source": {"kind": "application_directory", "contract_version": 2, "snapshot_path": str(root),
+        "files": records, "file_metadata": metadata, "bytes": sum(map(len, files.values())),
+        "digest": digest, "revision": "sha256:" + digest}}
 
 
 def copy_adapter_snapshot(export, destination, result, derived_path, check):
@@ -45,7 +62,7 @@ def copy_adapter_snapshot(export, destination, result, derived_path, check):
         identity = _private_directory(root)
         for name, data in files.items():
             check(); _write_file(root, name, data)
-        copied, _ = original_snapshot(_derived_draft(Path(destination), records), check)
+        copied, _ = original_snapshot(_copied_draft(Path(destination), files), check)
         if {item.path: item.data for item in copied.files} != files:
             raise PreparationError("agent_adapter_input_changed")
         visible = _open_directory(Path(destination))
@@ -108,7 +125,14 @@ def prepare_agent_adapter(descriptor, draft, result, derived_path, toolchain, ou
         def runtime(destination, dependency_project):
             if hashlib.sha256(_read(dependency_project / "uv.lock", 16 * 1024 * 1024)).hexdigest() != result.specification.dependency_lock_sha256:
                 raise PreparationError("dependency_lock_mismatch")
-            return _runtime(destination, dependency_project, current, run, check, work, acquire_wheels)
+            from .preparation_agent_runtime import complete_agent_runtime
+            def controlled_run(spec):
+                response = run(spec)
+                check()
+                if spec.operation == "dependency_install":
+                    complete_agent_runtime(current.root.parent, destination, output / "source", check)
+                return response
+            return _runtime(destination, dependency_project, current, controlled_run, check, work, acquire_wheels)
         package = generator.prepare(args, runtime_builder=runtime, check_canceled=check,
             lifecycle_override=descriptor.lifecycle.model_dump())
         # The generated wrapper is a derived artifact, never an original file.
@@ -132,6 +156,10 @@ def prepare_agent_adapter(descriptor, draft, result, derived_path, toolchain, ou
         source_label = "agent-derived:sha256:" + result.collection.digest
         derived_paths = {"source/" + CODE_PATH, "agent-adapter-derivation.json", license_path}
         records = {item["path"]: item for item in lock["artifacts"]}
+        sdk = json.loads(_read(output / "host-sdk-origin.json", 4 * 1024 * 1024))
+        for item in sdk["files"]:
+            records[item["path"]].update(source="host-sdk:sha256:" + sdk["host_build_sha256"],
+                provenance="Exact installed host MCP dependency closure; see host-sdk-origin.json")
         for name in ("preparation.json", *sorted(derived_paths)):
             data = _read(output / name, 1024 * 1024)
             (output / name).chmod(0o600)
@@ -141,7 +169,7 @@ def prepare_agent_adapter(descriptor, draft, result, derived_path, toolchain, ou
                     else "Original immutable source and separate derived collection",
                 "license": license_path if name in derived_paths else "source/" + result.specification.source_license}
         lock["artifacts"] = [records[name] for name in sorted(records)]
-        lock["build"].update(recipe="agent-python-adapter-v1 1.0.0", builder="mcpme governed agent adapter builder v1")
+        lock["build"].update(recipe="agent-python-adapter-v1 1.0.1", builder="mcpme governed agent adapter builder v1")
         # Package locks bind the complete runtime closure and have their own
         # existing larger bound; preparation-contract limits do not apply.
         lock_data = json.dumps(lock, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()

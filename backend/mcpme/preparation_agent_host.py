@@ -245,18 +245,23 @@ class AgentPreparationHost:
                 "SELECT data FROM agent_host_jobs ORDER BY rowid DESC") if (json.loads(row[0])["import_id"],
                 json.loads(row[0])["revision"], json.loads(row[0])["source_revision"]) ==
                 (import_id, revision, draft["source"]["revision"])), None),
+            "latest_setup_job": self.app_setups.latest(import_id) if hasattr(self, "app_setups") else None,
             "monetary_ceiling_enforced": False}
 
     def _request(self, plan, draft):
         provider = self._provider(plan["provider_id"], plan["model"])
-        return AnalysisRequestV1(import_id=plan["import_id"], revision=plan["revision"],
+        from .app_setup_contracts import RepairAnalysisRequestV1
+        repair = plan.get("repair_context")
+        contract = RepairAnalysisRequestV1 if repair is not None else AnalysisRequestV1
+        return contract(import_id=plan["import_id"], revision=plan["revision"],
             source_revision=plan["source_revision"], authority_id=plan["plan_id"], expires_at=plan["expires_at"],
             provider={"backend": provider.backend.backend_id, "model": plan["model"], "credential_ref": provider.credential_ref,
                 "provider_id": provider.provider_id, "configuration_generation": provider.generation,
                 "adapter_digest": provider.adapter_digest, "destination": provider.destination},
             selected_files=plan["selected_files"], intent=draft["intent"],
             selected_metadata=plan.get("selected_metadata", []), recipe=plan["recipe"], guide=self._guide(plan),
-            permitted_tools=["read-selected-source", "propose-files"], limits=plan["limits"])
+            permitted_tools=["read-selected-source", "propose-files"], limits=plan["limits"],
+            **({"repair_context": repair} if repair is not None else {}))
 
     def _validate(self, plan, *, dispatch=False):
         if self.execution_admission is not None:
@@ -352,7 +357,7 @@ class AgentPreparationHost:
             self.execution_admission.check_current(full=True)
         return result
 
-    async def plan(self, payload):
+    async def plan(self, payload, *, repair_context=None):
         if self.closing:
             raise PreparationError("agent_host_closing")
         if len(self.static_workers) >= 4:
@@ -392,6 +397,13 @@ class AgentPreparationHost:
                 "guide_binding": self._guide_binding(self.guides.resolve(recipe)),
                 "limits": selection.limits.model_dump(),
                 "expires_at": int(time.time()) + 300 + selection.limits.wall_seconds, "job_id": None}
+            if repair_context is not None:
+                from .app_setup_contracts import RepairContextV1, DIAGNOSTICS
+                repair = RepairContextV1.model_validate(repair_context)
+                if repair.diagnostic_code not in DIAGNOSTICS:
+                    raise PreparationError("app_setup_repair_scope_invalid")
+                self.store.repair_input(repair)
+                plan["repair_context"] = repair.model_dump()
             request = self._request(plan, draft)
             plan["request_digest"] = request.digest
             plan["plan_digest"] = contract_digest("agent-host-plan-v1", {key: value for key, value in plan.items() if key != "job_id"})
@@ -530,15 +542,17 @@ class AgentPreparationHost:
             worker = asyncio.create_task(asyncio.to_thread(validate_candidate))
             try:
                 job["candidate_metadata"] = await asyncio.shield(worker)
-            except Exception:
-                job["candidate_blocker"] = "agent_candidate_requires_review"
+            except Exception as error:
+                from .app_setup_contracts import safe_code
+                job["candidate_blocker"] = safe_code(error, "agent_candidate_requires_review")
             check(); self._validate(plan, dispatch=True)
             job.update(state="succeeded")
         except asyncio.CancelledError:
             stop.set()
             job.update(state="canceled", error_code=None)
-        except Exception:
-            job.update(state="canceled" if stop.is_set() else "failed", error_code=None if stop.is_set() else "agent_job_failed")
+        except Exception as error:
+            from .app_setup_contracts import safe_code
+            job.update(state="canceled" if stop.is_set() else "failed", error_code=None if stop.is_set() else safe_code(error, "agent_job_failed"))
         finally:
             if child is not None and not child.done():
                 child.cancel()

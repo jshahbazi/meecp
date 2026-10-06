@@ -127,7 +127,14 @@ def prepare_agent_unlocked_adapter(descriptor, draft, result, derived_path, tool
         def runtime(destination, dependency_project):
             if hashlib.sha256(_read(dependency_project / "uv.lock", 16 * 1024 * 1024)).hexdigest() != next(item.sha256 for item in result.derived_inputs if item.name == "dependency-lock"):
                 raise PreparationError("dependency_lock_mismatch")
-            return _runtime(destination, dependency_project, current, run, check, work, acquire_wheels)
+            from .preparation_agent_runtime import complete_agent_runtime
+            def controlled_run(spec):
+                response = run(spec)
+                check()
+                if spec.operation == "dependency_install":
+                    complete_agent_runtime(current.root.parent, destination, output / "source", check)
+                return response
+            return _runtime(destination, dependency_project, current, controlled_run, check, work, acquire_wheels)
         package = generator.prepare(args, runtime_builder=runtime, check_canceled=check,
             lifecycle_override=descriptor.lifecycle.model_dump())
         # The generated wrapper is a derived artifact, never an original file.
@@ -152,6 +159,10 @@ def prepare_agent_unlocked_adapter(descriptor, draft, result, derived_path, tool
         derived_paths = {"source/" + CODE_PATH, "source/"+DEPENDENCY_NAMESPACE+"/pyproject.toml",
             "source/"+DEPENDENCY_NAMESPACE+"/uv.lock", "agent-adapter-derivation.json", license_path}
         records = {item["path"]: item for item in lock["artifacts"]}
+        sdk = json.loads(_read(output / "host-sdk-origin.json", 4 * 1024 * 1024))
+        for item in sdk["files"]:
+            records[item["path"]].update(source="host-sdk:sha256:" + sdk["host_build_sha256"],
+                provenance="Exact installed host MCP dependency closure; see host-sdk-origin.json")
         for name in ("preparation.json", *sorted(derived_paths)):
             data = _read(output / name, 16 * 1024**2 if name.endswith("/uv.lock") else 1024 * 1024)
             (output / name).chmod(0o600)
@@ -164,7 +175,7 @@ def prepare_agent_unlocked_adapter(descriptor, draft, result, derived_path, tool
                 "license": "licenses/template-LICENSE.txt" if dependency else license_path if name in derived_paths
                     else "source/" + result.specification.source_license}
         lock["artifacts"] = [records[name] for name in sorted(records)]
-        lock["build"].update(recipe="agent-unlocked-python-adapter-v1 1.0.0", builder="mcpme governed unlocked adapter builder v1")
+        lock["build"].update(recipe="agent-unlocked-python-adapter-v1 1.0.1", builder="mcpme governed unlocked adapter builder v1")
         # Package locks bind the complete runtime closure and have their own
         # existing larger bound; preparation-contract limits do not apply.
         lock_data = json.dumps(lock, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()

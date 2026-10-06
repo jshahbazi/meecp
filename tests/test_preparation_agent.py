@@ -281,7 +281,7 @@ async def test_disconnect_cancels_siblings_and_cannot_leak_error_body(store):
     request, source = request_for()
     coordinator = AgentCoordinator(store, backend(handler), lambda _: None)
     attempt = coordinator.create(request)
-    with pytest.raises(PreparationError, match="^agent_attempt_failed$"):
+    with pytest.raises(PreparationError, match="^agent_provider_failed$"):
         await coordinator.run(attempt["attempt_id"], request, source)
     record = store.get(attempt["attempt_id"])
     assert len(settled) == 3 and record["local_io_settled"]

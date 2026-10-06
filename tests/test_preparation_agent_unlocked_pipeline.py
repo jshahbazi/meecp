@@ -88,7 +88,7 @@ async def test_unlocked_adapter_explicit_resolution_confined_build_attach_and_re
         host = Supervisor(retained/"state", host_root/"bin/mcpme-reap", preparation_runner_factory=preparation_factory,
             resolution_runner_factory=resolution_factory, agent_preparation_factory=agent_factory)
         family = next(value for value in host.preparations.families.values() if value.component.reference.id == COMPONENT_ID)
-        assert family.component.reference.digest == component_catalog()[COMPONENT_ID+"@1.0.0"]["digest"]
+        assert family.component.reference.digest == component_catalog()[COMPONENT_ID+"@1.0.1"]["digest"]
         record = next(value for value in host.recipes.list() if value["recipe_id"] == "mcpme.agent-unlocked-python-adapter")
         assert record["state"] == "enabled"
         draft = host.imports.create(source, name="Unlocked scalar app", intent="Wrap the selected scalar as a structured result", source_mode="automatic")

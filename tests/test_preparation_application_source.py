@@ -80,6 +80,40 @@ def test_unknown_regular_payload_is_bound_in_automatic_mode(tmp_path):
         assert "unrecognized.payload" in intake.read_application_snapshot(draft)
 
 
+def test_folder_selection_includes_bundled_models_without_transferring_binary_contents(tmp_path, monkeypatch):
+    from mcpme.preparation_agent_recipe_choices import source_choice_inventory
+    root = tmp_path / "detector"
+    (root / "models").mkdir(parents=True)
+    (root / "detector.py").write_text("raise AssertionError('intake must not execute code')\n")
+    weights = b"\x08\x09\0bounded synthetic ONNX weights"
+    (root / "models" / "detector.onnx").write_bytes(weights)
+    (root / "models" / "credentials.json").write_text('{"token":"synthetic-private-value"}')
+    (root / "model-provenance.json").write_text(json.dumps({"sha256": hashlib.sha256(weights).hexdigest()}))
+    monkeypatch.setattr("subprocess.Popen", lambda *a, **kw: pytest.fail("intake invoked selected code"))
+    with ImportStore(tmp_path / "state") as store:
+        draft = store.create(root, name="Detector", source_mode="automatic")
+        files = read_snapshot(draft).by_path()
+        assert files["models/detector.onnx"].data == weights
+        assert "models/credentials.json" not in files
+        inventory = source_choice_inventory(draft["source"])
+        assert "models/detector.onnx" not in {item["path"] for item in inventory["files"]}
+        assert "models/detector.onnx" in {item["path"] for item in inventory["metadata_files"]}
+        (root / "models" / "detector.onnx").write_bytes(b"changed original model")
+        assert read_snapshot(draft).by_path()["models/detector.onnx"].data == weights
+
+
+def test_oversized_bundled_model_is_reported_instead_of_silently_omitted(tmp_path, monkeypatch):
+    root = tmp_path / "detector"
+    (root / "models").mkdir(parents=True)
+    (root / "detector.py").write_text("pass\n")
+    (root / "models" / "detector.onnx").write_bytes(b"\0" * 33)
+    monkeypatch.setattr(intake, "MAX_SOURCE_FILE_BYTES", 32)
+    with ImportStore(tmp_path / "state") as store:
+        with pytest.raises(ImportError, match="^source_size_exceeded$"):
+            store.create(root, name="Detector", source_mode="automatic")
+        assert store.list() == []
+
+
 @pytest.mark.parametrize("unsafe", ["symlink", "hardlink", "fifo", "ancestor"])
 def test_automatic_rejects_unsafe_source_entries(tmp_path, unsafe):
     root = source_tree(tmp_path)

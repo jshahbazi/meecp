@@ -11,10 +11,11 @@ import pytest
 from mcpme.preparation_contracts import PreparationError
 from mcpme.preparation_release_policy import AgentExecutionAdmission, ReleasePolicy, POLICY_PATH, _load_policy, release_admissions
 from mcpme.preparation_agent_providers import AgentProviderRegistry, OpenAIResponsesAdapter
+from mcpme.preparation_agent_unlocked import COMPONENT_ID, VERSION, component_catalog
 from test_preparation_agent_providers import choices, update, SYNTHETIC
 
 
-KEY = ("agent-unlocked-python-adapter-v1", "1.0.0", "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f")
+KEY = (COMPONENT_ID, VERSION, component_catalog()[COMPONENT_ID + "@" + VERSION]["digest"])
 
 
 def closed():

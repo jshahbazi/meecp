@@ -13,7 +13,7 @@ from .preparation_components import ComponentReference, PreparationDescriptorV2,
 from .preparation_contracts import PreparationError, canonical_bytes, contract_digest
 from .preparation_agent_adapter import AgentAdapterInput
 
-COMPONENT_ID, VERSION = "agent-unlocked-python-adapter-v1", "1.0.0"
+COMPONENT_ID, VERSION = "agent-unlocked-python-adapter-v1", "1.0.1"
 
 
 def component_catalog():
@@ -23,12 +23,15 @@ def component_catalog():
     names = sorted({"preparation_agent_unlocked.py", "preparation_agent_unlocked_contracts.py",
         "preparation_agent_unlocked_store.py", "preparation_agent_unlocked_resolution.py", "preparation_agent_unlocked_builder.py",
         "preparation_agent_unlocked_forms.py", "preparation_agent_adapter.py", "preparation_agent_adapter_store.py",
+        "preparation_agent_runtime.py",
         "preparation_selection_snapshot.py", "preparation_application_builder.py", "preparation_application_source.py",
         "preparation_builder.py", "preparation_components.py", "preparation_inputs.py", "preparation_contracts.py",
         "contracts.py", "private.py"})
     digest = contract_digest("agent-unlocked-component-v1", [
         {"path": name, "sha256": hashlib.sha256((root/name).read_bytes()).hexdigest()} for name in names])
-    return {COMPONENT_ID+"@"+VERSION: {"digest": digest, "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []}}
+    return {COMPONENT_ID+"@1.0.0": {"digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f",
+        "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []},
+        COMPONENT_ID+"@"+VERSION: {"digest": digest, "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []}}
 
 
 def selected_input(descriptor):

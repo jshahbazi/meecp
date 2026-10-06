@@ -20,8 +20,8 @@
       },
       {
         "id": "text-generate-v1",
-        "version": "1.0.15",
-        "digest": "3914324a17e9cbf5b5e12212cb0142bc53725e19d8a6ae9dc613da1ccea2dc83"
+        "version": "1.0.16",
+        "digest": "2a6a08011dc0be030b4760f89d8a99218c6dd56d96c548a4e502e9ba5144aeae"
       },
       {
         "id": "service-text-generate-v1",
@@ -30,13 +30,13 @@
       },
       {
         "id": "agent-unlocked-python-adapter-v1",
-        "version": "1.0.0",
-        "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"
+        "version": "1.0.1",
+        "digest": "7849a67cc096d0579a92bc910aef855d68945a63d37b54362aa9a5f2bf307726"
       },
       {
         "id": "agent-python-adapter-v1",
-        "version": "1.0.0",
-        "digest": "28c1d862b947f294dcd0a7f038c32f3d9cf4e31ea20f81d91ab800b13d0b8274"
+        "version": "1.0.1",
+        "digest": "d7eb6da84e83c3c3204fb92e17c467766c1c4d17b930417634f2c8d71338712d"
       }
     ],
     "recipe_component_sets": [
@@ -76,13 +76,13 @@
       [
         {
           "id": "llamacpp-cpu-v1",
-          "version": "1.0.15",
-          "digest": "145c1d8b5a6fcb0926415cb456127f15afe6353c7e2aedfab0184c3e09796720"
+          "version": "1.0.16",
+          "digest": "36cb0a908b3cbd60503eaaa178c5beb9fa86082de13516be53cd47ccd36ac048"
         },
         {
           "id": "text-generate-v1",
-          "version": "1.0.15",
-          "digest": "3914324a17e9cbf5b5e12212cb0142bc53725e19d8a6ae9dc613da1ccea2dc83"
+          "version": "1.0.16",
+          "digest": "2a6a08011dc0be030b4760f89d8a99218c6dd56d96c548a4e502e9ba5144aeae"
         }
       ],
       [
@@ -105,15 +105,15 @@
       [
         {
           "id": "agent-unlocked-python-adapter-v1",
-          "version": "1.0.0",
-          "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"
+          "version": "1.0.1",
+          "digest": "7849a67cc096d0579a92bc910aef855d68945a63d37b54362aa9a5f2bf307726"
         }
       ],
       [
         {
           "id": "agent-python-adapter-v1",
-          "version": "1.0.0",
-          "digest": "28c1d862b947f294dcd0a7f038c32f3d9cf4e31ea20f81d91ab800b13d0b8274"
+          "version": "1.0.1",
+          "digest": "d7eb6da84e83c3c3204fb92e17c467766c1c4d17b930417634f2c8d71338712d"
         }
       ]
     ],
@@ -126,19 +126,19 @@
     "components": [
       {
         "id": "agent-unlocked-python-adapter-v1",
-        "version": "1.0.0",
-        "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"
+        "version": "1.0.1",
+        "digest": "7849a67cc096d0579a92bc910aef855d68945a63d37b54362aa9a5f2bf307726"
       },
       {
         "id": "agent-python-adapter-v1",
-        "version": "1.0.0",
-        "digest": "28c1d862b947f294dcd0a7f038c32f3d9cf4e31ea20f81d91ab800b13d0b8274"
+        "version": "1.0.1",
+        "digest": "d7eb6da84e83c3c3204fb92e17c467766c1c4d17b930417634f2c8d71338712d"
       }
     ],
     "providers": [
       {
         "adapter_id": "openai-responses-v1",
-        "adapter_digest": "f651b36ab4b3d4fe6479457e5a31f129b1339c41536e02bfb53cbbf4025cebc1",
+        "adapter_digest": "216c9fac8d10d60ffce2ee33ea8f58978fea078636d1e058299dfd44d19b747e",
         "models": [
           "gpt-6.1-sol"
         ]

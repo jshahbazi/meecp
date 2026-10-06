@@ -96,7 +96,7 @@ def _remove_attachment_tree(path: Path) -> None:
 _EXCLUDED_DIRECTORIES = {
     ".git", ".hg", ".svn", ".venv", "venv", "env", "node_modules", "__pycache__",
     ".pytest_cache", ".mypy_cache", ".ruff_cache", ".cache", ".tox", ".nox",
-    "build", "dist", "target", "artifacts", "bundles", "models", "runtime", "logs",
+    "build", "dist", "target", "artifacts", "bundles", "runtime", "logs",
 }
 _SOURCE_SUFFIXES = {
     ".py", ".pyi", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".md", ".txt",

@@ -13,7 +13,7 @@ from .preparation_components import ComponentReference, PreparationDescriptorV2,
 from .preparation_contracts import Contract, PreparationError, canonical_bytes, contract_digest
 from .preparation_agent_adapter_store import AgentAdapterDerivationStore
 
-COMPONENT_ID, VERSION = "agent-python-adapter-v1", "1.0.0"
+COMPONENT_ID, VERSION = "agent-python-adapter-v1", "1.0.1"
 INPUT_SCHEMA = {"type": "object", "additionalProperties": False,
     "required": ["derivation_id", "derivation_digest"], "properties": {
         "derivation_id": {"type": "string", "minLength": 36, "maxLength": 36},
@@ -24,11 +24,14 @@ def component_catalog():
     root = Path(__file__).parent
     files = ["preparation_agent_adapter.py", "preparation_agent_adapter_store.py",
         "preparation_agent_adapter_builder.py", "preparation_agent_adapter_forms.py",
+        "preparation_agent_runtime.py",
         "preparation_builder.py", "preparation_application_builder.py", "preparation_application_source.py",
         "preparation_selection_snapshot.py"]
     digest = contract_digest("agent-python-adapter-component-v1", [
         {"path": name, "sha256": hashlib.sha256((root / name).read_bytes()).hexdigest()} for name in files])
-    return {COMPONENT_ID + "@" + VERSION: {"digest": digest,
+    return {COMPONENT_ID + "@1.0.0": {"digest": "28c1d862b947f294dcd0a7f038c32f3d9cf4e31ea20f81d91ab800b13d0b8274",
+        "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []},
+        COMPONENT_ID + "@" + VERSION: {"digest": digest,
         "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []}}
 
 

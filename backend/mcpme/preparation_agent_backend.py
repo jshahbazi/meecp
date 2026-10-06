@@ -58,8 +58,10 @@ class OpenAIResponsesBackend:
                 "Interface: analyze callable or CLI contracts and schemas. Dependencies: "
                 "identify runtime/dependency closure and missing locks. Fixtures: propose "
                 "synthetic behavioral tests. Adapter: integrate preceding proposals into "
-                "adapter source and a proposed preparation descriptor. Record missing "
-                "requirements in unresolved. Never invent successful verification."
+                "the exact adapter files required by the host-owned component contract. "
+                "The host will build and test the app after generation. Lack of execution "
+                "during generation is not a missing requirement. Record actual missing "
+                "source facts in unresolved. Never invent successful verification."
             ),
             "input": [{"role": "user", "content": [{"type": "input_text", "text": content}]}],
             "text": {"format": {"type": "json_schema", "name": "preparation_proposal",
@@ -74,6 +76,18 @@ class OpenAIResponsesBackend:
                 "records disclose path, original byte length and SHA-256, not file contents. "
                 + canonical_bytes({"guide_id": request.guide.id, "guide_digest": request.guide.digest,
                     "component": request.guide.component.model_dump(), "role_contract": guide.model_dump()}).decode())
+        if hasattr(request, "repair_context"):
+            from .app_setup_contracts import DIAGNOSTICS
+            repair = request.repair_context
+            message, action = DIAGNOSTICS[repair.diagnostic_code]
+            payload["instructions"] += (
+                " This is a host-requested correction after an actual validation or confined build/test failure. "
+                "Revise only your assigned role. The prior proposals include the previous files. "
+                "For repair-adapter, interface, dependencies, test arguments, and expected results are frozen; "
+                "fix the adapter to pass those tests, never change or bypass them. "
+                "For complete-proposal, supply the missing concrete files; do not report lack of execution "
+                "as an unresolved requirement because the host builds and runs the tests after generation. "
+                + canonical_bytes({"repair": repair.model_dump(), "diagnostic": message, "required_action": action}).decode())
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
 
     async def complete(self, request, role, body):

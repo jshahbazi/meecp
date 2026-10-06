@@ -26,13 +26,30 @@ def python_adapter_guide(component, *, unlocked=False):
             {"role": "interface", "depends_on": [], "instructions":
                 'Return exactly proposed/interface/interface.json with {"tool": one Tool object}. '
                 'Design a typed Python invoke wrapper of the selected source behavior with a structured object result. '
-                'Include input_schema and output_schema; input_schema must match the typed wrapper signature. '
+                'Keep the interface simple and focused on the requested behavior; it need not copy every parameter '
+                'or diagnostic field from an existing interface. Include input_schema and output_schema. '
+                'The wrapper accepts only str, int, float and bool parameters. Its input_schema is exactly '
+                '{"type":"object","properties":{parameter:{"type":primitive JSON type}},'
+                '"required":[parameters without defaults],"additionalProperties":false}. '
+                'For a parameter with a primitive literal default, add that exact default to its property and '
+                'omit it from required. Do not add property descriptions, constraints, nullable unions or oneOf. '
+                'Adapt optional source parameters inside the wrapper: for images, a required base64 string can '
+                'replace a choice between a local file path and image bytes. Keep the actual requested result, '
+                'but omit observational fields such as elapsed time, random IDs and timestamps so tests are reproducible. '
+                'All selected file identities, including binary metadata, name files in the local build snapshot. '
+                'The host copies the complete snapshot, installs dependencies and tests the wrapper later. '
+                'Lack of execution during this proposal is not an unresolved input. '
                 'Tool JSON schema: ' + tool_schema},
             {"role": "dependencies", "depends_on": [], "instructions": dependencies},
             {"role": "fixtures", "depends_on": ["interface"], "instructions":
                 'Return exactly proposed/fixtures/fixtures.json with {"arguments": object, "expected": object}. '
                 'Use the agreed interface proposal unchanged. Choose one nonsecret synthetic deterministic call, '
                 'with arguments and expected matching the input/output schemas and selected source behavior. '
+                'This is a proposed test that the host will execute, not a report of a measured result. '
+                'The inability to execute now is not itself unresolved. Supply concrete arguments and an expected '
+                'result, never an empty placeholder. Prefer a minimal synthetic input with predictable behavior. '
+                'For image input use valid, complete base64 for a tiny synthetic image, never a private path. '
+                'Do not test a stub or manufacture a success result by bypassing the selected implementation. '
                 'Do not claim to have executed it.'},
             {"role": "adapter", "depends_on": ["interface", "dependencies", "fixtures"], "instructions":
                 'Return exactly three files: proposed/adapter/adapter.json, proposed/adapter/wrapper.py, '
@@ -43,6 +60,13 @@ def python_adapter_guide(component, *, unlocked=False):
                 'no module-level assignments, expressions, classes or extra functions. Its parameters must match '
                 'the agreed input_schema exactly, with supported primitive annotations (str, int, float, bool). '
                 'Return the agreed structured result object; import original selected modules as needed. '
+                'The host copies every selected source file and bundled asset while preserving relative paths, '
+                'adds this wrapper at the snapshot root, and runs it with the locked Python dependencies. '
+                'Binary metadata is sufficient to refer to a bundled model; its contents stay local. '
+                'Do not report host-owned building, dependency installation, code execution or verification '
+                'as missing input. Record unresolved only for a concrete source fact or capability that is '
+                'actually absent. Preserve the original application behavior and propagate real errors; '
+                'do not substitute fixture values, mock inference or catch every exception as success. '
                 'The fixture arguments and expected result must describe its behavior. Each file is at most 16384 '
                 'UTF-8 bytes. LICENSE is a nonempty permission notice for newly generated wrapper code; do not '
                 'invent or claim the contents of an original license disclosed only as metadata. No preparation '
@@ -53,10 +77,10 @@ def builtin_analysis_guides():
     # Literal published identity: a changed component does not inherit guidance
     # silently. New implementations must register a fresh exact guide binding.
     return (
-        python_adapter_guide({"id": "agent-python-adapter-v1", "version": "1.0.0",
-            "digest": "28c1d862b947f294dcd0a7f038c32f3d9cf4e31ea20f81d91ab800b13d0b8274"}),
-        python_adapter_guide({"id": "agent-unlocked-python-adapter-v1", "version": "1.0.0",
-            "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"}, unlocked=True),
+        python_adapter_guide({"id": "agent-python-adapter-v1", "version": "1.0.1",
+            "digest": "d7eb6da84e83c3c3204fb92e17c467766c1c4d17b930417634f2c8d71338712d"}),
+        python_adapter_guide({"id": "agent-unlocked-python-adapter-v1", "version": "1.0.1",
+            "digest": "7849a67cc096d0579a92bc910aef855d68945a63d37b54362aa9a5f2bf307726"}, unlocked=True),
     )
 
 

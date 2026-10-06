@@ -307,7 +307,7 @@ async def test_untrusted_artifacts_never_become_execution_or_attachment(foundati
         _, _, job = await planned_start(host, draft, descriptor)
         job = await completed(host, job)
         assert job["state"] == "succeeded" and job["candidate"] is None
-        assert job["blockers"] == ["agent_candidate_requires_review"]
+        assert job["blockers"] == ["agent_candidate_unresolved" if malformation == "unresolved" else "agent_candidate_requires_review"]
         with pytest.raises(ValueError):
             await host.adopt({"action": "adopt-candidate", "job_id": job["job_id"], "proposal_digest": job["proposal_digest"]})
         assert preparations.list() == [] and preparations.imports.inspect(draft["draft_id"])["attachment"] is None

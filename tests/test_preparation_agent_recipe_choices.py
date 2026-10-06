@@ -43,7 +43,7 @@ def recommended(value):
 
 
 def add_alias(host, root, recipe_id, version="1.0.0"):
-    shutil.copytree(ROOT / "templates/builtin-recipes/agent-unlocked-python-adapter-v1-0-0", root)
+    shutil.copytree(ROOT / "templates/builtin-recipes/agent-unlocked-python-adapter-v1-0-1", root)
     manifest = json.loads((root / "mcpme.recipe.json").read_bytes())
     manifest.update(id=recipe_id, version=version)
     raw = canonical_bytes(manifest)
@@ -117,11 +117,11 @@ async def test_unavailable_recipe_is_never_selected_or_reenabled(tmp_path, actio
     host = Supervisor(tmp_path / "state", tmp_path / "unused-reaper")
     try:
         draft = capture(host, tmp_path / "source", {"worker.py": WORKER})
-        getattr(host.recipes, action)(UNLOCKED, "1.0.0")
+        getattr(host.recipes, action)(UNLOCKED, "1.0.1")
         value = options(host, draft)
         assert recommended(value) == []
         assert UNLOCKED not in {item["id"] for item in value["recipes"]}
-        assert host.recipes.inspect(UNLOCKED, "1.0.0")["state"] != "enabled"
+        assert host.recipes.inspect(UNLOCKED, "1.0.1")["state"] != "enabled"
     finally:
         await host.close()
 
@@ -135,7 +135,7 @@ async def test_component_or_guide_change_cannot_inherit_a_recommendation(tmp_pat
         host.agent_preparations.guides = AnalysisGuideRegistry(tuple(AnalysisGuideV1.model_validate(item) for item in guides))
         assert recommended(options(host, draft)) == []
         host.agent_preparations.guides = AnalysisGuideRegistry(builtin_analysis_guides())
-        host.recipes.component_catalog["agent-unlocked-python-adapter-v1@1.0.0"]["digest"] = "0" * 64
+        host.recipes.component_catalog["agent-unlocked-python-adapter-v1@1.0.1"]["digest"] = "0" * 64
         value = options(host, draft)
         assert recommended(value) == []
         assert next(item for item in value["recipe_choices"] if item["recipe"]["id"] == UNLOCKED)["compatibility"] == "unresolved"
@@ -149,7 +149,7 @@ async def test_independent_exact_recipe_alias_can_be_chosen_without_dispatcher_c
         draft = capture(host, tmp_path / "source", {"worker.py": WORKER})
         add_alias(host, tmp_path / "alias-a", "test.independent-adapter")
         assert recommended(options(host, draft)) == [UNLOCKED]
-        host.recipes.disable(UNLOCKED, "1.0.0")
+        host.recipes.disable(UNLOCKED, "1.0.1")
         assert recommended(options(host, draft)) == ["test.independent-adapter"]
         add_alias(host, tmp_path / "alias-b", "test.second-adapter")
         assert recommended(options(host, draft)) == []
@@ -161,7 +161,7 @@ async def test_multiple_builtin_versions_require_explicit_selection(tmp_path):
     host = Supervisor(tmp_path / "state", tmp_path / "unused-reaper")
     try:
         draft = capture(host, tmp_path / "source", {"worker.py": WORKER})
-        add_alias(host, tmp_path / "alias", UNLOCKED, "1.0.1")
+        add_alias(host, tmp_path / "alias", UNLOCKED, "1.0.2")
         assert recommended(options(host, draft)) == []
     finally:
         await host.close()

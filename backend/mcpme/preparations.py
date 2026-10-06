@@ -29,6 +29,15 @@ from .preparation_contracts import (
 
 RECEIPT_NAME = "mcpme.preparation.json"
 TERMINAL = {"succeeded", "canceled", "failed", "interrupted"}
+# These retired families retained separately owned immutable derivations; their
+# release hook performed no work. Recovery may recognize that exact historical
+# fact without registering an old executor or substituting a new implementation.
+RETAINED_AGENT_INPUT_COMPONENTS = frozenset({
+    ("agent-python-adapter-v1", "1.0.0", "28c1d862b947f294dcd0a7f038c32f3d9cf4e31ea20f81d91ab800b13d0b8274"),
+    ("agent-python-adapter-v1", "1.0.1", "d7eb6da84e83c3c3204fb92e17c467766c1c4d17b930417634f2c8d71338712d"),
+    ("agent-unlocked-python-adapter-v1", "1.0.0", "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"),
+    ("agent-unlocked-python-adapter-v1", "1.0.1", "7849a67cc096d0579a92bc910aef855d68945a63d37b54362aa9a5f2bf307726"),
+})
 TRANSITIONS = {
     "queued": {"snapshotting", "canceled", "failed"},
     "snapshotting": {"preparing", "cancel_requested", "failed", "interrupted"},
@@ -227,6 +236,14 @@ class PreparationStore(PreparationAuthority):
         if row is not None:
             descriptor = parse_preparation_descriptor(json.loads(row["data"])["descriptor"])
             if descriptor.schema_version == 2:
+                if (len(descriptor.components) == 1
+                        and descriptor.components[0].component.key in RETAINED_AGENT_INPUT_COMPONENTS):
+                    with self.imports._lock:
+                        job = self._get(job_id)
+                        if (job["state"] not in TERMINAL or not job["ownership_settled"]
+                                or job["reservation_retained"] or self.pending_ownership(job_id)):
+                            raise PreparationError("preparation_ownership_unsettled")
+                    return
                 self.family_for(descriptor).release(job_id, descriptor)
 
     def plan(self, import_id, revision, descriptor):

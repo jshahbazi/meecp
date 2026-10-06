@@ -458,6 +458,7 @@ class PiSetup:
             "Declare truthful resource requirements and required access. Use the source_revision in setup.json. Write a custom adapter "
             "and launcher in any language. Bundle all needed runtimes "
             "and dependencies; no global installations, symlinks, secrets or external absolute paths in the package. "
+            "Python launchers must pass -B to keep the locked package unchanged: -I and -E ignore PYTHONDONTWRITEBYTECODE. "
             "Use uv for Python dependencies, locked dependencies for other ecosystems, and include licenses/provenance. "
             "Generate package/verification.json, one or more synthetic fixtures per declared tool. Use {tool,arguments,expected} for exact structuredContent "
             "or {tool,arguments,assertions:[{path,operator,value}]} for full MCP results. path is a JSON Pointer; operators equals,type,contains,exists,min_length. "

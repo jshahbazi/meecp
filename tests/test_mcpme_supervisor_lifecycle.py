@@ -3,9 +3,12 @@ from __future__ import annotations
 import array
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
 from pathlib import Path
+import py_compile
+import shlex
 import signal
 import socket
 import subprocess
@@ -14,11 +17,16 @@ import time
 
 import pytest
 import httpx
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
 
+from mcpme.contracts import PackageError, validate_package
 from mcpme.processes import OwnershipLost
 from mcpme.supervisor import HostError, Supervisor, Worker
 from mcpme.worker import RemoteLauncher
 from mcpme import worker as worker_module
+from test_mcpme_gateway import CHILD, TOOL
+from test_mcpme_packages import make_package, relock
 
 
 def reply(channel, instance_id):
@@ -254,6 +262,91 @@ def reaper(tmp_path_factory):
 def add_slot(host, tmp_path, port):
     return host.registry.add_slot(package_digest="a" * 64, package_path=tmp_path,
                                   name="Lifecycle fixture", public_port=port)
+
+
+@pytest.mark.parametrize("legacy_environment", [True, False])
+async def test_relocated_locked_python_cache_survives_install_and_gateway_session(reaper, tmp_path,
+                                                                                legacy_environment):
+    source = make_package(tmp_path / "source")
+    library = source / "lib"
+    library.mkdir()
+    module = library / "cache_input.py"
+    module.write_text("MESSAGE = 'unchanged locked input'\n")
+    cached = Path(py_compile.compile(str(module), doraise=True,
+                                    invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP))
+    # A stale cache is still a legitimate locked artifact. Importing the source
+    # after relocation must compile in memory, without replacing package bytes.
+    os.utime(module, (1, 1))
+    (library / "server.py").write_text("from cache_input import MESSAGE\nassert MESSAGE == 'unchanged locked input'\n" + CHILD)
+    executable = source / "bin/service"
+    executable.write_text("#!/bin/sh\nset -eu\nPACKAGE_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")/..\" && pwd)\n"
+                          "exec " + shlex.quote(sys.executable) + " \"$PACKAGE_DIR/lib/server.py\"\n")
+    manifest_path = source / "mcpme.package.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["tools"] = [{"name": TOOL["name"], "description": TOOL["description"],
+                          "input_schema": TOOL["inputSchema"], "output_schema": TOOL["outputSchema"]}]
+    manifest["validation"] = {"fixtures": [{"tool": "echo", "arguments": {"value": "candidate"},
+                                             "expected": {"value": "candidate"}}]}
+    manifest_path.write_text(json.dumps(manifest))
+    relock(source)
+    lock_path = source / "mcpme.lock.json"
+    lock = json.loads(lock_path.read_text())
+    for path in sorted(library.rglob("*")):
+        if path.is_file():
+            data = path.read_bytes()
+            digest = hashlib.sha256(data).hexdigest()
+            lock["artifacts"].append({"path": path.relative_to(source).as_posix(), "sha256": digest,
+                                      "size": len(data), "executable": False,
+                                      "source": "prepared:sha256:" + digest,
+                                      "provenance": "Synthetic relocated Python fixture", "license": "LICENSE"})
+    lock_path.write_text(json.dumps(lock))
+    original = validate_package(source)
+    cache_bytes = cached.read_bytes()
+    cache_relative = cached.relative_to(source)
+    host = Supervisor(tmp_path / "state", reaper)
+    if legacy_environment:
+        launch = host.launch_package
+        async def without_guard(*args, **kwargs):
+            kwargs["env"] = {key: value for key, value in kwargs["env"].items()
+                             if key != "PYTHONDONTWRITEBYTECODE"}
+            return await launch(*args, **kwargs)
+        host.launch_package = without_guard
+    try:
+        plan = await host.plan_install_async({"package": str(source), "start": True})
+        result = await host.apply_install(plan["plan_id"])
+        async with asyncio.timeout(30):
+            while True:
+                operation = host.registry.get_operation(result["operation_id"])
+                if operation.status not in {"pending", "running"}:
+                    break
+                await asyncio.sleep(.05)
+        slot = host.registry.get_slot(plan["slot_id"])
+        installed = Path(slot.package_path)
+        assert installed != source and original.digest == plan["package_digest"]
+        if legacy_environment:
+            assert operation.status == "recovery_required" and operation.error_code == "installation_recovery_required"
+            assert (installed / cache_relative).read_bytes() != cache_bytes
+            with pytest.raises(PackageError, match="^artifact_(size|hash)_mismatch$"):
+                validate_package(installed)
+            return
+        assert operation.status == "completed" and slot.observed_state == "ready"
+        assert validate_package(installed).digest == original.digest
+        connection = host.connection(slot.id)
+        async with httpx.AsyncClient(headers={"Authorization": "Bearer " + connection["token"]},
+                                     trust_env=False, timeout=10) as client:
+            async with streamable_http_client(connection["endpoint"], http_client=client) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    assert [tool.name for tool in (await session.list_tools()).tools] == ["echo"]
+                    output = await session.call_tool("echo", {"value": "gateway stdio session"})
+                    assert not output.isError and output.structuredContent == {"value": "gateway stdio session"}
+        assert (installed / cache_relative).read_bytes() == cache_bytes
+        assert validate_package(installed).digest == original.digest
+    finally:
+        await host.close()
+        assert not host.workers and all(not owner.instances for owner in host.owners.values())
+        assert all(not ledger for ledger in host.ledgers.values())
+    assert validate_package(source).digest == original.digest
 
 
 async def test_ownership_loss_persists_blocks_restart_and_is_scoped(reaper, tmp_path):

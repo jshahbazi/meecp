@@ -1290,7 +1290,8 @@ class Supervisor(UpgradeHost):
             runtime = ensure_private_directory(self.slot_directory(slot.id) / "runtime")
             process = await self.launch_package(slot, package,
                 executable=package.root / entry.executable, args=entry.args, cwd=package.root / entry.cwd,
-                env={"PATH": "/usr/bin:/bin", "HOME": str(data), "TMPDIR": str(runtime), "LANG": "en_US.UTF-8"},
+                env={"PATH": "/usr/bin:/bin", "HOME": str(data), "TMPDIR": str(runtime), "LANG": "en_US.UTF-8",
+                     "PYTHONDONTWRITEBYTECODE": "1"},
                 owned_group=True, io_mode=io_mode, startup_timeout=min(package.manifest.lifecycle.startup_timeout_seconds, 120),
                 stop_grace=package.manifest.lifecycle.stop_grace_seconds)
             if not hasattr(self, "stdio_audits"):

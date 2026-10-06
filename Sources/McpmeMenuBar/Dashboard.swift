@@ -38,23 +38,31 @@ struct DashboardDetails: Equatable {
     let sections: [DashboardSection]
 }
 
-/// Screens use AppKit's global coordinate system. Keep the companion to the right,
-/// moving the pair together when the menu-bar icon is near a screen edge.
+/// Screens use AppKit's global coordinate system. Keep the menu aligned with its
+/// status button, then open details on the side with room without shifting it.
 func dashboardFrames(anchor: NSRect, screen: NSRect, showsDetails: Bool) -> (menu: NSRect, details: NSRect?) {
     let inset: CGFloat = 8
     let gap: CGFloat = 10
     let safe = screen.insetBy(dx: inset, dy: inset)
-    let menuWidth = min(350, showsDetails ? max(180, (safe.width - gap) * 0.44) : safe.width)
-    let detailsWidth = min(470, max(0, safe.width - menuWidth - gap))
+    let menuWidth = min(350, safe.width)
     let menuHeight = min(650, safe.height)
     let detailsHeight = min(650, safe.height)
-    let totalWidth = menuWidth + (showsDetails ? gap + detailsWidth : 0)
-    let x = min(max(anchor.midX - menuWidth / 2, safe.minX), safe.maxX - totalWidth)
+    let x = min(max(anchor.maxX - menuWidth, safe.minX), safe.maxX - menuWidth)
     let top = min(max(anchor.minY - 5, safe.minY + menuHeight), safe.maxY)
     let menu = NSRect(x: x, y: top - menuHeight, width: menuWidth, height: menuHeight)
     guard showsDetails else { return (menu, nil) }
+    let leftSpace = max(0, menu.minX - gap - safe.minX)
+    let rightSpace = max(0, safe.maxX - menu.maxX - gap)
     let detailsY = min(max(top - detailsHeight, safe.minY), safe.maxY - detailsHeight)
-    return (menu, NSRect(x: menu.maxX + gap, y: detailsY, width: detailsWidth, height: detailsHeight))
+    // On compact screens a side panel would become unreadable. Cover the
+    // dropdown with a full-width detail panel until its close button is used.
+    if max(leftSpace, rightSpace) < min(300, safe.width) {
+        return (menu, NSRect(x: safe.minX, y: detailsY, width: safe.width, height: detailsHeight))
+    }
+    let opensLeft = leftSpace > rightSpace
+    let detailsWidth = min(470, opensLeft ? leftSpace : rightSpace)
+    let detailsX = opensLeft ? menu.minX - gap - detailsWidth : menu.maxX + gap
+    return (menu, NSRect(x: detailsX, y: detailsY, width: detailsWidth, height: detailsHeight))
 }
 
 private func dashboardLabel(_ text: String = "", size: CGFloat = 13, weight: NSFont.Weight = .regular,
@@ -256,6 +264,7 @@ final class MenuDashboard: NSObject, NSWindowDelegate {
     var onStopAll: (() -> Void)?
     var onRetry: (() -> Void)?
     var onLogin: (() -> Void)?
+    var onVisibilityChange: ((Bool) -> Void)?
     private(set) var selectedID: String?
     var isVisible: Bool { menuPanel.isVisible }
 
@@ -459,6 +468,7 @@ final class MenuDashboard: NSObject, NSWindowDelegate {
         menuPanel.makeKeyAndOrderFront(nil)
         menuPanel.makeFirstResponder(menuPanel)
         installMonitors()
+        onVisibilityChange?(true)
     }
 
     func dismiss() {
@@ -466,6 +476,7 @@ final class MenuDashboard: NSObject, NSWindowDelegate {
         clearSelection()
         if let localMonitor { NSEvent.removeMonitor(localMonitor); self.localMonitor = nil }
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor); self.globalMonitor = nil }
+        onVisibilityChange?(false)
     }
 
     private func clearSelection() {
@@ -752,11 +763,24 @@ final class MenuDashboard: NSObject, NSWindowDelegate {
 }
 
 /// Exercises menu selection, presentation, and keyboard routing without contacting a host.
-func dashboardViewSelfTest() -> Bool { MenuDashboard.verifySelectionAndFocus() }
+func dashboardViewSelfTest() -> Bool {
+    for width in [CGFloat(300), CGFloat(360)] {
+        let screen = NSRect(x: -360, y: 200, width: width, height: 700)
+        let anchor = NSRect(x: screen.maxX - 24, y: screen.maxY, width: 24, height: 24)
+        let frames = dashboardFrames(anchor: anchor, screen: screen, showsDetails: true)
+        guard let details = frames.details,
+              screen.contains(frames.menu), screen.contains(details),
+              details.width >= min(300, screen.width - 16),
+              frames.menu == dashboardFrames(anchor: anchor, screen: screen, showsDetails: false).menu else { return false }
+    }
+    return MenuDashboard.verifySelectionAndFocus()
+}
 
 extension MenuDashboard {
     fileprivate static func verifySelectionAndFocus() -> Bool {
         let dashboard = MenuDashboard()
+        var visibilityChanges: [Bool] = []
+        dashboard.onVisibilityChange = { visibilityChanges.append($0) }
         func app(_ id: String, state: String = "stopped") -> DashboardApp {
             DashboardApp(id: id, name: id.uppercased(), status: state, state: state,
                          policy: "Manual", activity: nil, error: nil, busy: false)
@@ -804,14 +828,17 @@ extension MenuDashboard {
         guard isClear(), let screen = NSScreen.main else { return false }
         let anchor = NSRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.maxY, width: 24, height: 24)
         defer { dashboard.dismiss() }
+        visibilityChanges.removeAll()
         dashboard.toggle(anchor: anchor, screen: screen)
+        let openedMenuFrame = dashboard.menuPanel.frame
         // CLI/CI WindowServer sessions may decline application activation.
         // When active, opening details must leave the menu as the key window.
         func menuKeepsFocus() -> Bool { !NSApp.isActive || dashboard.menuPanel.isKeyWindow }
-        guard isClear(), dashboard.isVisible, menuKeepsFocus() else { return false }
+        guard isClear(), dashboard.isVisible, menuKeepsFocus(), visibilityChanges == [true] else { return false }
         dashboard.rows["a"]?.performClick(nil)
         guard isSelected("a"), dashboard.detailsPanel.isVisible,
-              menuKeepsFocus() else { return false }
+              menuKeepsFocus(), dashboard.menuPanel.frame == openedMenuFrame,
+              visibilityChanges == [true] else { return false }
         guard let down = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
                                          windowNumber: dashboard.menuPanel.windowNumber, context: nil,
                                          characters: "\u{F701}", charactersIgnoringModifiers: "\u{F701}",
@@ -821,11 +848,12 @@ extension MenuDashboard {
         dashboard.rows["b"]?.performClick(nil)
         guard isSelected("b"), menuKeepsFocus() else { return false }
         dashboard.detailsPanel.performClose(nil)
-        guard isClear(), dashboard.isVisible else { return false }
+        guard isClear(), dashboard.isVisible, dashboard.menuPanel.frame == openedMenuFrame,
+              visibilityChanges == [true] else { return false }
         dashboard.showDetails(id: "a")
         dashboard.toggle(anchor: anchor, screen: screen)
-        guard isClear(), !dashboard.isVisible else { return false }
+        guard isClear(), !dashboard.isVisible, visibilityChanges == [true, false] else { return false }
         dashboard.toggle(anchor: anchor, screen: screen)
-        return isClear() && dashboard.isVisible && menuKeepsFocus()
+        return isClear() && dashboard.isVisible && menuKeepsFocus() && visibilityChanges == [true, false, true]
     }
 }

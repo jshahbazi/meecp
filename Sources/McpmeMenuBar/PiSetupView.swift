@@ -228,8 +228,9 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     private var deliveredReady: String?
     private var restoredJobID: String?
     private let modelLabel = workspaceLabel("Loading setup model…", size: 12, secondary: true)
-    private let status = workspaceLabel("Choose a source and describe the tools you want.", size: 13)
-    private let notice = workspaceLabel("Set Up App sends the selected source to your configured model and builds it in a temporary workspace. Only the selected source is shared.", size: 12, secondary: true)
+    private let status = workspaceLabel("Describe the tools you want, then choose Set Up App.", size: 13)
+    private let errorDetail = workspaceLabel("", size: 11, secondary: true)
+    private let notice = workspaceLabel("Set Up App sends your description, selected source, and any answers to your configured model, then builds the app in a temporary workspace.", size: 12, secondary: true)
     private let progress = NSProgressIndicator()
     private let questionView = NSStackView()
     private let questionText = workspaceLabel("", size: 13, weight: .medium)
@@ -244,6 +245,8 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     private var settingsButton: NSButton!
     private let settingsView = PiSettingsView()
     private var settingsWindow: NSWindow?
+    private var modelRow: NSView!
+    private var actionRow: NSView!
 
     var blocksNavigation: Bool { busy || job?.active == true || restoredJobID != nil }
 
@@ -268,9 +271,10 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         }
         questionView.isHidden = true
         progress.style = .spinning; progress.controlSize = .small; progress.isDisplayedWhenStopped = false
-        let modelRow = workspaceStack([modelLabel, settingsButton!], horizontal: true)
+        modelRow = workspaceStack([modelLabel, settingsButton!], horizontal: true)
         let statusRow = workspaceStack([progress, status], horizontal: true)
-        for view in [modelRow, notice, workspaceStack([startButton!, cancelButton!, retryButton!], horizontal: true), statusRow, questionView] {
+        actionRow = workspaceStack([startButton!, cancelButton!, retryButton!], horizontal: true)
+        for view in [modelRow!, notice, actionRow!, statusRow, errorDetail, questionView] {
             addArrangedSubview(view); workspaceFill(view, in: self)
         }
         status.setAccessibilityLabel("App setup progress")
@@ -286,6 +290,8 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         if self.context != nil, self.context?.importID != context?.importID {
             guard !blocksNavigation else { return }
             job = nil; deliveredReady = nil; errorCode = nil
+            errorDetail.stringValue = ""
+            status.stringValue = "Describe the tools you want, then choose Set Up App."
             clearQuestion()
             onJobChange?(nil)
         }
@@ -301,23 +307,34 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
 
     func connectionReset() {
         epoch &+= 1; settings = nil; settingsLoading = false; busy = false; polling = false
+        errorCode = nil; errorDetail.stringValue = ""
         clearQuestion()
         settingsView.connectionReset(); refreshAvailability()
     }
 
     func refreshAvailability() {
         let enabled = available?() == true
-        startButton.isEnabled = enabled && !blocksNavigation && eligible && settings?.ready == true
+        let active = job?.active == true || restoredJobID != nil || busy
+        let configured = settings?.configured == true
+        let retryState = job?.status == "failed" || job?.status == "canceled"
+        startButton.title = configured && retryState ? "Try Again" : configured ? "Set Up App" : "Configure Model"
+        startButton.action = configured ? #selector(startSetup) : #selector(showSettings)
+        startButton.isEnabled = enabled && !active && (configured ? eligible && settings?.ready == true : settings != nil)
         cancelButton.isHidden = job?.active != true
         cancelButton.isEnabled = enabled && !busy && job?.active == true
-        retryButton.isHidden = errorCode == nil && restoredJobID == nil
         retryButton.isEnabled = enabled && !busy && !polling && !settingsLoading
-        settingsButton.isEnabled = enabled && !blocksNavigation && !settingsLoading && settings != nil
+        settingsButton.isEnabled = enabled && !active && !settingsLoading && settings != nil
+        settingsButton.isHidden = settings?.configured != true
+        modelRow.isHidden = active
+        notice.isHidden = active
+        startButton.isHidden = active
+        retryButton.isHidden = active || (errorCode == nil && restoredJobID == nil)
+        actionRow.isHidden = startButton.isHidden && cancelButton.isHidden && retryButton.isHidden
+        errorDetail.isHidden = errorDetail.stringValue.isEmpty
         if let settings {
-            modelLabel.stringValue = settings.configured ? "Setup model: " + settings.provider + " / " + settings.model : "Choose your setup model in Model Settings."
+            modelLabel.stringValue = settings.configured ? "Setup model: " + settings.provider + " / " + settings.model : "Choose a model to set up your apps."
             if !settings.runtimeAvailable { modelLabel.stringValue += " Pi runtime unavailable." }
         } else { modelLabel.stringValue = enabled ? "Loading setup model…" : "Setup model unavailable while the host is disconnected." }
-        notice.isHidden = job?.active == true
         updateQuestion()
         if busy || job?.active == true && job?.question == nil { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
     }
@@ -358,8 +375,32 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
 
     private func fail(_ code: String) {
         errorCode = preparationCode(code) ?? "pi_setup_failed"
-        status.stringValue = "Setup could not continue (" + errorCode! + ")."
+        status.stringValue = Self.userMessage(for: errorCode!)
+        errorDetail.stringValue = "Details: " + errorCode!
         refreshAvailability(); onStateChange?()
+    }
+
+    private static func userMessage(for code: String) -> String {
+        switch code {
+        case "pi_settings_invalid", "pi_settings_required": return "Model settings are incomplete. Open Model Settings and choose a provider and model."
+        case "pi_runtime_unavailable", "pi_runtime_changed": return "The bundled setup runtime is unavailable. Rebuild or reinstall mcpme, then try again."
+        case "pi_job_not_found": return "This setup run is no longer available. Start it again."
+        case "pi_source_changed": return "The selected source changed during setup. Choose the source again and retry."
+        case "pi_interrupted": return "Setup was interrupted. Start it again to resume from the saved draft."
+        case "pi_deadline_exceeded": return "Setup took too long to finish. Check the source and try again."
+        case "pi_credentials_unavailable": return "A requested app credential is unavailable. Try setup again and provide the credential when asked."
+        case "pi_provider_auth_failed": return "The provider rejected the API key. Check Model Settings and try again."
+        case "pi_provider_rate_limited": return "The provider is rate limiting requests. Wait briefly, then try again."
+        case "pi_provider_timeout": return "The provider did not respond in time. Check the endpoint and try again."
+        case "pi_provider_context_limit": return "The source is too large for this model. Choose a smaller source or a model with a larger context."
+        case "pi_model_unsupported": return "The selected model does not support this setup. Choose another model."
+        case "pi_provider_failed": return "The provider could not complete setup. Check Model Settings and try again."
+        case "pi_job_unavailable": return "Setup is unavailable right now. Refresh status and try again."
+        case "pi_question_changed": return "The setup question changed. Refresh the setup and answer the new question."
+        case "pi_resource_blocked": return "The Mac cannot run another setup right now. Close other setup work and try again."
+        case "pi_canceled", "canceled": return "Setup was canceled. Your draft is still available to try again."
+        default: return "Setup could not finish. Check the draft and try again."
+        }
     }
 
     private func loadSettings() {
@@ -369,7 +410,7 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
             guard let self, expected == self.epoch else { return }
             self.settingsLoading = false
             guard let object, let settings = PiSettingsMetadata(object) else { self.fail(code ?? "pi_settings_invalid"); return }
-            self.settings = settings; self.errorCode = nil
+            self.settings = settings; self.errorCode = nil; self.errorDetail.stringValue = ""
             self.refreshAvailability(); self.onStateChange?()
         }
     }
@@ -401,7 +442,7 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         beforeStart { [weak self] context in
             guard let self, let context, self.available?() == true, !self.blocksNavigation,
                   self.context == context, self.eligible, self.settings?.ready == true, let request = self.request else { return }
-            self.epoch &+= 1; self.busy = true; self.errorCode = nil; self.deliveredReady = nil
+            self.epoch &+= 1; self.busy = true; self.errorCode = nil; self.errorDetail.stringValue = ""; self.deliveredReady = nil
             self.clearQuestion()
             self.status.stringValue = "Starting app setup…"; self.refreshAvailability(); self.onStateChange?()
             let expected = self.epoch
@@ -420,6 +461,7 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     private func showJob() {
         guard let job else { return }
         errorCode = job.errorCode
+        errorDetail.stringValue = errorCode.map { "Details: " + $0 } ?? ""
         switch job.status {
         case "running":
             let stages = ["starting": "Starting Pi…", "preparing": "Preparing the workspace…", "running": "Pi is setting up your app…",
@@ -428,7 +470,7 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
             status.stringValue = stages[job.stage] ?? "Setting up your app: " + job.stage.replacingOccurrences(of: "_", with: " ") + "…"
         case "ready": status.stringValue = "App prepared. Review its tools and access before adding it."
         case "canceled": status.stringValue = "App setup canceled. Your source and draft are kept."
-        default: status.stringValue = "App setup failed (" + (job.errorCode ?? "pi_setup_failed") + ")."
+        default: status.stringValue = Self.userMessage(for: job.errorCode ?? "pi_setup_failed")
         }
         refreshAvailability(); onStateChange?()
         deliverReady()
@@ -441,7 +483,7 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
             deliveredReady = job.id; onReady?(job)
     }
 
-    @objc func refreshStatus() { errorCode = nil; if settings == nil { loadSettings() }; poll(force: true) }
+    @objc func refreshStatus() { errorCode = nil; errorDetail.stringValue = ""; if settings == nil { loadSettings() }; poll(force: true) }
 
     func poll(force: Bool = false) {
         guard available?() == true else { return }
@@ -509,16 +551,39 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         guard PiSettingsMetadata(missingRuntime)?.ready == false,
               PiSettingsView.validBaseURL("http://127.0.0.1:8080/v1"),
               !PiSettingsView.validBaseURL("http://remote.example/v1"),
-              !PiSettingsView.validBaseURL("https://user:private@example.com/v1") else { return false }
+              !PiSettingsView.validBaseURL("https://user:private@example.com/v1"),
+              PiSetupView.userMessage(for: "pi_job_not_found").contains("Start it again"),
+              !PiSetupView.userMessage(for: "raw provider response").contains("raw provider response") else { return false }
         var row: [String: Any] = ["id": jobID, "import_id": importID, "revision": 2, "source_revision": source,
             "status": "running", "stage": "building", "code": NSNull()]
         var invalid = row; invalid["code"] = "raw provider response"
         guard PiSetupJob(invalid) == nil else { return false }
         let view = PiSetupView(); view.available = { true }
+        let unconfigured: [String: Any] = ["configured": false, "provider": "openai", "model": "", "base_url": NSNull(),
+            "runtime_available": true, "available_providers": ["openai", "anthropic", "google", "openai-compatible"]]
+        guard let unconfiguredSettings = PiSettingsMetadata(unconfigured) else { return false }
+        view.settings = unconfiguredSettings; view.bind(revised, eligible: true); view.refreshAvailability()
+        guard view.startButton.title == "Configure Model", view.startButton.isEnabled,
+              view.errorDetail.stringValue.isEmpty else { return false }
+        view.settings = PiSettingsMetadata(settings); view.bind(revised, eligible: true); view.refreshAvailability()
+        guard view.startButton.title == "Set Up App", view.startButton.isEnabled else { return false }
+        view.settings = PiSettingsMetadata(missingRuntime); view.refreshAvailability()
+        guard view.startButton.title == "Set Up App", !view.startButton.isEnabled else { return false }
+        view.settings = PiSettingsMetadata(settings)
+        view.job = PiSetupJob(row); view.showJob()
+        guard view.startButton.isHidden, view.modelRow.isHidden, !view.cancelButton.isHidden else { return false }
+        row["status"] = "failed"; row["code"] = "pi_provider_failed"; view.job = PiSetupJob(row); view.showJob()
+        guard view.startButton.title == "Try Again", view.startButton.isEnabled,
+              view.status.stringValue.contains("provider") else { return false }
+        view.fail("pi_settings_invalid")
+        guard view.retryButton.isHidden == false, view.errorDetail.stringValue == "Details: pi_settings_invalid",
+              !view.status.stringValue.contains("pi_settings_invalid") else { return false }
+        row["status"] = "running"; row["stage"] = "building"; row["code"] = NSNull(); row.removeValue(forKey: "question")
         var postedRevision: Int?
         var stalePoll: (([String: Any]?, String?) -> Void)?
         var readyCount = 0
         view.onReady = { _ in readyCount += 1 }
+        view.job = nil; view.errorCode = nil; view.errorDetail.stringValue = ""; view.deliveredReady = nil
         view.request = { path, method, body, completion in
             if path == "v1/pi/settings" { completion(settings, nil) }
             else if path == "v1/pi/jobs", method == "POST" {
@@ -534,7 +599,8 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         view.poll(); view.cancelSetup()
         row["status"] = "ready"; row["stage"] = "ready"
         stalePoll?(row, nil)
-        guard view.job?.status == "canceled", !view.blocksNavigation, readyCount == 0 else { return false }
+        guard view.job?.status == "canceled", !view.blocksNavigation, readyCount == 0,
+              view.startButton.title == "Try Again" else { return false }
         view.startSetup()
         guard view.job?.status == "ready", readyCount == 1 else { return false }
         view.bind(revised, eligible: false); view.bind(revised, eligible: false)

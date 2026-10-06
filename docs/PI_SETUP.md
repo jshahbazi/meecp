@@ -6,18 +6,24 @@ across unfamiliar projects has not been established.
 
 ## Add an app
 
-1. Open **Add App**. Choose or drop a source folder, choose a Markdown/text setup
-   file, paste a public HTTPS project link, or describe the app you want. For a
-   single Python or JavaScript source file, choose its containing folder.
-2. Describe the tools your assistant should be able to call, including useful
-   inputs and outputs. Choose **Use these instructions** for a setup document.
-3. Open **Model Settings…** once to select the provider and model used by Pi.
+1. Open **Add App** and describe what your assistant should be able to do,
+   including useful inputs and outputs.
+2. If you have existing source, expand **Add files or a project link (optional)**.
+   Choose or drop a source folder or Markdown/text document, or paste a public
+   HTTPS project link. For a single Python or JavaScript source file, choose its
+   containing folder. Choose **Use these instructions** for a setup document.
+3. Select **Configure Model** once to select the provider and model used by Pi.
    Save an API key for a remote provider, or configure an existing compatible
-   local model endpoint.
+   local model endpoint. **Model Settings…** lets you change it later.
 4. Select **Set Up App**. Pi inspects the staged source, writes the adapter and
    package, acquires dependencies and runtimes, runs checks, and repairs failures.
-5. Review the verified package's tools, declared access, configuration, and
-   startup choices. Select **Add App** or **Add & Start App** to install it.
+5. Review the verified app's tools and declared access. Choose its name,
+   configuration, and startup behavior here, then select **Add App** or
+   **Add & Start App** to install it.
+
+The description and setup action share one composer. Saved setups appear when
+there are drafts to resume. Active runs show progress, questions, and cancellation;
+failed or canceled runs offer **Try Again** with a readable failure explanation.
 
 Pi can investigate unfamiliar source or implement an idea from scratch without
 a registered recipe or app template. It chooses the integration architecture,

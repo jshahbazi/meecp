@@ -406,6 +406,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private var managementTabs: NSTabView?
     private var workspacePicker: NSSegmentedControl?
     private var setupHostText: NSTextField?
+    private var savedSetupsRow: NSView?
+    private var sourceOptionsButton: NSButton?
+    private var sourceOptionsStack: NSStackView?
+    private var sourceOptionsExpanded = false
+    private var briefSummary: NSTextField?
     private var pendingInstalledSelection: String?
     private var pendingAppRequests: Set<String> = []
     private var pathField: NSTextField?
@@ -709,6 +714,12 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private func configureDashboard() {
+        dashboard.onVisibilityChange = { [weak self] _ in
+            self?.updateStatusButtonSelection()
+            // Status buttons clear their mouse-tracking highlight after the
+            // action returns. Reapply the current selection on the next turn.
+            DispatchQueue.main.async { [weak self] in self?.updateStatusButtonSelection() }
+        }
         dashboard.onSelect = { [weak self] id in self?.showDetails(id) }
         dashboard.onControl = { [weak self] id, action in self?.control(id, action: action) }
         dashboard.onCopy = { [weak self] id in self?.copyConfiguration(id) }
@@ -720,11 +731,22 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         dashboard.onLogin = { [weak self] in self?.toggleLogin() }
     }
 
+    private func updateStatusButtonSelection() {
+        statusItem.button?.state = dashboard.isVisible ? .on : .off
+        statusItem.button?.highlight(dashboard.isVisible)
+    }
+
     @objc private func handleStatusButton() {
         let event = NSApp.currentEvent
         if event?.type == .rightMouseUp || (event?.type == .leftMouseUp && event?.modifierFlags.contains(.control) == true) {
             guard let button = statusItem.button else { return }
             dashboard.dismiss()
+            button.state = .on
+            button.highlight(true)
+            defer {
+                updateStatusButtonSelection()
+                DispatchQueue.main.async { [weak self] in self?.updateStatusButtonSelection() }
+            }
             let menu = NSMenu()
             let open = NSMenuItem(title: "Open", action: #selector(openDashboard), keyEquivalent: "")
             open.target = self; menu.addItem(open)
@@ -828,7 +850,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         if let id = management?.selectedID { loadDetails(id) }
     }
 
-    @objc private func addProject() { showManagement(); selectWorkspace(1); chooseSource() }
+    @objc private func addProject() { showManagement(); selectWorkspace(1) }
 
     @objc private func changeWorkspace() { selectWorkspace(workspacePicker?.selectedSegment ?? 0) }
 
@@ -836,7 +858,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         workspacePicker?.selectedSegment = index
         managementTabs?.selectTabViewItem(at: index)
         if index == 0, let id = management?.selectedID { loadDetails(id) }
-        if index == 1 { window?.makeFirstResponder(chooseButton) }
+        if index == 1 { window?.makeFirstResponder(intentField) }
     }
 
     private func makeManagementWindow() {
@@ -907,9 +929,10 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         draftPicker.setAccessibilityLabel("Saved app draft"); self.draftField = draftPicker
         draftPicker.setContentHuggingPriority(.defaultLow, for: .horizontal)
         draftPicker.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let newDraft = button("New Draft", action: #selector(newDraft)); self.newDraftButton = newDraft
-        let draftsRow = workspaceStack([workspaceLabel("Resume setup", size: 12, weight: .medium),
+        let newDraft = button("Start New App", action: #selector(newDraft)); self.newDraftButton = newDraft
+        let draftsRow = workspaceStack([workspaceLabel("Saved setups", size: 12, weight: .medium),
                                        draftPicker, newDraft], horizontal: true)
+        self.savedSetupsRow = draftsRow
         content.addArrangedSubview(draftsRow); workspaceFill(draftsRow, in: content, inset: 28)
         let host = workspaceLabel("", size: 12, secondary: true); self.setupHostText = host
         content.addArrangedSubview(host); workspaceFill(host, in: content, inset: 28)
@@ -942,13 +965,13 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         drop.selectedSource = { [weak self] url in self?.beginImport(url) }
         drop.heightAnchor.constraint(equalToConstant: 66).isActive = true
         let path = NSTextField(labelWithString: "")
-        path.placeholderString = "Drop your app's source folder or choose it here"
+        path.placeholderString = "Drop a source folder, app, or document here"
         path.isSelectable = true; path.lineBreakMode = .byTruncatingMiddle
         path.setAccessibilityLabel("Selected source")
         path.setContentHuggingPriority(.defaultLow, for: .horizontal)
         path.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         self.pathField = path
-        let choose = button("Choose Files…", action: #selector(chooseSource)); self.chooseButton = choose
+        let choose = button("Choose…", action: #selector(chooseSource)); self.chooseButton = choose
         let sourceRow = workspaceStack([path, choose], horizontal: true)
         drop.addSubview(sourceRow)
         NSLayoutConstraint.activate([
@@ -962,20 +985,28 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let policy = NSPopUpButton(); policy.addItems(withTitles: ["Start manually", "Automatic when mcpme opens"])
         policy.target = self; policy.action = #selector(setupChanged); policy.setAccessibilityLabel("New app startup"); self.policyField = policy
         let start = NSButton(checkboxWithTitle: "Start after install", target: self, action: #selector(setupChanged)); self.startCheck = start
-        let settings = workspaceStack([name, policy, start], horizontal: true)
+        let nameRow = workspaceStack([workspaceLabel("App name", size: 12, weight: .medium), name], horizontal: true)
+        name.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let startupRow = workspaceStack([policy, start], horizontal: true)
         let intentScroll = NSScrollView(); intentScroll.hasVerticalScroller = true; intentScroll.borderType = .bezelBorder
-        let intent = NSTextView(); intent.delegate = self; intent.font = .systemFont(ofSize: 13)
+        let intent = AppBriefTextView(); intent.delegate = self; intent.font = .systemFont(ofSize: 14)
         intent.isRichText = false; intent.isAutomaticQuoteSubstitutionEnabled = false; intent.isAutomaticDashSubstitutionEnabled = false
         intent.isVerticallyResizable = true; intent.isHorizontallyResizable = false; intent.autoresizingMask = [.width]
-        intent.textContainer?.widthTracksTextView = true; intent.textContainerInset = NSSize(width: 8, height: 8)
+        intent.textContainer?.widthTracksTextView = true; intent.textContainerInset = NSSize(width: 10, height: 10)
         intent.setAccessibilityLabel("Requested tools and behavior"); intentScroll.documentView = intent; self.intentField = intent
-        intentScroll.heightAnchor.constraint(equalToConstant: 76).isActive = true
+        intentScroll.heightAnchor.constraint(equalToConstant: 132).isActive = true
         let role = NSPopUpButton(); role.addItems(withTitles: ["Choose how to use this document", "Use this information", "Use these instructions"])
         role.target = self; role.action = #selector(setupChanged); role.setAccessibilityLabel("Document role"); self.documentRoleField = role
         let sourceURL = NSTextField(); sourceURL.placeholderString = "Project link (optional)"; sourceURL.delegate = self
         sourceURL.setAccessibilityLabel("Project link"); self.piSourceURL = sourceURL
-        let sourceCard = workspaceCard("What do you want to add?", subtitle: "Choose a source folder, paste a project link, or describe an app. Pi prepares it for you.",
-            views: [drop, sourceURL, settings, workspaceLabel("What should your assistant be able to do?", size: 12, weight: .medium), intentScroll, role])
+        let sourceOptions = workspaceStack([drop, sourceURL, role], spacing: 10)
+        self.sourceOptionsStack = sourceOptions
+        for view in [drop, sourceURL, role] { workspaceFill(view, in: sourceOptions) }
+        let sourceOptionsButton = button("Add files or a project link (optional)", action: #selector(toggleSourceOptions))
+        sourceOptionsButton.isBordered = false; sourceOptionsButton.imagePosition = .imageLeading
+        sourceOptionsButton.alignment = .left
+        sourceOptionsButton.setAccessibilityLabel("Show or hide optional app source")
+        self.sourceOptionsButton = sourceOptionsButton
 
         piSetupView.request = { [weak self] path, method, body, completion in
             self?.request(path, method: method, body: body, completion: completion)
@@ -1021,8 +1052,10 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                 self.displayDraft(draft); self.reviewPackage()
             }
         }
-        let piCard = workspaceCard("Set up your app", subtitle: "Pi handles dependencies and the MCP integration, then checks the result.", views: [piSetupView])
-        piSetupCard = piCard
+        let sourceCard = workspaceCard("What would you like your assistant to do?",
+            subtitle: "Describe an app. Pi will build it, ask for anything it needs, and check that it works.",
+            views: [intentScroll, sourceOptionsButton, sourceOptions, piSetupView])
+        piSetupCard = sourceCard
 
         artifactCaptureView.available = { [weak self] in
             guard let self else { return false }
@@ -1125,10 +1158,10 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                                         views: [recipes, preparationView, workspaceCard("Agent assistance", subtitle: "Review the exact captured files and configured provider before transfer. Candidate selection requires ordinary preparation review.", views: [agentPreparationView]), handoff, handoffReturn, modelControls])
         configurationView.onChange = { [weak self] in self?.setupChanged() }
         configurationView.onCreateSecret = { [weak self] name in self?.createSecret(name) }
-        let configureCard = workspaceCard("Configure the prepared app", subtitle: "Choose nonsecret settings and saved secret references before reviewing the exact plan.", views: [configurationView])
+        let configureCard = workspaceCard("App settings", subtitle: "Choose the settings and credentials your app needs.", views: [configurationView])
         preparedConfigurationCard = configureCard
 
-        let label = workspaceLabel("Choose a source to begin.", size: 13); self.setupLabel = label
+        let label = workspaceLabel("", size: 13); self.setupLabel = label
         label.setAccessibilityLabel("Setup status")
         let reviewScroll = NSScrollView(); reviewScroll.hasVerticalScroller = true; reviewScroll.borderType = .bezelBorder
         let text = NSTextView(); text.isEditable = false; text.isSelectable = true; text.font = .systemFont(ofSize: 13)
@@ -1148,8 +1181,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let recoverOperation = button("Recover Candidate", action: #selector(recoverSetupOperation)); self.operationRecoverButton = recoverOperation
         let stopOperation = button("Stop Candidate", action: #selector(stopSetupOperation)); self.operationStopButton = stopOperation
         stopOperation.toolTip = "Stop the exposed candidate and preserve its saved data while recovery remains required"
-        let reviewCard = workspaceCard("Review and add", subtitle: "Check the tools, declared access, and startup choices before adding this app.",
-                                       views: [reviewScroll, actions, workspaceStack([cancelOperation, stopOperation, recoverOperation], horizontal: true), showInstalled])
+        let briefSummary = workspaceLabel("", size: 12, secondary: true)
+        briefSummary.isSelectable = true; briefSummary.maximumNumberOfLines = 3; briefSummary.lineBreakMode = .byTruncatingTail
+        briefSummary.setAccessibilityLabel("Requested app behavior"); self.briefSummary = briefSummary
+        let reviewCard = workspaceCard("Ready to add", subtitle: "Review your app's tools and access, then choose when it should run.",
+                                       views: [briefSummary, nameRow, startupRow, reviewScroll, actions, workspaceStack([cancelOperation, stopOperation, recoverOperation], horizontal: true), showInstalled])
         installationReviewCard = reviewCard
         let advancedToggle = NSButton(checkboxWithTitle: "Advanced setup options", target: self, action: #selector(toggleAdvancedSetup))
         advancedSetupToggle = advancedToggle
@@ -1157,7 +1193,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let advanced = workspaceStack([starterCard, serviceCard, captureCard, publisherToggle, downloadCard, prepareCard])
         advancedSetupStack = advanced; advanced.isHidden = true
         for card in [starterCard, serviceCard, captureCard, publisherToggle, downloadCard, prepareCard] { workspaceFill(card, in: advanced) }
-        for card in [sourceCard, label, piCard, configureCard, reviewCard, advancedToggle, advanced] {
+        for card in [sourceCard, label, configureCard, reviewCard, advancedToggle, advanced] {
             content.addArrangedSubview(card); workspaceFill(card, in: content, inset: 28)
         }
         return page
@@ -1203,12 +1239,24 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             pendingInstalledSelection = nil; management?.select(id: id)
         }
         setupHostText?.stringValue = uiPreviewMode ? "Preview · setup actions are disabled." :
-            (hostAvailable ? "Drafts are kept when you switch views or close this window." : "Host unavailable. Setup will resume when the connection returns.")
+            (hostAvailable ? "" : "Waiting for mcpme to connect. Your saved setup is kept.")
+        setupHostText?.isHidden = !uiPreviewMode && hostAvailable
+        setupLabel?.isHidden = setupLabel?.stringValue.isEmpty != false
+        let brief = (intentField?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        briefSummary?.stringValue = brief.isEmpty ? "" : "Requested: " + brief
+        briefSummary?.isHidden = brief.isEmpty
+        savedSetupsRow?.isHidden = drafts.isEmpty && currentDraft == nil
+        let sourcePath = pathField?.stringValue ?? ""
+        sourceOptionsButton?.title = sourcePath.isEmpty ? "Add files or a project link (optional)" : "Source: " + URL(fileURLWithPath: sourcePath).lastPathComponent
+        let showsSource = sourceOptionsExpanded
+        sourceOptionsStack?.isHidden = !showsSource
+        sourceOptionsButton?.image = NSImage(systemSymbolName: showsSource ? "chevron.down" : "chevron.right", accessibilityDescription: nil)
         let operation = setupOperation.flatMap { id in operations.first { $0.id == id } }
         let active = operation.map { $0.active || $0.status == "recovery_required" } ?? (setupOperation != nil)
         let enabled = process?.isRunning == true && connection() != nil && !stopping && !quitting && !setupRequest && !active
         let editable = enabled && (currentDraft?.editable ?? true) && !preparationView.busy && !preparationView.hasActiveJob && !artifactCaptureView.blocksNavigation && !agentPreparationView.blocksNavigation && !piSetupView.blocksNavigation
         chooseButton?.isEnabled = intakeEnabled; newDraftButton?.isEnabled = intakeEnabled
+        sourceOptionsButton?.isEnabled = !setupRequest && !piSetupView.blocksNavigation
         piSourceURL?.isEditable = intakeEnabled && currentDraft == nil
         starterButton?.isEnabled = intakeEnabled && bundledStarterPackage != nil
         starterLabel?.stringValue = bundledStarterPackage == nil ? "The included app is unavailable in this copy of mcpme." :
@@ -1223,13 +1271,15 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         if upgradeTarget != nil { nameField?.isEnabled = false; policyField?.isEnabled = false; startCheck?.isEnabled = false }
         configurationView.setEditable(editable)
         intentField?.isEditable = editable; documentRoleField?.isEnabled = editable && currentDraft?.isDocument == true
-        documentRoleField?.isHidden = currentDraft?.isDocument != true
+        documentRoleField?.isHidden = currentDraft?.isDocument != true || isDescriptionDraft(currentDraft)
         saveDraftButton?.isEnabled = editable && currentDraft != nil && draftDirty
         copyInstructionsButton?.isEnabled = editable && currentDraft != nil
         exportDraftButton?.isEnabled = editable && currentDraft != nil
         attachButton?.isEnabled = editable && currentDraft != nil
         cancelDraftButton?.isEnabled = enabled && currentDraft?.editable == true && !preparationView.busy && !artifactCaptureView.blocksNavigation && !agentPreparationView.blocksNavigation && !piSetupView.blocksNavigation
         reviewButton?.isEnabled = editable && (currentDraft?.packagePath != nil || currentDraft == nil && !(pathField?.stringValue.isEmpty ?? true))
+        reviewButton?.title = setupPlan == nil ? "Review App" : "Update Review"
+        reviewButton?.isHidden = setupPlan != nil && !draftDirty
         installButton?.isEnabled = enabled && setupPlan != nil && setupOperation == nil && !draftDirty
         planDetailsButton?.isEnabled = setupPlan != nil
         installButton?.title = upgradeTarget != nil ? "Apply Reviewed Upgrade" : startCheck?.state == .on ? "Add & Start App" : "Add App"
@@ -1294,6 +1344,10 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
 
     @objc private func togglePublisherDownload() { refreshWindow() }
     @objc private func toggleAdvancedSetup() { refreshWindow() }
+    @objc private func toggleSourceOptions() {
+        sourceOptionsExpanded.toggle()
+        refreshWindow()
+    }
 
     private func pollSecrets() {
         guard !uiPreviewMode, connection() != nil else { return }
@@ -1790,6 +1844,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         }
     }
 
+    private func isDescriptionDraft(_ draft: ImportDraft?) -> Bool {
+        guard let draft, draft.isDocument else { return false }
+        return draft.sourcePath.hasPrefix(stateDirectory.appendingPathComponent("pi-setup/briefs").path + "/")
+    }
+
     private func pollImports() {
         guard !uiPreviewMode else { return }
         guard !importsPollInFlight, !setupRequest, !preparationView.busy, connection() != nil else { return }
@@ -1845,9 +1904,12 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         restoringDraft = true; defer { restoringDraft = false }
         importViewGeneration &+= 1
         let changed = currentDraft?.id != draft.id || currentDraft?.revision != draft.revision || currentDraft?.packageDigest != draft.packageDigest
+        let changedApp = currentDraft?.id != draft.id
+        if !isDescriptionDraft(draft) || currentDraft != nil && changedApp { piSourceURL?.stringValue = "" }
         currentDraft = draft; draftDirty = false
         upgradeTarget = nil
-        pathField?.stringValue = draft.sourceKind == "service_connection" ? "Local service connection" : draft.sourceKind == "captured_artifact_collection" ? "Captured artifacts" : draft.sourcePath
+        pathField?.stringValue = isDescriptionDraft(draft) ? "" : draft.sourceKind == "service_connection" ? "Local service connection" : draft.sourceKind == "captured_artifact_collection" ? "Captured artifacts" : draft.sourcePath
+        if changedApp && !(pathField?.stringValue.isEmpty ?? true) { sourceOptionsExpanded = true }
         nameField?.stringValue = draft.name; intentField?.string = draft.intent
         policyField?.selectItem(at: draft.policy == "host" ? 1 : 0)
         startCheck?.state = draft.start ? .on : .off
@@ -1929,9 +1991,10 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         configurationView.configure(package: nil, settings: setupSettings)
         pathField?.stringValue = ""; nameField?.stringValue = ""; intentField?.string = ""; piSourceURL?.stringValue = ""
         policyField?.selectItem(at: 0); startCheck?.state = .off; documentRoleField?.selectItem(at: 0)
-        reviewText?.string = ""; setupLabel?.stringValue = "Choose a source to begin."
+        sourceOptionsExpanded = false
+        reviewText?.string = ""; setupLabel?.stringValue = ""
         savedSetup.removeValue(forKey: "import_id"); updateDraftPicker(); persistSetup(); refreshWindow()
-        window?.makeFirstResponder(chooseButton)
+        window?.makeFirstResponder(intentField)
     }
 
     @objc private func chooseSource() {
@@ -1964,12 +2027,15 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
 
     private func beginImport(_ source: URL, name suppliedName: String? = nil) {
         guard intakeEnabled else { return }
+        // Attaching source after writing a brief must keep the user's request.
+        let initialIntent = currentDraft == nil ? intentField?.string ?? "" : ""
         saveDraftBeforeNavigation { [weak self] saved in
             guard let self = self, saved else { return }
             let directory = (try? source.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
             let name = suppliedName ?? (directory ? source.lastPathComponent : source.deletingPathExtension().lastPathComponent)
             self.setupRequest = true; self.setupLabel?.stringValue = "Inspecting selected source…"; self.refreshWindow()
-            self.request("v1/imports", method: "POST", body: ["source": source.path, "source_mode": "automatic", "name": name, "start": false, "start_policy": "manual"]) { [weak self] object, code in
+            self.request("v1/imports", method: "POST", body: ["source": source.path, "source_mode": "automatic", "name": name,
+                    "intent": initialIntent, "start": false, "start_policy": "manual"]) { [weak self] object, code in
                 guard let self = self else { return }; self.setupRequest = false
                 guard let object = object, let draft = ImportDraft(object) else {
                     self.setupLabel?.stringValue = self.draftError(code ?? "invalid_draft"); self.refreshWindow(); return
@@ -2008,7 +2074,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             draftDirty = hasDraftChanges(draft)
             setupLabel?.stringValue = draftDirty ? "Unsaved draft changes." : draftStatus(draft)
         }
-        else { setupLabel?.stringValue = "Choose a source to begin." }
+        else { setupLabel?.stringValue = "" }
         persistSetup(); refreshWindow()
     }
 
@@ -2437,7 +2503,8 @@ private func nativeSelfTest() -> Bool {
             let anchor = NSRect(x: x, y: screen.maxY, width: 24, height: 24)
             let frames = dashboardFrames(anchor: anchor, screen: screen, showsDetails: true)
             guard let detail = frames.details, screen.contains(frames.menu), screen.contains(detail),
-                  detail.minX > frames.menu.maxX else { return false }
+                  detail.minX > frames.menu.maxX || detail.maxX < frames.menu.minX,
+                  frames.menu == dashboardFrames(anchor: anchor, screen: screen, showsDetails: false).menu else { return false }
         }
     }
     return true
@@ -3263,7 +3330,13 @@ extension McpmeApp {
         let app = McpmeApp()
         _ = app.makeSetupWorkspace(); app.refreshWindow()
         guard app.starterButton?.action == #selector(useStarterApp), app.starterButton?.isEnabled == false,
-              app.publisherDownloadCard?.isHidden == true, app.downloadStartButton?.isEnabled == false else { return false }
+              app.publisherDownloadCard?.isHidden == true, app.downloadStartButton?.isEnabled == false,
+              app.savedSetupsRow?.isHidden == true, app.sourceOptionsStack?.isHidden == true,
+              app.piSetupCard?.isHidden == false, app.installationReviewCard?.isHidden == true else { return false }
+        app.sourceOptionsButton?.performClick(nil)
+        guard app.sourceOptionsStack?.isHidden == false else { return false }
+        app.sourceOptionsButton?.performClick(nil)
+        guard app.sourceOptionsStack?.isHidden == true else { return false }
         app.publisherDownloadToggle?.state = .on; app.togglePublisherDownload()
         guard app.publisherDownloadCard?.isHidden == false else { return false }
         app.publisherDownloadToggle?.state = .off
@@ -3298,8 +3371,15 @@ extension McpmeApp {
         updated["revision"] = 3; updated["name"] = "Newer name"
         guard let newer = ImportDraft(updated) else { return false }
         app.drafts = [newer]; app.updateDraftPicker()
-        return app.draftField?.selectedItem?.representedObject as? String == id
-            && app.draftField?.titleOfSelectedItem == "Newer name — Prepared package received"
+        guard app.draftField?.selectedItem?.representedObject as? String == id,
+              app.draftField?.titleOfSelectedItem == "Newer name — Prepared package received" else { return false }
+        let brief: [String: Any] = ["draft_id": id, "revision": 1, "state": "waiting_for_agent", "name": "New App",
+            "source": ["kind": "document", "locator": app.stateDirectory.appendingPathComponent("pi-setup/briefs/synthetic/app.md").path],
+            "intent": "Synthetic app behavior", "document_role": "instructions", "start": false, "start_policy": "manual"]
+        guard let briefDraft = ImportDraft(brief), app.isDescriptionDraft(briefDraft) else { return false }
+        app.currentDraft = briefDraft; app.intentField?.string = briefDraft.intent; app.refreshWindow()
+        return app.documentRoleField?.isHidden == true && app.savedSetupsRow?.isHidden == false
+            && app.briefSummary?.stringValue == "Requested: Synthetic app behavior"
     }
 
     /// Verifies recovery button availability without starting a host or issuing requests.

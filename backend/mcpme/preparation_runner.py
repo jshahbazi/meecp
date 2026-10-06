@@ -613,8 +613,18 @@ class PreparationRunner:
             if not self.store.pending_ownership(job["job_id"]):
                 job = self.store.settle(job["job_id"])
             if job["ownership_settled"] and not job["reservation_retained"]:
-                await asyncio.to_thread(self.store.release_family_inputs, job["job_id"])
-                if workspace is not None and Path(workspace).exists():
+                cleanup_available = True
+                try:
+                    await asyncio.to_thread(self.store.release_family_inputs, job["job_id"])
+                except PreparationError as error:
+                    if error.code != "unknown_preparation_component":
+                        raise
+                    # Historical jobs can reference an implementation absent
+                    # from this host. Ownership is already settled, so retain
+                    # their inputs/workspace without granting that component
+                    # current execution authority or blocking host startup.
+                    cleanup_available = False
+                if cleanup_available and workspace is not None and Path(workspace).exists():
                     await asyncio.to_thread(_remove_workspace, self.store.imports.root, job["job_id"], Path(workspace))
                 await self._release(job["job_id"])
             elif job["reservation_retained"]:

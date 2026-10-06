@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import os
+from pathlib import Path
 import threading
 
 import pytest
@@ -14,7 +15,7 @@ from mcpme.preparation_agent_providers import AgentProviderRegistry, OpenAIRespo
 from test_preparation_agent_providers import choices, update, SYNTHETIC
 
 
-KEY = ("agent-unlocked-python-adapter-v1", "1.0.0", "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f")
+KEY = ("agent-unlocked-python-adapter-v1", "1.0.0", "30a6e459f76f4feabff58ff5481b5cc95f9589e03436a8aac109583a4cbfa26c")
 
 
 def closed():
@@ -39,6 +40,22 @@ def test_shipped_policy_closed_and_environment_cannot_activate(monkeypatch):
     monkeypatch.setenv("MCPME_RELEASE_POLICY", "/arbitrary/policy")
     monkeypatch.setenv("MCPME_AGENT_EXECUTION", "true")
     assert release_admissions() == (None, None, (None, None))
+
+
+def test_shipped_agent_policy_tuples_match_registered_implementations():
+    from mcpme.recipes import builtin_components
+    from mcpme.preparation_agent_guides import builtin_analysis_guides
+
+    root = Path(__file__).parents[1]
+    policy = ReleasePolicy.model_validate(json.loads((root / POLICY_PATH).read_bytes()))
+    preparation, agent, _ = policy.admissions()
+    catalog = builtin_components()
+    assert agent.components <= preparation.families
+    for identifier, version, digest in agent.components:
+        assert catalog[identifier + "@" + version]["digest"] == digest
+    assert agent.components <= frozenset(
+        (guide.component.id, guide.component.version, guide.component.digest)
+        for guide in builtin_analysis_guides())
 
 
 def test_whole_external_policy_changes_reviewed_producer_identity():

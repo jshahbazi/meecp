@@ -451,7 +451,7 @@ async def test_actual_wrapper_loss_interrupts_drain_and_retains_unknown_owner(tm
             os.kill(target, signal.SIGKILL)
 
 
-@pytest.mark.parametrize("timeout", [True, 1.5, 0, 601, "60"])
+@pytest.mark.parametrize("timeout", [True, 1.5, 0, 1801, "60"])
 async def test_timeout_contract_requires_bounded_integer(broker, timeout):
     assert (await broker.invoke("run_command", {"argv": ["/bin/true"], "timeout_seconds": timeout}))["output"] == "invalid_timeout"
 

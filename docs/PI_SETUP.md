@@ -15,14 +15,22 @@ across unfamiliar projects has not been established.
    Save an API key for a remote provider, or configure an existing compatible
    local model endpoint.
 4. Select **Set Up App**. Pi inspects the staged source, writes the adapter and
-   package, installs supported dependencies, runs checks, and repairs failures.
+   package, acquires dependencies and runtimes, runs checks, and repairs failures.
 5. Review the verified package's tools, declared access, configuration, and
    startup choices. Select **Add App** or **Add & Start App** to install it.
 
-Pi can write a new integration without a registered recipe. The package
+Pi can investigate unfamiliar source or implement an idea from scratch without
+a registered recipe or app template. It chooses the integration architecture,
+build steps, dependencies, and tool schemas. The package
 manifest, lockfile, launcher, provenance, licenses, and verification fixtures are
 generated setup outputs. Recipe selection and authoring are absent from the
 normal Pi flow.
+
+When setup needs a decision or credential, Add App shows Pi's question inline.
+Answer and select **Continue** to resume the same coding session. Credential
+answers use a secure field and remain in the host's secret store; Pi receives
+an opaque binding identity rather than the credential value. Ordinary
+implementation choices remain the agent's responsibility.
 
 **Advanced setup options** contains the included JSON Utilities app, existing
 service connection, model capture, publisher package download, and earlier
@@ -66,24 +74,51 @@ The host copies the selected source snapshot into a private workspace and checks
 its revision and hashes. Pi runs through the SDK with an in-memory conversation,
 settings, credential store, and model store. The resource loader provides no
 discovered instructions, extensions, skills, templates, or MCP connections.
-Automatic model catalog refresh, compaction, agent retries, and cache warming are
-disabled. Individual provider requests allow at most two transient retries. The
+Automatic context compaction summarizes long coding sessions in memory using
+the configured provider. Model catalog refresh, agent retries, and cache warming
+are disabled. Individual provider requests allow at most two transient retries. The
 worker only advertises these host tools:
 
 | Tool | Host behavior |
 | --- | --- |
-| `read_file` | Reads a bounded UTF-8 file from the workspace or selected host resources. |
+| `capabilities` | Discovers host facilities, runtime paths, and generic package requirements. |
+| `list_files` | Lists and pages through workspace or selected host-resource trees. |
+| `read_file` | Reads a bounded UTF-8 file, with byte offsets for large files. |
 | `write_file` | Writes a bounded UTF-8 file inside the private workspace. |
-| `run_command` | Runs an explicit argument array in a macOS sandbox with workspace writes, selected read access, owned process lifetime, and no network access. |
+| `run_command` | Runs an explicit argument array with workspace writes, selected read access, and owned process lifetime. Network access is an explicit option. |
+| `start_process` / `read_process` / `stop_process` | Starts, inspects, and reaps temporary services or background work owned by this setup. |
 | `fetch_url` | Downloads a bounded public HTTPS file through the host's address, redirect, and transfer policy; an expected SHA-256 can be supplied. |
-| `install_dependencies` | Resolves a static Python dependency declaration through the host and publishes a private, locked runtime. |
+| `extract_archive` | Unpacks downloaded runtime, toolchain, or source archives into the workspace. |
+| `prepare_environment` | Uses an available private-runtime convenience helper. |
+| `install_dependencies` | Uses an available dependency-manager convenience helper and retains locked dependency metadata. |
+| `ask_user` | Waits for a missing requirement or privately supplied credential. |
 | `check_package` | Independently validates `package/` and probes its MCP fixtures; fixed failure feedback lets Pi repair the package and repeat the check. |
 
 The filesystem broker rejects traversal, symlinks, unsafe file identities, and
 writes outside its workspace. Commands use a private HOME/TMPDIR and approved
-runtime paths. The host owns and reaps their process groups. Tool results return
+runtime paths. Network-enabled commands can reach network and local services;
+this option is needed for package managers, builds, and integration tests and is
+distinct from `fetch_url`'s public-download policy. The host owns and reaps
+process groups, including temporary background services. It inspects TCP
+listeners during network commands, package verification, background work, and
+installed stdio sessions, then stops an owned group if it listens beyond loopback. This
+is an asynchronous listener check; macOS's sandbox does not reliably distinguish
+the requested wildcard bind address from an explicit loopback bind. Generated
+local services must bind to loopback and authenticate their routes. Tool results return
 to the in-memory coding session so the agent can fix compilation or test
 failures. Runtime identity and hashes are checked before launching Pi.
+
+Commands can receive explicit nonsecret environment values. `credentials` maps
+environment names to opaque secret IDs requested during that job. The host
+injects their values privately and suppresses all output from credential-bearing
+commands and services. Runtime secrets are declared in the package manifest and
+delivered through the host's existing private settings descriptor. The host
+excludes their values from settings responses and credential-bearing command
+output.
+
+Programs given credentials are authorized to handle those values. Hiding their
+output does not control their file writes or outbound requests; Pi must keep
+credentials out of generated files and use them only for the requested app.
 
 Python dependency setup reads static `pyproject.toml` metadata, uses bundled
 Python 3.12.13 and `uv`, and pins MCP 1.30.0 for generated adapters. The host
@@ -93,24 +128,49 @@ requirements, dependency versions, and notices. Direct dependency URLs, dynamic
 project metadata, build hooks, source builds, and unsupported Python versions
 are rejected or excluded from this dependency path.
 
-Node dependency installation currently returns
-`pi_node_dependencies_unavailable`. Dependency-free JavaScript can use the
-bundled Node runtime during preparation. A generated Node package still needs
-its own verified runtime and complete dependency closure. A compiler, platform
-facility, runtime topology, or dependency outside the supported host contract
-can prevent setup; a capable coding model does not establish compatibility.
+Node dependency setup uses the bundled Node runtime and npm in a private
+project, retains the project source for ordinary builds and local dependencies,
+resolves or preserves npm lock metadata, then installs the locked
+dependency closure. Published runtimes retain Node's license and provenance,
+dependency identities, integrity metadata, and dependency notices. This helper
+disables lifecycle scripts and reports packages with pending scripts; Pi can
+run required project-specific build or install commands explicitly and test
+their results. It does not load the user's npm configuration or credentials.
+
+These helpers support common Python and Node setup paths. The agent can acquire
+other runtimes and toolchains with downloads, tar/zip archive extraction, and
+custom build commands. Archive intake materializes safe internal links into
+regular files and rejects escaping links or paths. Available system compilers
+and developer tools are reported by `capabilities` and `prepare_environment`
+with runtime `system`. A package can own databases or other child services
+behind its stdio launcher. The final package still needs its own complete,
+relocatable dependency closure.
+
+There is no app-family allowlist in the Pi workflow. Available machine hardware,
+platform facilities, source licenses, external account access, build resources,
+and the host's generic execution/package contracts still affect what can work.
+The agent investigates and attempts an integration; success comes from the
+independent checks of the resulting package. Support for every future app is
+not established by giving a coding model general tools.
 
 ## Verification and installation
 
 Pi writes `package/mcpme.package.json`, `package/mcpme.lock.json`, the launcher and
-runtime closure, and `package/verification.json`. Synthetic fixtures have the form
-`{tool, arguments, expected}`. Every declared tool must have a fixture, and the
-expected value is its exact MCP `structuredContent`. The fixtures are included
-in the package lock.
+runtime closure, and `package/verification.json`. Every declared tool must have
+a meaningful synthetic fixture. A fixture's `expected` field compares exact
+MCP `structuredContent`. Its optional `assertions` field checks the full MCP
+tool result with RFC 6901 JSON Pointer paths and `equals`, `type`, `contains`,
+`exists`, or `min_length` operators. Both checks can be combined. This supports
+text, image, audio, and varying outputs without forcing every tool to produce a
+fixed JSON object. For example, an image fixture can assert `/content/0/type`
+equals `image`, `/content/0/mimeType` equals `image/png`, and `/content/0/data`
+is a string with a positive minimum length. The fixtures are included in the
+package lock.
 
 The generic [lock helper](../templates/pi_package.py) seals the files after Pi
 writes a custom integration. Run it with the host-supplied Python using
-`-I -S templates/pi_package.py package`; `--primary-license` selects a declared
+`-I -S -B tools/seal_package.py package` inside the staged workspace;
+`--primary-license` selects a declared
 license or notice file, and `--toolchain-metadata` binds recorded JSON metadata
 by hash. The default primary license is the manifest's first license. Pi must
 preserve the applicable third-party licenses and attribution. The helper hashes
@@ -129,7 +189,7 @@ The host validates the complete package and lock, then launches the candidate
 from a separate probe workspace. The probe can read the package and system
 runtime resources; it cannot read the original source or host toolchain. It
 initializes MCP 2025-11-25, checks the exact tools and supported capabilities,
-executes the fixtures, and compares the structured results. Package hashes are
+executes the fixtures, and compares the expected results and assertions. Package hashes are
 checked again after the probe. A model's statement that setup succeeded is
 insufficient to reach package review.
 
@@ -154,11 +214,35 @@ cannot configure provider credentials or start Pi jobs.
 | `POST /v1/pi/jobs` | Start setup for one exact import ID/revision. |
 | `GET /v1/pi/jobs/{job_id}` | Read progress and the verified attachment identity. |
 | `POST /v1/pi/jobs/{job_id}/cancel` | Cancel an active job with an empty JSON object. |
+| `POST /v1/pi/jobs/{job_id}/answer` | Answer the current transient question for the exact question ID and import revision. |
 
 One setup job runs at a time. Jobs have bounded messages, tool calls, events,
-downloads, subprocess output, and deadlines. Saved job states are `running`,
+downloads, subprocess output, and a two-hour active-work deadline. Waiting for
+a user answer pauses that deadline. Saved job states are `running`,
 `ready`, `failed`, and `canceled`. Changing provider settings affects subsequent
 jobs; an existing job keeps its captured configuration.
+
+A job waiting for input remains `running` with stage `waiting_for_user`. Its
+public response includes a transient question bound to the job, import, and
+revision. Answer submission includes `question_id`, `import_id`, `revision`,
+and `value`. Questions and answers are never journaled. The worker allows up to
+1,024 tool calls, 512 turns, and twelve final verification/repair cycles;
+context compaction can preserve progress without persisting a conversation.
+
+## Regression checks
+
+The final general Pi suite passed 272 tests, with two optional live dependency
+checks skipped. Separate real npm checks passed installation, CLI execution,
+argument forwarding, and offline builds after relocation. Nine real SDK checks
+passed against a synthetic streaming provider, including context compaction.
+Compatibility, recipe upgrade, policy tuple, and opt-out checks passed; listener
+tests cover foreground work, independent probes, late child services, admission
+closure, and shutdown during cleanup.
+
+The broader host regression investigation also reproduced four existing legacy
+text-generation failures at the pre-change commit. Its frozen runtime admission
+and capture readiness issues have not been repaired in this Pi change. The
+historical signed Phase 3 acceptance records retain their original tuples.
 
 ## Bundled runtime
 
@@ -196,16 +280,34 @@ provide a controlled model comparison or an estimate of app-setup reliability.
 The successful case establishes this checked source, model, and runtime path;
 additional projects and dependency ecosystems still need their own evidence.
 
-The portable [live acceptance CLI](../scripts/verify_pi_setup_live.py) repeats the
-fixed synthetic source and three known gateway fixtures against a separately
-built host. Invoking it makes paid OpenAI requests with the supplied key. Build
+The general workflow subsequently passed two once-only acceptance runs using
+OpenAI `gpt-5.4` and the separately built `dist/pi-general-host-v2` host. A Node
+CSV integration installed an actual `csv-parse` 6.2.1 npm dependency closure and
+passed three authenticated gateway calls covering ordinary records, quoted
+commas and newlines, and Unicode fields. A native checksum integration included
+a compiled Mach-O checksum executable and a C MCP adapter that invokes it; its
+three authenticated gateway calls checked empty input, `hello`, and `foobar`.
+Both cases passed independent package verification, attached their packages,
+completed disposable installation, and shut down their owned hosts. Disposable
+provider and runtime credential stores were revoked. Neither case required an
+app recipe, and neither was retried. These results establish the checked Node
+dependency and native build paths; they do not establish universal installation
+reliability. Later source fixes require their own regression checks.
+
+The portable [live acceptance CLI](../scripts/verify_pi_setup_live.py) runs a
+selected synthetic source and three known gateway fixtures against a separately
+built host. `--case python` (the default) selects the normalizer; `--case node`
+selects a JavaScript CSV parser with an external npm dependency; `--case native`
+selects a C checksum program that must be compiled and invoked by the package.
+These examples test reusable execution facilities and do not reveal the user's
+later acceptance idea. Invoking the CLI makes paid OpenAI requests with the supplied key. Build
 into a fresh output path, then run:
 
 ```sh
 uv run --locked python scripts/build_mcpme_host.py --output dist/pi-live-host
 uv run --locked python scripts/verify_pi_setup_live.py \
   --host-root dist/pi-live-host --key-file /absolute/path/openai-key.txt \
-  --model gpt-5.4
+  --model gpt-5.4 --case node
 ```
 
 For an app bundle, `--host-root` is its `Contents/Resources/host` directory. The

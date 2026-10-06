@@ -37,10 +37,10 @@
       "version": "1.0.0"
     },
     {
-      "digest": "a7103a35adbf5d55a9ea369a48614517d34e0c0d69a9b9f2498dd079f9eddea3",
-      "directory": "agent-unlocked-python-adapter-v1-0-0",
+      "digest": "3e72286afe4bac80d9adfc15f144a8ca34c379d70dcb3d204f3e568764f9848b",
+      "directory": "agent-unlocked-python-adapter-v1-0-1",
       "recipe_id": "mcpme.agent-unlocked-python-adapter",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "digest": "579defab9a646d37f07eb92f2e6a2260ad1923477f1cadb96c46fc9edf6d28c3",

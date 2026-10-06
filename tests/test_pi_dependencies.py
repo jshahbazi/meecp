@@ -209,11 +209,11 @@ async def test_actual_installer_sandbox_denies_external_connections_user_files_a
         await server.wait_closed()
 
 
-async def test_node_reports_unavailable_without_running_installer(tmp_path, group_reaper):
+async def test_node_reports_missing_host_runtime_without_running_installer(tmp_path, group_reaper):
     broker = PiToolBroker(tmp_path.resolve() / "workspace", group_reaper)
     try:
         result = await install_dependencies(broker, {"ecosystem": "node", "project_path": "."}, None)
-        assert result == {"success": False, "output": "pi_node_dependencies_unavailable"}
+        assert result == {"success": False, "output": "pi_dependency_runtime_unavailable"}
         assert not broker.owner.instances
     finally:
         await broker.close()

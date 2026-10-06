@@ -1,9 +1,11 @@
-"""Host-owned wheel-only Python dependency setup for a Pi staging workspace.
+"""Host-owned dependency setup for a Pi staging workspace.
 
 The agent supplies ordinary project metadata, never installer commands, index
-configuration, credentials or a build hook. Resolution reaches public PyPI
+configuration or credentials. Python resolution reaches public PyPI
 through the authenticated bounded index broker. Installation consumes exact
 hash-bound wheels offline and copies the verified private Python closure.
+Node projects resolve a standard npm lock and install that lock without implicit
+lifecycle scripts. Pi can then explicitly run project build steps in its sandbox.
 """
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ from pathlib import Path
 import platform
 import re
 import shutil
+import shlex
 import stat
 import tempfile
 import threading
@@ -33,6 +36,7 @@ from .preparation_contracts import PreparationError
 from .preparation_processes import PreparationExecutor
 from .preparation_resolution_network import ResolutionIndexBroker
 from .processes import OwnershipLost, _await_ownership
+from .pi_environment import copy_regular_tree, stage_trust_bundle
 
 MAX_PROJECT_BYTES = 1024 * 1024
 MAX_LOCK_BYTES = 16 * 1024 * 1024
@@ -260,6 +264,172 @@ class _Installer:
         return runtime, lock, await self.thread(_versions, runtime)
 
 
+def node_project(data: bytes) -> dict:
+    """Accept ordinary npm metadata without an app-family template."""
+    try:
+        if not 0 < len(data) <= MAX_PROJECT_BYTES:
+            raise ValueError()
+        document = json.loads(data)
+        if not isinstance(document, dict):
+            raise ValueError()
+        for key in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+            dependencies = document.get(key, {})
+            if not isinstance(dependencies, dict) or len(dependencies) > 1024:
+                raise ValueError()
+            for name, spec in dependencies.items():
+                if not isinstance(name, str) or not isinstance(spec, str) or not 0 < len(name) <= 256 or not 0 < len(spec) <= 4096:
+                    raise ValueError()
+        return document
+    except (ValueError, UnicodeError, TypeError):
+        raise PreparationError("pi_node_project_invalid") from None
+
+
+def _node_lock(data: bytes) -> dict:
+    """Keep npm's public, integrity-bound dependency identities for provenance."""
+    from urllib.parse import urlsplit
+    try:
+        if not 0 < len(data) <= MAX_LOCK_BYTES:
+            raise ValueError()
+        document = json.loads(data)
+        packages = document.get("packages")
+        if not isinstance(packages, dict) or len(packages) > 10000 or document.get("lockfileVersion") not in {2, 3}:
+            raise ValueError()
+        for path, package in packages.items():
+            if not isinstance(path, str) or ".." in Path(path).parts or Path(path).is_absolute() or not isinstance(package, dict):
+                raise ValueError()
+            resolved = package.get("resolved")
+            if resolved is not None:
+                if not isinstance(resolved, str) or len(resolved) > 4096:
+                    raise ValueError()
+                parsed = urlsplit(resolved)
+                if parsed.username is not None or parsed.password is not None:
+                    raise PreparationError("pi_node_dependency_credentials_unsupported")
+                if parsed.scheme in {"http", "https"} and (parsed.query or parsed.fragment):
+                    raise PreparationError("pi_node_dependency_locator_unsupported")
+        return document
+    except PreparationError:
+        raise
+    except (ValueError, UnicodeError, TypeError, AttributeError):
+        raise PreparationError("pi_node_lock_invalid") from None
+
+
+def _node_bin_launchers(source: Path, target: Path, check=lambda: None) -> int:
+    """Preserve CLI script location while publishing a regular-file closure.
+
+    Copying a bin symlink's bytes into .bin changes __dirname and relative
+    imports. A shell launcher instead executes the original project-relative
+    target and prepends this project's relocated private Node interpreter.
+    """
+    source, target = source.resolve(strict=True), target.resolve(strict=True)
+    count = 0
+    for path in source.rglob("*"):
+        check()
+        if path.parent.name != ".bin" or not path.is_symlink():
+            continue
+        resolved = path.resolve(strict=True)
+        if not resolved.is_relative_to(source) or not resolved.is_file():
+            raise PreparationError("pi_node_bin_target_unsafe")
+        destination = target / path.relative_to(source)
+        original = target / resolved.relative_to(source)
+        if not original.is_file() or destination.is_symlink() or not destination.is_file():
+            raise PreparationError("pi_node_bin_target_unsafe")
+        relative = shlex.quote(os.path.relpath(original, destination.parent))
+        private_node = shlex.quote(os.path.relpath(target / ".mcpme-node/bin", destination.parent))
+        launcher = ("#!/bin/sh\n"
+            'mcpme_bin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1\n'
+            + 'mcpme_private_node_dir="$mcpme_bin_dir"/' + private_node + "\n"
+            + 'PATH="$mcpme_private_node_dir:$PATH"\nexport PATH\n'
+            + 'exec "$mcpme_bin_dir"/' + relative + ' "$@"\n')
+        destination.write_text(launcher)
+        destination.chmod(0o755)
+        count += 1
+    return count
+
+
+class _NodeInstaller(_Installer):
+    async def build(self, work: Path, source: bytes, project: Path, target: Path):
+        self.check()
+        runtime, derived = work / "runtime", work / "project"
+        for lock_name in ("package-lock.json", "npm-shrinkwrap.json"):
+            source_lock = project / lock_name
+            if source_lock.exists():
+                parent, leaf, _ = self.broker._parent(str(source_lock), write=True)
+                try:
+                    _node_lock(_read_file(parent, leaf, MAX_LOCK_BYTES))
+                finally:
+                    os.close(parent)
+        def copy_project():
+            copy_regular_tree(project, derived, self.check, allowed_root=project, exclude_paths=(target,),
+                exclude_names={"node_modules", ".git", ".npmrc", ".cache", ".npm", ".pnpm-store", ".home", ".tmp", ".trust"},
+                exclude_private=True)
+        await self.thread(copy_project)
+        (derived / "package.json").write_bytes(source)
+        host_runtime = self.host_root / "pi-runtime"
+        node, npm = host_runtime / "bin/node", host_runtime / "npm/bin/npm-cli.js"
+        if not node.is_file() or not npm.is_file():
+            raise PreparationError("pi_node_installer_unavailable")
+        config, global_config = work / "empty-user-npmrc", work / "empty-global-npmrc"
+        config.write_bytes(b"")
+        global_config.write_bytes(b"")
+        common = [str(node), "--use-system-ca", str(npm), "--cache=" + str(work / "cache"),
+            "--userconfig=" + str(config), "--globalconfig=" + str(global_config),
+            "--registry=https://registry.npmjs.org/", "--ignore-scripts", "--no-audit", "--no-fund",
+            "--no-update-notifier", "--logs-max=0", "--fetch-retries=1", "--fetch-timeout=60000",
+            "--fetch-retry-mintimeout=1000", "--fetch-retry-maxtimeout=3000"]
+        environment = {"PATH": str(host_runtime / "bin") + ":/usr/bin:/bin"}
+        trust = await self.thread(stage_trust_bundle, work / "extra-ca.pem")
+        if trust is not None:
+            environment["NODE_EXTRA_CA_CERTS"] = str(trust)
+        lock_name = "npm-shrinkwrap.json" if (derived / "npm-shrinkwrap.json").is_file() else "package-lock.json"
+        # Node supports the platform trust store; no user npm configuration,
+        # registry credential or provider secret enters this subprocess.
+        for operation in ("install", "ci"):
+            argv = [*common, operation, *(["--package-lock-only"] if operation == "install" else [])]
+            result = await self.controlled(self.broker._run({"argv": argv, "cwd": str(derived),
+                "timeout_seconds": min(MAX_SECONDS, max(1, int(self.deadline - time.monotonic()))),
+                "network": True, "env": environment}))
+            self.check()
+            if not result.get("success"):
+                # Diagnostics are returned in memory to Pi for repair. The host
+                # never logs them or persists npm's debug history.
+                return None, None, result
+            lock = (derived / lock_name).read_bytes()
+            _node_lock(lock)
+        # Keep ordinary package-relative imports, workspace dependencies and
+        # build scripts intact beside node_modules. The target is a complete
+        # private project, rather than a detached dependency directory.
+        await self.thread(lambda: copy_regular_tree(derived, runtime, self.check, allowed_root=derived))
+        private_node = runtime / ".mcpme-node/bin"
+        private_node.mkdir(mode=0o700, parents=True)
+        shutil.copyfile(node, private_node / "node")
+        (private_node / "node").chmod(0o755)
+        bin_launchers = await self.thread(_node_bin_launchers, derived, runtime, self.check)
+        if not (runtime / "node_modules").exists():
+            (runtime / "node_modules").mkdir(mode=0o700)
+        (runtime / ".mcpme-node/licenses").mkdir(mode=0o700)
+        shutil.copyfile(host_runtime / "licenses/NODE-LICENSE.txt", runtime / ".mcpme-node/licenses/NODE-LICENSE.txt")
+        shutil.copyfile(host_runtime / "provenance.json", runtime / ".mcpme-node/node-provenance.json")
+        (runtime / lock_name).write_bytes(lock)
+        versions = []
+        lifecycle = []
+        for relative, record in _node_lock(lock)["packages"].items():
+            if not relative:
+                continue
+            name = record.get("name") or relative.rsplit("node_modules/", 1)[-1]
+            version = record.get("version", "local")
+            item = {"name": name, "version": version, "license": record.get("license", "unspecified")}
+            for key in ("resolved", "integrity"):
+                if key in record:
+                    item[key] = record[key]
+            versions.append(item)
+            if record.get("hasInstallScript"):
+                lifecycle.append(relative)
+        (runtime / ".mcpme-node/dependency-notices.json").write_text(json.dumps({"schema_version": 1, "ecosystem": "node",
+            "distributions": versions, "lifecycle_scripts_pending": lifecycle}, sort_keys=True) + "\n")
+        return runtime, lock, {"versions": versions, "lifecycle_scripts_pending": lifecycle, "lock_name": lock_name,
+                               "bin_launcher_count": bin_launchers}
+
+
 async def install_dependencies(broker, args: dict, host_root: Path | None) -> dict:
     """Build and atomically publish a private runtime; expose metadata only.
 
@@ -273,14 +443,14 @@ async def install_dependencies(broker, args: dict, host_root: Path | None) -> di
         if (broker._closed or not isinstance(args, dict) or set(args) - {"ecosystem", "project_path", "target_path"}
                 or args.get("ecosystem") not in {"python", "node"}):
             raise PreparationError("pi_dependency_arguments_invalid")
-        if args["ecosystem"] == "node":
-            return {"success": False, "output": "pi_node_dependencies_unavailable"}
         if host_root is None or platform.system() != "Darwin" or platform.machine() != "arm64" or not SANDBOX.is_file():
             raise PreparationError("pi_dependency_runtime_unavailable")
+        ecosystem = args["ecosystem"]
         project = broker._path(args.get("project_path"), write=True, directory=True)
-        project_fd, project_leaf, _ = broker._parent(str(project / "pyproject.toml"), write=True)
+        manifest = "pyproject.toml" if ecosystem == "python" else "package.json"
+        project_fd, project_leaf, _ = broker._parent(str(project / manifest), write=True)
         source = _read_file(project_fd, project_leaf, MAX_PROJECT_BYTES)
-        dependency_project(source)  # Reject unsafe declarations before opening network or launching uv.
+        (dependency_project if ecosystem == "python" else node_project)(source)
         value = args.get("target_path", str(project / ".mcpme-runtime"))
         parent_fd, leaf, target = broker._parent(value, write=True, create=True)
         if target == project or target in project.parents or target == broker.workspace:
@@ -293,7 +463,7 @@ async def install_dependencies(broker, args: dict, host_root: Path | None) -> di
             marker_fd = os.open(leaf, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
             try:
                 marker = json.loads(_read_file(marker_fd, MARKER, 65536))
-                if marker.get("schema_version") != 1 or marker.get("ecosystem") != "python":
+                if marker.get("schema_version") != 1 or marker.get("ecosystem") != ecosystem:
                     raise PreparationError("pi_dependency_target_exists")
             finally:
                 os.close(marker_fd)
@@ -301,21 +471,38 @@ async def install_dependencies(broker, args: dict, host_root: Path | None) -> di
         except FileNotFoundError:
             if os.path.lexists(target):
                 raise PreparationError("pi_dependency_target_exists") from None
-        installer = _Installer(broker, host_root)
+        installer = (_Installer if ecosystem == "python" else _NodeInstaller)(broker, host_root)
         work = Path(tempfile.mkdtemp(prefix=".mcpme-dependencies-", dir=broker.workspace))
         async with asyncio.timeout(MAX_SECONDS):
-            runtime, lock, versions = await installer.build(work, source)
+            runtime, lock, details = await (installer.build(work, source) if ecosystem == "python"
+                                          else installer.build(work, source, project, target))
+            if runtime is None:
+                return details
             if _read_file(project_fd, project_leaf, MAX_PROJECT_BYTES) != source:
                 raise PreparationError("pi_dependency_source_changed")
-            result = {"schema_version": 1, "ecosystem": "python", "runtime_path": str(target),
+            if ecosystem == "python":
+                result = {"schema_version": 1, "ecosystem": "python", "runtime_path": str(target),
                 "python_path": str(target / "python/bin/python3.12"),
                 "site_packages_path": str(target / "python/site-packages"), "uv_lock_path": str(target / "uv.lock"),
-                "requirements_path": str(target / "requirements.txt"), "versions": versions,
+                "requirements_path": str(target / "requirements.txt"), "versions": details,
                 "pyproject_sha256": hashlib.sha256(source).hexdigest()}
+                lock_name = "uv.lock"
+            else:
+                result = {"schema_version": 1, "ecosystem": "node", "runtime_path": str(target),
+                    "project_path": str(target), "node_path": str(target / ".mcpme-node/bin/node"), "node_modules_path": str(target / "node_modules"),
+                    "package_lock_path": str(target / details["lock_name"]),
+                    "dependency_notices_path": str(target / ".mcpme-node/dependency-notices.json"),
+                    "dependency_count": len(details["versions"]),
+                    "versions": [{"name": item["name"], "version": item["version"]} for item in details["versions"][:64]],
+                    "lifecycle_scripts_pending": details["lifecycle_scripts_pending"][:64],
+                    "lifecycle_script_count": len(details["lifecycle_scripts_pending"]),
+                    "bin_launcher_count": details["bin_launcher_count"],
+                    "package_json_sha256": hashlib.sha256(source).hexdigest()}
+                lock_name = details["lock_name"]
             if len(json.dumps(result, sort_keys=True).encode()) > 65536:
                 raise PreparationError("pi_dependency_metadata_limit")
             (runtime / MARKER).write_text(json.dumps(result, sort_keys=True) + "\n")
-            _write_file(project_fd, "uv.lock", lock)
+            _write_file(project_fd, lock_name, lock)
             previous = None
             if existing:
                 previous = ".mcpme-previous-" + os.urandom(12).hex()

@@ -1,4 +1,4 @@
-"""Run one paid OpenAI Pi setup and disposable synthetic app acceptance check.
+"""Run a paid OpenAI Pi setup and disposable synthetic app acceptance check.
 
 Build the host separately. This CLI uses its bundled backend/runtime unchanged,
 keeps each run in fresh private state, and emits only acceptance metadata.
@@ -20,6 +20,61 @@ import warnings
 
 ROOT = Path(__file__).resolve().parents[1]
 STAGES = {"starting", "thinking", "reading", "writing", "downloading", "building", "testing", "verifying", "ready"}
+CASES = {
+    "python": {
+        "name": "Text Normalizer", "scope": "synthetic_normalizer",
+        "intent": "Expose normalizer.py normalize_text(text) as the normalize_text MCP tool. "
+            "Use the selected implementation. Accept one string text. Return its exact normalized and word_count fields. "
+            "Build a self-contained Python package. Test whitespace, case folding, and empty strings.",
+        "files": {"normalizer.py": "def normalize_text(text):\n"
+            "    words = text.split()\n"
+            "    return {'normalized': ' '.join(words).casefold(), 'word_count': len(words)}\n"},
+        "fixtures": (("normalize_text", {"text": "  HeLLo\n WORLD  "}, {"normalized": "hello world", "word_count": 2}),
+                     ("normalize_text", {"text": ""}, {"normalized": "", "word_count": 0}),
+                     ("normalize_text", {"text": "Straße"}, {"normalized": "strasse", "word_count": 1})),
+    },
+    "node": {
+        "name": "CSV Reader", "scope": "synthetic_node_csv",
+        "intent": "Expose parse-csv.mjs parse_csv(csv) as the parse_csv MCP tool. Use the selected JavaScript "
+            "implementation and its external csv-parse npm dependency; preserve the implementation's row_count, columns "
+            "and records fields exactly. Build a self-contained Node package with its own Node runtime, a pinned npm "
+            "lockfile and installed dependency closure. Test quoted commas, quoted newlines and Unicode fields. "
+            "No credentials or runtime user configuration are needed.",
+        "files": {"package.json": json.dumps({"name": "mcpme-synthetic-csv", "version": "1.0.0", "private": True,
+            "type": "module", "dependencies": {"csv-parse": "^6.0.0"}}, indent=2) + "\n",
+            "parse-csv.mjs": "import { parse } from 'csv-parse/sync';\n"
+                "export function parse_csv(csv) {\n"
+                "  const records = parse(csv, { columns: true, skip_empty_lines: true, bom: true });\n"
+                "  return { row_count: records.length, columns: Object.keys(records[0] ?? {}), records };\n"
+                "}\n"},
+        "fixtures": (("parse_csv", {"csv": "name,score\nAda,7\nLin,11\n"},
+            {"row_count": 2, "columns": ["name", "score"], "records": [{"name": "Ada", "score": "7"}, {"name": "Lin", "score": "11"}]}),
+            ("parse_csv", {"csv": 'label,note\n"red, blue","first\nsecond"\n'},
+            {"row_count": 1, "columns": ["label", "note"], "records": [{"label": "red, blue", "note": "first\nsecond"}]}),
+            ("parse_csv", {"csv": "title\nStraße\n"},
+            {"row_count": 1, "columns": ["title"], "records": [{"title": "Straße"}]})),
+    },
+    "native": {
+        "name": "Compiled Checksum", "scope": "synthetic_native_checksum",
+        "intent": "Compile the selected checksum.c C program and expose it as the checksum_text MCP tool accepting "
+            "one string text. The compiled executable receives text as its first argument and emits JSON containing "
+            "checksum and byte_count. Return those fields exactly. The package must contain and actually invoke the "
+            "compiled native executable; do not replace its algorithm with a JavaScript or Python implementation. "
+            "Choose an MCP adapter and include its complete runtime closure. Test empty input, hello, and foobar. "
+            "No credentials or runtime user configuration are needed.",
+        "files": {"checksum.c": "#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
+            "int main(int argc, char **argv) {\n"
+            "    if (argc != 2) return 2;\n"
+            "    const unsigned char *text = (const unsigned char *)argv[1];\n"
+            "    uint32_t checksum = UINT32_C(2166136261);\n"
+            "    for (size_t i = 0; text[i]; ++i) checksum = (checksum ^ text[i]) * UINT32_C(16777619);\n"
+            '    printf("{\\\"checksum\\\":%u,\\\"byte_count\\\":%zu}\\n", (unsigned int)checksum, strlen(argv[1]));\n'
+            "    return 0;\n}\n"},
+        "fixtures": (("checksum_text", {"text": ""}, {"checksum": 2166136261, "byte_count": 0}),
+                     ("checksum_text", {"text": "hello"}, {"checksum": 1335831723, "byte_count": 5}),
+                     ("checksum_text", {"text": "foobar"}, {"checksum": 3214735720, "byte_count": 6})),
+    },
+}
 
 
 class AcceptanceError(ValueError):
@@ -60,13 +115,11 @@ def bundled_host(path):
     return root
 
 
-def synthetic_source(base):
+def synthetic_source(base, case="python"):
     source = base / "source"
     source.mkdir(mode=0o700)
-    (source / "normalizer.py").write_text(
-        "def normalize_text(text):\n"
-        "    words = text.split()\n"
-        "    return {'normalized': ' '.join(words).casefold(), 'word_count': len(words)}\n")
+    for name, content in CASES[case]["files"].items():
+        (source / name).write_text(content)
     (source / "LICENSE").write_text(
         "Synthetic acceptance source dedicated to the public domain under CC0-1.0.\n"
         "To the extent possible under law, its authors waive copyright and related rights.\n"
@@ -74,15 +127,13 @@ def synthetic_source(base):
     return source
 
 
-async def gateway_fixtures(host, slot_id):
+async def gateway_fixtures(host, slot_id, case="python"):
     import httpx
     from mcp import ClientSession
     from mcp.client.streamable_http import streamable_http_client
 
     connection = host.connection(slot_id)
-    fixtures = (("  HeLLo\n WORLD  ", {"normalized": "hello world", "word_count": 2}),
-                ("", {"normalized": "", "word_count": 0}),
-                ("Straße", {"normalized": "strasse", "word_count": 1}))
+    fixtures = CASES[case]["fixtures"]
     async with asyncio.timeout(90):
         async with httpx.AsyncClient(headers={"Authorization": "Bearer " + connection["token"]},
                                      trust_env=False, timeout=45) as http:
@@ -90,8 +141,8 @@ async def gateway_fixtures(host, slot_id):
                 async with ClientSession(read, write) as client:
                     initialized = await client.initialize()
                     require(initialized.protocolVersion == "2025-11-25", "acceptance_gateway_protocol_failed")
-                    for text, expected in fixtures:
-                        result = await client.call_tool("normalize_text", {"text": text})
+                    for tool, arguments, expected in fixtures:
+                        result = await client.call_tool(tool, arguments)
                         require(not result.isError and result.structuredContent == expected,
                                 "acceptance_gateway_fixture_failed")
 
@@ -110,7 +161,8 @@ async def acceptance(args):
     run_id = str(uuid.uuid4())
     base = parent / run_id
     base.mkdir(mode=0o700)
-    source = synthetic_source(base)
+    case = CASES[args.case]
+    source = synthetic_source(base, args.case)
     host, job_id, cleanup_failed = None, None, False
     try:
         host = Supervisor(base / "state", bundle / "bin/mcpme-reap")
@@ -120,17 +172,15 @@ async def acceptance(args):
             host.pi_setup.save_settings({"provider": "openai", "model": args.model, "api_key": key})
         finally:
             del key
-        draft = host.imports.create(source, name="Text Normalizer", intent=
-            "Expose normalizer.py normalize_text(text) as the normalize_text MCP tool. "
-            "Use the selected implementation. Accept one string text. Return its exact normalized and word_count fields. "
-            "Build a self-contained Python package. Test whitespace, case folding, and empty strings.", start=True)
+        draft = host.imports.create(source, name=case["name"], intent=case["intent"], start=True)
         job = await host.pi_setup.start({"import_id": draft["draft_id"], "revision": draft["revision"]})
         job_id = job["id"]
-        emit("started", run_id=run_id)
+        emit("started", run_id=run_id, case=args.case)
         previous = None
         task = host.pi_setup.tasks[job_id]
         while not task.done():
             current = host.pi_setup.get(job_id)
+            require(current["stage"] != "waiting_for_user", "acceptance_question_required")
             stage = current["stage"]
             if stage != previous and stage in STAGES:
                 emit("progress", stage=stage)
@@ -150,8 +200,8 @@ async def acceptance(args):
                 await asyncio.sleep(0.1)
         require(operation.status == "completed", "acceptance_install_failed")
         emit("installed", status="completed")
-        await gateway_fixtures(host, operation.slot_id)
-        emit("gateway_verified", fixtures=3)
+        await gateway_fixtures(host, operation.slot_id, args.case)
+        emit("gateway_verified", fixtures=len(case["fixtures"]))
     finally:
         if host is not None:
             try:
@@ -160,19 +210,20 @@ async def acceptance(args):
             except BaseException:
                 cleanup_failed = True
             try:
-                # This fresh run owns every secret record in its disposable state.
-                # Remove the provider value while retaining inspectable artifacts.
-                for secret in host.pi_setup.secrets.list():
-                    host.pi_setup.secrets.revoke(secret["secret_id"])
+                await host.close()
             except BaseException:
                 cleanup_failed = True
             try:
-                await host.close()
+                # This fresh run owns both stores. Revoke after owned workers
+                # finish, including runtime credentials supplied during setup.
+                for store in (host.pi_setup.secrets, host.secrets):
+                    for secret in store.list():
+                        store.revoke(secret["secret_id"])
             except BaseException:
                 cleanup_failed = True
             if cleanup_failed:
                 raise AcceptanceError("acceptance_cleanup_failed") from None
-    return {"fixtures": 3, "scope": "synthetic_normalizer", "run_id": run_id}
+    return {"fixtures": len(case["fixtures"]), "scope": case["scope"], "run_id": run_id}
 
 
 async def run(args):
@@ -218,11 +269,13 @@ def main(argv=None):
         parser.add_argument("--key-file", type=Path, required=True, help="OpenAI key file; its value is never emitted.")
         parser.add_argument("--model", default="gpt-5.4", help="Exact supported OpenAI model ID (default: gpt-5.4).")
         parser.add_argument("--host-root", type=Path, required=True, help="Built host directory, including backend, Python, Pi, and reaper.")
+        parser.add_argument("--case", choices=tuple(CASES), default="python",
+                            help="Synthetic integration case: Python normalizer, Node/npm CSV parser, or compiled C checksum.")
         parser.add_argument("--run-root", type=Path, default=ROOT / "test-artifacts/pi-live",
                             help="Parent directory for a fresh private UUID run (default: ignored test-artifacts/pi-live).")
-        parser.add_argument("--timeout-seconds", type=int, default=1800, help="Whole-run deadline, including setup (default: 1800).")
+        parser.add_argument("--timeout-seconds", type=int, default=3600, help="Whole-run deadline, including setup (default: 3600).")
         args = parser.parse_args(argv)
-        require(1 <= args.timeout_seconds <= 3600, "acceptance_arguments_invalid")
+        require(1 <= args.timeout_seconds <= 7200, "acceptance_arguments_invalid")
         report = asyncio.run(run(args))
     except AcceptanceError as error:
         emit("acceptance_failed", code=error.code)

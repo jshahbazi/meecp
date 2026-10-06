@@ -71,15 +71,15 @@ def _command(arguments: list[str], *, cwd: Path, env: dict[str, str], timeout: i
         raise ValueError("pi_runtime_command_failed") from None
 
 
-def _copy_modules(source: Path, destination: Path) -> None:
+def _copy_modules(source: Path, destination: Path, *, preserve_build_files=False) -> None:
     """Retain package runtime assets/licenses; omit CLI links and source maps."""
     total = 0
     count = 0
     for path in sorted(source.rglob("*")):
         relative = path.relative_to(source)
-        if any(part in {".bin", "docs", "examples", "test", "tests", "__tests__"} for part in relative.parts):
+        if not preserve_build_files and any(part in {".bin", "docs", "examples", "test", "tests", "__tests__"} for part in relative.parts):
             continue
-        if path.name.endswith((".map", ".d.ts", ".d.mts", ".d.cts")):
+        if not preserve_build_files and path.name.endswith((".map", ".d.ts", ".d.mts", ".d.cts")):
             continue
         if path.is_dir() and not path.is_symlink():
             continue
@@ -164,6 +164,9 @@ def bundle(destination: Path, *, cache: Path | None = None) -> Path:
                 shutil.copyfile(SOURCE / name, destination / name)
             shutil.copytree(SOURCE / "licenses", destination / "licenses")
             shutil.copyfile(node_runtime / "LICENSE", destination / "licenses/NODE-LICENSE.txt")
+            # npm ships in the same hash-verified official Node archive. It is
+            # a private general project installer, never a global installation.
+            _copy_modules(node_runtime / "lib/node_modules/npm", destination / "npm", preserve_build_files=True)
             _copy_modules(staging / "node_modules", destination / "node_modules")
             _command([str(destination / "bin/node"), "--check", str(destination / "worker.mjs")],
                      cwd=destination, env=env, timeout=10)

@@ -914,6 +914,16 @@ class Supervisor(UpgradeHost):
     def connection(self, slot_id: str) -> dict:
         return read_private_json(self.slot_directory(slot_id) / "connection.json")
 
+    def publish_connection_limits(self, slot) -> dict:
+        """Publish the selected package's bridge limit without rotating identity."""
+        package = self.package(slot)
+        connection = self.connection(slot.id)
+        limit = package.manifest.lifecycle.max_request_bytes
+        if connection.get("max_request_bytes") != limit:
+            connection = {**connection, "max_request_bytes": limit}
+            write_private_json(self.slot_directory(slot.id) / "connection.json", connection)
+        return connection
+
     def package(self, slot):
         cached = self.package_cache.get(slot.package_path)
         if cached and self.package_stamp(cached[0]) == cached[1]:
@@ -1321,13 +1331,16 @@ class Supervisor(UpgradeHost):
     async def start_gateway(self, slot, active: bool, *, inactive_code="slot_stopped"):
         package = self.package(slot)
         lifecycle = package.manifest.lifecycle
+        # Gateway admission and newly started stdio bridges must use the same
+        # validated limit after upgrades, rollback, and restart recovery.
+        connection = self.publish_connection_limits(slot)
         listener = self.listeners[slot.id]
         parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
         parent.setblocking(False)
         activity_parent, activity_child = socket.socketpair()
         activity_parent.setblocking(False)
         config_read, config_write = os.pipe()
-        config = {"token": self.connection(slot.id)["token"], "port": slot.public_port, "active": active,
+        config = {"token": connection["token"], "port": slot.public_port, "active": active,
                   "inactive_code": inactive_code,
                   "max_sessions": lifecycle.max_sessions, "idle_timeout": lifecycle.idle_timeout_seconds,
                   "max_request_bytes": lifecycle.max_request_bytes,

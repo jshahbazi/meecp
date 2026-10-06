@@ -21,6 +21,7 @@ import pytest
 from mcpme.app_setup import AppSetupHost
 from mcpme.contracts import validate_package
 from mcpme.imports import ImportStore
+from mcpme.limits import MAX_REQUEST_BYTES
 from mcpme.preparation_agent_adapter import AgentPythonAdapterFamily
 from mcpme.preparation_agent_adapter_store import AgentAdapterDerivationStore
 from mcpme.preparation_agent_host import AgentPreparationHost
@@ -83,7 +84,7 @@ async def test_hotdog_assets_and_actual_confined_test_drive_adapter_repair(tmp_p
 
     with ImportStore(tmp_path.resolve() / "state") as imports:
         recipes = RecipeStore(imports)
-        record = recipes.add(Path(__file__).resolve().parents[1] / "templates/builtin-recipes/agent-python-adapter-v1-0-1")
+        record = recipes.add(Path(__file__).resolve().parents[1] / "templates/builtin-recipes/agent-python-adapter-v1-0-2")
         recipes.enable(record["recipe_id"], record["version"])
         draft = imports.create(source, name="Hotdog repair check", intent="Detect hot dogs from an image", source_mode="automatic")
         assert "models/yolo11n.onnx" in {item["path"] for item in draft["source"]["files"]}
@@ -128,6 +129,7 @@ async def test_hotdog_assets_and_actual_confined_test_drive_adapter_repair(tmp_p
             assert len(builds) == 2 and {item["state"] for item in builds} == {"failed", "succeeded"}
             saved = imports.inspect(draft["draft_id"])
             package = validate_package(Path(saved["attachment"]["path"]))
+            assert package.manifest.lifecycle.max_request_bytes == MAX_REQUEST_BYTES
             assert (package.root / "source/models/yolo11n.onnx").read_bytes() == model.read_bytes()
             assert (package.root / "source/mcpme_generated_agent_adapter.py").read_text() == wrapper
             assert hashlib.sha256(model.read_bytes()).hexdigest() == provenance["onnx"]["sha256"]

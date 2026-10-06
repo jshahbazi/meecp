@@ -24,6 +24,8 @@ The automatic path currently supports the admitted Python adapter recipes: proje
 
 The workflow uses existing host-owned proposal validation, dependency resolution, confined builds, runtime probes, and package verification. The model proposes files and typed setup data; it receives no arbitrary shell or ambient filesystem tools. The host may request missing proposal details, then repair the adapter after an eligible build or probe failure. Once accepted, tool schemas and test fixtures remain fixed through adapter repair. A `ready` job returns the verified, attached draft for the separate installation review.
 
+Generated adapters with string inputs use the host's 17 MiB request ceiling, allowing a 12 MiB image plus base64 and JSON framing. Numeric-only tools retain the 1 MiB default. Upgrades and rollback republish the selected package limit; existing stdio clients must reconnect to load a changed limit. Size rejections produce a specific diagnostic without echoing request contents.
+
 ## Current limits
 
 | Scope | Limit |

@@ -9,11 +9,12 @@ from pathlib import Path
 from pydantic import Field
 
 from .contracts import Digest
+from .limits import DEFAULT_REQUEST_BYTES, MAX_REQUEST_BYTES
 from .preparation_components import ComponentReference, PreparationDescriptorV2, SourceBinding, SourceFileBinding
 from .preparation_contracts import Contract, PreparationError, canonical_bytes, contract_digest
 from .preparation_agent_adapter_store import AgentAdapterDerivationStore
 
-COMPONENT_ID, VERSION = "agent-python-adapter-v1", "1.0.1"
+COMPONENT_ID, VERSION = "agent-python-adapter-v1", "1.0.2"
 INPUT_SCHEMA = {"type": "object", "additionalProperties": False,
     "required": ["derivation_id", "derivation_digest"], "properties": {
         "derivation_id": {"type": "string", "minLength": 36, "maxLength": 36},
@@ -26,10 +27,12 @@ def component_catalog():
         "preparation_agent_adapter_builder.py", "preparation_agent_adapter_forms.py",
         "preparation_agent_runtime.py",
         "preparation_builder.py", "preparation_application_builder.py", "preparation_application_source.py",
-        "preparation_selection_snapshot.py"]
+        "preparation_selection_snapshot.py", "limits.py"]
     digest = contract_digest("agent-python-adapter-component-v1", [
         {"path": name, "sha256": hashlib.sha256((root / name).read_bytes()).hexdigest()} for name in files])
     return {COMPONENT_ID + "@1.0.0": {"digest": "28c1d862b947f294dcd0a7f038c32f3d9cf4e31ea20f81d91ab800b13d0b8274",
+        "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []},
+        COMPONENT_ID + "@1.0.1": {"digest": "d7eb6da84e83c3c3204fb92e17c467766c1c4d17b930417634f2c8d71338712d",
         "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []},
         COMPONENT_ID + "@" + VERSION: {"digest": digest,
         "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []}}
@@ -48,6 +51,15 @@ def selected_input(descriptor):
     return AgentAdapterInput.model_validate(descriptor.components[0].input)
 
 
+def request_limit_for(tool):
+    # Primitive string parameters can carry inline images or documents. A tiny
+    # preparation fixture does not establish their real-world request size.
+    # Reserve the host's bounded inline-data capacity without guessing from
+    # parameter names or making the owner configure transport limits.
+    return (MAX_REQUEST_BYTES if any(value.get("type") == "string"
+        for value in tool.input_schema.get("properties", {}).values()) else DEFAULT_REQUEST_BYTES)
+
+
 def descriptor_for(result, identity, draft):
     tool = result.specification.tool
     return PreparationDescriptorV2.model_validate({"schema_version": 2,
@@ -57,7 +69,8 @@ def descriptor_for(result, identity, draft):
             "input": {"derivation_id": identity, "derivation_digest": result.digest}}],
         "tools": [tool.model_dump(exclude_none=True)], "artifacts": [], "inputs": {},
         "access": {}, "resources": {"memory_mb": 128, "cpu_only": True},
-        "lifecycle": {"max_sessions": 1, "idle_timeout_seconds": 300, "operation_timeout_seconds": 30},
+        "lifecycle": {"max_request_bytes": request_limit_for(tool), "max_sessions": 1,
+            "idle_timeout_seconds": 300, "operation_timeout_seconds": 30},
         "validation": [{"id": "agent-adapter-fixture", "tool": tool.name, "arguments": result.specification.arguments,
             "expected": result.specification.expected, "synthetic": True}]})
 

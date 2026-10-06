@@ -20,8 +20,8 @@
       },
       {
         "id": "text-generate-v1",
-        "version": "1.0.16",
-        "digest": "2a6a08011dc0be030b4760f89d8a99218c6dd56d96c548a4e502e9ba5144aeae"
+        "version": "1.0.17",
+        "digest": "2c703317b6213a43d199848efd69f1d731cd2528a776417bfdb7692f9a392eda"
       },
       {
         "id": "service-text-generate-v1",
@@ -30,13 +30,13 @@
       },
       {
         "id": "agent-unlocked-python-adapter-v1",
-        "version": "1.0.1",
-        "digest": "7849a67cc096d0579a92bc910aef855d68945a63d37b54362aa9a5f2bf307726"
+        "version": "1.0.2",
+        "digest": "4fb42bdadcb09578f2fdc48d6d780fd076e82715751f8ae9c3af6a9bad76e090"
       },
       {
         "id": "agent-python-adapter-v1",
-        "version": "1.0.1",
-        "digest": "d7eb6da84e83c3c3204fb92e17c467766c1c4d17b930417634f2c8d71338712d"
+        "version": "1.0.2",
+        "digest": "e7a94187467fa5a8bed8a8e2f994c0964fa50448f35cfc9f2ca69d9929407e61"
       }
     ],
     "recipe_component_sets": [
@@ -76,13 +76,13 @@
       [
         {
           "id": "llamacpp-cpu-v1",
-          "version": "1.0.16",
-          "digest": "36cb0a908b3cbd60503eaaa178c5beb9fa86082de13516be53cd47ccd36ac048"
+          "version": "1.0.17",
+          "digest": "f2245aecbf6ca2b4ffd37903092cddae3f61f702af8290a9c17b1b35f074e00b"
         },
         {
           "id": "text-generate-v1",
-          "version": "1.0.16",
-          "digest": "2a6a08011dc0be030b4760f89d8a99218c6dd56d96c548a4e502e9ba5144aeae"
+          "version": "1.0.17",
+          "digest": "2c703317b6213a43d199848efd69f1d731cd2528a776417bfdb7692f9a392eda"
         }
       ],
       [
@@ -105,15 +105,15 @@
       [
         {
           "id": "agent-unlocked-python-adapter-v1",
-          "version": "1.0.1",
-          "digest": "7849a67cc096d0579a92bc910aef855d68945a63d37b54362aa9a5f2bf307726"
+          "version": "1.0.2",
+          "digest": "4fb42bdadcb09578f2fdc48d6d780fd076e82715751f8ae9c3af6a9bad76e090"
         }
       ],
       [
         {
           "id": "agent-python-adapter-v1",
-          "version": "1.0.1",
-          "digest": "d7eb6da84e83c3c3204fb92e17c467766c1c4d17b930417634f2c8d71338712d"
+          "version": "1.0.2",
+          "digest": "e7a94187467fa5a8bed8a8e2f994c0964fa50448f35cfc9f2ca69d9929407e61"
         }
       ]
     ],
@@ -126,13 +126,13 @@
     "components": [
       {
         "id": "agent-unlocked-python-adapter-v1",
-        "version": "1.0.1",
-        "digest": "7849a67cc096d0579a92bc910aef855d68945a63d37b54362aa9a5f2bf307726"
+        "version": "1.0.2",
+        "digest": "4fb42bdadcb09578f2fdc48d6d780fd076e82715751f8ae9c3af6a9bad76e090"
       },
       {
         "id": "agent-python-adapter-v1",
-        "version": "1.0.1",
-        "digest": "d7eb6da84e83c3c3204fb92e17c467766c1c4d17b930417634f2c8d71338712d"
+        "version": "1.0.2",
+        "digest": "e7a94187467fa5a8bed8a8e2f994c0964fa50448f35cfc9f2ca69d9929407e61"
       }
     ],
     "providers": [

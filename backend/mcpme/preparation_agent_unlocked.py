@@ -11,9 +11,9 @@ from .preparation_agent_adapter_store import MODULE
 from .preparation_agent_unlocked_store import UnlockedCompletionRequestV1
 from .preparation_components import ComponentReference, PreparationDescriptorV2, SourceBinding, SourceFileBinding
 from .preparation_contracts import PreparationError, canonical_bytes, contract_digest
-from .preparation_agent_adapter import AgentAdapterInput
+from .preparation_agent_adapter import AgentAdapterInput, request_limit_for
 
-COMPONENT_ID, VERSION = "agent-unlocked-python-adapter-v1", "1.0.1"
+COMPONENT_ID, VERSION = "agent-unlocked-python-adapter-v1", "1.0.2"
 
 
 def component_catalog():
@@ -26,10 +26,12 @@ def component_catalog():
         "preparation_agent_runtime.py",
         "preparation_selection_snapshot.py", "preparation_application_builder.py", "preparation_application_source.py",
         "preparation_builder.py", "preparation_components.py", "preparation_inputs.py", "preparation_contracts.py",
-        "contracts.py", "private.py"})
+        "contracts.py", "private.py", "limits.py"})
     digest = contract_digest("agent-unlocked-component-v1", [
         {"path": name, "sha256": hashlib.sha256((root/name).read_bytes()).hexdigest()} for name in names])
     return {COMPONENT_ID+"@1.0.0": {"digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f",
+        "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []},
+        COMPONENT_ID+"@1.0.1": {"digest": "7849a67cc096d0579a92bc910aef855d68945a63d37b54362aa9a5f2bf307726",
         "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []},
         COMPONENT_ID+"@"+VERSION: {"digest": digest, "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []}}
 
@@ -47,7 +49,8 @@ def descriptor_for(result, identity, draft):
         "components": [{"component": result.request.producer.model_dump(), "input": {"derivation_id": identity, "derivation_digest": result.digest}}],
         "tools": [result.specification.tool.model_dump(exclude_none=True)], "inputs": {}, "artifacts": [], "access": {},
         "resources": {"memory_mb": 128, "cpu_only": True},
-        "lifecycle": {"max_sessions": 1, "idle_timeout_seconds": 300, "operation_timeout_seconds": 30},
+        "lifecycle": {"max_request_bytes": request_limit_for(result.specification.tool), "max_sessions": 1,
+            "idle_timeout_seconds": 300, "operation_timeout_seconds": 30},
         "validation": [{"id": "agent-unlocked-fixture", "tool": result.specification.tool.name,
             "arguments": result.specification.arguments, "expected": result.specification.expected, "synthetic": True}]})
 

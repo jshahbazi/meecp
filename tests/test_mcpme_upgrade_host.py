@@ -32,7 +32,8 @@ def data_file(path: Path, value: bytes) -> None:
 
 
 class UpgradeFixture:
-    def __init__(self, tmp_path: Path, *, running: bool = True, configured: bool = False):
+    def __init__(self, tmp_path: Path, *, running: bool = True, configured: bool = False,
+                 request_limit: int | None = None):
         self.host = Supervisor(tmp_path / "state", tmp_path / "unused-reaper")
         old_source = make_package(tmp_path / "old-source")
         next_source = make_package(tmp_path / "candidate-source")
@@ -40,6 +41,8 @@ class UpgradeFixture:
         if configured:
             edit_manifest(old_source, configuration=configuration)
         edit_manifest(next_source, version="2.0.0", **({"configuration": configuration} if configured else {}))
+        if request_limit is not None:
+            edit_manifest(next_source, lifecycle={"max_request_bytes": request_limit})
         old = validate_package(old_source)
         self.candidate_source = next_source
         self.new_digest = validate_package(next_source).digest
@@ -55,7 +58,9 @@ class UpgradeFixture:
         self.old_data = ensure_private_directory(self.directory / "data")
         data_file(self.old_data / "state.bin", b"old generation data")
         write_private_json(self.directory / "settings.json", normalize_settings(old.manifest))
-        self.connection = {"token": "synthetic-invocation-token", "port": self.slot.public_port}
+        self.connection = {"token": "synthetic-invocation-token", "slot_id": self.slot.id,
+            "endpoint": f"http://127.0.0.1:{self.slot.public_port}/mcp",
+            "max_request_bytes": old.manifest.lifecycle.max_request_bytes}
         write_private_json(self.directory / "connection.json", self.connection)
         write_private_json(self.directory / "activation.json", {"generation": self.slot.generation,
             "verified": True, "exposure_permitted": running, "legacy_jev": False})
@@ -65,6 +70,7 @@ class UpgradeFixture:
         self.host.stop_residents = AsyncMock()
 
         async def gateway(slot, active: bool, **kwargs):
+            self.host.publish_connection_limits(slot)
             self.gateways.append((slot.to_dict(), active, kwargs.get("inactive_code")))
         async def candidate(slot, **kwargs):
             self.probes.append(slot.to_dict())
@@ -115,6 +121,67 @@ async def test_successful_upgrade_keeps_identity_connection_and_old_data(tmp_pat
         assert fixture.gateways[-1][1] is True
         assert (await host.apply_upgrade(plan["plan_id"]))["operation_id"] == operation.id
         assert len([item for item in host.registry.list_operations() if item.action == "upgrade"]) == 1
+    finally:
+        await host.close()
+
+
+@pytest.mark.parametrize("running", [True, False])
+async def test_upgrade_and_return_to_previous_package_publish_request_limits(tmp_path, running):
+    fixture = UpgradeFixture(tmp_path, running=running, request_limit=17 * 1024 * 1024)
+    host = fixture.host
+    original = dict(fixture.connection)
+    try:
+        assert original["max_request_bytes"] == 1024 * 1024
+        operation = await fixture.apply(await fixture.plan())
+        assert operation.status == "completed"
+        assert host.connection(fixture.slot.id) == {**original, "max_request_bytes": 17 * 1024 * 1024}
+        rollback = await host.plan_upgrade({"slot_id": fixture.slot.id,
+            "package": fixture.slot.package_path})
+        restored = await fixture.apply(rollback)
+        assert restored.status == "completed"
+        assert host.connection(fixture.slot.id) == original
+        assert host.registry.get_slot(fixture.slot.id).package_digest == fixture.slot.package_digest
+        assert host.registry.get_slot(fixture.slot.id).desired_state == ("running" if running else "stopped")
+    finally:
+        await host.close()
+
+
+@pytest.mark.parametrize("stage", ["selected", "exposed"])
+async def test_limit_publication_follows_upgrade_rollback_and_recovery(tmp_path, stage):
+    fixture = UpgradeFixture(tmp_path, request_limit=17 * 1024 * 1024)
+    host = fixture.host
+    async def checkpoint(operation_id, current):
+        if current == stage:
+            raise UpgradeError("synthetic_upgrade_failure")
+    host.upgrade_checkpoint = checkpoint
+    try:
+        operation = await fixture.apply(await fixture.plan())
+        # The old, inactive gateway remains authoritative until exposure starts
+        # a gateway for the verified candidate.
+        assert host.connection(fixture.slot.id) == fixture.connection
+        if stage == "selected":
+            assert operation.status == "failed"
+            assert host.registry.get_slot(fixture.slot.id).package_digest == fixture.slot.package_digest
+        else:
+            assert operation.status == "recovery_required"
+            await host.recover_operation(operation.id)
+            await settle(host, operation.id)
+            assert host.registry.get_operation(operation.id).status == "completed"
+            assert host.connection(fixture.slot.id) == {
+                **fixture.connection, "max_request_bytes": 17 * 1024 * 1024}
+    finally:
+        await host.close()
+
+
+async def test_gateway_rejects_unbound_package_before_publishing_connection_limit(tmp_path):
+    fixture = UpgradeFixture(tmp_path, request_limit=17 * 1024 * 1024)
+    host = fixture.host
+    try:
+        mismatched = replace(fixture.slot, package_path=str(fixture.candidate_source))
+        with pytest.raises(HostError, match="^package_digest_mismatch$"):
+            await Supervisor.start_gateway(host, mismatched, active=False)
+        assert host.connection(fixture.slot.id) == fixture.connection
+        assert not host.workers
     finally:
         await host.close()
 

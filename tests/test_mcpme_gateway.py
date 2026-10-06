@@ -539,3 +539,24 @@ async def test_bridge_forwarding_and_eof_delete():
 
 def load_line(data):
     return json.loads(data)
+
+
+@pytest.mark.parametrize("rejection", ["client_limit", "host_limit", "other"])
+async def test_bridge_explains_size_rejection_without_echoing_payload_or_retrying(rejection):
+    calls, emitted = [], []
+    def reject(request):
+        calls.append(request.method)
+        return httpx.Response(413 if rejection == "host_limit" else 400,
+            text="private upstream diagnostic must not escape")
+    async def write(data):
+        emitted.append(load_line(data))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(reject)) as client:
+        bridge = Bridge("http://127.0.0.1:19387/mcp", "synthetic-token", client=client,
+            max_request_bytes=32 if rejection == "client_limit" else 1024)
+        bridge.writer = write
+        await bridge.post({"jsonrpc": "2.0", "id": "image-request", "method": "tools/call",
+            "params": {"name": "image", "arguments": {"image_base64": "synthetic-private-image"}}})
+    expected = ("The slot request could not be completed." if rejection == "other"
+        else "The request exceeds this app's image or data size limit.")
+    assert emitted == [{"jsonrpc": "2.0", "id": "image-request", "error": {"code": -32000, "message": expected}}]
+    assert calls == ([] if rejection == "client_limit" else ["POST"])

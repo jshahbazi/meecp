@@ -19,10 +19,10 @@
       "version": "1.0.0"
     },
     {
-      "digest": "36445b9b1f6c7a8453a7678abacfbf321c78284831b7371b4255f7af070b3031",
-      "directory": "text-generation-v1-0-16",
+      "digest": "59e2a45874dae94633e0d620361864faddc9df116476dd5f89b5bbe7a2e459bb",
+      "directory": "text-generation-v1-0-17",
       "recipe_id": "mcpme.text-generation",
-      "version": "1.0.16"
+      "version": "1.0.17"
     },
     {
       "digest": "4c8244519199d76224efa11ace14c8edc5f14d2218c85ecf31a4de16913b3c79",
@@ -31,16 +31,16 @@
       "version": "1.0.1"
     },
     {
-      "digest": "65cb4f6d19848d1fd6f5140bc736897749c55e119091fbdf36ec378c77c558b6",
-      "directory": "agent-python-adapter-v1-0-1",
+      "digest": "7b7478127876d6ce16e71dad2a72ec587f8cc37423464e19722f8faca9628d6f",
+      "directory": "agent-python-adapter-v1-0-2",
       "recipe_id": "mcpme.agent-python-adapter",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     {
-      "digest": "0dc4c801f5032998c1af24b3b9faaa967d8293b82154c96a0b3e48a3f3b6dabd",
-      "directory": "agent-unlocked-python-adapter-v1-0-1",
+      "digest": "78c4b7341daa3d6708fffec48f122d47fb566cdd1480b2f75a532fea316efe95",
+      "directory": "agent-unlocked-python-adapter-v1-0-2",
       "recipe_id": "mcpme.agent-unlocked-python-adapter",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     {
       "digest": "579defab9a646d37f07eb92f2e6a2260ad1923477f1cadb96c46fc9edf6d28c3",

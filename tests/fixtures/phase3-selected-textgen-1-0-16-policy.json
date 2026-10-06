@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "policy_id": "phase3-live-agent-acceptance-candidate-v1",
+  "preparation": {
+    "families": [
+      {
+        "id": "resolved-python-v1",
+        "version": "1.0.1",
+        "digest": "3c24410b46415cb83b9d945ebf0049f552e9f7493943164f311939a79b49000e"
+      },
+      {
+        "id": "yolo11-coco-detect-v1",
+        "version": "1.0.0",
+        "digest": "b48bde76ca30787de2e41a6b984c0c80a79b3a4b6ec75637f3147ccfadec3e99"
+      },
+      {
+        "id": "host-command-json-v1",
+        "version": "1.0.1",
+        "digest": "a216f2ed58294410850afc4bd63f9b9b63c945464a1f10d1b735bd8de26cd607"
+      },
+      {
+        "id": "text-generate-v1",
+        "version": "1.0.16",
+        "digest": "2a6a08011dc0be030b4760f89d8a99218c6dd56d96c548a4e502e9ba5144aeae"
+      },
+      {
+        "id": "service-text-generate-v1",
+        "version": "1.0.0",
+        "digest": "bc540561a87cba329d1d62d837596d6318a2d740fc4f6cf49b3eab95a9145d75"
+      },
+      {
+        "id": "agent-unlocked-python-adapter-v1",
+        "version": "1.0.1",
+        "digest": "7849a67cc096d0579a92bc910aef855d68945a63d37b54362aa9a5f2bf307726"
+      },
+      {
+        "id": "agent-python-adapter-v1",
+        "version": "1.0.1",
+        "digest": "d7eb6da84e83c3c3204fb92e17c467766c1c4d17b930417634f2c8d71338712d"
+      }
+    ],
+    "recipe_component_sets": [
+      [
+        {
+          "id": "python-function-v1",
+          "version": "1.0.0",
+          "digest": "b28f98582aeff09e344b4a7049af7fdadbaf19436dc6724638ab64b6a9139d4e"
+        }
+      ],
+      [
+        {
+          "id": "resolved-python-v1",
+          "version": "1.0.1",
+          "digest": "3c24410b46415cb83b9d945ebf0049f552e9f7493943164f311939a79b49000e"
+        }
+      ],
+      [
+        {
+          "id": "onnxruntime-cpu-v1",
+          "version": "1.0.0",
+          "digest": "ec982f8489de85afd79d6aa715431082e1bba29be48ca06eef457dbcc362d8dc"
+        },
+        {
+          "id": "yolo11-coco-detect-v1",
+          "version": "1.0.0",
+          "digest": "b48bde76ca30787de2e41a6b984c0c80a79b3a4b6ec75637f3147ccfadec3e99"
+        }
+      ],
+      [
+        {
+          "id": "host-command-json-v1",
+          "version": "1.0.1",
+          "digest": "a216f2ed58294410850afc4bd63f9b9b63c945464a1f10d1b735bd8de26cd607"
+        }
+      ],
+      [
+        {
+          "id": "llamacpp-cpu-v1",
+          "version": "1.0.16",
+          "digest": "36cb0a908b3cbd60503eaaa178c5beb9fa86082de13516be53cd47ccd36ac048"
+        },
+        {
+          "id": "text-generate-v1",
+          "version": "1.0.16",
+          "digest": "2a6a08011dc0be030b4760f89d8a99218c6dd56d96c548a4e502e9ba5144aeae"
+        }
+      ],
+      [
+        {
+          "id": "openai-chat-completions-v1",
+          "version": "1.0.0",
+          "digest": "01d9379a0ed5fdd9fc86e1b6aeb47465f153162af57157cfbd42f6644f338587"
+        },
+        {
+          "id": "loopback-http-bearer-v1",
+          "version": "1.0.0",
+          "digest": "2f93a9f9258fa5d2b6b9c854f9e828d2f43ceeb7f0108183759e9f428fbaa4dc"
+        },
+        {
+          "id": "service-text-generate-v1",
+          "version": "1.0.0",
+          "digest": "bc540561a87cba329d1d62d837596d6318a2d740fc4f6cf49b3eab95a9145d75"
+        }
+      ],
+      [
+        {
+          "id": "agent-unlocked-python-adapter-v1",
+          "version": "1.0.1",
+          "digest": "7849a67cc096d0579a92bc910aef855d68945a63d37b54362aa9a5f2bf307726"
+        }
+      ],
+      [
+        {
+          "id": "agent-python-adapter-v1",
+          "version": "1.0.1",
+          "digest": "d7eb6da84e83c3c3204fb92e17c467766c1c4d17b930417634f2c8d71338712d"
+        }
+      ]
+    ],
+    "resolution_candidate_kinds": [
+      "python-callable",
+      "python-mcp"
+    ]
+  },
+  "agent": {
+    "components": [
+      {
+        "id": "agent-unlocked-python-adapter-v1",
+        "version": "1.0.1",
+        "digest": "7849a67cc096d0579a92bc910aef855d68945a63d37b54362aa9a5f2bf307726"
+      },
+      {
+        "id": "agent-python-adapter-v1",
+        "version": "1.0.1",
+        "digest": "d7eb6da84e83c3c3204fb92e17c467766c1c4d17b930417634f2c8d71338712d"
+      }
+    ],
+    "providers": [
+      {
+        "adapter_id": "openai-responses-v1",
+        "adapter_digest": "216c9fac8d10d60ffce2ee33ea8f58978fea078636d1e058299dfd44d19b747e",
+        "models": [
+          "gpt-6.1-sol"
+        ]
+      }
+    ],
+    "unlocked_resolution": true
+  },
+  "command": {
+    "component": [
+      "host-command-json-v1",
+      "1.0.1",
+      "a216f2ed58294410850afc4bd63f9b9b63c945464a1f10d1b735bd8de26cd607"
+    ],
+    "installed_platform_policy": "3898759c85d08268db02963c0e822e2bd3c9657d337e1e5c5708e0bb0738c83b",
+    "resource_platform_policy": "03a5e27b4931b1eaa705f0a4be373bc202ac7dd3bb4d71a438c2eb6ffeae1b8a"
+  }
+}

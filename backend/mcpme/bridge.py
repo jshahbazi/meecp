@@ -18,6 +18,10 @@ from .gateway import (DEFAULT_REQUEST_BYTES, MAX_MESSAGE_BYTES, MAX_OPERATION_BY
 from .policy import load_json
 
 
+class RequestTooLarge(ValueError):
+    """A local bound or an authenticated host's HTTP size rejection."""
+
+
 class Bridge:
     def __init__(self, endpoint: str, token: str, *, socket_path: Path | None = None, timeout=65, client=None,
                  max_request_bytes=DEFAULT_REQUEST_BYTES):
@@ -109,9 +113,11 @@ class Bridge:
         try:
             body = encode(message)
             if len(body) > self.max_request_bytes:
-                raise ValueError("request_limit")
+                raise RequestTooLarge()
             async with asyncio.timeout(self.timeout):
                 async with self.client.stream("POST", self.endpoint, headers=self.headers(), content=body) as response:
+                    if response.status_code == 413:
+                        raise RequestTooLarge()
                     if response.status_code not in {200, 202}:
                         raise ValueError("request_rejected")
                     if message.get("method") == "initialize":
@@ -163,9 +169,13 @@ class Bridge:
                         raise ValueError("missing_response")
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as error:
             if request_id is not None and not responded:
-                await self.emit(error_message(request_id))
+                if isinstance(error, RequestTooLarge):
+                    await self.emit(error_message(request_id,
+                        message="The request exceeds this app's image or data size limit."))
+                else:
+                    await self.emit(error_message(request_id))
             if responded:
                 self.stop.set()
             if message.get("method") == "initialize":

@@ -367,6 +367,7 @@ private enum PrivateFile {
 
 final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate, NSTextViewDelegate {
     private var statusItem: NSStatusItem!
+    private var statusMenuTracking = false
     private var process: Process?
     // Assigned only by the explicit native acceptance command. The normal app
     // continues to require its own live host Process and matching connection.
@@ -732,18 +733,21 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private func updateStatusButtonSelection() {
-        statusItem.button?.state = dashboard.isVisible ? .on : .off
-        statusItem.button?.highlight(dashboard.isVisible)
+        let selected = dashboard.isVisible || statusMenuTracking
+        statusItem.button?.state = selected ? .on : .off
+        statusItem.button?.highlight(selected)
     }
 
     @objc private func handleStatusButton() {
         let event = NSApp.currentEvent
         if event?.type == .rightMouseUp || (event?.type == .leftMouseUp && event?.modifierFlags.contains(.control) == true) {
             guard let button = statusItem.button else { return }
+            statusMenuTracking = true
             dashboard.dismiss()
             button.state = .on
             button.highlight(true)
             defer {
+                statusMenuTracking = false
                 updateStatusButtonSelection()
                 DispatchQueue.main.async { [weak self] in self?.updateStatusButtonSelection() }
             }
@@ -2790,6 +2794,27 @@ private struct NativeRecipeAcceptanceContext {
 }
 
 extension McpmeApp {
+    /// Checks selection through panel visibility and nested context-menu tracking.
+    fileprivate static func statusButtonSelfTest() -> Bool {
+        guard let screen = NSScreen.main else { return false }
+        let app = McpmeApp()
+        app.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        defer { app.dashboard.dismiss(); NSStatusBar.system.removeStatusItem(app.statusItem) }
+        guard let button = app.statusItem.button else { return false }
+        app.configureDashboard()
+        let anchor = NSRect(x: screen.visibleFrame.maxX - 24, y: screen.visibleFrame.maxY, width: 24, height: 24)
+        app.dashboard.toggle(anchor: anchor, screen: screen)
+        guard button.state == .on, button.cell?.isHighlighted == true else { return false }
+        app.dashboard.dismiss()
+        guard button.state == .off, button.cell?.isHighlighted == false else { return false }
+        app.statusMenuTracking = true
+        app.dashboard.dismiss()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        guard button.state == .on, button.cell?.isHighlighted == true else { return false }
+        app.statusMenuTracking = false; app.updateStatusButtonSelection()
+        return button.state == .off && button.cell?.isHighlighted == false
+    }
+
     /// Developer-only acceptance: dialog choices are simulated by an owned
     /// fixture; production handlers and authenticated owner socket are real.
     fileprivate static func recipesNativeAcceptance(fixture: URL) -> Bool {
@@ -3466,7 +3491,7 @@ if CommandLine.arguments.dropFirst().first == "--dashboard-ui-self-test" {
     let application = NSApplication.shared
     application.setActivationPolicy(.accessory)
     application.finishLaunching()
-    let passed = dashboardViewSelfTest()
+    let passed = dashboardViewSelfTest() && McpmeApp.statusButtonSelfTest()
     print(passed ? "dashboard_ui_contracts_passed" : "dashboard_ui_contracts_failed")
     exit(passed ? 0 : 1)
 }

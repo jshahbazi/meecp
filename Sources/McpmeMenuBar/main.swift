@@ -468,6 +468,9 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private var setupDraftsRow: NSView?
     private var externalPreparationView: NSView?
     private var assistedPreparationView: NSView?
+    private var agentPreparationReviewHeader: NSView?
+    private var agentPreparationBackButton: NSButton?
+    private var agentPreparationReviewContext: PreparationContext?
     private var setupStageLabel: NSTextField?
     private var supplementaryCapture = false
     private var modelFilesButton: NSButton?
@@ -1075,6 +1078,9 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         preparationView.onUpdatedDraft = { [weak self] object in
             guard let self, !self.draftDirty, !self.setupRequest, let current = self.currentDraft, let updated = ImportDraft(object),
                   updated.id == current.id, updated.revision >= current.revision, updated.sourceRevision == current.sourceRevision else { return false }
+            if let reviewing = self.agentPreparationReviewContext, reviewing == self.currentPreparationContext {
+                self.agentPreparationReviewContext = PreparationContext(importID: updated.id, revision: updated.revision, sourceRevision: updated.sourceRevision ?? "")
+            }
             self.displayDraft(updated); return true
         }
         preparationView.onStateChange = { [weak self] in self?.refreshWindow() }
@@ -1092,7 +1098,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         agentPreparationView.onUpdatedDraft = { [weak self] object in
             guard let self, !self.draftDirty, !self.setupRequest, let current = self.currentDraft, let updated = ImportDraft(object),
                   updated.id == current.id, updated.revision == current.revision + 1, updated.sourceRevision == current.sourceRevision else { return false }
-            self.preparationMethod?.selectedSegment = 0
+            self.agentPreparationReviewContext = PreparationContext(importID: updated.id, revision: updated.revision, sourceRevision: updated.sourceRevision ?? "")
+            self.preparationMethod?.selectedSegment = 1
             self.displayDraft(updated); self.preparationView.refreshForm(); return true
         }
         agentPreparationView.onStateChange = { [weak self] in self?.refreshWindow() }
@@ -1104,9 +1111,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                   let draft = self.currentDraft, draft.editable, draft.packagePath == nil,
                   ["local_folder", "application_directory"].contains(draft.sourceKind),
                   PreparationContext(importID: draft.id, revision: draft.revision, sourceRevision: draft.sourceRevision ?? "") == context else { return false }
-            let opened = self.preparationView.reviewAgentProposal(context)
-            if opened { self.preparationMethod?.selectedSegment = 0; self.refreshSetupSections() }
-            return opened
+            return self.openAgentPreparationReview(context)
         }
         recipesView.onRegistryChange = { [weak self] in self?.preparationView.registryChanged(); self?.agentPreparationView.registryChanged() }
         let preparationMethod = NSSegmentedControl(labels: ["Guided setup", "Use AI assistance", "Use my coding agent"], trackingMode: .selectOne,
@@ -1115,11 +1120,16 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         self.preparationMethod = preparationMethod
         let assisted = workspaceStack([workspaceLabel("Your folder is included automatically. Review once, then let your assistant analyze it.", size: 12, secondary: true), agentPreparationView])
         assistedPreparationView = assisted
+        let backToAnalysis = button("Back to AI Analysis", action: #selector(backToAgentAnalysis))
+        agentPreparationBackButton = backToAnalysis
+        let agentReviewHeader = workspaceStack([workspaceLabel("Review your assistant’s setup", size: 16, weight: .semibold),
+            workspaceLabel("Your assistant has proposed a setup. Check the tools and settings below, then prepare your app.", size: 12, secondary: true), backToAnalysis])
+        agentPreparationReviewHeader = agentReviewHeader
         let external = workspaceStack([workspaceLabel("1. Copy the instructions into your coding agent.\n2. When it finishes, choose the prepared package it created.", size: 13), handoff,
                                        WorkspaceDisclosure("Export for developers", views: [export])])
         externalPreparationView = external
-        let prepareCard = workspaceCard("Set up your app", subtitle: "Start with guided setup. Use an assistant if your source needs help becoming an app.",
-                                        views: [preparationMethod, save, preparationView, assisted, external, modelControls,
+        let prepareCard = workspaceCard("Set up your app", subtitle: "Review your app’s setup, then prepare it for installation.",
+                                        views: [preparationMethod, save, assisted, agentReviewHeader, preparationView, external, modelControls,
                                                 WorkspaceDisclosure("Discard this setup", views: [cancel])])
         setupPrepareCard = prepareCard
         configurationView.onChange = { [weak self] in self?.setupChanged() }
@@ -1176,6 +1186,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let preparationContext = currentDraft.flatMap { draft in
             draft.sourceRevision.flatMap { PreparationContext(importID: draft.id, revision: draft.revision, sourceRevision: $0) }
         }
+        if agentPreparationReviewContext != preparationContext { agentPreparationReviewContext = nil }
         preparationView.bind(preparationContext, saved: !draftDirty, eligible: currentDraft?.editable == true && currentDraft?.packagePath == nil)
         preparationView.refreshAvailability()
         let agentContext = currentDraft.flatMap { draft -> PreparationContext? in
@@ -1183,7 +1194,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             return preparationContext
         }
         agentPreparationView.bind(agentContext, saved: !draftDirty); agentPreparationView.refreshAvailability()
-        if preparationMethod?.selectedSegment == 1 { agentPreparationView.loadOptionsIfNeeded() }
+        if preparationMethod?.selectedSegment == 1 && agentPreparationReviewContext == nil { agentPreparationView.loadOptionsIfNeeded() }
         refreshActionButtons()
         if let id = pendingInstalledSelection, projects.contains(where: { $0.id == id }), management != nil {
             pendingInstalledSelection = nil; management?.select(id: id)
@@ -1263,10 +1274,13 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         setupConfigureCard?.isHidden = !prepared || configurationView.isHidden || !configurationView.hasSettings || setupOperation != nil
         setupReviewCard?.isHidden = !prepared
         if agentPreparationView.hasActiveAnalysis { preparationMethod?.selectedSegment = 1 }
-        else if preparationView.busy || preparationView.hasActiveJob { preparationMethod?.selectedSegment = 0 }
+        else if preparationView.busy || preparationView.hasActiveJob { preparationMethod?.selectedSegment = agentPreparationReviewContext == nil ? 0 : 1 }
         let method = preparationMethod?.selectedSegment ?? 0
-        preparationView.isHidden = method != 0
-        assistedPreparationView?.isHidden = method != 1
+        let reviewingAgentSetup = method == 1 && agentPreparationReviewContext != nil
+        preparationView.isHidden = method != 0 && !reviewingAgentSetup
+        assistedPreparationView?.isHidden = method != 1 || reviewingAgentSetup
+        agentPreparationReviewHeader?.isHidden = !reviewingAgentSetup
+        agentPreparationBackButton?.isEnabled = !preparationView.busy && !preparationView.hasActiveJob && !agentPreparationView.blocksNavigation
         externalPreparationView?.isHidden = method != 2
         preparationMethod?.isEnabled = !preparationView.busy && !preparationView.hasActiveJob && !agentPreparationView.blocksNavigation
         sourceMethod?.isEnabled = !setupRequest && !hasDraft
@@ -1277,7 +1291,31 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         reviewText?.enclosingScrollView?.isHidden = setupPlan == nil && setupOperation == nil
         setupPlanDetails?.isHidden = setupPlan == nil
         setupHostText?.isHidden = hostAvailable && !uiPreviewMode
-        setupStageLabel?.stringValue = !hasDraft ? "Add an app" : prepared ? "Review and add" : "Set up your app"
+        setupStageLabel?.stringValue = !hasDraft ? "Add an app" : prepared ? "Review and add" : reviewingAgentSetup ? "Review AI setup" : "Set up your app"
+    }
+
+    private var currentPreparationContext: PreparationContext? {
+        currentDraft.flatMap { draft in
+            draft.sourceRevision.flatMap { PreparationContext(importID: draft.id, revision: draft.revision, sourceRevision: $0) }
+        }
+    }
+
+    private func openAgentPreparationReview(_ context: PreparationContext) -> Bool {
+        guard currentPreparationContext == context else { return false }
+        let previous = agentPreparationReviewContext, previousMethod = preparationMethod?.selectedSegment ?? 1
+        // Set the presentation owner before loading: the form publishes busy
+        // state synchronously, which must not switch the selected workflow.
+        agentPreparationReviewContext = context; preparationMethod?.selectedSegment = 1
+        let opened = preparationView.reviewAgentProposal(context)
+        if !opened { agentPreparationReviewContext = previous; preparationMethod?.selectedSegment = previousMethod }
+        refreshSetupSections()
+        return opened
+    }
+
+    @objc private func backToAgentAnalysis() {
+        guard !preparationView.busy, !preparationView.hasActiveJob, !agentPreparationView.blocksNavigation else { return }
+        agentPreparationReviewContext = nil; preparationMethod?.selectedSegment = 1
+        refreshWindow()
     }
 
     @objc private func changeSourceMethod() {
@@ -1289,6 +1327,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
     @objc private func toggleModelFiles() { supplementaryCapture.toggle(); refreshWindow() }
     @objc private func changePreparationMethod() {
+        if preparationMethod?.selectedSegment != 1 { agentPreparationReviewContext = nil }
         refreshWindow()
         if preparationMethod?.selectedSegment == 0 && preparationView.form == nil { preparationView.refreshForm() }
     }
@@ -1958,7 +1997,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     @objc private func newDraft() { saveDraftBeforeNavigation { [weak self] saved in if saved { self?.clearDraft() } } }
 
     private func clearDraft() {
-        supplementaryCapture = false; preparationMethod?.selectedSegment = 0
+        supplementaryCapture = false; preparationMethod?.selectedSegment = 0; agentPreparationReviewContext = nil
         serviceConnectionView.invalidate()
         importViewGeneration &+= 1
         currentDraft = nil; draftDirty = false; setupPlan = nil; setupOperation = nil
@@ -3277,6 +3316,72 @@ extension McpmeApp {
     }
 
     /// Exercises actual host form/review responses through the parent's draft callback.
+    fileprivate static func agentReviewPresentationSelfTest() -> Bool {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("mcpme-agent-review-test-" + UUID().uuidString, isDirectory: true)
+        guard (try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])) != nil else { return false }
+        let prior = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"]
+        setenv("MCPME_STATE_DIR", directory.path, 1)
+        defer {
+            if let prior { setenv("MCPME_STATE_DIR", prior, 1) } else { unsetenv("MCPME_STATE_DIR") }
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let app = McpmeApp(); _ = app.makeSetupWorkspace()
+        func draft(_ revision: Int, source: String = PreparationTestData.source) -> [String: Any] {
+            ["summary": true, "draft_id": PreparationTestData.importID, "revision": revision,
+             "state": "waiting_for_agent", "name": "Synthetic app", "start": false, "start_policy": "manual",
+             "source": ["kind": "local_folder", "revision": source]]
+        }
+        app.currentDraft = ImportDraft(draft(1)); app.preparationMethod?.selectedSegment = 1; app.refreshWindow()
+        app.preparationView.available = { true }
+        var calls: [(path: String, complete: ([String: Any]?, String?) -> Void)] = []
+        app.preparationView.request = { path, _, _, complete in calls.append((path, complete)) }
+        func staysInAIReview() -> Bool {
+            app.refreshWindow()
+            return app.preparationMethod?.selectedSegment == 1 && !app.preparationView.isHidden &&
+                app.assistedPreparationView?.isHidden == true && app.agentPreparationReviewHeader?.isHidden == false
+        }
+        guard app.openAgentPreparationReview(PreparationTestData.context), calls.count == 1,
+              app.preparationView.busy, staysInAIReview(), app.agentPreparationBackButton?.isEnabled == false else { return false }
+        app.backToAgentAnalysis(); guard staysInAIReview() else { return false }
+        calls.removeFirst().complete(PreparationTestData.form(available: true), nil)
+        guard staysInAIReview(), app.agentPreparationBackButton?.isEnabled == true else { return false }
+        app.preparationView.reviewForm()
+        guard calls.count == 1, calls[0].path == "v1/preparations/plan-form", staysInAIReview() else { return false }
+        var review = PreparationTestData.review(revision: 2, available: true); review["draft"] = draft(2)
+        calls.removeFirst().complete(review, nil)
+        guard app.currentDraft?.revision == 2, app.agentPreparationReviewContext?.revision == 2,
+              app.preparationView.review?.context.revision == 2, staysInAIReview() else { return false }
+        app.preparationView.startPreparation()
+        guard calls.count == 1, calls[0].path == "v1/preparations/start", staysInAIReview() else { return false }
+        calls.removeFirst().complete(PreparationTestData.job(revision: 2), nil)
+        guard app.preparationView.hasActiveJob, staysInAIReview(), app.agentPreparationBackButton?.isEnabled == false else { return false }
+        app.backToAgentAnalysis(); guard staysInAIReview() else { return false }
+        app.preparationView.poll()
+        guard calls.count == 1 else { return false }
+        let failed = PreparationTestData.job(state: "failed", revision: 2, updated: 2)
+        calls.removeFirst().complete(["preparations": [PreparationTestData.summary(failed)]], nil)
+        guard calls.count == 1 else { return false }
+        calls.removeFirst().complete(failed, nil)
+        guard !app.preparationView.hasActiveJob, staysInAIReview() else { return false }
+        app.backToAgentAnalysis()
+        guard app.agentPreparationReviewContext == nil, app.preparationMethod?.selectedSegment == 1,
+              app.preparationView.isHidden, app.assistedPreparationView?.isHidden == false else { return false }
+        // Direct candidate adoption takes the same presentation path.
+        guard app.agentPreparationView.onUpdatedDraft?(draft(3)) == true, staysInAIReview(), calls.count == 1 else { return false }
+        calls.removeFirst().complete(PreparationTestData.form(revision: 3, available: true), nil)
+        app.preparationMethod?.selectedSegment = 0; app.changePreparationMethod()
+        guard app.agentPreparationReviewContext == nil, !app.preparationView.isHidden,
+              app.agentPreparationReviewHeader?.isHidden == true else { return false }
+        // An ordinary Guided review must not acquire AI presentation ownership.
+        guard app.preparationView.onUpdatedDraft?(draft(4)) == true, app.agentPreparationReviewContext == nil else { return false }
+        guard let fourth = app.currentPreparationContext, app.openAgentPreparationReview(fourth), calls.count == 1 else { return false }
+        calls.removeFirst().complete(nil, "preparation_form_unavailable")
+        guard staysInAIReview(), app.preparationView.formErrorCode == "preparation_form_unavailable" else { return false }
+        app.currentDraft = ImportDraft(draft(5, source: String(repeating: "f", count: 64))); app.refreshWindow()
+        return app.agentPreparationReviewContext == nil && app.agentPreparationReviewHeader?.isHidden == true &&
+            !app.openAgentPreparationReview(fourth) && calls.isEmpty
+    }
+
     fileprivate static func preparationBindingSelfTest(fixture: URL?) -> Bool {
         guard let fixture else { return true }
         guard let data = try? Data(contentsOf: fixture), data.count <= 1_048_576,
@@ -3475,7 +3580,7 @@ if CommandLine.arguments.dropFirst().first == "--management-ui-self-test" {
 
 if CommandLine.arguments.dropFirst().first == "--agent-preparation-ui-self-test" {
     _ = NSApplication.shared
-    let passed = runAgentPreparationContractSelfTest()
+    let passed = runAgentPreparationContractSelfTest() && McpmeApp.agentReviewPresentationSelfTest()
     print(passed ? "agent_preparation_ui_contracts_passed" : "agent_preparation_ui_contracts_failed")
     exit(passed ? 0 : 1)
 }

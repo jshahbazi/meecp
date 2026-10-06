@@ -92,7 +92,7 @@ async def test_required_generated_adapter_real_confined_build_probe_attach_and_r
     try:
         async with settled_imports(retained / "state") as imports:
             recipes = RecipeStore(imports)
-            record = recipes.add(Path(__file__).resolve().parents[1] / "templates/builtin-recipes/agent-python-adapter-v1-0-2")
+            record = recipes.add(Path(__file__).resolve().parents[1] / "templates/builtin-recipes/agent-python-adapter-v1-0-3")
             record = recipes.enable(record["recipe_id"], record["version"])
             draft = imports.create(source, name="Unknown scalar app", intent="Wrap the selected scalar callable as a structured result")
             original_source = json.loads(json.dumps(draft["source"]))

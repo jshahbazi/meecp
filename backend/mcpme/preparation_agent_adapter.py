@@ -14,7 +14,7 @@ from .preparation_components import ComponentReference, PreparationDescriptorV2,
 from .preparation_contracts import Contract, PreparationError, canonical_bytes, contract_digest
 from .preparation_agent_adapter_store import AgentAdapterDerivationStore
 
-COMPONENT_ID, VERSION = "agent-python-adapter-v1", "1.0.2"
+COMPONENT_ID, VERSION = "agent-python-adapter-v1", "1.0.3"
 INPUT_SCHEMA = {"type": "object", "additionalProperties": False,
     "required": ["derivation_id", "derivation_digest"], "properties": {
         "derivation_id": {"type": "string", "minLength": 36, "maxLength": 36},
@@ -33,6 +33,8 @@ def component_catalog():
     return {COMPONENT_ID + "@1.0.0": {"digest": "28c1d862b947f294dcd0a7f038c32f3d9cf4e31ea20f81d91ab800b13d0b8274",
         "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []},
         COMPONENT_ID + "@1.0.1": {"digest": "d7eb6da84e83c3c3204fb92e17c467766c1c4d17b930417634f2c8d71338712d",
+        "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []},
+        COMPONENT_ID + "@1.0.2": {"digest": "e7a94187467fa5a8bed8a8e2f994c0964fa50448f35cfc9f2ca69d9929407e61",
         "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []},
         COMPONENT_ID + "@" + VERSION: {"digest": digest,
         "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []}}
@@ -69,7 +71,9 @@ def descriptor_for(result, identity, draft):
             "input": {"derivation_id": identity, "derivation_digest": result.digest}}],
         "tools": [tool.model_dump(exclude_none=True)], "artifacts": [], "inputs": {},
         "access": {}, "resources": {"memory_mb": 128, "cpu_only": True},
-        "lifecycle": {"max_request_bytes": request_limit_for(tool), "max_sessions": 1,
+        # Editors may keep discovery connected while opening a separate tool
+        # execution client. Both sessions retain ordinary resource admission.
+        "lifecycle": {"max_request_bytes": request_limit_for(tool), "max_sessions": 2,
             "idle_timeout_seconds": 300, "operation_timeout_seconds": 30},
         "validation": [{"id": "agent-adapter-fixture", "tool": tool.name, "arguments": result.specification.arguments,
             "expected": result.specification.expected, "synthetic": True}]})

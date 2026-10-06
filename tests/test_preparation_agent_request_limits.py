@@ -62,3 +62,7 @@ def test_published_adapter_component_identities_remain_available():
         "d7eb6da84e83c3c3204fb92e17c467766c1c4d17b930417634f2c8d71338712d")
     assert unlocked_catalog()["agent-unlocked-python-adapter-v1@1.0.1"]["digest"] == (
         "7849a67cc096d0579a92bc910aef855d68945a63d37b54362aa9a5f2bf307726")
+    assert locked_catalog()["agent-python-adapter-v1@1.0.2"]["digest"] == (
+        "e7a94187467fa5a8bed8a8e2f994c0964fa50448f35cfc9f2ca69d9929407e61")
+    assert unlocked_catalog()["agent-unlocked-python-adapter-v1@1.0.2"]["digest"] == (
+        "4fb42bdadcb09578f2fdc48d6d780fd076e82715751f8ae9c3af6a9bad76e090")

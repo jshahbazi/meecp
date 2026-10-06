@@ -15,7 +15,7 @@ from test_preparation_agent_adapter import TOOL
 
 
 @pytest.mark.parametrize("stem", ["agent-python-adapter", "agent-unlocked-python-adapter"])
-@pytest.mark.parametrize("version", ["1.0.0", "1.0.1"])
+@pytest.mark.parametrize("version", ["1.0.0", "1.0.1", "1.0.2"])
 async def test_public_host_recovers_completed_historical_agent_job_without_old_executor(tmp_path, stem, version):
     state = tmp_path / "state"
     reaper = tmp_path / "unused-reaper"

@@ -84,7 +84,7 @@ async def test_hotdog_assets_and_actual_confined_test_drive_adapter_repair(tmp_p
 
     with ImportStore(tmp_path.resolve() / "state") as imports:
         recipes = RecipeStore(imports)
-        record = recipes.add(Path(__file__).resolve().parents[1] / "templates/builtin-recipes/agent-python-adapter-v1-0-2")
+        record = recipes.add(Path(__file__).resolve().parents[1] / "templates/builtin-recipes/agent-python-adapter-v1-0-3")
         recipes.enable(record["recipe_id"], record["version"])
         draft = imports.create(source, name="Hotdog repair check", intent="Detect hot dogs from an image", source_mode="automatic")
         assert "models/yolo11n.onnx" in {item["path"] for item in draft["source"]["files"]}

@@ -13,7 +13,7 @@ from .preparation_components import ComponentReference, PreparationDescriptorV2,
 from .preparation_contracts import PreparationError, canonical_bytes, contract_digest
 from .preparation_agent_adapter import AgentAdapterInput, request_limit_for
 
-COMPONENT_ID, VERSION = "agent-unlocked-python-adapter-v1", "1.0.2"
+COMPONENT_ID, VERSION = "agent-unlocked-python-adapter-v1", "1.0.3"
 
 
 def component_catalog():
@@ -33,6 +33,8 @@ def component_catalog():
         "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []},
         COMPONENT_ID+"@1.0.1": {"digest": "7849a67cc096d0579a92bc910aef855d68945a63d37b54362aa9a5f2bf307726",
         "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []},
+        COMPONENT_ID+"@1.0.2": {"digest": "4fb42bdadcb09578f2fdc48d6d780fd076e82715751f8ae9c3af6a9bad76e090",
+        "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []},
         COMPONENT_ID+"@"+VERSION: {"digest": digest, "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []}}
 
 
@@ -49,7 +51,7 @@ def descriptor_for(result, identity, draft):
         "components": [{"component": result.request.producer.model_dump(), "input": {"derivation_id": identity, "derivation_digest": result.digest}}],
         "tools": [result.specification.tool.model_dump(exclude_none=True)], "inputs": {}, "artifacts": [], "access": {},
         "resources": {"memory_mb": 128, "cpu_only": True},
-        "lifecycle": {"max_request_bytes": request_limit_for(result.specification.tool), "max_sessions": 1,
+        "lifecycle": {"max_request_bytes": request_limit_for(result.specification.tool), "max_sessions": 2,
             "idle_timeout_seconds": 300, "operation_timeout_seconds": 30},
         "validation": [{"id": "agent-unlocked-fixture", "tool": result.specification.tool.name,
             "arguments": result.specification.arguments, "expected": result.specification.expected, "synthetic": True}]})

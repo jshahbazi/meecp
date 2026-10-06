@@ -26,6 +26,8 @@ The workflow uses existing host-owned proposal validation, dependency resolution
 
 Generated adapters with string inputs use the host's 17 MiB request ceiling, allowing a 12 MiB image plus base64 and JSON framing. Numeric-only tools retain the 1 MiB default. Upgrades and rollback republish the selected package limit; existing stdio clients must reconnect to load a changed limit. Size rejections produce a specific diagnostic without echoing request contents.
 
+Generated apps allow two concurrent client sessions so an editor can keep tool discovery connected while a separate client executes a tool. Each runtime retains the host's resource admission and idle cleanup; a third concurrent client is rejected before launching another runtime.
+
 ## Current limits
 
 | Scope | Limit |

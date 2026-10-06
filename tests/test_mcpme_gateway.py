@@ -560,3 +560,73 @@ async def test_bridge_explains_size_rejection_without_echoing_payload_or_retryin
         else "The request exceeds this app's image or data size limit.")
     assert emitted == [{"jsonrpc": "2.0", "id": "image-request", "error": {"code": -32000, "message": expected}}]
     assert calls == ([] if rejection == "client_limit" else ["POST"])
+
+
+async def test_bridge_explains_session_capacity_without_disturbing_existing_connection():
+    async with live_gateway(max_sessions=1) as (endpoint, owner, gateway), client(endpoint) as http:
+        sid, headers = await initialize_raw(http, endpoint)
+        stdin = asyncio.StreamReader()
+        emitted = []
+        async def write(data):
+            emitted.append(load_line(data))
+        bridge = Bridge(endpoint, "secret", socket_path=owner.socket_path)
+        stdin.feed_data(encode(INIT) + b"\n")
+        await asyncio.wait_for(bridge.run(stdin, write), 3)
+        assert emitted == [{"jsonrpc": "2.0", "id": INIT["id"], "error": {
+            "code": -32000,
+            "message": "All connections to this app are in use. Close another connection or reconnect your MCP client.",
+        }}]
+        assert bridge.session_id is None
+        assert owner.launched == 1 and sid in gateway.sessions
+        response = await http.post(endpoint, headers=headers,
+            json={"jsonrpc": "2.0", "id": "still-connected", "method": "ping"})
+        assert response.status_code == 200
+        await http.delete(endpoint, headers=headers)
+
+
+@pytest.mark.parametrize("status,code,expected", [
+    (429, "request_limit", "This app is busy handling other requests. Wait for them to finish, then try again."),
+    (503, "slot_unavailable", "This app is unavailable. Open mcpme and check that it is running, then reconnect your MCP client."),
+    (404, "session_not_found", "This app connection has expired. Reconnect your MCP client, then try again."),
+    (401, "session_limit", "The slot request could not be completed."),
+    (429, "private unknown rejection", "The slot request could not be completed."),
+])
+async def test_bridge_maps_only_known_status_codes_without_echoing_host_body_or_retrying(status, code, expected):
+    calls, emitted = [], []
+    def reject(request):
+        calls.append(request.method)
+        return httpx.Response(status, json={"error": {"code": code,
+            "message": "private host diagnostic must not escape"}, "private": "synthetic private input"})
+    async def write(data):
+        emitted.append(load_line(data))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(reject)) as client:
+        bridge = Bridge("http://127.0.0.1:19387/mcp", "synthetic-token", client=client)
+        bridge.writer = write
+        await bridge.post({"jsonrpc": "2.0", "id": "rejected-call", "method": "tools/call",
+            "params": {"name": "echo", "arguments": {"value": "synthetic private input"}}})
+    assert emitted == [{"jsonrpc": "2.0", "id": "rejected-call", "error": {"code": -32000, "message": expected}}]
+    assert calls == ["POST"]
+
+
+@pytest.mark.parametrize("body,content_type", [
+    (b'{"error":{"code":"session_limit"},"private":"' + b"x" * 1024 + b'"}', "application/json"),
+    (b'{"error":{"code":"session_limit"}}', "text/plain"),
+    (b'{"error":', "application/json"),
+    (b'{"error":{"code":["session_limit"]}}', "application/json"),
+    (b'[{"error":{"code":"session_limit"}}]', "application/json"),
+])
+async def test_bridge_rejection_parser_is_bounded_and_requires_a_json_error_code(body, content_type):
+    calls, emitted = [], []
+    def reject(request):
+        calls.append(request.method)
+        return httpx.Response(429, content=body, headers={"content-type": content_type})
+    async def write(data):
+        emitted.append(load_line(data))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(reject)) as client:
+        bridge = Bridge("http://127.0.0.1:19387/mcp", "synthetic-token", client=client)
+        bridge.writer = write
+        await bridge.post(INIT)
+    assert emitted == [{"jsonrpc": "2.0", "id": INIT["id"], "error": {
+        "code": -32000, "message": "The slot request could not be completed.",
+    }}]
+    assert calls == ["POST"] and bridge.stop.is_set()

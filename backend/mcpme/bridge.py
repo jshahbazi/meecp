@@ -22,6 +22,36 @@ class RequestTooLarge(ValueError):
     """A local bound or an authenticated host's HTTP size rejection."""
 
 
+class HostRequestRejected(ValueError):
+    """An allowlisted host rejection with a fixed, content-free explanation."""
+
+
+HOST_REJECTIONS = {
+    (429, "session_limit"): "All connections to this app are in use. Close another connection or reconnect your MCP client.",
+    (429, "request_limit"): "This app is busy handling other requests. Wait for them to finish, then try again.",
+    (503, "slot_unavailable"): "This app is unavailable. Open mcpme and check that it is running, then reconnect your MCP client.",
+    (404, "session_not_found"): "This app connection has expired. Reconnect your MCP client, then try again.",
+}
+MAX_REJECTION_BYTES = 1024
+
+
+async def host_rejection_message(response):
+    """Read a bounded code only; never forward host text or other body fields."""
+    if response.headers.get("content-type", "").split(";")[0].strip() != "application/json":
+        return None
+    body = bytearray()
+    async for chunk in response.aiter_bytes(chunk_size=MAX_REJECTION_BYTES + 1):
+        body.extend(chunk)
+        if len(body) > MAX_REJECTION_BYTES:
+            return None
+    value = load_json(bytes(body))
+    error = value.get("error") if isinstance(value, dict) else None
+    code = error.get("code") if isinstance(error, dict) else None
+    if not isinstance(code, str):
+        return None
+    return HOST_REJECTIONS.get((response.status_code, code))
+
+
 class Bridge:
     def __init__(self, endpoint: str, token: str, *, socket_path: Path | None = None, timeout=65, client=None,
                  max_request_bytes=DEFAULT_REQUEST_BYTES):
@@ -119,6 +149,9 @@ class Bridge:
                     if response.status_code == 413:
                         raise RequestTooLarge()
                     if response.status_code not in {200, 202}:
+                        rejection = await host_rejection_message(response)
+                        if rejection is not None:
+                            raise HostRequestRejected(rejection)
                         raise ValueError("request_rejected")
                     if message.get("method") == "initialize":
                         sid = response.headers.get("mcp-session-id")
@@ -174,6 +207,8 @@ class Bridge:
                 if isinstance(error, RequestTooLarge):
                     await self.emit(error_message(request_id,
                         message="The request exceeds this app's image or data size limit."))
+                elif isinstance(error, HostRequestRejected):
+                    await self.emit(error_message(request_id, message=str(error)))
                 else:
                     await self.emit(error_message(request_id))
             if responded:

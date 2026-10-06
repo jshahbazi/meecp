@@ -35,8 +35,10 @@ TERMINAL = {"succeeded", "canceled", "failed", "interrupted"}
 RETAINED_AGENT_INPUT_COMPONENTS = frozenset({
     ("agent-python-adapter-v1", "1.0.0", "28c1d862b947f294dcd0a7f038c32f3d9cf4e31ea20f81d91ab800b13d0b8274"),
     ("agent-python-adapter-v1", "1.0.1", "d7eb6da84e83c3c3204fb92e17c467766c1c4d17b930417634f2c8d71338712d"),
+    ("agent-python-adapter-v1", "1.0.2", "e7a94187467fa5a8bed8a8e2f994c0964fa50448f35cfc9f2ca69d9929407e61"),
     ("agent-unlocked-python-adapter-v1", "1.0.0", "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"),
     ("agent-unlocked-python-adapter-v1", "1.0.1", "7849a67cc096d0579a92bc910aef855d68945a63d37b54362aa9a5f2bf307726"),
+    ("agent-unlocked-python-adapter-v1", "1.0.2", "4fb42bdadcb09578f2fdc48d6d780fd076e82715751f8ae9c3af6a9bad76e090"),
 })
 TRANSITIONS = {
     "queued": {"snapshotting", "canceled", "failed"},

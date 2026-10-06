@@ -301,10 +301,10 @@ def test_new_bundle_static_registration_preserves_nonexecution_boundary(adapter_
     _, recipes, _, _, _, family, _ = adapter_foundation
     root = Path(__file__).resolve().parents[1]
     with pytest.raises(PreparationError, match="recipe_version_collision"):
-        recipes.add(root / "templates/builtin-recipes/agent-python-adapter-v1-0-2")
+        recipes.add(root / "templates/builtin-recipes/agent-python-adapter-v1-0-3")
     with ImportStore(tmp_path / "new-state") as imports:
         actual = RecipeStore(imports)
-        registered = actual.add(root / "templates/builtin-recipes/agent-python-adapter-v1-0-2")
+        registered = actual.add(root / "templates/builtin-recipes/agent-python-adapter-v1-0-3")
         enabled = actual.enable(registered["recipe_id"], registered["version"])
         assert enabled["state"] == "enabled" and not enabled["runnable"]
         assert enabled["manifest"]["steps"] == [{"component": family.component.reference.id,

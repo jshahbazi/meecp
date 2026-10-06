@@ -169,7 +169,7 @@ def prepare_agent_adapter(descriptor, draft, result, derived_path, toolchain, ou
                     else "Original immutable source and separate derived collection",
                 "license": license_path if name in derived_paths else "source/" + result.specification.source_license}
         lock["artifacts"] = [records[name] for name in sorted(records)]
-        lock["build"].update(recipe="agent-python-adapter-v1 1.0.2", builder="mcpme governed agent adapter builder v1")
+        lock["build"].update(recipe="agent-python-adapter-v1 1.0.3", builder="mcpme governed agent adapter builder v1")
         # Package locks bind the complete runtime closure and have their own
         # existing larger bound; preparation-contract limits do not apply.
         lock_data = json.dumps(lock, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()

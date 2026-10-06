@@ -1277,6 +1277,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         else if preparationView.busy || preparationView.hasActiveJob { preparationMethod?.selectedSegment = agentPreparationReviewContext == nil ? 0 : 1 }
         let method = preparationMethod?.selectedSegment ?? 0
         let reviewingAgentSetup = method == 1 && agentPreparationReviewContext != nil
+        preparationView.setReviewingAgentSetup(reviewingAgentSetup)
         preparationView.isHidden = method != 0 && !reviewingAgentSetup
         assistedPreparationView?.isHidden = method != 1 || reviewingAgentSetup
         agentPreparationReviewHeader?.isHidden = !reviewingAgentSetup

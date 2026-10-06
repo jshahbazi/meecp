@@ -1133,7 +1133,7 @@ final class AgentPreparationView: NSStackView {
     private func showJob() {
         status.stringValue = job?.errorCode?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Analysis: " + (job?.state ?? "unknown")
         if job?.state == "succeeded", job?.candidateDigest == nil, job?.proposalDigest != nil {
-            status.stringValue = "The proposal is ready for preparation review. Review the remaining questions and dependency scope before building."
+            status.stringValue = "Analysis finished. Continue to preparation review to check the proposed setup and any remaining dependencies."
         }
         refreshAvailability(); onStateChange?()
     }

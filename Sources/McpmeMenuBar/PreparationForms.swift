@@ -267,7 +267,14 @@ struct OnboardingFormV1 {
     let resolutionPolicy: PreparationResolutionPolicy?
 
     var unavailableMessage: String? {
+        unavailableMessage(agentAssisted: false)
+    }
+
+    func unavailableMessage(agentAssisted: Bool) -> String? {
         if candidates.isEmpty {
+            if agentAssisted {
+                return "The assistant couldn't produce a usable setup for this folder. Go back to AI Analysis to update your instructions and try again, or choose Use my coding agent."
+            }
             return "Guided setup couldn't find a supported app entry point in this folder. Choose Use my coding agent to create a prepared package."
         }
         guard candidateID != nil, recipe != nil else { return nil }
@@ -522,6 +529,14 @@ final class PreparationWorkspaceView: NSStackView {
     var onUpdatedDraft: (([String: Any]) -> Bool)?
     var onStateChange: (() -> Void)?
     var onAttached: (() -> Void)?
+    private var reviewingAgentSetup = false
+
+    func setReviewingAgentSetup(_ value: Bool) {
+        reviewingAgentSetup = value
+        if !busy, !hasActiveJob, let message = form?.unavailableMessage(agentAssisted: value) {
+            status.stringValue = message
+        }
+    }
     private let candidatePicker = NSPopUpButton()
     private let recipePicker = NSPopUpButton()
     private var candidateRow: NSView?
@@ -630,6 +645,7 @@ final class PreparationWorkspaceView: NSStackView {
     func reviewAgentProposal(_ expected: PreparationContext) -> Bool {
         guard context == expected, saved, eligible, available?() == true,
               request != nil, !busy, !hasActiveJob else { return false }
+        reviewingAgentSetup = true
         job = nil; attachedNotification = nil; progress.stringValue = ""
         resolutionJob = nil; resolutionNotification = nil
         resolutionStatus.stringValue = ""; resolutionProgress.stringValue = ""
@@ -715,7 +731,7 @@ final class PreparationWorkspaceView: NSStackView {
             self.formView.configure(fields: form.fields, values: form.values)
             self.resolutionStatus.stringValue = form.resolutionRequired ? "The host must resolve dependencies" + (form.resolutionOperations.contains("discover_interface") ? " and discover this App's tools" : "") + " before package preparation. Review the scope below." : form.resolutionDigest != nil ? "Resolved dependencies and tools are bound to this source and candidate." : ""
             if form.resolutionRequired, let policy = form.resolutionPolicy { self.resolutionStatus.stringValue += "\n" + policy.display }
-            self.status.stringValue = form.unavailableMessage ?? (form.blockers.isEmpty ?
+            self.status.stringValue = form.unavailableMessage(agentAssisted: self.reviewingAgentSetup) ?? (form.blockers.isEmpty ?
                 "Detected: " + (form.candidates.first(where: { $0.id == form.candidateID })?.label ?? "app") + ". Answer the questions, then review your app's tools and access." :
                 "To continue: " + form.blockers.map { $0.replacingOccurrences(of: "_", with: " ") }.joined(separator: "; ") + ".")
             self.updateControls(); self.onStateChange?()
@@ -1334,7 +1350,22 @@ extension PreparationWorkspaceView {
         let current = calls.removeFirst()
         view.bind(PreparationContext(importID: context.importID, revision: 2, sourceRevision: context.sourceRevision), saved: true, eligible: true)
         current.complete(PreparationTestData.resolutionForm(), nil)
-        return view.form == nil && !view.busy && calls.isEmpty
+        guard view.form == nil, !view.busy, calls.isEmpty else { return false }
+        // Analysis can finish with an incomplete proposal. Never present that
+        // as a Guided setup failure or enable a preparation with no candidate.
+        view.bind(context, saved: true, eligible: true)
+        guard view.reviewAgentProposal(context), calls.count == 1 else { return false }
+        var unsupported = PreparationTestData.form()
+        unsupported["candidate_choices"] = []; unsupported["candidate_id"] = NSNull()
+        unsupported["recipe_choices"] = []; unsupported["recipe"] = NSNull(); unsupported["fields"] = []
+        unsupported["tools"] = []; unsupported["blockers"] = ["supported_interface_selection_required"]
+        calls.removeFirst().complete(unsupported, nil)
+        guard view.status.stringValue.contains("assistant couldn't produce a usable setup"),
+              !view.status.stringValue.contains("Guided setup"), view.reviewButton.isHidden,
+              !view.startButton.isEnabled else { return false }
+        view.reviewForm(); view.startPreparation(); guard calls.isEmpty else { return false }
+        view.setReviewingAgentSetup(false)
+        return view.status.stringValue.contains("Guided setup couldn't find")
     }
     static func resolutionContractSelfTest() -> Bool {
         var invalid = PreparationTestData.resolutionForm()

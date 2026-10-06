@@ -566,7 +566,7 @@ final class AgentPreparationView: NSStackView {
     private var pendingStart: [String: Any]?
     private var pendingContext: PreparationContext?
     private let providerPicker = NSPopUpButton()
-    private let providerSettings = AgentProviderSettingsView()
+    let providerSettings = AgentProviderSettingsView()
     private let modelPicker = NSPopUpButton()
     private let recipePicker = NSPopUpButton()
     private var fileControls: [NSButton] = []
@@ -584,6 +584,7 @@ final class AgentPreparationView: NSStackView {
     private var retryButton: NSButton!
     private var adoptButton: NSButton!
     private var analysisBlocksNavigation: Bool { busy || pendingStart != nil || job?.active == true }
+    var hasActiveAnalysis: Bool { analysisBlocksNavigation }
     var blocksNavigation: Bool { analysisBlocksNavigation || providerSettings.blocksNavigation }
 
     override init(frame: NSRect) {
@@ -618,12 +619,11 @@ final class AgentPreparationView: NSStackView {
             self.refreshAvailability(); self.onStateChange?()
         }
         providerSettings.onRegistryChange = { [weak self] in self?.registryChanged() }
-        addArrangedSubview(providerSettings)
-        workspaceFill(providerSettings, in: self)
         addArrangedSubview(workspaceStack([providerPicker, modelPicker, recipePicker], horizontal: true))
         addArrangedSubview(files)
-        addArrangedSubview(workspaceStack([workspaceLabel("Transfer bytes", size: 12), transfer,
-            workspaceLabel("Output tokens/call", size: 12), output, workspaceLabel("Seconds", size: 12), deadline], horizontal: true))
+        let limits = WorkspaceDisclosure("Usage limits", views: [workspaceStack([workspaceLabel("Transfer bytes", size: 12), transfer,
+            workspaceLabel("Output tokens/call", size: 12), output, workspaceLabel("Seconds", size: 12), deadline], horizontal: true)])
+        addArrangedSubview(limits); workspaceFill(limits, in: self)
         addArrangedSubview(reviewLabel); workspaceFill(reviewLabel, in: self)
         addArrangedSubview(workspaceStack([loadButton, reviewButton, sendButton], horizontal: true))
         addArrangedSubview(status); workspaceFill(status, in: self)
@@ -869,7 +869,7 @@ final class AgentPreparationView: NSStackView {
                 self.metadataControls.append(button); self.files.addArrangedSubview(button)
             }
             if let latest = object["latest_job"] as? [String: Any], let job = AgentPreparationJob(latest), job.context.importID == context.importID { self.job = job }
-            self.status.stringValue = providers.isEmpty ? "No agent provider is configured. Refresh Providers, then choose Add Provider above." : "Choose a model and files to transfer. Loading options sends no files."
+            self.status.stringValue = providers.isEmpty ? "Set up a provider in Settings → LLM Providers, then load options again." : "Choose a model and files to transfer. Loading options sends no files."
             if self.requiresExplicitRecipeChoice { self.status.stringValue += " Your previously selected preparation path is no longer available. Choose a current path explicitly." }
             if !choices.isEmpty, !choices.contains(where: \.recommended), self.preferredRecipe == nil {
                 self.status.stringValue += " No compatible preparation path was recommended for these captured files."

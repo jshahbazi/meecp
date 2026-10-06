@@ -145,6 +145,7 @@ final class SetupConfigurationView: NSStackView, NSTextFieldDelegate {
     private var savedReferences: [String: String] = [:]
     private var editable = true
     private(set) var validContract = true
+    var hasSettings: Bool { !fields.isEmpty || !references.isEmpty || !validContract }
 
     override init(frame: NSRect) {
         super.init(frame: frame); orientation = .vertical; alignment = .leading; spacing = 10

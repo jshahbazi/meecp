@@ -135,11 +135,10 @@ final class PreparationFormView: NSStackView, NSTextFieldDelegate, NSTextViewDel
         self.fields = fields; controls = [:]; included = [:]
         for field in fields {
             if field.kind == "schema-preview" {
-                let label = workspaceLabel(field.label, size: 13, weight: .semibold)
-                addArrangedSubview(label)
                 let text = NSTextField(wrappingLabelWithString: preparationJSON(field.preview ?? [:], maximum: 16384) ?? "Schema preview unavailable")
                 text.isSelectable = true; text.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-                addArrangedSubview(text); workspaceFill(text, in: self); continue
+                let details = WorkspaceDisclosure(field.label, views: [text])
+                addArrangedSubview(details); workspaceFill(details, in: self); continue
             }
             let include = NSButton(checkboxWithTitle: field.label + (field.required ? " (required)" : " (optional)"), target: self, action: #selector(changed))
             include.state = field.required || values[field.id] != nil ? .on : .off; included[field.id] = include
@@ -514,6 +513,8 @@ final class PreparationWorkspaceView: NSStackView {
     var onAttached: (() -> Void)?
     private let candidatePicker = NSPopUpButton()
     private let recipePicker = NSPopUpButton()
+    private var candidateRow: NSView?
+    private var recipeRow: NSView?
     private let formView = PreparationFormView()
     private let status = NSTextField(wrappingLabelWithString: "Save a draft to load its preparation questions.")
     private let progress = NSTextField(wrappingLabelWithString: "")
@@ -558,8 +559,10 @@ final class PreparationWorkspaceView: NSStackView {
             picker.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
             picker.widthAnchor.constraint(lessThanOrEqualToConstant: 300).isActive = true
         }
-        let selectors = workspaceStack([workspaceLabel("Candidate", size: 12), candidatePicker, workspaceLabel("Recipe", size: 12), recipePicker], horizontal: true)
-        addArrangedSubview(selectors); workspaceFill(selectors, in: self)
+        let candidateRow = workspaceStack([workspaceLabel("App to prepare", size: 12), candidatePicker], horizontal: true)
+        let recipeRow = workspaceStack([workspaceLabel("Setup template", size: 12), recipePicker], horizontal: true)
+        self.candidateRow = candidateRow; self.recipeRow = recipeRow
+        for row in [candidateRow, recipeRow] { addArrangedSubview(row); workspaceFill(row, in: self) }
         addArrangedSubview(resolutionStatus); workspaceFill(resolutionStatus, in: self)
         resolutionReviewButton = NSButton(title: "Review Dependency Resolution", target: self, action: #selector(reviewResolution))
         resolutionStartButton = NSButton(title: "Resolve Reviewed Inputs", target: self, action: #selector(startResolution))
@@ -574,7 +577,7 @@ final class PreparationWorkspaceView: NSStackView {
             self.reviewText.string = ""; self.status.stringValue = "Review these answers before preparing."; self.updateControls(); self.onStateChange?()
         }
         addArrangedSubview(status); workspaceFill(status, in: self)
-        refreshButton = NSButton(title: "Load Preparation Questions", target: self, action: #selector(refreshForm))
+        refreshButton = NSButton(title: "Continue Setup", target: self, action: #selector(refreshForm))
         reviewButton = NSButton(title: "Review Preparation", target: self, action: #selector(reviewForm))
         startButton = NSButton(title: "Prepare Automatically", target: self, action: #selector(startPreparation))
         cancelButton = NSButton(title: "Cancel Preparation", target: self, action: #selector(cancelPreparation))
@@ -631,6 +634,16 @@ final class PreparationWorkspaceView: NSStackView {
         refreshButton?.isEnabled = enabled
         reviewButton?.isEnabled = enabled && currentForm && form?.candidateID != nil && form?.recipe != nil && form?.resolutionRequired != true && formView.answers() != nil
         startButton?.isEnabled = enabled && review?.context == context && review?.canStart() == true
+        candidateRow?.isHidden = form == nil || (form?.candidates.count ?? 0) < 2 && form?.candidateID != nil
+        recipeRow?.isHidden = form == nil || (form?.recipes.count ?? 0) < 2 && form?.recipe != nil
+        refreshButton?.isHidden = hasActiveJob
+        refreshButton?.title = form == nil ? "Continue Setup" : "Reload Questions"
+        reviewButton?.isHidden = form == nil || review?.canStart() == true || form?.resolutionRequired == true || hasActiveJob
+        startButton?.isHidden = review?.canStart() != true || hasActiveJob
+        resolutionStartButton?.isHidden = resolutionReview == nil || hasActiveJob
+        reviewText.enclosingScrollView?.isHidden = reviewText.string.isEmpty
+        progress.isHidden = progress.stringValue.isEmpty
+        resolutionProgress.isHidden = resolutionProgress.stringValue.isEmpty
         if enabled, let review, review.executionAvailable, !review.canStart() {
             status.stringValue = "The preparation review expired. Load the current questions and review again."
         }
@@ -638,7 +651,8 @@ final class PreparationWorkspaceView: NSStackView {
         cancelButton?.isHidden = job == nil
         let requiresResolution = currentForm && form?.resolutionRequired == true
         resolutionStatus.isHidden = !requiresResolution && resolutionReview == nil && resolutionJob == nil
-        resolutionReviewButton.isHidden = !requiresResolution; resolutionStartButton.isHidden = !requiresResolution
+        resolutionReviewButton.isHidden = !requiresResolution || resolutionReview?.canStart() == true || hasActiveJob
+        resolutionStartButton.isHidden = !requiresResolution || resolutionReview?.canStart() != true || hasActiveJob
         resolutionReviewButton.isEnabled = enabled && requiresResolution && form?.resolutionPolicy != nil
         resolutionStartButton.isEnabled = enabled && requiresResolution && form?.resolutionAvailable == true && resolutionReview?.context == context && resolutionReview?.canStart() == true
         resolutionCancelButton.isHidden = resolutionJob == nil || resolutionJob?.active != true || resolutionJob?.needsRecovery == true
@@ -688,7 +702,8 @@ final class PreparationWorkspaceView: NSStackView {
             self.formView.configure(fields: form.fields, values: form.values)
             self.resolutionStatus.stringValue = form.resolutionRequired ? "The host must resolve dependencies" + (form.resolutionOperations.contains("discover_interface") ? " and discover this App's tools" : "") + " before package preparation. Review the scope below." : form.resolutionDigest != nil ? "Resolved dependencies and tools are bound to this source and candidate." : ""
             if form.resolutionRequired, let policy = form.resolutionPolicy { self.resolutionStatus.stringValue += "\n" + policy.display }
-            self.status.stringValue = form.blockers.isEmpty ? "Complete the questions and review the host plan." : "Host blockers: " + form.blockers.joined(separator: ", ")
+            self.status.stringValue = form.blockers.isEmpty ? "Answer the questions, then review your app's tools and access." :
+                "To continue: " + form.blockers.map { $0.replacingOccurrences(of: "_", with: " ") }.joined(separator: "; ") + "."
             self.updateControls(); self.onStateChange?()
         }
     }
@@ -927,6 +942,7 @@ final class PreparationRecipesView: NSStackView {
     var onRegistryChange: (() -> Void)?
     private let picker = NSPopUpButton()
     private let status = NSTextField(wrappingLabelWithString: "Recipe metadata is unavailable.")
+    private let summary = NSTextField(wrappingLabelWithString: "Choose a recipe to see what it does.")
     private let detail = NSTextView()
     private var rows: [PreparationRecipeIdentity] = []
     private var selected: PreparationRecipeIdentity?
@@ -937,27 +953,32 @@ final class PreparationRecipesView: NSStackView {
 
     override init(frame: NSRect) {
         super.init(frame: frame); orientation = .vertical; alignment = .leading; spacing = 12
+        let explanation = workspaceLabel("Recipes are reusable setup templates. Most apps use the included templates automatically. Create a starter when you need to extend app support.", size: 13, secondary: true)
+        addArrangedSubview(explanation); workspaceFill(explanation, in: self)
         picker.target = self; picker.action = #selector(inspectRecipe)
         picker.setAccessibilityLabel("Recipe version and implementation identity")
         picker.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         picker.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
         picker.widthAnchor.constraint(lessThanOrEqualToConstant: 400).isActive = true
-        let add = NSButton(title: "Add Recipe…", target: self, action: #selector(addRecipe)); add.bezelStyle = .rounded
+        let add = NSButton(title: "Import Recipe…", target: self, action: #selector(addRecipe)); add.bezelStyle = .rounded
+        let create = NSButton(title: "Create Recipe…", target: self, action: #selector(createRecipe)); create.bezelStyle = .rounded
         let refresh = NSButton(title: "Refresh", target: self, action: #selector(refreshRecipes)); refresh.bezelStyle = .rounded
-        buttons = [add, refresh]
-        let top = workspaceStack([picker, add, refresh], horizontal: true)
+        buttons = [add, create, refresh]
+        let top = workspaceStack([picker, add, create, refresh], horizontal: true)
         addArrangedSubview(top); workspaceFill(top, in: self); addArrangedSubview(status); workspaceFill(status, in: self)
         let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
         detail.isEditable = false; detail.isSelectable = true; detail.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         detail.isVerticallyResizable = true; detail.autoresizingMask = [.width]; detail.textContainer?.widthTracksTextView = true
         detail.textContainerInset = NSSize(width: 8, height: 8); scroll.documentView = detail
         scroll.heightAnchor.constraint(equalToConstant: 310).isActive = true
-        addArrangedSubview(scroll); workspaceFill(scroll, in: self)
+        summary.font = .systemFont(ofSize: 13); summary.textColor = .secondaryLabelColor
+        addArrangedSubview(summary); workspaceFill(summary, in: self)
+        addArrangedSubview(WorkspaceDisclosure("Show technical details", views: [scroll]))
         let actions = ["enable", "disable", "deprecate", "revoke", "remove"].map { action -> NSButton in
             let button = NSButton(title: action.capitalized, target: self, action: #selector(changeRecipe(_:)))
             button.bezelStyle = .rounded; button.identifier = NSUserInterfaceItemIdentifier(action); buttons.append(button); return button
         }
-        addArrangedSubview(workspaceStack(actions, horizontal: true))
+        addArrangedSubview(WorkspaceDisclosure("Advanced recipe lifecycle", views: [workspaceStack(actions, horizontal: true)]))
         updateControls()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -1007,7 +1028,20 @@ final class PreparationRecipesView: NSStackView {
             }
             self.detail.string = metadata
             self.inspectedState = state
-            self.status.stringValue = identity.label + " · " + state + (object["runnable"] as? Bool == true ? " · Execution admitted by host" : " · Automatic execution unavailable")
+            let runnable = object["runnable"] as? Bool == true
+            let blockers = object["blockers"] as? [Any] ?? []
+            let stateText: String
+            switch state {
+            case "enabled": stateText = runnable ? "Enabled and ready to use." : "Enabled, but execution is unavailable."
+            case "disabled": stateText = "Disabled. Enable it when you want to use it."
+            case "deprecated": stateText = "Deprecated. Existing references remain pinned."
+            case "revoked": stateText = "Revoked. It cannot be enabled again."
+            case "removed": stateText = "Removed from the registry."
+            default: stateText = runnable ? "Ready to use." : "Metadata is valid; execution is unavailable."
+            }
+            self.summary.stringValue = identity.id + " v" + identity.version + "\n" + stateText +
+                (blockers.isEmpty ? "" : "\nNeeds attention before use.")
+            self.status.stringValue = "Recipe loaded."
             self.updateControls()
         }
     }
@@ -1020,6 +1054,47 @@ final class PreparationRecipesView: NSStackView {
         panel.begin { [weak self] result in
             guard result == .OK, let url = panel.url else { return }
             _ = self?.selectedRecipeFolder(url, panelEpoch: panelEpoch)
+        }
+    }
+
+    @objc private func createRecipe() {
+        guard !busy, available?() == true else { return }
+        let alert = NSAlert(); alert.messageText = "Create a recipe"
+        alert.informativeText = "Choose a name and starter type. mcpme will generate the manifest, license records, and integrity lock for you."
+        let name = NSTextField(string: ""); name.placeholderString = "Recipe name (for example, My Tool)"; name.setAccessibilityLabel("Recipe name")
+        let component = NSPopUpButton(); component.addItems(withTitles: ["Python function", "Existing MCP app"])
+        component.setAccessibilityLabel("Recipe starter type")
+        let form = NSStackView(views: [name, component]); form.orientation = .vertical; form.spacing = 8
+        form.translatesAutoresizingMaskIntoConstraints = false
+        form.widthAnchor.constraint(equalToConstant: 360).isActive = true
+        form.heightAnchor.constraint(equalToConstant: 58).isActive = true
+        alert.accessoryView = form; alert.addButton(withTitle: "Choose Folder…"); alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let displayName = name.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let slug = displayName.lowercased().replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        let recipeID = "local." + slug
+        guard !slug.isEmpty, recipeID.count <= 128 else {
+            status.stringValue = "Enter a short recipe name."; return
+        }
+        let panel = NSSavePanel(); panel.canCreateDirectories = true; panel.nameFieldStringValue = recipeID
+        panel.message = "Choose where to create the new recipe folder. An existing folder will not be replaced."
+        let panelEpoch = epoch
+        panel.begin { [weak self] result in
+            guard let self, result == .OK, let url = panel.url, url.isFileURL, !url.path.isEmpty,
+                  self.epoch == panelEpoch, !self.busy, self.available?() == true, let request = self.request else { return }
+            let components = ["python-function-v1", "existing-mcp-v1"]
+            let componentID = components[min(max(component.indexOfSelectedItem, 0), components.count - 1)]
+            self.epoch &+= 1; let expected = self.epoch; self.busy = true; self.updateControls()
+            request("v1/recipes/scaffold", "POST", ["path": url.path, "recipe_id": recipeID, "component": componentID]) { [weak self] object, code in
+                guard let self, self.epoch == expected else { return }; self.busy = false
+                guard let object, let identity = PreparationRecipeIdentity(object), identity.id == recipeID,
+                      identity.version == "1.0.0", object["path"] as? String == url.path else {
+                    self.status.stringValue = "Recipe could not be created (" + (preparationCode(code) ?? "invalid_recipe_response") + ")."; self.updateControls(); return
+                }
+                self.status.stringValue = "Created " + displayName + " at " + url.path + ". Review its README, then use Import Recipe… to register it."
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+                self.updateControls()
+            }
         }
     }
 
@@ -1451,7 +1526,8 @@ extension PreparationWorkspaceView {
             view.refreshForm(); guard calls.count == 1 else { return false }
             calls.removeFirst().complete(unavailable, nil)
             guard view.form?.recipe == nil, view.recipePicker.selectedItem?.representedObject == nil,
-                  !view.acceptanceReviewEnabled, view.status.stringValue.contains("recipe_selection_required") else { return false }
+                  !view.acceptanceReviewEnabled, view.recipeRow?.isHidden == false,
+                  view.status.stringValue.contains("recipe selection required") else { return false }
         }
         return true
     }

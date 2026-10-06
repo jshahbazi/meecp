@@ -51,3 +51,25 @@ func workspaceCard(_ title: String, subtitle: String, views: [NSView]) -> NSView
     for child in [heading, caption] + views { workspaceFill(child, in: stack) }
     return box
 }
+
+/// Keep optional details available without competing with the next setup action.
+final class WorkspaceDisclosure: NSStackView {
+    private let toggle = NSButton()
+    let body: NSStackView
+
+    init(_ title: String, views: [NSView]) {
+        body = workspaceStack(views, spacing: 10)
+        super.init(frame: .zero)
+        orientation = .vertical; alignment = .leading; spacing = 10
+        toggle.setButtonType(.onOff); toggle.bezelStyle = .disclosure
+        toggle.title = title; toggle.target = self; toggle.action = #selector(change)
+        toggle.setAccessibilityLabel(title)
+        let label = workspaceLabel(title, size: 12, weight: .medium)
+        addArrangedSubview(workspaceStack([toggle, label], horizontal: true, spacing: 5))
+        addArrangedSubview(body); workspaceFill(body, in: self)
+        for view in views { workspaceFill(view, in: body) }
+        body.isHidden = true
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    @objc private func change() { body.isHidden = toggle.state != .on }
+}

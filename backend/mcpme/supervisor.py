@@ -2397,6 +2397,14 @@ def management_app(host: Supervisor, token: str, port: int):
                         raise HostError("invalid_recipe_request")
                     result = await host.static_work(host.recipes.add, Path(payload["path"]),
                         **({"admit": lambda record: host.workflow_grants.recipe_admit(grant_id, "register", record)} if workflow_grant else {}))
+                elif route == "/v1/recipes/scaffold":
+                    if (set(payload) != {"path", "recipe_id", "component"}
+                            or not isinstance(payload["path"], str) or not Path(payload["path"]).is_absolute()
+                            or not isinstance(payload["recipe_id"], str) or not isinstance(payload["component"], str)):
+                        raise HostError("invalid_recipe_request")
+                    from .recipe_sdk import scaffold_recipe
+                    result = await host.static_work(scaffold_recipe, Path(payload["path"]), payload["recipe_id"],
+                        component=payload["component"])
                 elif route.startswith("/v1/recipes/"):
                     action = request.path_params["action"]
                     if (action not in {"inspect", "enable", "disable", "revoke", "remove", "deprecate"}

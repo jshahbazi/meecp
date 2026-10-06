@@ -6,11 +6,21 @@ This first Phase 2 milestone implements source intake and resumable preparation.
 
 Add App accepts a prepared package, a local source folder, or a UTF-8 Markdown/text document through a file chooser or drag-and-drop. Drafts appear in Manage Apps and survive window closure and host restart. An unfinished source draft asks what tools the assistant should receive. Documents require an explicit `instructions` or `reference` role. Reference information remains blocked on a supported document-service template.
 
+### Native setup
+
+**Add App** starts with a file or folder chooser. The **Add from** menu also offers local models, local services, and publisher download links, showing only the selected input method. After source selection, the window shows the relevant setup questions. Prepared packages go directly to configuration and installation review. Startup choices appear at that point. Saved drafts remain available through **Resume setup**.
+
+**Guided setup** uses the host's detected template. A template picker appears when a choice is needed; adding a standard app does not require authoring a recipe. **Use AI assistance** and **Use my coding agent** are separate alternatives. The coding-agent path has two steps: copy the instructions, then import the returned package. Schema previews, exports, usage limits, and package identity details are expandable. Active work retains visible cancellation or recovery controls even after reopening the window.
+
+**Settings → LLM Providers** opens a separate configuration window. Save a provider, select a configured model, then choose **Test Connection**. The test sends a fixed sample request to OpenAI with no app source, a 64-token output limit, a 15-second deadline, and a bounded response. A small API charge may apply. A successful test establishes connectivity and model access; it does not establish preparation compatibility or grant execution authority. Saving a changed provider invalidates previous transfer reviews. Keys retain the existing private-file storage policy.
+
+**Settings → App Recipes** manages reusable setup templates. **Create Recipe…** asks for a name, a supported starter, and an output folder, then generates the metadata, license records, and lock and reveals the folder in Finder. **Import Recipe…** registers the resulting folder. Custom behavior still requires developer authoring and the existing validation/admission checks; creating a starter does not add a new runtime capability. Recipe lifecycle controls and raw metadata are under expandable details.
+
 ## First app without package assembly
 
 Open **Add App** and select **Try JSON Utilities**. The bundled starter is compiled during the native app build, signed, locked, and statically validated before the outer app signature seals it. Selecting it creates a normal prepared-package draft; **Review Package** and **Add App** retain the same snapshot, authorization, and supervised candidate checks as other installations. Select **Start after install** to add and start it. No user compiler, model download, package archive URL, or development checkout is required.
 
-**I already have a package download link** reveals the manual publisher form. **Enter Package Link…** requires the publisher's direct HTTPS ZIP URL, byte count, and SHA-256; it does not discover or generate apps. Existing download jobs remain visible. Supported automatic directory/service preparation is the next milestone and is not advertised as runnable by this change.
+Choose **Add from → Package download link** for the publisher form and saved downloads. **Enter Package Link…** requires the publisher's direct HTTPS ZIP URL, byte count, and SHA-256; it does not discover or generate apps. Downloads continue when the window closes.
 
 Verify an actual bundled starter through relocated private host storage and real MCP clients:
 

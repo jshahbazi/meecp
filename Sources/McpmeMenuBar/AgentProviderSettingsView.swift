@@ -89,6 +89,7 @@ final class AgentProviderSettingsView: NSStackView {
     private var epoch: UInt64 = 0
     private var requestEpoch: UInt64 = 0
     private let picker = NSPopUpButton()
+    private let testModelPicker = NSPopUpButton()
     private let nameField = NSTextField(string: "")
     private let modelsField = NSTextField(string: "")
     private let keyField = NSSecureTextField(string: "")
@@ -100,33 +101,38 @@ final class AgentProviderSettingsView: NSStackView {
     private var removeButton: NSButton!
     private var saveButton: NSButton!
     private var cancelButton: NSButton!
+    private var testButton: NSButton!
     var blocksNavigation: Bool { busy || editing }
     var providerNames: [String: String] { Dictionary(uniqueKeysWithValues: records.filter { !$0.removed }.map { ($0.id, $0.name) }) }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         orientation = .vertical; alignment = .leading; spacing = 8
-        let title = NSTextField(labelWithString: "Agent providers"); title.font = .boldSystemFont(ofSize: 13)
+        let title = NSTextField(labelWithString: "AI providers"); title.font = .boldSystemFont(ofSize: 13)
         picker.setAccessibilityLabel("Configured agent providers"); picker.target = self; picker.action = #selector(selectionChanged)
+        testModelPicker.setAccessibilityLabel("Model to test"); testModelPicker.target = self; testModelPicker.action = #selector(testModelChanged)
         nameField.placeholderString = "Provider name"; nameField.setAccessibilityLabel("Provider name")
         modelsField.placeholderString = "Model IDs separated by commas"; modelsField.setAccessibilityLabel("Explicit agent model IDs")
         keyField.placeholderString = "API key"; keyField.setAccessibilityLabel("Provider API key")
         keyField.isAutomaticTextCompletionEnabled = false
         for field in [nameField, modelsField, keyField] { field.widthAnchor.constraint(greaterThanOrEqualToConstant: 320).isActive = true }
         func button(_ title: String, _ action: Selector) -> NSButton { NSButton(title: title, target: self, action: action) }
-        refreshButton = button("Refresh Providers", #selector(loadProviders)); addButton = button("Add Provider", #selector(addProvider))
-        editButton = button("Edit Provider", #selector(editProvider)); removeButton = button("Remove Provider", #selector(removeProvider))
-        saveButton = button("Save Provider", #selector(saveProvider)); cancelButton = button("Cancel", #selector(cancelEditing))
+        refreshButton = button("Refresh", #selector(loadProviders)); addButton = button("Add Provider", #selector(addProvider))
+        editButton = button("Edit", #selector(editProvider)); removeButton = button("Remove", #selector(removeProvider))
+        saveButton = button("Save", #selector(saveProvider)); cancelButton = button("Cancel", #selector(cancelEditing))
+        testButton = button("Test Connection", #selector(testConnection))
         editor.orientation = .vertical; editor.alignment = .leading; editor.spacing = 6
-        let notice = workspaceLabel("Destination: " + agentProviderDestination + "\nAPI keys are saved as plain text in private files on this Mac.\nEnter exact model IDs available to your account. Model compatibility has not been checked. Saving sends no source files and makes no provider request. Review the selected source and usage limits before starting agent assistance.", size: 12, secondary: true)
+        let notice = workspaceLabel("Use an OpenAI API key and model IDs available to your account.\nAPI keys are saved as plain text in private files on this Mac.", size: 12, secondary: true)
+        let testNotice = workspaceLabel("Test Connection sends a short sample request to OpenAI using the selected model. A small API charge may apply.", size: 12, secondary: true)
         for view in [NSTextField(labelWithString: "OpenAI Responses"),
                      workspaceStack([workspaceLabel("Profile name", size: 12), nameField], horizontal: true),
                      workspaceStack([workspaceLabel("Model IDs", size: 12), modelsField], horizontal: true),
                      workspaceStack([workspaceLabel("API key", size: 12), keyField], horizontal: true), notice,
                      workspaceStack([saveButton!, cancelButton!], horizontal: true)] { editor.addArrangedSubview(view) }
         editor.isHidden = true
-        for view in [title, picker, NSStackView(views: [refreshButton!, addButton!, editButton!, removeButton!]), editor, status] { addArrangedSubview(view) }
-        workspaceFill(editor, in: self); workspaceFill(notice, in: editor); workspaceFill(status, in: self)
+        for view in [title, picker, NSStackView(views: [refreshButton!, addButton!, editButton!, removeButton!]), editor,
+                     workspaceStack([workspaceLabel("Model", size: 12), testModelPicker, testButton!], horizontal: true), testNotice, status] { addArrangedSubview(view) }
+        workspaceFill(editor, in: self); workspaceFill(notice, in: editor); workspaceFill(testNotice, in: self); workspaceFill(status, in: self)
         refreshAvailability()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -137,6 +143,8 @@ final class AgentProviderSettingsView: NSStackView {
         addButton.isEnabled = enabled && loaded && !needsRefresh && !editing && records.filter { !$0.removed }.count < 16
         editButton.isEnabled = enabled && loaded && !needsRefresh && !editing && selected?.removed == false
         removeButton.isEnabled = editButton.isEnabled
+        testModelPicker.isEnabled = editButton.isEnabled && selected?.credentialAvailable == true
+        testButton.isEnabled = testModelPicker.isEnabled && testModelPicker.selectedItem != nil
         picker.isEnabled = enabled && !editing
         saveButton.isEnabled = enabled && editing
         cancelButton.isEnabled = !busy && editing
@@ -153,7 +161,7 @@ final class AgentProviderSettingsView: NSStackView {
     }
     func invalidate() {
         epoch &+= 1; clearEditor(); editing = false; editingProvider = nil
-        loaded = false; liveExecutionEnabled = false; needsRefresh = true; records = []; picker.removeAllItems()
+        loaded = false; liveExecutionEnabled = false; needsRefresh = true; records = []; picker.removeAllItems(); testModelPicker.removeAllItems()
         refreshAvailability(); onStateChange?()
     }
     /// The parent calls this only when replacing a settled/lost host connection.
@@ -162,11 +170,41 @@ final class AgentProviderSettingsView: NSStackView {
         requestEpoch &+= 1; busy = false; invalidate()
         status.stringValue = "Provider configuration status needs a refresh after reconnection."
     }
-    @objc private func selectionChanged() { refreshAvailability() }
+    private func updateModels() {
+        let previous = testModelPicker.selectedItem?.title
+        testModelPicker.removeAllItems(); testModelPicker.addItems(withTitles: selected?.models ?? [])
+        if let previous, selected?.models.contains(previous) == true { testModelPicker.selectItem(withTitle: previous) }
+    }
+    @objc private func selectionChanged() { updateModels(); testModelChanged() }
+    @objc private func testModelChanged() {
+        errorCode = nil; status.stringValue = "Choose Test Connection to check the selected model."
+        refreshAvailability()
+    }
+    private func updatePicker(preferred: String?) -> Bool {
+        picker.removeAllItems()
+        let active = records.filter { !$0.removed }
+        guard let titles = agentPickerTitles(active.map { $0.name + ($0.credentialAvailable ? "" : " · Key unavailable") }, identities: active.map(\.id)) else { return false }
+        for (record, title) in zip(active, titles) {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: ""); item.representedObject = record.id
+            picker.menu?.addItem(item)
+        }
+        guard picker.numberOfItems == active.count else { return false }
+        if let preferred, let index = picker.itemArray.firstIndex(where: { $0.representedObject as? String == preferred }) { picker.selectItem(at: index) }
+        updateModels(); return true
+    }
     private func fail(_ code: String) {
         errorCode = preparationCode(code) ?? "agent_provider_request_rejected"
-        status.stringValue = (errorCode ?? "agent_provider_request_rejected").replacingOccurrences(of: "_", with: " ").capitalized
-        if needsRefresh { status.stringValue += ". Refresh Providers before making another change." }
+        let messages = ["agent_provider_authentication_failed": "OpenAI did not accept the API key. Edit the provider and try again.",
+            "agent_provider_model_unavailable": "This account cannot access the selected model. Check the model ID and account permissions.",
+            "agent_provider_rate_limited": "OpenAI reported a rate or usage limit. Check your account limits and try again.",
+            "agent_provider_test_timeout": "The connection test timed out. Try again.",
+            "agent_provider_test_busy": "Another connection test is running. Try again shortly.",
+            "agent_provider_test_incomplete": "The model did not complete the short test. Check the model ID or try another model.",
+            "agent_provider_test_failed": "The connection test failed. Check your connection, API key, and model ID.",
+            "agent_provider_configuration_stale": "These provider settings have changed. Refresh and try again.",
+            "agent_provider_configuration_invalid": "Enter a name, unique model IDs, and a valid API key."]
+        status.stringValue = messages[errorCode ?? ""] ?? (errorCode ?? "agent_provider_request_rejected").replacingOccurrences(of: "_", with: " ").capitalized
+        if needsRefresh { status.stringValue += " Refresh before making another change." }
         refreshAvailability(); onStateChange?()
     }
     private func beginRequest() -> (UInt64, UInt64) {
@@ -192,18 +230,10 @@ final class AgentProviderSettingsView: NSStackView {
                   parsed.filter({ !$0.removed }).count <= 16,
                   liveEnabled || !parsed.contains(where: { $0.executionAvailable }) else { self.fail("agent_provider_response_invalid"); return }
             let previous = self.selected?.id
-            self.records = parsed; self.loaded = true; self.liveExecutionEnabled = liveEnabled; self.needsRefresh = false; self.picker.removeAllItems()
-            let active = parsed.filter { !$0.removed }
-            guard let titles = agentPickerTitles(active.map { $0.name + ($0.credentialAvailable ? "" : " · Key unavailable") }, identities: active.map(\.id)) else { self.fail("agent_provider_response_invalid"); return }
-            for (record, title) in zip(active, titles) {
-                let item = NSMenuItem(title: title, action: nil, keyEquivalent: ""); item.representedObject = record.id
-                self.picker.menu?.addItem(item)
-            }
-            guard self.picker.numberOfItems == active.count else { self.fail("agent_provider_response_invalid"); return }
-            if let previous, let index = self.picker.itemArray.firstIndex(where: { $0.representedObject as? String == previous }) { self.picker.selectItem(at: index) }
+            self.records = parsed; self.loaded = true; self.liveExecutionEnabled = liveEnabled; self.needsRefresh = false
+            guard self.updatePicker(preferred: previous) else { self.fail("agent_provider_response_invalid"); return }
             self.status.stringValue = self.providerNames.isEmpty ? "No provider is configured. Choose Add Provider." :
-                liveEnabled ? "Provider settings loaded. Review the selected source and usage limits before starting agent assistance." :
-                "Provider settings loaded. Agent assistance is unavailable in this app."
+                "Choose Test Connection to check the selected model."
             self.refreshAvailability(); self.onRegistryChange?()
         }
     }
@@ -222,7 +252,8 @@ final class AgentProviderSettingsView: NSStackView {
     @objc func addProvider() {
         guard addButton.isEnabled else { return }
         clearEditor(); editingProvider = nil; editing = true; epoch &+= 1
-        keyField.placeholderString = "API key (required)"; status.stringValue = "Add an OpenAI provider. No connection test or source transfer occurs."
+        nameField.stringValue = "OpenAI"
+        keyField.placeholderString = "API key (required)"; status.stringValue = "Add your API key and model IDs, then save."
         refreshAvailability(); onStateChange?()
     }
     @objc func editProvider() {
@@ -230,7 +261,7 @@ final class AgentProviderSettingsView: NSStackView {
         clearEditor(); editingProvider = record; editing = true; epoch &+= 1
         nameField.stringValue = record.name; modelsField.stringValue = record.models.joined(separator: ", ")
         keyField.placeholderString = "Leave blank to keep the saved key"
-        status.stringValue = "Edit model IDs or enter a replacement key. Saving invalidates previous transfer reviews."
+        status.stringValue = "Leave the API key blank to keep your saved key."
         refreshAvailability(); onStateChange?()
     }
     @objc func cancelEditing() {
@@ -260,6 +291,25 @@ final class AgentProviderSettingsView: NSStackView {
         clearCredentialEntry()
         mutate(path: "v1/agent-providers/" + record.id + "/remove", body: ["schema_version": 1, "expected_generation": record.generation], expected: record, removing: true, name: record.name, models: record.models, rotating: false)
     }
+    @objc func testConnection() {
+        guard testButton.isEnabled, let record = selected, let model = testModelPicker.selectedItem?.title,
+              record.models.contains(model), let request else { return }
+        let (token, viewEpoch) = beginRequest()
+        status.stringValue = "Testing \(model)…"
+        request("v1/agent-providers/" + record.id + "/test", "POST",
+                ["schema_version": 1, "expected_generation": record.generation, "model": model]) { [weak self] object, code in
+            guard let self, self.finishRequest(token), self.epoch == viewEpoch else { return }
+            guard let object, providerEnvelope(object, keys: ["schema_version", "provider_id", "generation", "model", "status"]),
+                  preparationInteger(object["schema_version"]) == 1, object["provider_id"] as? String == record.id,
+                  object["generation"] as? String == record.generation, object["model"] as? String == model,
+                  object["status"] as? String == "connected" else {
+                if code == "agent_provider_configuration_stale" { self.needsRefresh = true }
+                self.fail(code ?? "agent_provider_response_invalid"); return
+            }
+            self.status.stringValue = "Connected. \(model) accepted the test request."
+            self.refreshAvailability(); self.onStateChange?()
+        }
+    }
     private func mutate(path: String, body: [String: Any], expected: AgentProviderMetadata?, removing: Bool, name: String, models: [String], rotating: Bool) {
         guard let request else { return }
         needsRefresh = true
@@ -273,13 +323,55 @@ final class AgentProviderSettingsView: NSStackView {
                   expected == nil ? !self.records.contains(where: { $0.id == next.id }) : next.id == expected?.id && next.generation != expected?.generation &&
                     (rotating ? next.credentialGeneration != expected?.credentialGeneration : next.credentialGeneration == expected?.credentialGeneration) else { self.fail(code ?? "agent_provider_response_invalid"); self.onRegistryChange?(); return }
             self.records.removeAll { $0.id == next.id }; self.records.append(next)
-            self.status.stringValue = removing ? "Provider removed. Refresh Providers to continue." : "Provider saved. Refresh Providers to choose its models."
+            guard self.updatePicker(preferred: removing ? nil : next.id) else { self.fail("agent_provider_response_invalid"); self.onRegistryChange?(); return }
+            self.needsRefresh = false
+            self.status.stringValue = removing ? "Provider removed." : "Provider saved. Choose Test Connection to check it."
             self.refreshAvailability(); self.onRegistryChange?()
         }
     }
 }
 
 extension AgentProviderSettingsView {
+    static func connectionTestSelfTest() -> Bool {
+        let id = UUID().uuidString.lowercased(), generation = UUID().uuidString.lowercased()
+        let record: [String: Any] = ["provider_id": id, "adapter_id": agentProviderAdapter, "name": "Test account",
+            "models": ["first-model", "second-model"], "configuration": [:], "generation": generation,
+            "credential_generation": UUID().uuidString.lowercased(), "credential_status": "configured",
+            "status": "active", "destination": agentProviderDestination, "execution_available": false]
+        let view = AgentProviderSettingsView(); view.available = { true }
+        view.records = [AgentProviderMetadata(record)!]; view.loaded = true
+        guard view.updatePicker(preferred: id) else { return false }
+        view.testModelPicker.selectItem(withTitle: "second-model"); view.testModelChanged()
+        var requests = 0, validRequest = true
+        var held: (([String: Any]?, String?) -> Void)?
+        view.request = { path, method, body, completion in
+            requests += 1; held = completion
+            validRequest = validRequest && path == "v1/agent-providers/" + id + "/test" && method == "POST" &&
+                Set(body?.keys.map { $0 } ?? []) == ["schema_version", "expected_generation", "model"] &&
+                preparationInteger(body?["schema_version"]) == 1 && body?["expected_generation"] as? String == generation &&
+                body?["model"] as? String == "second-model"
+        }
+        let connected: [String: Any] = ["api_version": 1, "schema_version": 1, "provider_id": id,
+            "generation": generation, "model": "second-model", "status": "connected"]
+        view.testButton.performClick(nil)
+        guard view.busy, view.blocksNavigation, !view.testButton.isEnabled, !view.editButton.isEnabled,
+              !view.testModelPicker.isEnabled, requests == 1, validRequest else { return false }
+        view.testConnection(); guard requests == 1 else { return false }
+        held?(connected, nil)
+        guard !view.busy, view.testButton.isEnabled, view.status.stringValue == "Connected. second-model accepted the test request." else { return false }
+        view.testButton.performClick(nil); held?(nil, "agent_provider_authentication_failed")
+        guard view.errorCode == "agent_provider_authentication_failed", view.status.stringValue.contains("API key"), view.testButton.isEnabled else { return false }
+        view.testButton.performClick(nil)
+        var stale = connected; stale["generation"] = UUID().uuidString.lowercased()
+        held?(stale, nil)
+        guard view.errorCode == "agent_provider_response_invalid", !view.status.stringValue.hasPrefix("Connected") else { return false }
+        view.testButton.performClick(nil); held?(nil, "agent_provider_configuration_stale")
+        guard view.needsRefresh, !view.testButton.isEnabled else { return false }
+        view.needsRefresh = false; view.refreshAvailability(); view.testButton.performClick(nil)
+        let oldReply = held; view.connectionReset()
+        oldReply?(connected, nil)
+        return !view.busy && !view.loaded && view.records.isEmpty && !view.status.stringValue.hasPrefix("Connected") && validRequest
+    }
     static func duplicateProviderTitlesSelfTest() -> Bool {
         let view = AgentProviderSettingsView(); view.available = { true }
         let ids = (0..<5).map { _ in UUID().uuidString.lowercased() }
@@ -318,6 +410,7 @@ extension AgentProviderSettingsView {
     }
     /// Actual AppKit actions with a synthetic owner transport, never a provider.
     static func contractSelfTest() -> Bool {
+        guard connectionTestSelfTest() else { return false }
         let id = UUID().uuidString.lowercased()
         func row(_ generation: String, credential: String, removed: Bool = false) -> [String: Any] {
             ["provider_id": id, "adapter_id": agentProviderAdapter, "name": "Local test profile", "models": ["test-model"],
@@ -369,7 +462,7 @@ extension AgentProviderSettingsView {
         view.keyField.currentEditor()?.string = "synthetic-only-key"
         view.saveButton.performClick(nil)
         guard requests.count == 2, sawClearedSecureField, view.keyField.stringValue.isEmpty, !view.blocksNavigation,
-              view.needsRefresh, !view.addButton.isEnabled, changes == 2 else { return false }
+              !view.needsRefresh, view.testButton.isEnabled, changes == 2 else { return false }
         view.refreshButton.performClick(nil); view.editButton.performClick(nil)
         guard view.editing, view.keyField.stringValue.isEmpty, view.modelsField.stringValue == "test-model" else { return false }
         view.saveButton.performClick(nil)

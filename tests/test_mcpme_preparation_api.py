@@ -40,6 +40,33 @@ async def test_foundation_metadata_allows_prepare_and_execution_stays_unavailabl
         await host.close()
 
 
+async def test_owner_recipe_scaffold_is_authenticated_and_collision_safe(tmp_path):
+    host = Supervisor(tmp_path.resolve() / "state", tmp_path / "unused-reaper")
+    owner, port = "synthetic-owner-authorization", 19886
+    destination = tmp_path / "created-recipe"
+    try:
+        grant = host.grants.issue({"mode": "prepare", "ttl_seconds": 60})
+        scoped = read_credential(Path(grant["credential_file"]))["token"]
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=management_app(host, owner, port)),
+                base_url=f"http://127.0.0.1:{port}") as client:
+            payload = {"path": str(destination), "recipe_id": "local.created", "component": "python-function-v1"}
+            assert (await client.post("/v1/recipes/scaffold", json=payload)).status_code == 401
+            denied = await client.post("/v1/recipes/scaffold", json=payload,
+                headers={"Authorization": "Bearer " + scoped})
+            assert denied.status_code == 403 and not destination.exists()
+            malformed = await client.post("/v1/recipes/scaffold", json={"path": str(destination)},
+                headers={"Authorization": "Bearer " + owner})
+            assert malformed.status_code == 400
+            created = await client.post("/v1/recipes/scaffold", json=payload,
+                headers={"Authorization": "Bearer " + owner})
+            assert created.status_code == 200 and created.json()["recipe_id"] == "local.created"
+            collision = await client.post("/v1/recipes/scaffold", json=payload,
+                headers={"Authorization": "Bearer " + owner})
+            assert collision.status_code == 400
+    finally:
+        await host.close()
+
+
 async def test_integrated_agent_routes_preserve_owner_policy_and_closed_defaults(tmp_path):
     host = Supervisor(tmp_path.resolve() / "state", tmp_path / "unused-reaper")
     port, owner = 19886, "synthetic-owner-authorization"

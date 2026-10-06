@@ -255,13 +255,14 @@ async def test_owner_policy_rejects_old_grants_auth_origin_and_unknown_inputs(tm
                 grant = host.grants.issue({"mode": mode})
                 scoped = read_credential(Path(grant["credential_file"]))["token"]
                 for method, route in (("GET", "/v1/agent-providers"), ("POST", "/v1/agent-providers"),
-                        ("POST", target), ("POST", target + "/remove")):
+                        ("POST", target), ("POST", target + "/remove"), ("POST", target + "/test")):
                     result = await api.request(method, route, headers={"Authorization": "Bearer " + scoped},
                         json=None if method == "GET" else choices())
                     assert result.status_code == 403 and result.json()["error"]["code"] == "grant_scope"
             for headers in ({}, {"Authorization": "Bearer owner", "Host": "elsewhere.invalid"},
                     {"Authorization": "Bearer owner", "Origin": "https://elsewhere.invalid"}):
                 assert (await api.post("/v1/agent-providers", headers=headers, json=choices())).status_code in {401, 403}
+                assert (await api.post(target + "/test", headers=headers, json={})).status_code in {401, 403}
             headers = {"Authorization": "Bearer owner"}
             rejected = await api.post("/v1/agent-providers", headers=headers, json=choices(endpoint=SYNTHETIC))
             assert rejected.status_code == 400 and SYNTHETIC not in rejected.text
@@ -292,3 +293,136 @@ async def test_new_trusted_adapter_uses_same_registry_and_host_seam(foundation, 
         assert request.provider.backend == "synthetic-test-v1" and not plan["execution_available"]
     finally:
         await host.close()
+
+
+def connection_registry(tmp_path, handler):
+    from mcpme.preparation_agent_backend import OpenAIResponsesBackend
+    class SyntheticAdapter(OpenAIResponsesAdapter):
+        def backend(self, resolve, configuration):
+            return OpenAIResponsesBackend(lambda generation: resolve(generation)["api_key"],
+                transport=httpx.MockTransport(handler))
+    registry = AgentProviderRegistry(tmp_path / "providers", adapters=(SyntheticAdapter(),))
+    row = registry.create(choices(models=["first-model", "second-model"]))["provider"]
+    payload = {"schema_version": 1, "expected_generation": row["generation"], "model": "second-model"}
+    return registry, row, payload
+
+
+def connection_response():
+    return httpx.Response(200, json={"status": "completed", "usage": {"input_tokens": 8, "output_tokens": 1},
+        "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "OK"}]}]})
+
+
+async def test_owner_connection_route_uses_only_saved_model_and_synthetic_input(tmp_path, caplog):
+    from starlette.applications import Starlette
+    from mcpme.policy import LocalPolicy
+    from mcpme.preparation_agent_providers import agent_provider_routes
+    seen = []
+    def handler(request):
+        seen.append(request)
+        assert str(request.url) == "https://api.openai.com/v1/responses"
+        assert request.headers["Authorization"] == "Bearer " + SYNTHETIC
+        assert json.loads(request.content) == {"model": "second-model", "store": False, "background": False,
+            "max_output_tokens": 64, "tools": [], "tool_choice": "none", "truncation": "disabled", "input": "Reply with OK."}
+        return connection_response()
+    registry, row, payload = connection_registry(tmp_path, handler)
+    before = registry.path.read_bytes()
+    policy = LocalPolicy(Starlette(), "owner", 19384,
+        authenticate=lambda _: {"owner": True, "grant_id": None})
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=agent_provider_routes(policy, registry)),
+            base_url="http://127.0.0.1:19384") as client:
+        result = await client.post("/v1/agent-providers/" + row["provider_id"] + "/test", json=payload)
+    assert result.status_code == 200
+    assert result.json() == {"api_version": 1, "schema_version": 1, "provider_id": row["provider_id"],
+        "generation": row["generation"], "model": "second-model", "status": "connected"}
+    assert len(seen) == 1 and registry.path.read_bytes() == before
+    assert not registry.list()["live_execution_enabled"] and not registry._test_active
+    assert SYNTHETIC not in result.text and "OK" not in result.text and not caplog.records
+
+
+@pytest.mark.parametrize("change", [{"schema_version": True}, {"model": "unconfigured-model"},
+    {"expected_generation": str(uuid.uuid4())}, {"prompt": SYNTHETIC}, {"credentials": {"api_key": SYNTHETIC}}])
+async def test_connection_rejects_stale_or_unreviewed_inputs_before_dispatch(tmp_path, change):
+    def forbidden(_):
+        raise AssertionError("invalid test dispatched")
+    registry, row, payload = connection_registry(tmp_path, forbidden)
+    with pytest.raises(AgentProviderError):
+        await registry.test_connection(row["provider_id"], payload | change, owner_authorized=True)
+    with pytest.raises(AgentProviderError, match="owner_required"):
+        await registry.test_connection(row["provider_id"], payload)
+    assert not registry._test_active
+
+
+@pytest.mark.parametrize("mutation", ["edit", "rotate", "remove", "revoke"])
+async def test_connection_discards_stale_success_and_bounds_concurrent_requests(tmp_path, mutation):
+    entered, release = asyncio.Event(), asyncio.Event()
+    async def handler(_):
+        entered.set(); await release.wait()
+        return connection_response()
+    registry, row, payload = connection_registry(tmp_path, handler)
+    pending = asyncio.create_task(registry.test_connection(row["provider_id"], payload, owner_authorized=True))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        with pytest.raises(AgentProviderError, match="test_busy"):
+            await registry.test_connection(row["provider_id"], payload, owner_authorized=True)
+        if mutation == "edit":
+            registry.update(row["provider_id"], update(row, name="Changed"))
+        elif mutation == "rotate":
+            registry.update(row["provider_id"], update(row, credentials={"api_key": "synthetic-rotated"}))
+        elif mutation == "remove":
+            registry.remove(row["provider_id"], {"schema_version": 1, "expected_generation": row["generation"]})
+        else:
+            registry.secrets.revoke(registry._read().providers[0].credential_references["api_key"])
+        release.set()
+        with pytest.raises(AgentProviderError, match="configuration_stale|unavailable"):
+            await pending
+        assert not registry._test_active
+    finally:
+        release.set()
+        if not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+
+@pytest.mark.parametrize("response,code", [
+    (httpx.Response(401, text=SYNTHETIC), "agent_provider_authentication_failed"),
+    (httpx.Response(403, text=SYNTHETIC), "agent_provider_model_unavailable"),
+    (httpx.Response(429, text=SYNTHETIC), "agent_provider_rate_limited"),
+    (httpx.Response(302, headers={"location": "https://unregistered.invalid"}), "agent_provider_test_failed"),
+    (httpx.Response(200, content=b"x" * 16385), "agent_provider_test_failed"),
+    (httpx.Response(200, json={"status": "incomplete"}), "agent_provider_test_incomplete"),
+    (httpx.Response(200, json={"status": "completed", "usage": {}, "output": []}), "agent_provider_test_incomplete"),
+])
+async def test_connection_failures_are_bounded_sanitized_and_retryable(tmp_path, caplog, response, code):
+    calls = []
+    def handler(request):
+        calls.append(request)
+        return response
+    registry, row, payload = connection_registry(tmp_path, handler)
+    with pytest.raises(AgentProviderError) as failure:
+        await registry.test_connection(row["provider_id"], payload, owner_authorized=True)
+    assert failure.value.code == code and SYNTHETIC not in str(failure.value)
+    assert len(calls) == 1 and not registry._test_active and not caplog.records
+
+
+async def test_connection_accepts_reasoning_model_reaching_the_small_test_budget(tmp_path):
+    def handler(_):
+        return httpx.Response(200, json={"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"},
+            "usage": {"input_tokens": 8, "output_tokens": 64}, "output": [{"type": "reasoning"}]})
+    registry, row, payload = connection_registry(tmp_path, handler)
+    result = await registry.test_connection(row["provider_id"], payload, owner_authorized=True)
+    assert result["status"] == "connected" and not registry._test_active
+
+
+async def test_connection_deadline_and_cancellation_settle_local_io(tmp_path, monkeypatch):
+    import mcpme.preparation_agent_backend as backend
+    monkeypatch.setattr(backend, "PROVIDER_TEST_SECONDS", 0.02)
+    settled = asyncio.Event()
+    async def handler(_):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            settled.set()
+    registry, row, payload = connection_registry(tmp_path, handler)
+    with pytest.raises(AgentProviderError, match="test_timeout"):
+        await registry.test_connection(row["provider_id"], payload, owner_authorized=True)
+    assert settled.is_set() and not registry._test_active

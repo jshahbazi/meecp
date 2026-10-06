@@ -34,6 +34,8 @@ signature = public_command.signature
 ROOT = Path(__file__).resolve().parents[1]
 UNLOCKED = {"id": "agent-unlocked-python-adapter-v1", "version": "1.0.0",
     "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"}
+LOCKED = {"id": "agent-python-adapter-v1", "version": "1.0.0",
+    "digest": "28c1d862b947f294dcd0a7f038c32f3d9cf4e31ea20f81d91ab800b13d0b8274"}
 LIMITS = {"max_calls": 4, "max_parallel": 3, "max_transfer_bytes": 524288,
     "max_output_tokens": 4096, "wall_seconds": 180, "max_artifact_bytes": 131072}
 RECIPE = "mcpme.agent-unlocked-python-adapter"
@@ -125,7 +127,10 @@ def active_candidate(policy, model, adapter_digest):
     from mcpme.preparation_release_policy import ReleasePolicy
     selected = ReleasePolicy.model_validate(policy)
     _, agent, _ = selected.admissions()
-    common.require(agent is not None and agent.components == frozenset({tuple(UNLOCKED.values())})
+    # This harness still exercises the unlocked scalar case. Current releases
+    # also admit the exact locked family; that is not new live-case evidence.
+    common.require(agent is not None and agent.components in {
+        frozenset({tuple(UNLOCKED.values())}), frozenset({tuple(UNLOCKED.values()), tuple(LOCKED.values())})}
         and agent.providers == frozenset({("openai-responses-v1", adapter_digest, model)})
         and agent.unlocked_resolution, "live_agent_candidate_inactive")
     return selected

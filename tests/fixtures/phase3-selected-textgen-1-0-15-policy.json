@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "policy_id": "phase3-live-agent-acceptance-candidate-v1",
+  "preparation": {
+    "families": [
+      {
+        "id": "resolved-python-v1",
+        "version": "1.0.1",
+        "digest": "3c24410b46415cb83b9d945ebf0049f552e9f7493943164f311939a79b49000e"
+      },
+      {
+        "id": "yolo11-coco-detect-v1",
+        "version": "1.0.0",
+        "digest": "b48bde76ca30787de2e41a6b984c0c80a79b3a4b6ec75637f3147ccfadec3e99"
+      },
+      {
+        "id": "host-command-json-v1",
+        "version": "1.0.1",
+        "digest": "a216f2ed58294410850afc4bd63f9b9b63c945464a1f10d1b735bd8de26cd607"
+      },
+      {
+        "id": "text-generate-v1",
+        "version": "1.0.15",
+        "digest": "3914324a17e9cbf5b5e12212cb0142bc53725e19d8a6ae9dc613da1ccea2dc83"
+      },
+      {
+        "id": "service-text-generate-v1",
+        "version": "1.0.0",
+        "digest": "bc540561a87cba329d1d62d837596d6318a2d740fc4f6cf49b3eab95a9145d75"
+      },
+      {
+        "id": "agent-unlocked-python-adapter-v1",
+        "version": "1.0.0",
+        "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"
+      }
+    ],
+    "recipe_component_sets": [
+      [
+        {
+          "id": "python-function-v1",
+          "version": "1.0.0",
+          "digest": "b28f98582aeff09e344b4a7049af7fdadbaf19436dc6724638ab64b6a9139d4e"
+        }
+      ],
+      [
+        {
+          "id": "resolved-python-v1",
+          "version": "1.0.1",
+          "digest": "3c24410b46415cb83b9d945ebf0049f552e9f7493943164f311939a79b49000e"
+        }
+      ],
+      [
+        {
+          "id": "onnxruntime-cpu-v1",
+          "version": "1.0.0",
+          "digest": "ec982f8489de85afd79d6aa715431082e1bba29be48ca06eef457dbcc362d8dc"
+        },
+        {
+          "id": "yolo11-coco-detect-v1",
+          "version": "1.0.0",
+          "digest": "b48bde76ca30787de2e41a6b984c0c80a79b3a4b6ec75637f3147ccfadec3e99"
+        }
+      ],
+      [
+        {
+          "id": "host-command-json-v1",
+          "version": "1.0.1",
+          "digest": "a216f2ed58294410850afc4bd63f9b9b63c945464a1f10d1b735bd8de26cd607"
+        }
+      ],
+      [
+        {
+          "id": "llamacpp-cpu-v1",
+          "version": "1.0.15",
+          "digest": "145c1d8b5a6fcb0926415cb456127f15afe6353c7e2aedfab0184c3e09796720"
+        },
+        {
+          "id": "text-generate-v1",
+          "version": "1.0.15",
+          "digest": "3914324a17e9cbf5b5e12212cb0142bc53725e19d8a6ae9dc613da1ccea2dc83"
+        }
+      ],
+      [
+        {
+          "id": "openai-chat-completions-v1",
+          "version": "1.0.0",
+          "digest": "01d9379a0ed5fdd9fc86e1b6aeb47465f153162af57157cfbd42f6644f338587"
+        },
+        {
+          "id": "loopback-http-bearer-v1",
+          "version": "1.0.0",
+          "digest": "2f93a9f9258fa5d2b6b9c854f9e828d2f43ceeb7f0108183759e9f428fbaa4dc"
+        },
+        {
+          "id": "service-text-generate-v1",
+          "version": "1.0.0",
+          "digest": "bc540561a87cba329d1d62d837596d6318a2d740fc4f6cf49b3eab95a9145d75"
+        }
+      ],
+      [
+        {
+          "id": "agent-unlocked-python-adapter-v1",
+          "version": "1.0.0",
+          "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"
+        }
+      ]
+    ],
+    "resolution_candidate_kinds": [
+      "python-callable",
+      "python-mcp"
+    ]
+  },
+  "agent": {
+    "components": [
+      {
+        "id": "agent-unlocked-python-adapter-v1",
+        "version": "1.0.0",
+        "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"
+      }
+    ],
+    "providers": [
+      {
+        "adapter_id": "openai-responses-v1",
+        "adapter_digest": "f651b36ab4b3d4fe6479457e5a31f129b1339c41536e02bfb53cbbf4025cebc1",
+        "models": [
+          "gpt-6.1-sol"
+        ]
+      }
+    ],
+    "unlocked_resolution": true
+  },
+  "command": {
+    "component": [
+      "host-command-json-v1",
+      "1.0.1",
+      "a216f2ed58294410850afc4bd63f9b9b63c945464a1f10d1b735bd8de26cd607"
+    ],
+    "installed_platform_policy": "3898759c85d08268db02963c0e822e2bd3c9657d337e1e5c5708e0bb0738c83b",
+    "resource_platform_policy": "03a5e27b4931b1eaa705f0a4be373bc202ac7dd3bb4d71a438c2eb6ffeae1b8a"
+  }
+}

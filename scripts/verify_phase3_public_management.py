@@ -134,8 +134,9 @@ def agent_policy_scope(value):
     accepted = {"components": [live.UNLOCKED], "providers": [{"adapter_id": "openai-responses-v1",
         "adapter_digest": REVIEWED_ADAPTER_DIGEST, "models": [REVIEWED_AGENT_MODEL]}],
         "unlocked_resolution": True}
+    locked_accepted = {**accepted, "components": [live.UNLOCKED, live.LOCKED]}
     require(type(value) is dict and type(value.get("unlocked_resolution")) is bool
-        and value in (closed, accepted), "management_agent_not_reviewed")
+        and value in (closed, accepted, locked_accepted), "management_agent_not_reviewed")
     return "closed" if value == closed else "selected_model_accepted"
 
 

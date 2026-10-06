@@ -822,7 +822,12 @@ final class AgentPreparationView: NSStackView {
     }
     private func fail(_ code: String) {
         errorCode = preparationCode(code) ?? "agent_request_failed"
-        status.stringValue = errorCode!.replacingOccurrences(of: "_", with: " ").capitalized
+        if errorCode == "agent_request_rejected" {
+            plan = nil
+            status.stringValue = "The host could not approve this setup. Choose Reload to refresh the folder and preparation path, then Continue again."
+        } else {
+            status.stringValue = errorCode!.replacingOccurrences(of: "_", with: " ").capitalized
+        }
         refreshAvailability(); onStateChange?()
     }
     private func finishRequest() { busy = false; refreshAvailability(); onStateChange?() }

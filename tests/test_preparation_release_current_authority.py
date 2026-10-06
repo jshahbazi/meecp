@@ -1,5 +1,6 @@
 """Held signed-shape proof mutations; mock transport only, no live calls."""
 from dataclasses import replace
+from pathlib import Path
 import uuid
 
 import httpx
@@ -19,6 +20,40 @@ from test_preparation_agent_providers import choices
 from test_preparation_agent_request_readiness import request_only_handler, selected, start
 from test_preparation_agent_unlocked_store import foundation
 from test_preparation_agent_public_resolution import public_request
+
+
+@pytest.mark.parametrize("locked_admitted", [False, True])
+async def test_shipped_policy_admits_recommended_locked_folder_review(adapter_foundation, tmp_path, monkeypatch, locked_admitted):
+    from mcpme.preparation_release_policy import ReleasePolicy
+    _, _, preparations, draft, _, family, _ = adapter_foundation
+    policy = ReleasePolicy.model_validate_json((Path(__file__).resolve().parents[1] / POLICY_PATH).read_bytes())
+    _, admission, _ = policy.admissions()
+    if not locked_admitted:
+        admission = replace(admission, components=frozenset(key for key in admission.components if key != family.component.reference.key))
+    def forbidden(*args, **kwargs):
+        raise AssertionError("review_must_not_dispatch")
+    monkeypatch.setattr(OpenAIResponsesBackend, "complete", forbidden)
+    registry = AgentProviderRegistry(tmp_path / "providers", execution_admission=admission)
+    row = registry.create(choices(models=["gpt-6.1-sol"]))["provider"]
+    host = AgentPreparationHost(preparations, tmp_path / "agent", provider_registry=registry, execution_admission=admission)
+    try:
+        options = host.options(draft["draft_id"], draft["revision"])
+        recipe = next(item["recipe"] for item in options["recipe_choices"] if item["recommended"])
+        assert recipe["id"] == "mcpme.agent-python-adapter"
+        paths = sorted(item["path"] for item in options["files"])
+        body = {"import_id": draft["draft_id"], "revision": draft["revision"], "recipe": recipe,
+            "provider_id": row["provider_id"], "model": "gpt-6.1-sol", "selected_paths": paths,
+            "selected_metadata_paths": sorted(item["path"] for item in options["metadata_files"] if item["path"] not in paths)}
+        if not locked_admitted:
+            with pytest.raises(PreparationError, match="agent_recipe_not_admitted"):
+                await host.plan(body)
+        else:
+            plan = await host.plan(body)
+            assert plan["execution_available"] is True
+            assert plan["guide"]["component"] == family.component.reference.model_dump()
+        assert not host.tasks and not preparations.list()
+    finally:
+        await host.close()
 
 
 def mutate(artifact, damage):

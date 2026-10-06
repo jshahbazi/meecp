@@ -81,6 +81,35 @@ def test_string_annotations_do_not_evaluate_python(inspect_fixture):
     assert result["candidates"][0]["tools"][0]["input_schema"]["properties"]["value"]["type"] == "string"
 
 
+@pytest.mark.parametrize("test_path", ["tests/test_image_inputs.py", "test/helpers.py", "pkg/tests/helpers.py",
+    "test_worker.py", "pkg/worker_test.py", "conftest.py"])
+def test_test_helpers_do_not_become_the_only_app_tool(inspect_fixture, test_path):
+    _, run = inspect_fixture
+    draft, result = run({
+        "detector.py": "def detect_hotdog(image_path: str | None = None) -> dict:\n    return {}\n",
+        test_path: "def result() -> dict:\n    return {'is_hotdog': True}\n",
+    })
+    assert result["candidates"] == []
+    assert "supported_interface_selection_required" in result["blockers"]
+    # Retain tests in the source snapshot for external preparation and validation.
+    assert test_path in {item["path"] for item in draft["source"]["files"]}
+
+
+def test_test_helpers_do_not_hide_supported_application_function(inspect_fixture):
+    _, run = inspect_fixture
+    _, result = run({"worker.py": "def calculate(value: str) -> dict:\n    return {}\n",
+        "tests/helpers.py": "def result() -> dict:\n    return {}\n"})
+    assert [(item["module"], item["function"]) for item in result["candidates"]] == [("worker", "calculate")]
+
+
+def test_explicit_mcp_module_under_tests_is_still_observed(inspect_fixture):
+    _, run = inspect_fixture
+    _, result = run({"pyproject.toml": "[tool.mcpme]\nmcp_module='tests.server'\n",
+        "tests/server.py": "def result() -> dict:\n    return {}\n"})
+    candidate, = result["candidates"]
+    assert candidate["kind"] == "python-mcp" and candidate["module"] == "tests.server"
+
+
 @pytest.mark.parametrize("source", [
     "str = int\ndef calculate(value: str) -> dict:\n    return {}\n",
     "from custom import dict\ndef calculate(value: str) -> dict:\n    return {}\n",

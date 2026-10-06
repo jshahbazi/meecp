@@ -2609,8 +2609,10 @@ def management_app(host: Supervisor, token: str, port: int):
         Route("/v1/slots/{slot_id}/{action}", dispatch, methods=["POST"])])
     from .preparation_agent_host import agent_preparation_routes
     from .preparation_agent_providers import agent_provider_routes
+    from .preparation_provider_test import provider_test_routes
     policy = agent_preparation_routes(LocalPolicy(app, token=token, port=port, authenticate=authenticate), host.agent_preparations)
-    return agent_provider_routes(policy, host.agent_provider_registry)
+    policy = agent_provider_routes(policy, host.agent_provider_registry)
+    return provider_test_routes(policy, host.agent_provider_registry)
 
 
 async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None, *, preparation_runner_factory=None, resolution_runner_factory=None, agent_preparation_factory=None):

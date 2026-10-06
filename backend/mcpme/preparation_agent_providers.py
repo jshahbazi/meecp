@@ -1,4 +1,4 @@
-"""Owner-entered provider configuration and explicit synthetic connection tests.
+"""Owner-entered provider configuration; no discovery, dispatch or gate changes.
 
 The Supervisor owns the state lock. SecretStore keeps immutable values in this
 dedicated private namespace. Registry identities and digests contain only opaque
@@ -28,9 +28,7 @@ MAX_RECORDS = 128
 MAX_REGISTRY_BYTES = 512 * 1024
 ERRORS = frozenset({"agent_provider_request_rejected", "agent_provider_configuration_stale",
     "agent_provider_not_found", "agent_provider_limit", "agent_provider_unavailable",
-    "agent_provider_adapter_unavailable", "agent_provider_owner_required", "agent_provider_test_busy",
-    "agent_provider_authentication_failed", "agent_provider_model_unavailable", "agent_provider_rate_limited",
-    "agent_provider_test_incomplete", "agent_provider_test_timeout", "agent_provider_test_failed"})
+    "agent_provider_adapter_unavailable", "agent_provider_owner_required"})
 
 
 class AgentProviderError(ValueError):
@@ -77,10 +75,6 @@ class UpdateProvider(ProviderChoices):
 
 class RemoveProvider(VersionedProviderInput):
     expected_generation: UUID
-
-
-class TestProvider(RemoveProvider):
-    model: Identifier
 
 
 class ProviderRecord(StrictModel):
@@ -169,7 +163,6 @@ class AgentProviderRegistry:
             self.secrets = SecretStore(self.root)
             self.path = self.root / "providers.json"
             self._lock = threading.RLock()
-            self._test_active = False
             if not self.path.exists() and not self.path.is_symlink():
                 write_private_json(self.path, {"schema_version": 1, "providers": []})
             self._read()
@@ -368,42 +361,6 @@ class AgentProviderRegistry:
                     result.append(self.configuration(record.provider_id))
             return tuple(result)
 
-    async def test_connection(self, provider_id, payload, *, owner_authorized=False):
-        if owner_authorized is not True:
-            raise AgentProviderError("agent_provider_owner_required")
-        try:
-            choices = TestProvider.model_validate(payload)
-        except Exception:
-            raise AgentProviderError("agent_provider_request_rejected") from None
-        with self._lock:
-            record = self._record(self._read(), provider_id)
-            if record.status != "active" or record.generation != choices.expected_generation:
-                raise AgentProviderError("agent_provider_configuration_stale")
-            if choices.model not in record.models:
-                raise AgentProviderError("agent_provider_request_rejected")
-            configuration = self.configuration(provider_id)
-            if not callable(getattr(configuration.backend, "test_connection", None)):
-                raise AgentProviderError("agent_provider_adapter_unavailable")
-            if self._test_active:
-                raise AgentProviderError("agent_provider_test_busy")
-            self._test_active = True
-        try:
-            await configuration.backend.test_connection(configuration.credential_ref, choices.model)
-            # Reject stale success if a profile or its credential changed while
-            # the request was in flight. Connection tests confer no job authority.
-            self._resolve(provider_id, record.generation, record.credential_generation)
-            return {"schema_version": 1, "provider_id": provider_id, "generation": record.generation,
-                "model": choices.model, "status": "connected"}
-        except PreparationError as error:
-            raise AgentProviderError(error.code if error.code in ERRORS else "agent_provider_test_failed") from None
-        except AgentProviderError:
-            raise
-        except Exception:
-            raise AgentProviderError("agent_provider_test_failed") from None
-        finally:
-            with self._lock:
-                self._test_active = False
-
     def dispatch(self, method, path, payload=None, *, owner_authorized=False):
         if owner_authorized is not True:
             raise AgentProviderError("agent_provider_owner_required")
@@ -434,10 +391,7 @@ def agent_provider_routes(local_policy, registry):
             if data is not None and len(data) > 64 * 1024:
                 raise AgentProviderError("agent_provider_request_rejected")
             payload = None if data is None else load_json(data)
-            if request.url.path.endswith("/test"):
-                result = await registry.test_connection(request.path_params["provider_id"], payload, owner_authorized=True)
-            else:
-                result = registry.dispatch(request.method, request.url.path, payload, owner_authorized=True)
+            result = registry.dispatch(request.method, request.url.path, payload, owner_authorized=True)
             return JSONResponse(result | {"api_version": 1})
         except AgentProviderError as error:
             status = {"agent_provider_configuration_stale": 409, "agent_provider_not_found": 404}.get(error.code, 400)
@@ -449,6 +403,5 @@ def agent_provider_routes(local_policy, registry):
         Route("/v1/agent-providers", dispatch, methods=["GET", "POST"]),
         Route("/v1/agent-providers/{provider_id}", dispatch, methods=["POST"]),
         Route("/v1/agent-providers/{provider_id}/remove", dispatch, methods=["POST"]),
-        Route("/v1/agent-providers/{provider_id}/test", dispatch, methods=["POST"]),
     ])
     return local_policy

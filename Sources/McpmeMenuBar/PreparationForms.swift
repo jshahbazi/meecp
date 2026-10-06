@@ -266,6 +266,17 @@ struct OnboardingFormV1 {
     let resolutionAvailable: Bool
     let resolutionPolicy: PreparationResolutionPolicy?
 
+    var unavailableMessage: String? {
+        if candidates.isEmpty {
+            return "Guided setup couldn't find a supported app entry point in this folder. Choose Use my coding agent to create a prepared package."
+        }
+        guard candidateID != nil, recipe != nil else { return nil }
+        if resolutionRequired ? !resolutionAvailable : !executionAvailable {
+            return "This copy of mcpme can't prepare this app automatically. Choose Use my coding agent, then import the package it creates."
+        }
+        return nil
+    }
+
     init?(_ object: [String: Any]) {
         let keys: Set<String> = ["schema_version", "import_id", "revision", "source_revision", "form_digest", "candidate_id", "recipe",
             "candidate_choices", "recipe_choices", "fields", "tools", "blockers", "execution_available"]
@@ -630,15 +641,17 @@ final class PreparationWorkspaceView: NSStackView {
         let enabled = available?() == true && saved && eligible && context != nil && !busy && !hasActiveJob
         let currentForm = form.map { $0.importID == context?.importID && $0.revision == context?.revision && $0.sourceRevision == context?.sourceRevision } == true
         candidatePicker.isEnabled = enabled && currentForm; recipePicker.isEnabled = enabled && currentForm
-        formView.setEditable(enabled && currentForm)
+        let questionsAvailable = currentForm && form?.unavailableMessage == nil
+        formView.isHidden = !questionsAvailable
+        formView.setEditable(enabled && questionsAvailable)
         refreshButton?.isEnabled = enabled
-        reviewButton?.isEnabled = enabled && currentForm && form?.candidateID != nil && form?.recipe != nil && form?.resolutionRequired != true && formView.answers() != nil
+        reviewButton?.isEnabled = enabled && questionsAvailable && form?.candidateID != nil && form?.recipe != nil && form?.resolutionRequired != true && form?.blockers.isEmpty == true && formView.answers() != nil
         startButton?.isEnabled = enabled && review?.context == context && review?.canStart() == true
         candidateRow?.isHidden = form == nil || (form?.candidates.count ?? 0) < 2 && form?.candidateID != nil
         recipeRow?.isHidden = form == nil || (form?.recipes.count ?? 0) < 2 && form?.recipe != nil
         refreshButton?.isHidden = hasActiveJob
         refreshButton?.title = form == nil ? "Continue Setup" : "Reload Questions"
-        reviewButton?.isHidden = form == nil || review?.canStart() == true || form?.resolutionRequired == true || hasActiveJob
+        reviewButton?.isHidden = !questionsAvailable || review?.canStart() == true || form?.resolutionRequired == true || hasActiveJob
         startButton?.isHidden = review?.canStart() != true || hasActiveJob
         resolutionStartButton?.isHidden = resolutionReview == nil || hasActiveJob
         reviewText.enclosingScrollView?.isHidden = reviewText.string.isEmpty
@@ -650,10 +663,10 @@ final class PreparationWorkspaceView: NSStackView {
         cancelButton?.isEnabled = available?() == true && !busy && job?.active == true && job?.state != "cancel_requested"
         cancelButton?.isHidden = job == nil
         let requiresResolution = currentForm && form?.resolutionRequired == true
-        resolutionStatus.isHidden = !requiresResolution && resolutionReview == nil && resolutionJob == nil
-        resolutionReviewButton.isHidden = !requiresResolution || resolutionReview?.canStart() == true || hasActiveJob
+        resolutionStatus.isHidden = (!requiresResolution || !questionsAvailable) && resolutionReview == nil && resolutionJob == nil
+        resolutionReviewButton.isHidden = !requiresResolution || !questionsAvailable || resolutionReview?.canStart() == true || hasActiveJob
         resolutionStartButton.isHidden = !requiresResolution || resolutionReview?.canStart() != true || hasActiveJob
-        resolutionReviewButton.isEnabled = enabled && requiresResolution && form?.resolutionPolicy != nil
+        resolutionReviewButton.isEnabled = enabled && questionsAvailable && requiresResolution && form?.resolutionPolicy != nil
         resolutionStartButton.isEnabled = enabled && requiresResolution && form?.resolutionAvailable == true && resolutionReview?.context == context && resolutionReview?.canStart() == true
         resolutionCancelButton.isHidden = resolutionJob == nil || resolutionJob?.active != true || resolutionJob?.needsRecovery == true
         resolutionCancelButton.isEnabled = available?() == true && !busy && resolutionJob?.active == true && resolutionJob?.state != "cancel_requested" && resolutionJob?.needsRecovery != true
@@ -702,8 +715,9 @@ final class PreparationWorkspaceView: NSStackView {
             self.formView.configure(fields: form.fields, values: form.values)
             self.resolutionStatus.stringValue = form.resolutionRequired ? "The host must resolve dependencies" + (form.resolutionOperations.contains("discover_interface") ? " and discover this App's tools" : "") + " before package preparation. Review the scope below." : form.resolutionDigest != nil ? "Resolved dependencies and tools are bound to this source and candidate." : ""
             if form.resolutionRequired, let policy = form.resolutionPolicy { self.resolutionStatus.stringValue += "\n" + policy.display }
-            self.status.stringValue = form.blockers.isEmpty ? "Answer the questions, then review your app's tools and access." :
-                "To continue: " + form.blockers.map { $0.replacingOccurrences(of: "_", with: " ") }.joined(separator: "; ") + "."
+            self.status.stringValue = form.unavailableMessage ?? (form.blockers.isEmpty ?
+                "Detected: " + (form.candidates.first(where: { $0.id == form.candidateID })?.label ?? "app") + ". Answer the questions, then review your app's tools and access." :
+                "To continue: " + form.blockers.map { $0.replacingOccurrences(of: "_", with: " ") }.joined(separator: "; ") + ".")
             self.updateControls(); self.onStateChange?()
         }
     }
@@ -753,7 +767,7 @@ final class PreparationWorkspaceView: NSStackView {
     @objc func reviewForm() {
         guard !busy, !hasActiveJob, saved, eligible, available?() == true, let context, let form,
               form.importID == context.importID, form.revision == context.revision, form.sourceRevision == context.sourceRevision,
-              !form.resolutionRequired,
+              !form.resolutionRequired, form.unavailableMessage == nil, form.blockers.isEmpty,
               let candidate = form.candidateID, let recipe = form.recipe, let answers = formView.answers(), let request else { return }
         epoch &+= 1; let expected = epoch; busy = true; polling = false; review = nil; startKey = nil; reviewText.string = ""
         status.stringValue = "Reviewing the exact preparation inputs…"; updateControls(); onStateChange?()
@@ -1470,6 +1484,18 @@ extension PreparationWorkspaceView {
         view.bind(second, saved: true, eligible: true); stale.complete(PreparationTestData.form(), nil)
         guard view.form == nil, !view.busy else { return false }
         view.refreshForm(); calls.removeFirst().complete(PreparationTestData.form(revision: 2), nil)
+        guard view.form?.revision == 2, !view.reviewButton.isEnabled, view.reviewButton.isHidden, view.formView.isHidden,
+              view.status.stringValue.contains("can't prepare this app automatically") else { return false }
+        view.reviewForm(); guard calls.isEmpty else { return false }
+        var unsupported = PreparationTestData.form(revision: 2)
+        unsupported["candidate_choices"] = []; unsupported["candidate_id"] = NSNull()
+        unsupported["recipe_choices"] = []; unsupported["recipe"] = NSNull(); unsupported["fields"] = []
+        unsupported["tools"] = []; unsupported["blockers"] = ["supported_interface_selection_required"]
+        view.bind(nil, saved: true, eligible: true); view.bind(second, saved: true, eligible: true)
+        view.refreshForm(); calls.removeFirst().complete(unsupported, nil)
+        guard !view.reviewButton.isEnabled, view.formView.isHidden,
+              view.status.stringValue.contains("couldn't find a supported app entry point") else { return false }
+        view.refreshForm(); calls.removeFirst().complete(PreparationTestData.form(revision: 2, available: true), nil)
         guard view.form?.revision == 2, view.reviewButton.isEnabled, !view.startButton.isEnabled else { return false }
         view.reviewForm(); guard calls.count == 1, calls[0].path == "v1/preparations/plan-form", Set(calls[0].body!.keys) == ["import_id", "revision", "candidate_id", "recipe", "form_digest", "answers"],
             (calls[0].body?["answers"] as? [String: Any])?.count == 7 else { return false }

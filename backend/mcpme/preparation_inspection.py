@@ -137,6 +137,13 @@ def _source_module(path: str) -> str | None:
     return module if _MODULE.fullmatch(module) and len(module) <= 256 else None
 
 
+def _test_source(path: str) -> bool:
+    """Test helpers are not inferred app entry points; explicit MCP declarations remain valid."""
+    path = PurePosixPath(path)
+    return (any(part in {"test", "tests"} for part in path.parts[:-1])
+        or path.name == "conftest.py" or path.name.startswith("test_") or path.name.endswith("_test.py"))
+
+
 def _bound_names(node: ast.AST) -> set[str]:
     """Find top-level bindings that make builtin annotation names ambiguous."""
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -229,7 +236,7 @@ def inspect_source(draft: dict) -> dict:
                 "unresolved": unresolved}, snapshot.revision))
             if len(candidates) > MAX_CANDIDATES:
                 raise PreparationError("preparation_inspection_limit")
-    python_files = [file for file in snapshot.files if file.path.endswith(".py")]
+    python_files = [file for file in snapshot.files if file.path.endswith(".py") and not _test_source(file.path)]
     total_bytes = 0
     for index, file in enumerate(python_files):
         if index >= MAX_PYTHON_FILES or file.size > MAX_AST_BYTES or total_bytes + file.size > MAX_AST_TOTAL_BYTES:

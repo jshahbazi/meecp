@@ -90,6 +90,11 @@ def capabilities(host=None) -> dict:
             "preparation_descriptor_schema_versions": [1], "recipe_bundle_schema_versions": [1],
             "recipe_management": "local_static_declarative", "recipe_execution": False,
             "automatic_preparation": False,
+            "pi_setup": {"engine": "pi", "credentials": "owner_only", "profiles": ["mcp-stdio"],
+                         "recipe_required": False, "dependency_ecosystems": ["python"],
+                         "execution": host is not None and not host.closing and
+                                      getattr(host, "pi_setup", None) is not None and not host.pi_setup.closed and
+                                      (host.pi_setup.runtime_root / "inventory.json").is_file()},
             "preparation_resolution": {"schema_versions": [1], "credentials": "owner_and_exact_execution_grants", "execution": False,
                                        "operations": ["resolve_dependencies", "discover_interface"]},
             "configuration": {"schema_versions": [1], "types": ["string", "integer", "boolean"],
@@ -382,6 +387,8 @@ class Supervisor(UpgradeHost):
             self.agent_preparations = factory(self.preparations, self.root / "agent-preparations",
                 **({"provider_registry": self.agent_provider_registry, "execution_admission": agent_execution_admission}
                     if agent_preparation_factory is None else {}))
+            from .pi_setup import PiSetup
+            self.pi_setup = PiSetup(self)
         except BaseException:
             if hasattr(self, "imports"):
                 self.imports.close()
@@ -2123,7 +2130,7 @@ class Supervisor(UpgradeHost):
                         with contextlib.suppress(Exception, asyncio.CancelledError):
                             await _await_ownership(task)
                 failures = []
-                for runner in (self.agent_preparations, self.preparation_runner, self.capture_runner, self.resolution_runner):
+                for runner in (self.pi_setup, self.agent_preparations, self.preparation_runner, self.capture_runner, self.resolution_runner):
                     try:
                         await runner.close()
                     except (OwnershipLost, ArtifactError, PreparationError) as error:
@@ -2602,7 +2609,8 @@ def management_app(host: Supervisor, token: str, port: int):
     from .preparation_agent_host import agent_preparation_routes
     from .preparation_agent_providers import agent_provider_routes
     policy = agent_preparation_routes(LocalPolicy(app, token=token, port=port, authenticate=authenticate), host.agent_preparations)
-    return agent_provider_routes(policy, host.agent_provider_registry)
+    from .pi_setup import pi_setup_routes
+    return pi_setup_routes(agent_provider_routes(policy, host.agent_provider_registry), host.pi_setup)
 
 
 async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None, *, preparation_runner_factory=None, resolution_runner_factory=None, agent_preparation_factory=None):

@@ -14,7 +14,7 @@ Run a JSON validator alongside a local decision model. Connect several clients t
 - **Manage apps in one place.** Search and filter the app sidebar, then select an app for live requests, tools, connection details, and recent operations. Start, stop, or restart a service. Choose **Manual** or **Automatic when mcpme opens**, or remove the app while keeping its data for recovery.
 - **Connect your assistant.** Copy an app's connection configuration and add it to your MCP client. Its endpoint stays stable across restarts.
 - **Share a local model.** Use a model of your choice through a prepared package, and connect multiple assistants to the same running app.
-- **Bring your own tools.** Install a prepared package, or start from source code and use an external coding agent to prepare it.
+- **Bring your own tools.** Choose source, paste a project link, or describe an app. The bundled Pi agent prepares its MCP integration with your configured model, then opens package review.
 - **Give an assistant management access.** Create an expiring grant for a separate management MCP connection. Allow inspection, preparation, controls for selected apps, or installation of one reviewed plan.
 
 mcpme requires **Apple silicon and macOS 26 or later**. The supported features and remaining work are listed below.
@@ -27,7 +27,7 @@ Open the disk image, open `mcpme.app` on the image, and choose **Install and Res
 
 The installer waits up to 75 seconds for the current app to quit. A refusal or timeout stops replacement. A confirmed launch failure restores the previous bundle; an unconfirmed launch leaves a recovery copy. Installing manually by dragging the app from the DMG to Applications requires quitting mcpme before copying, then opening the installed app. See [macOS distribution](docs/MACOS_DISTRIBUTION.md) for installation and recovery details.
 
-The installer includes **JSON Utilities**, a small local tool you can try immediately. Open **Add App…**, select **Try JSON Utilities**, review its tool and access, then select **Add App** or **Add & Start App**. No package download, compiler, or model is needed. Other apps can be added from a prepared package or through the source-preparation workflow below. Application updates currently use this installation flow; an [automatic updater is planned](docs/AUTO_UPDATE_PLAN.md).
+The installer includes **JSON Utilities**, a small local tool you can try immediately. Open **Add App…**, expand **Advanced setup options**, select **Try JSON Utilities**, review its tool and access, then select **Add App** or **Add & Start App**. No package download, compiler, or model is needed. Other apps can be added from a prepared package or through the Pi setup workflow below. Application updates currently use this installation flow; an [automatic updater is planned](docs/AUTO_UPDATE_PLAN.md).
 
 ## Build from source and try JSON Utilities
 
@@ -43,7 +43,7 @@ uv run --locked python scripts/prepare_json_package.py
 open dist/mcpme.app
 ```
 
-The app bundles its own Python runtime and dependencies. Once built, it can run without `uv`, Homebrew, or the checkout. Builders require a fresh output path; for another app build, pass `--output dist/mcpme-dev.app`.
+The app bundles its own Python runtime and dependencies, Pi SDK, and verified Apple silicon Node runtime. Once built, it can run without globally installed Pi, Node, `uv`, Homebrew, or the checkout. Builders require a fresh output path; for another app build, pass `--output dist/mcpme-dev.app`.
 
 1. Open **Add App…** from the menu bar and choose `dist/json-utilities-package`.
 2. Check **Start after install**, then select **Review Package** to see the tools and declared access.
@@ -65,19 +65,19 @@ Local builds are ad hoc signed development artifacts. The DMG builder creates a 
 
 ## Bring your own tools
 
-A useful script can become a tool your assistant calls. **Add App** accepts local source folders and Markdown or text setup instructions, as well as prepared packages.
+A useful script can become a tool your assistant calls. In **Add App**, choose a source folder or Markdown/text setup file, paste a public HTTPS project link, or describe the app you want. For a single source script, choose its containing folder.
 
-Describe what you want your assistant to do, then use **Copy Agent Instructions** to hand preparation to your coding agent. The agent builds a package in a separate workspace. Bring it back with **Import Prepared Package…**, review the tools and access it declares, and install it. Your draft is saved, so you can close the window and pick up later.
+Describe what your assistant should be able to do. Open **Model Settings…** to choose the provider and exact model ID and save your API key; an existing local OpenAI-compatible endpoint is also supported. Select **Set Up App**. The bundled Pi coding agent writes and tests the integration in a private workspace, using host-controlled files, commands, public downloads, and Python dependency installation. You do not select or author recipes.
 
-The agent does the work of exposing your code through MCP. mcpme snapshots and inspects the source without running it, binds the returned package to the saved source revision, then checks the package before installation. Installation runs candidate readiness and protocol checks, including when **Start after install** is off. See [source onboarding](docs/PHASE2_ONBOARDING.md) for the implemented workflow and the [package-authoring guide](docs/PACKAGE_AUTHORING.md) for manifests, locked artifacts, and templates.
+After independent package and MCP fixture checks, mcpme opens the generated package for review. Check its tools, access, configuration, and startup choices, then select **Add App** or **Add & Start App**. Drafts and progress survive closing the window; **Cancel Setup** stops setup work. See [Pi setup](docs/PI_SETUP.md) for model configuration, data sharing, execution boundaries, and current limits.
 
-If a publisher gives you a prepared package link, open **I already have a package download link** in Add App and select **Enter Package Link…**. Supply the publisher's URL, size, and checksum, then review the verified package. This is a manual download option; there is no public package browser. The owner CLI supports the same [pinned downloads](docs/PINNED_DOWNLOADS.md).
+Python preparation supports locked public PyPI wheels and a private Python runtime. Node dependency installation is currently unavailable, and the Pi verifier currently accepts `mcp-stdio` packages. General reliability across arbitrary projects has not been established. Prepared packages and earlier external-agent handoff remain available through **Advanced setup options** and the [package-authoring guide](docs/PACKAGE_AUTHORING.md).
+
+If a publisher gives you a prepared package link, expand **Advanced setup options** in Add App, open **I already have a package download link**, and select **Enter Package Link…**. Supply the publisher's URL, size, and checksum, then review the verified package. This is a manual download option; there is no public package browser. The owner CLI supports the same [pinned downloads](docs/PINNED_DOWNLOADS.md).
 
 Packages can declare [typed configuration and secret references](docs/CONFIGURATION_SECRETS.md). The owner selects nonsecret settings and private credential references in the installation plan; package processes receive the selected values through a private descriptor.
 
-Add App supports pinned package downloads, typed configuration and secret references, and raw pinned JevK5 weights with a selected verified engine. Reviewed [upgrades and recovery](docs/UPGRADES_RECOVERY.md) preserve app identity and data. Reference-document services and integrated provider preparation remain later work; see the [completion audit](docs/PHASE2_COMPLETION.md).
-
-The next onboarding milestone is [automatic app preparation](docs/AUTOMATIC_PREPARATION.md): select an app directory or configure a service connection, answer missing questions, and let mcpme assemble and test the integration. Packages are generated installation artifacts; users should not need to write manifests or assemble dependency trees. The merged preparation foundation manages recipes and job identities, but automatic build execution is not yet available. Supported build recipes and agent-assisted adapter creation will use the same review/install path.
+Advanced Add App paths support pinned package downloads, typed configuration and secret references, and raw pinned JevK5 weights with a selected verified engine. Reviewed [upgrades and recovery](docs/UPGRADES_RECOVERY.md) preserve app identity and data. Reference-document services and additional dependency ecosystems remain separate work. The [automatic preparation plan](docs/AUTOMATIC_PREPARATION.md) records the earlier recipe foundation and its gated execution profiles; Pi setup uses the normal package review/install contract.
 
 ## Let an assistant manage apps
 
@@ -115,7 +115,7 @@ The fetch verifies the pinned revision, size, and SHA-256; the model download is
 
 ## Where things stand
 
-The current host supports `mcp-stdio` packages for CPU tools, authenticated `mcp-http` server factories, and `model-service` packages with a shared model engine. JevK5-4B and JSON Utilities have been tested together. Source imports, saved drafts, external-agent preparation, scoped management MCP and reviewed upgrades are implemented. The host currently permits one resident GPU package; first-call wake loading remains unsupported.
+The current host supports `mcp-stdio` packages for CPU tools, authenticated `mcp-http` server factories, and `model-service` packages with a shared model engine. JevK5-4B and JSON Utilities have been tested together. Source imports, saved drafts, internal Pi setup, external-agent preparation, scoped management MCP and reviewed upgrades are implemented. The host currently permits one resident GPU package; first-call wake loading remains unsupported.
 
 **Start at Login** is implemented through macOS ServiceManagement; registration and next-login behavior for the development bundle still need verification. Reviewed package upgrades and exposure-aware recovery are implemented. An automatic host updater remains planned. Live request counters are limited to the current host session, while model-runtime statistics reset with that runtime.
 
@@ -131,6 +131,7 @@ swift test
 .build/debug/McpmeMenuBar --native-self-test
 .build/debug/McpmeMenuBar --dashboard-ui-self-test
 .build/debug/McpmeMenuBar --management-ui-self-test
+.build/debug/McpmeMenuBar --pi-setup-ui-self-test
 ```
 
 For the opt-in installer lifecycle checks, run `MCPME_RUN_INSTALL_LIFECYCLE_TESTS=1 swift test`; they create and replace synthetic app bundles. See [macOS distribution](docs/MACOS_DISTRIBUTION.md) for the checks and their limits. UI previews are available through `.build/debug/McpmeMenuBar --ui-preview` and `--manage-preview`, without modifying host state.
@@ -138,6 +139,7 @@ For the opt-in installer lifecycle checks, run `MCPME_RUN_INSTALL_LIFECYCLE_TEST
 - [Implementation guide](docs/MCPME_STATUS.md): CLI usage, builds, package contracts, and migration.
 - [Host design](docs/MCPME_DESIGN.md): architecture and planned features.
 - [Source onboarding](docs/PHASE2_ONBOARDING.md), [package authoring](docs/PACKAGE_AUTHORING.md), and [management MCP](docs/MANAGEMENT_MCP.md): preparation, review, and assistant access.
+- [Pi setup](docs/PI_SETUP.md): internal coding agent, model settings, dependency support, and execution/verification contracts.
 - [macOS distribution](docs/MACOS_DISTRIBUTION.md), [GitHub releases](docs/GITHUB_RELEASES.md), and [automatic update plan](docs/AUTO_UPDATE_PLAN.md): installation, release verification, and planned updates.
 - [Verification](docs/MCPME_VERIFICATION.md): tested behavior and known limits.
 - [Visual identity](docs/BRAND.md): artwork, icons, and the [menu bar preview](assets/brand/icon-preview.html).

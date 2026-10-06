@@ -39,7 +39,7 @@ struct DashboardDetails: Equatable {
 }
 
 /// Screens use AppKit's global coordinate system. Keep the menu aligned with its
-/// status button, then open details on the side with room without shifting it.
+/// status button's left edge, then open details on the side with room without shifting it.
 func dashboardFrames(anchor: NSRect, screen: NSRect, showsDetails: Bool) -> (menu: NSRect, details: NSRect?) {
     let inset: CGFloat = 8
     let gap: CGFloat = 10
@@ -47,7 +47,7 @@ func dashboardFrames(anchor: NSRect, screen: NSRect, showsDetails: Bool) -> (men
     let menuWidth = min(350, safe.width)
     let menuHeight = min(650, safe.height)
     let detailsHeight = min(650, safe.height)
-    let x = min(max(anchor.maxX - menuWidth, safe.minX), safe.maxX - menuWidth)
+    let x = min(max(anchor.minX, safe.minX), safe.maxX - menuWidth)
     let top = min(max(anchor.minY - 5, safe.minY + menuHeight), safe.maxY)
     let menu = NSRect(x: x, y: top - menuHeight, width: menuWidth, height: menuHeight)
     guard showsDetails else { return (menu, nil) }
@@ -764,6 +764,13 @@ final class MenuDashboard: NSObject, NSWindowDelegate {
 
 /// Exercises menu selection, presentation, and keyboard routing without contacting a host.
 func dashboardViewSelfTest() -> Bool {
+    for screen in [NSRect(x: 0, y: 0, width: 1512, height: 944),
+                   NSRect(x: -1024, y: 200, width: 1024, height: 700)] {
+        let anchor = NSRect(x: screen.minX + 100, y: screen.maxY, width: 24, height: 24)
+        let frames = dashboardFrames(anchor: anchor, screen: screen, showsDetails: false)
+        guard frames.menu.minX == anchor.minX, frames.menu.maxX > anchor.maxX,
+              frames.menu == dashboardFrames(anchor: anchor, screen: screen, showsDetails: true).menu else { return false }
+    }
     for width in [CGFloat(300), CGFloat(360)] {
         let screen = NSRect(x: -360, y: 200, width: width, height: 700)
         let anchor = NSRect(x: screen.maxX - 24, y: screen.maxY, width: 24, height: 24)

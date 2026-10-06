@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 import json
 import os
 import socket
@@ -83,7 +83,7 @@ def server():
 
 
 @asynccontextmanager
-async def service():
+async def service(*, lifecycle=None):
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(128)
@@ -91,6 +91,8 @@ async def service():
     port = listener.getsockname()[1]
     configuration = {"endpoint": {"host": "127.0.0.1", "port": port}, "api_key": "k" * 64, "nonce": "a" * 64,
                      "generation": 1, "model": None, "dependencies": {}}
+    if lifecycle is not None:
+        configuration["lifecycle"] = lifecycle
     app, manager = make_http_app(server(), configuration)
     runtime = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, log_level="critical", access_log=False))
     task = asyncio.create_task(runtime.serve(sockets=[listener]))
@@ -136,6 +138,32 @@ async def test_private_http_identity_policy_real_sdk_and_delete():
             assert session_id not in manager._server_instances
             response = await http.delete(endpoint + "/mcp", headers={"mcp-session-id": session_id, "mcp-protocol-version": "2025-11-25"})
             assert response.status_code == 404
+
+
+async def test_private_http_clients_ignore_legacy_session_cap_and_delete_independently():
+    async with service(lifecycle={"max_sessions": 1}) as (endpoint, config, manager):
+        assert manager.max_sessions is None
+        assert manager.session_idle_timeout == 300 and manager.max_request_body_size == 1048576
+        headers = {"authorization": "Bearer " + config["api_key"]}
+        async with AsyncExitStack() as connections:
+            clients, ids = [], []
+            http = await connections.enter_async_context(httpx.AsyncClient(headers=headers, trust_env=False, timeout=10))
+            for _ in range(12):
+                read, write, session_id = await connections.enter_async_context(
+                    streamable_http_client(endpoint + "/mcp", http_client=http))
+                client = await connections.enter_async_context(ClientSession(read, write))
+                await client.initialize()
+                clients.append(client)
+                ids.append(session_id())
+            assert len(set(ids)) == len(manager._server_instances) == 12
+            results = await asyncio.gather(*(client.call_tool("add", {"left": index, "right": 2})
+                for index, client in enumerate(clients)))
+            assert [result.structuredContent for result in results] == [{"total": index + 2} for index in range(12)]
+            assert (await http.delete(endpoint + "/mcp", headers={"mcp-session-id": ids[0],
+                "mcp-protocol-version": "2025-11-25"})).status_code == 200
+            assert ids[0] not in manager._server_instances and set(ids[1:]) == set(manager._server_instances)
+            assert (await clients[-1].call_tool("add", {"left": 20, "right": 2})).structuredContent == {"total": 22}
+        assert not manager._server_instances
 
 
 def test_http_factory_blocks_extra_capabilities_before_readiness():

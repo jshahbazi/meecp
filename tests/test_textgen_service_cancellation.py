@@ -204,19 +204,54 @@ async def test_actual_stateful_routes_preserve_auth_host_origin_and_deleted_sess
             assert response.status_code == 404
 
 
-async def test_actual_private_session_limit_and_normal_sdk_delete_reclaims_admission():
+async def test_many_private_clients_share_bounded_execution_and_independent_cancellation():
     model = ControlledModel()
-    async with live_service(model) as (endpoint, _):
+    active = []
+    async with live_service(model) as (endpoint, auxiliary):
+        manager = auxiliary.state.mcp.session_manager
+        assert manager.max_sessions is None
+        assert manager.session_idle_timeout == 300 and manager.max_request_body_size == 32768
         async with AsyncExitStack() as clients:
-            for _ in range(8):
-                await clients.enter_async_context(sdk_client(endpoint))
-            async with httpx.AsyncClient(headers={"Authorization": "Bearer synthetic-service-key",
-                    "Accept": "application/json, text/event-stream"}, trust_env=False, timeout=3) as http:
-                response = await http.post(endpoint, json={"jsonrpc": "2.0", "id": 1, "method": "initialize",
-                    "params": {"protocolVersion": "2025-11-25", "capabilities": {},
-                        "clientInfo": {"name": "over-capacity", "version": "1"}}})
-                assert response.status_code == 503
-        async with sdk_client(endpoint) as (client, _, session_id, _):
-            assert session_id()
-            result = await client.call_tool("text_status", {})
-            assert result.structuredContent["ready"] and model.start_count == 1
+            connected = [await clients.enter_async_context(sdk_client(endpoint)) for _ in range(12)]
+            ids = {session_id() for _, _, session_id, _ in connected}
+            assert len(ids) == 12 and ids == set(manager._server_instances)
+            try:
+                for index in range(4):
+                    active.append(asyncio.create_task(connected[index][0].call_tool("text_generate",
+                        {"text": "synthetic", "max_output_tokens": 1})))
+                    async with asyncio.timeout(3):
+                        while model.adapter.pending != index + 1:
+                            await asyncio.sleep(.005)
+                await started(model)
+                assert model.transport.calls == 1 and model.adapter.queue_limit == 4
+                overflow = await connected[8][0].call_tool("text_generate", {"text": "synthetic", "max_output_tokens": 1})
+                assert overflow.isError and overflow.content[0].text == "queue_full"
+                assert model.adapter.pending == 4 and model.transport.calls == 1
+                status = await connected[9][0].call_tool("text_status", {})
+                assert status.structuredContent["queue_depth"] == 4
+                canceling, observed, _, _ = connected[1]
+                await canceling.send_notification(ClientNotification(CancelledNotification(
+                    params=CancelledNotificationParams(requestId=observed.request_ids[-1]))))
+                with pytest.raises(McpError):
+                    await asyncio.wait_for(asyncio.shield(active[1]), 3)
+                async with asyncio.timeout(3):
+                    while model.adapter.pending != 3:
+                        await asyncio.sleep(.005)
+                assert model.transport.active and model.transport.calls == 1
+                _, _, deleted_id, http = connected[10]
+                response = await http.delete(endpoint, headers={"mcp-session-id": deleted_id(),
+                    "mcp-protocol-version": "2025-11-25"})
+                assert response.status_code == 200
+                assert set(manager._server_instances) == ids - {deleted_id()}
+                assert (await connected[11][0].call_tool("text_status", {})).structuredContent["ready"]
+                model.transport.release.set()
+                results = await asyncio.wait_for(asyncio.gather(active[0], active[2], active[3]), 3)
+                assert all(not result.isError for result in results)
+                await settled(model)
+                assert model.transport.calls == model.adapter.completed == 3 and model.start_count == 1
+                result = await canceling.call_tool("text_generate", {"text": "synthetic", "max_output_tokens": 1})
+                assert not result.isError and model.transport.calls == 4
+            finally:
+                model.transport.release.set()
+                await _await_ownership(asyncio.gather(*active, return_exceptions=True))
+        assert not manager._server_instances

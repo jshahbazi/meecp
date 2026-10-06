@@ -16,7 +16,7 @@ from mcpme.preparation_agent_unlocked import descriptor_for as unlocked_descript
 from mcpme.preparation_components import ComponentReference
 from mcpme.preparation_contracts import RecipeReference, canonical_bytes
 from mcpme.preparation_inputs import DescriptorView
-from test_mcpme_gateway import HEADERS, INIT, VSCODE_CLIENT_CAPABILITIES, client, live_gateway
+from test_mcpme_gateway import live_gateway
 
 
 # A complete synthetic one-pixel PNG, never an owner image or filesystem path.
@@ -61,8 +61,10 @@ async def editor_client(endpoint, socket_path, limit):
 async def test_discovery_session_does_not_block_separate_image_execution(factory, component):
     contract = generated_contract(factory, component)
     lifecycle = contract["lifecycle"]
-    async with live_gateway(max_sessions=lifecycle["max_sessions"],
-            max_request_bytes=lifecycle["max_request_bytes"]) as (endpoint, owner, gateway):
+    # Historical descriptors still retain this immutable metadata; production
+    # gateways no longer use it to limit connection admission.
+    assert lifecycle["max_sessions"] == 2
+    async with live_gateway(max_request_bytes=lifecycle["max_request_bytes"]) as (endpoint, owner, gateway):
         async with editor_client(endpoint, owner.socket_path, lifecycle["max_request_bytes"]) as discovery:
             assert (await discovery.list_tools()).tools[0].name == "echo"
             async with editor_client(endpoint, owner.socket_path, lifecycle["max_request_bytes"]) as execution:
@@ -70,17 +72,15 @@ async def test_discovery_session_does_not_block_separate_image_execution(factory
                 assert not result.isError
                 assert result.structuredContent == {"value": "data:image/png;base64," + IMAGE}
                 assert len(owner.processes) == owner.launched == 2
-                # The bounded capacity is still enforced before launching a
-                # third runtime, and a rejected client cannot evict discovery.
-                async with client(endpoint) as http:
-                    initial = {**INIT, "params": {**INIT["params"], "capabilities": VSCODE_CLIENT_CAPABILITIES}}
-                    assert (await http.post(endpoint, json=initial, headers=HEADERS)).status_code == 429
-                assert owner.launched == 2
-                assert (await discovery.list_tools()).tools[0].name == "echo"
+                async with editor_client(endpoint, owner.socket_path, lifecycle["max_request_bytes"]) as third:
+                    output = await third.call_tool("echo", {"value": IMAGE})
+                    assert not output.isError and output.structuredContent == {"value": IMAGE}
+                    assert len(owner.processes) == owner.launched == 3
+                    assert (await discovery.list_tools()).tools[0].name == "echo"
             assert (await discovery.list_tools()).tools[0].name == "echo"
         for _ in range(100):
             if not gateway.sessions:
                 break
             await asyncio.sleep(0.01)
         assert not gateway.sessions and not owner.processes
-        assert len(owner.closed) == 2
+        assert len(owner.closed) == 3

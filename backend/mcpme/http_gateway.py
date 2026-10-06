@@ -210,7 +210,7 @@ class HTTPGateway(Gateway):
         async with self.lock:
             if self.stopping or not self.active():
                 raise RuntimeError("slot_stopped")
-            if len(self.reservations) >= self.max_sessions:
+            if self.max_sessions is not None and len(self.reservations) >= self.max_sessions:
                 raise RuntimeError("session_limit")
             sid = secrets.token_hex(24)
             self.reservations.add(sid)
@@ -324,7 +324,7 @@ class HTTPGateway(Gateway):
             return JSONResponse({"error": {"code": "slot_unavailable"}}, status_code=503)
 
 
-def make_http_app(*, token, port, upstream_endpoint=None, upstream_token=None, max_sessions=8,
+def make_http_app(*, token, port, upstream_endpoint=None, upstream_token=None, max_sessions=None,
                   idle_timeout=300, request_timeout=180, expected_tools=None, active=None,
                   legacy_jev=False, control=None, control_timeout=None, client=None,
                   activity_report=None, max_request_bytes=DEFAULT_REQUEST_BYTES, inactive_code="slot_stopped"):

@@ -1342,7 +1342,7 @@ class Supervisor(UpgradeHost):
         config_read, config_write = os.pipe()
         config = {"token": connection["token"], "port": slot.public_port, "active": active,
                   "inactive_code": inactive_code,
-                  "max_sessions": lifecycle.max_sessions, "idle_timeout": lifecycle.idle_timeout_seconds,
+                  "max_sessions": None, "idle_timeout": lifecycle.idle_timeout_seconds,
                   "max_request_bytes": lifecycle.max_request_bytes,
                   "request_timeout": lifecycle.operation_timeout_seconds,
                   "control_timeout": lifecycle.startup_timeout_seconds +
@@ -1473,8 +1473,6 @@ class Supervisor(UpgradeHost):
                         current = self.registry.get_slot(slot.id)
                         if not active or worker.closing or current.generation != slot.generation or current.error_code == "ownership_lost":
                             raise HostError("slot_stopped")
-                        if len(instances) >= package.manifest.lifecycle.max_sessions:
-                            raise HostError("session_limit")
                         session_ids.add(session_id)
                         process = (await self.commands.session(slot) if package.manifest.profile == "host-command"
                                    else await self.package_process(slot, io_mode="fds"))

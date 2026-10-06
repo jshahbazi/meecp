@@ -109,7 +109,7 @@ def make_http_app(server: Server, config: dict):
     manager = StreamableHTTPSessionManager(server, json_response=True, stateless=False,
         security_settings=TransportSecuritySettings(allowed_hosts=[f"127.0.0.1:{port}", f"localhost:{port}"],
             allowed_origins=[f"http://127.0.0.1:{port}", f"http://localhost:{port}"]),
-        max_sessions=lifecycle.get("max_sessions", 8), session_idle_timeout=lifecycle.get("idle_timeout_seconds", 300),
+        max_sessions=None, session_idle_timeout=lifecycle.get("idle_timeout_seconds", 300),
         max_request_body_size=lifecycle.get("max_request_bytes", 1048576))
     ready = False
     @asynccontextmanager

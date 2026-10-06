@@ -213,13 +213,14 @@ class Session:
 
 class Gateway:
     def __init__(self, *, launch_session: Callable[[str], Awaitable[SessionPipes]],
-                 close_session: Callable[[str], Awaitable[None]], max_sessions=8,
+                 close_session: Callable[[str], Awaitable[None]], max_sessions=None,
                  idle_timeout=300, request_timeout=60, active=None, expected_tools=None,
                  activity_report=None, max_request_bytes=DEFAULT_REQUEST_BYTES, inactive_code="slot_stopped"):
         if inactive_code not in {"slot_stopped", "updating"}:
             raise ValueError("invalid_inactive_code")
         self.inactive_code = inactive_code
-        if (not isinstance(max_sessions, int) or isinstance(max_sessions, bool) or max_sessions < 1 or
+        if ((max_sessions is not None and (not isinstance(max_sessions, int)
+                or isinstance(max_sessions, bool) or max_sessions < 1)) or
                 not isinstance(max_request_bytes, int) or isinstance(max_request_bytes, bool) or
                 not 1 <= max_request_bytes <= MAX_REQUEST_BYTES or
                 any(not math.isfinite(v) or v <= 0 for v in (idle_timeout, request_timeout))):
@@ -254,7 +255,7 @@ class Gateway:
         async with self.lock:
             if self.stopping or not self.active():
                 raise RuntimeError("slot_stopped")
-            if len(self.reservations) >= self.max_sessions:
+            if self.max_sessions is not None and len(self.reservations) >= self.max_sessions:
                 raise RuntimeError("session_limit")
             self.reservations.add(session_id)
         pipes = None
@@ -563,7 +564,7 @@ class SSE(Response):
             session.followers.discard(self.stream)
 
 
-def make_app(*, token: str, port: int, launch_session, close_session, max_sessions=8,
+def make_app(*, token: str, port: int, launch_session, close_session, max_sessions=None,
              idle_timeout=300, request_timeout=60, active=None, expected_tools=None,
              activity_report=None, max_request_bytes=DEFAULT_REQUEST_BYTES, inactive_code="slot_stopped"):
     gateway = Gateway(launch_session=launch_session, close_session=close_session, max_sessions=max_sessions,

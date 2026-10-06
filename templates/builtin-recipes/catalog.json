@@ -19,10 +19,10 @@
       "version": "1.0.0"
     },
     {
-      "digest": "eb4b31829f7ec273a6a447dd518a7a567780b902d9e98721dff7add05fb6e76c",
-      "directory": "text-generation-v1-0-19",
+      "digest": "08ea8f65ad20bb71f67f3bd533b73929d700629cb4dd4507d99fea332e05992e",
+      "directory": "text-generation-v1-0-20",
       "recipe_id": "mcpme.text-generation",
-      "version": "1.0.19"
+      "version": "1.0.20"
     },
     {
       "digest": "4c8244519199d76224efa11ace14c8edc5f14d2218c85ecf31a4de16913b3c79",

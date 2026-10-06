@@ -26,7 +26,7 @@ The workflow uses existing host-owned proposal validation, dependency resolution
 
 Generated adapters with string inputs use the host's 17 MiB request ceiling, allowing a 12 MiB image plus base64 and JSON framing. Numeric-only tools retain the 1 MiB default. Upgrades and rollback republish the selected package limit; existing stdio clients must reconnect to load a changed limit. Size rejections produce a specific diagnostic without echoing request contents.
 
-Generated apps allow two concurrent client sessions so an editor can keep tool discovery connected while a separate client executes a tool. Each runtime retains the host's resource admission and idle cleanup; a third concurrent client is rejected before launching another runtime.
+The host imposes no fixed connection-count limit on apps, including already installed packages. An editor can keep discovery connected while other clients use the app. Idle cleanup, request deadlines, message limits, and each model's execution queue and serialization remain in effect. A stdio app uses one owned subprocess per connection; a shared model service keeps one resident model regardless of connection count. Actual capacity depends on available system resources.
 
 ## Current limits
 
@@ -47,5 +47,7 @@ Truncated inventories and oversized selections fail before dispatch; the host do
 ## Verification
 
 Native contract checks cover local-only preflight, save-and-replan before dispatch, idempotent retry, cancellation settlement, stale response rejection, concrete error display, and one-time ready handoff. Synthetic workflow checks exercise the bounded control flow. An opt-in hotdog pipeline check used the real bundled ONNX model, an intentionally broken adapter, a failed confined test, and an adapter-only repair that passed the unchanged test. Its provider responses were simulated; it does not establish success rates for live LLM-generated apps.
+
+Connection regressions hold 65 gateway sessions, exercise multiple clients against a legacy one-session package, and verify independent cleanup. Private HTTP and text-generation checks hold 12 clients while preserving the model's four-request queue, single active inference, and cancellation ownership.
 
 Implementation: `Sources/McpmeMenuBar/AppSetupView.swift`, `backend/mcpme/app_setup.py`, and `backend/mcpme/app_setup_contracts.py`.

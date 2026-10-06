@@ -38,8 +38,17 @@ struct DashboardDetails: Equatable {
     let sections: [DashboardSection]
 }
 
+/// The measured macOS 26 highlight extends two points beyond the per-item window.
+/// Use that visible edge rather than the button, which AppKit insets inside it.
+/// Keep the button's vertical bounds so this does not change the menu's top gap.
+func dashboardHighlightAnchor(button: NSRect, statusItem: NSRect) -> NSRect {
+    let highlightOutset: CGFloat = 2
+    return NSRect(x: statusItem.minX - highlightOutset, y: button.minY,
+                  width: statusItem.width + 2 * highlightOutset, height: button.height)
+}
+
 /// Screens use AppKit's global coordinate system. Keep the menu aligned with its
-/// status button's left edge, then open details on the side with room without shifting it.
+/// pressed highlight's left edge, then open details on the side with room without shifting it.
 func dashboardFrames(anchor: NSRect, screen: NSRect, showsDetails: Bool) -> (menu: NSRect, details: NSRect?) {
     let inset: CGFloat = 8
     let gap: CGFloat = 10
@@ -287,6 +296,7 @@ final class MenuDashboard: NSObject, NSWindowDelegate {
     private var apps: [DashboardApp] = []
     private var available = false
     private var anchor = NSRect.zero
+    private var statusButtonFrame = NSRect.zero
     private var screenFrame = NSRect.zero
     private var localMonitor: Any?
     private var globalMonitor: Any?
@@ -458,10 +468,11 @@ final class MenuDashboard: NSObject, NSWindowDelegate {
         ])
     }
 
-    func toggle(anchor: NSRect, screen: NSScreen) {
+    func toggle(anchor: NSRect, screen: NSScreen, statusButtonFrame: NSRect? = nil) {
         if isVisible { dismiss(); return }
         clearSelection()
         self.anchor = anchor
+        self.statusButtonFrame = statusButtonFrame ?? anchor
         screenFrame = screen.visibleFrame
         positionPanels()
         NSApp.activate(ignoringOtherApps: true)
@@ -498,7 +509,7 @@ final class MenuDashboard: NSObject, NSWindowDelegate {
             }
             if event.window !== self.menuPanel && event.window !== self.detailsPanel {
                 // The status button handles its own toggle; dismissing here would reopen it.
-                if !self.anchor.contains(NSEvent.mouseLocation) { self.dismiss() }
+                if !self.statusButtonFrame.contains(NSEvent.mouseLocation) { self.dismiss() }
             }
             return event
         }
@@ -770,6 +781,13 @@ func dashboardViewSelfTest() -> Bool {
         let frames = dashboardFrames(anchor: anchor, screen: screen, showsDetails: false)
         guard frames.menu.minX == anchor.minX, frames.menu.maxX > anchor.maxX,
               frames.menu == dashboardFrames(anchor: anchor, screen: screen, showsDetails: true).menu else { return false }
+        let statusItem = NSRect(x: screen.minX + 100, y: screen.maxY, width: 38, height: 33)
+        let button = NSRect(x: statusItem.minX + 8, y: statusItem.minY + 5.5, width: 22, height: 22)
+        let highlight = dashboardHighlightAnchor(button: button, statusItem: statusItem)
+        let highlightedFrames = dashboardFrames(anchor: highlight, screen: screen, showsDetails: false)
+        guard highlightedFrames.menu.minX == button.minX - 10,
+              highlight.minY == button.minY,
+              highlightedFrames.menu == dashboardFrames(anchor: highlight, screen: screen, showsDetails: true).menu else { return false }
     }
     for width in [CGFloat(300), CGFloat(360)] {
         let screen = NSRect(x: -360, y: 200, width: width, height: 700)

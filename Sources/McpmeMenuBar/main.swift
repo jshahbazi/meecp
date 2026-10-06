@@ -769,8 +769,9 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     @objc private func toggleDashboard() {
         guard let button = statusItem.button, let window = button.window,
               let screen = window.screen ?? NSScreen.main else { return }
-        let anchor = window.convertToScreen(button.convert(button.bounds, to: nil))
-        dashboard.toggle(anchor: anchor, screen: screen)
+        let buttonFrame = window.convertToScreen(button.convert(button.bounds, to: nil))
+        let anchor = dashboardHighlightAnchor(button: buttonFrame, statusItem: window.frame)
+        dashboard.toggle(anchor: anchor, screen: screen, statusButtonFrame: buttonFrame)
         if dashboard.isVisible { poll() }
     }
 
@@ -2800,7 +2801,15 @@ extension McpmeApp {
         let app = McpmeApp()
         app.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         defer { app.dashboard.dismiss(); NSStatusBar.system.removeStatusItem(app.statusItem) }
-        guard let button = app.statusItem.button else { return false }
+        guard let button = app.statusItem.button, let window = button.window else { return false }
+        let buttonFrame = window.convertToScreen(button.convert(button.bounds, to: nil))
+        // The status window belongs to this item, including native highlight padding.
+        guard window.frame.width >= buttonFrame.width,
+              window.frame.width <= buttonFrame.width + 32 else { return false }
+        let highlight = dashboardHighlightAnchor(button: buttonFrame, statusItem: window.frame)
+        guard highlight.minX == window.frame.minX - 2,
+              highlight.minX < buttonFrame.minX,
+              highlight.minY == buttonFrame.minY else { return false }
         app.configureDashboard()
         let anchor = NSRect(x: screen.visibleFrame.maxX - 24, y: screen.visibleFrame.maxY, width: 24, height: 24)
         app.dashboard.toggle(anchor: anchor, screen: screen)

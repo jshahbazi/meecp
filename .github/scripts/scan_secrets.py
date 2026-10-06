@@ -52,6 +52,7 @@ PUBLIC_GGUF_METADATA_PATHS = (
     "templates/builtin-recipes/text-generation-v1-0-12/model-provenance.json",
     "templates/builtin-recipes/text-generation-v1-0-13/model-provenance.json",
     "templates/builtin-recipes/text-generation-v1-0-14/model-provenance.json",
+    "templates/builtin-recipes/text-generation-v1-0-15/model-provenance.json",
 )
 
 

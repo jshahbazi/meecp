@@ -36,6 +36,7 @@ LIFECYCLE_POLICY_SHA256 = frozenset({
     "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375",
     "8a9a8fd69217352b49e0e338d4d652df8cebcac86609edae1190a88cd2d9a592",
     "5bb20b7a8cde39368a5cc3d03a92a4ed3f69d92ac56c317b6f696432863925ea",
+    "7187e19fdc75827c807632996e38aab264e84be58fb689c478f5907eaedc911a",
 })
 BARRIERS = {"disabled_queued": "scheduler_before_snapshot", "stale_source": "scheduler_before_snapshot",
     "revoked_verification": "actual_verifier_return_before_publication",

@@ -647,8 +647,8 @@ final class PreparationWorkspaceView: NSStackView {
         refreshButton?.isEnabled = enabled
         reviewButton?.isEnabled = enabled && questionsAvailable && form?.candidateID != nil && form?.recipe != nil && form?.resolutionRequired != true && form?.blockers.isEmpty == true && formView.answers() != nil
         startButton?.isEnabled = enabled && review?.context == context && review?.canStart() == true
-        candidateRow?.isHidden = form == nil || (form?.candidates.count ?? 0) < 2 && form?.candidateID != nil
-        recipeRow?.isHidden = form == nil || (form?.recipes.count ?? 0) < 2 && form?.recipe != nil
+        candidateRow?.isHidden = form == nil || form?.candidates.isEmpty == true || (form?.candidates.count ?? 0) < 2 && form?.candidateID != nil
+        recipeRow?.isHidden = form == nil || form?.recipes.isEmpty == true || (form?.recipes.count ?? 0) < 2 && form?.recipe != nil
         refreshButton?.isHidden = hasActiveJob
         refreshButton?.title = form == nil ? "Continue Setup" : "Reload Questions"
         reviewButton?.isHidden = !questionsAvailable || review?.canStart() == true || form?.resolutionRequired == true || hasActiveJob
@@ -1493,7 +1493,7 @@ extension PreparationWorkspaceView {
         unsupported["tools"] = []; unsupported["blockers"] = ["supported_interface_selection_required"]
         view.bind(nil, saved: true, eligible: true); view.bind(second, saved: true, eligible: true)
         view.refreshForm(); calls.removeFirst().complete(unsupported, nil)
-        guard !view.reviewButton.isEnabled, view.formView.isHidden,
+        guard !view.reviewButton.isEnabled, view.formView.isHidden, view.candidateRow?.isHidden == true, view.recipeRow?.isHidden == true,
               view.status.stringValue.contains("couldn't find a supported app entry point") else { return false }
         view.refreshForm(); calls.removeFirst().complete(PreparationTestData.form(revision: 2, available: true), nil)
         guard view.form?.revision == 2, view.reviewButton.isEnabled, !view.startButton.isEnabled else { return false }

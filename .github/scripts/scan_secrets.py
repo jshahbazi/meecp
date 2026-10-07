@@ -52,6 +52,13 @@ PUBLIC_GGUF_METADATA_PATHS = (
     "templates/builtin-recipes/text-generation-v1-0-12/model-provenance.json",
     "templates/builtin-recipes/text-generation-v1-0-13/model-provenance.json",
     "templates/builtin-recipes/text-generation-v1-0-14/model-provenance.json",
+    # Retired recipe versions remain in fetched history after tuple rollback.
+    "templates/builtin-recipes/text-generation-v1-0-15/model-provenance.json",
+    "templates/builtin-recipes/text-generation-v1-0-16/model-provenance.json",
+    "templates/builtin-recipes/text-generation-v1-0-17/model-provenance.json",
+    "templates/builtin-recipes/text-generation-v1-0-18/model-provenance.json",
+    "templates/builtin-recipes/text-generation-v1-0-19/model-provenance.json",
+    "templates/builtin-recipes/text-generation-v1-0-20/model-provenance.json",
 )
 
 

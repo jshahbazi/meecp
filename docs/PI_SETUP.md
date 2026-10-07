@@ -256,10 +256,12 @@ Compatibility, recipe upgrade, policy tuple, and opt-out checks passed; listener
 tests cover foreground work, independent probes, late child services, admission
 closure, and shutdown during cleanup.
 
-The broader host regression investigation also reproduced four existing legacy
-text-generation failures at the pre-change commit. Its frozen runtime admission
-and capture readiness issues have not been repaired in this Pi change. The
-historical signed Phase 3 acceptance records retain their original tuples.
+The expanded Pi source closure requires a fresh TextGen recipe identity. Version
+1.0.21 restores cold-host recipe readiness, model capture, and lifecycle controls
+with exact current component hashes. Upgrade checks preserve enabled snapshots
+and owner opt-outs from earlier recipes. The historical signed Phase 3 acceptance
+records retain their original source, runtime, and policy tuples; they do not
+establish signed runtime acceptance for the new recipe.
 
 ## Bundled runtime
 

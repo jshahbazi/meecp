@@ -274,9 +274,12 @@ async def test_relocated_locked_python_cache_survives_install_and_gateway_sessio
     module.write_text("MESSAGE = 'unchanged locked input'\n")
     cached = Path(py_compile.compile(str(module), doraise=True,
                                     invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP))
-    # A stale cache is still a legitimate locked artifact. Importing the source
-    # after relocation must compile in memory, without replacing package bytes.
-    os.utime(module, (1, 1))
+    # Relocation can give the source the same timestamp as its original cache.
+    # Pin the cache header to an old timestamp so it stays stale after copying.
+    # Importing it must compile in memory, without replacing package bytes.
+    cached_bytes = bytearray(cached.read_bytes())
+    cached_bytes[8:12] = (0).to_bytes(4, "little")
+    cached.write_bytes(cached_bytes)
     (library / "server.py").write_text("from cache_input import MESSAGE\nassert MESSAGE == 'unchanged locked input'\n" + CHILD)
     executable = source / "bin/service"
     executable.write_text("#!/bin/sh\nset -eu\nPACKAGE_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")/..\" && pwd)\n"

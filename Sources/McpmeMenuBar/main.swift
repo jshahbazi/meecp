@@ -472,6 +472,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private let serviceConnectionView = ServiceConnectionView()
     private let agentPreparationView = AgentPreparationView()
     private let piSetupView = PiSetupView()
+    private let authorizationCoordinator = ExternalAuthorizationCoordinator()
     private var piSourceURL: NSTextField?
     private let stateDirectory: URL = {
         if let configured = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"], configured.hasPrefix("/") {
@@ -490,6 +491,10 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let applicationMenu = NSMenu(title: "mcpme")
         let manage = NSMenuItem(title: "Manage Apps…", action: #selector(showManagement), keyEquivalent: "m")
         manage.target = self; applicationMenu.addItem(manage); applicationMenu.addItem(.separator())
+        let connections = NSMenuItem(title: "Approved Connections…", action: #selector(showApprovedConnections), keyEquivalent: "")
+        connections.target = self; applicationMenu.addItem(connections)
+        let copyManagement = NSMenuItem(title: "Copy Management Connection", action: #selector(copyManagementConnection), keyEquivalent: "")
+        copyManagement.target = self; applicationMenu.addItem(copyManagement); applicationMenu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit mcpme", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self; applicationMenu.addItem(quit); applicationItem.submenu = applicationMenu
         mainMenu.addItem(applicationItem); NSApp.mainMenu = mainMenu
@@ -505,7 +510,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         if statusItem.button?.image == nil { statusItem.button?.title = "m" }
         statusItem.button?.target = self; statusItem.button?.action = #selector(handleStatusButton)
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        configureDashboard()
+        configureDashboard(); configureAuthorization()
         if uiPreviewMode {
             showDashboardPreview(); return
         }
@@ -560,7 +565,10 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             return false
         }
         if process == nil && !quitting && !stopping { startHost() }
-        showManagement(); return false
+        if authorizationCoordinator.state == .presenting || authorizationCoordinator.state == .submitting || authorizationPresentationBlocked { return false }
+        // Reopening must not replace an active draft or interrupt a protected interaction.
+        if window?.isVisible != true { showManagement() }
+        authorizationCoordinator.poll(); return false
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -580,6 +588,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private var setupFile: URL { stateDirectory.appendingPathComponent("ui-project-setup.json") }
 
     private func resetHostRequestState() {
+        authorizationCoordinator.invalidate()
         pollInFlight = false; importsPollInFlight = false; downloadsPolling = false
         setupRequest = false; detailRequests = []; pendingAppRequests = []
         preparationView.invalidate(); recipesView.invalidate(); agentPreparationView.invalidate(); piSetupView.connectionReset()
@@ -683,6 +692,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
 
     private func poll() {
         guard !uiPreviewMode else { return }
+        authorizationCoordinator.poll()
         guard !pollInFlight, !quitting, !stopping else { return }
         guard connection() != nil else {
             if hostAvailable && !uiPreviewMode {
@@ -706,7 +716,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             self.hostAvailable = true
             self.projects = parsed.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }; self.operations = operations.compactMap(Operation.init)
             self.hostMessage = "\(parsed.filter { $0.state == "ready" }.count) ready / \(parsed.count) installed"
-            self.rebuildMenu(); self.refreshWindow(); self.pollTrackedOperations(); self.pollImports(); self.pollDownloads(); self.preparationView.poll(); self.artifactCaptureView.poll(); self.agentPreparationView.poll(); self.piSetupView.poll()
+            self.rebuildMenu(); self.refreshWindow(); self.pollTrackedOperations(); self.pollImports(); self.pollDownloads(); self.preparationView.poll(); self.artifactCaptureView.poll(); self.agentPreparationView.poll(); self.piSetupView.poll(); self.authorizationCoordinator.poll()
             if Date().timeIntervalSince(self.lastDetailRefresh) >= 6 {
                 var selected: Set<String> = []
                 if self.dashboard.isVisible, let id = self.dashboard.selectedID { selected.insert(id) }
@@ -735,6 +745,43 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         dashboard.onLogin = { [weak self] in self?.toggleLogin() }
     }
 
+    private var authorizationPresentationBlocked: Bool {
+        installing || quitting || stopping || NSApp.modalWindow != nil ||
+        NSApp.windows.contains(where: { $0.attachedSheet != nil }) ||
+        piSetupView.authorizationPresentationBlocked || agentPreparationView.authorizationPresentationBlocked ||
+        NSApp.windows.contains(where: { window in
+            guard window.isVisible, let editor = window.firstResponder as? NSTextView else { return false }
+            return editor.delegate is NSSecureTextField
+        })
+    }
+
+    private func configureAuthorization() {
+        authorizationCoordinator.request = { [weak self] path, method, body, completion in
+            self?.request(path, method: method, body: body, completion: completion)
+        }
+        authorizationCoordinator.available = { [weak self] in self?.hostAvailable == true && self?.quitting == false && self?.stopping == false }
+        authorizationCoordinator.presentationBlocked = { [weak self] in self?.authorizationPresentationBlocked != false }
+        authorizationCoordinator.onCopyConnection = { [weak self] in self?.copyManagementConnection() }
+    }
+
+    @objc private func showApprovedConnections() { authorizationCoordinator.showConnections() }
+
+    @objc private func copyManagementConnection() {
+        guard !uiPreviewMode, hostAvailable, !quitting, !stopping else { return }
+        request("v1/authorization/profiles", method: "POST", body: ["label": "External management integration"]) { [weak self] object, code in
+            guard let self else { return }
+            guard let profile = object?["profile"] as? [String: Any], let id = profile["profile_id"] as? String, validUUID(id) else {
+                self.showError(code ?? "configuration_unavailable"); return
+            }
+            let executable = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/mcpme").path
+            let config: [String: Any] = ["mcpServers": ["mcpme-management": ["command": executable,
+                "args": ["--state-dir", self.stateDirectory.path, "management", "connect", "--profile", id]]]]
+            guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
+                  let text = String(data: data, encoding: .utf8) else { return }
+            NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+        }
+    }
+
     private func updateStatusButtonSelection() {
         let selected = dashboard.isVisible || statusMenuTracking
         statusItem.button?.state = selected ? .on : .off
@@ -757,6 +804,10 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             let menu = NSMenu()
             let open = NSMenuItem(title: "Open", action: #selector(openDashboard), keyEquivalent: "")
             open.target = self; menu.addItem(open)
+            let connections = NSMenuItem(title: "Approved Connections…", action: #selector(showApprovedConnections), keyEquivalent: "")
+            connections.target = self; menu.addItem(connections)
+            let copyManagement = NSMenuItem(title: "Copy Management Connection", action: #selector(copyManagementConnection), keyEquivalent: "")
+            copyManagement.target = self; menu.addItem(copyManagement)
             menu.addItem(.separator())
             let quit = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "")
             quit.target = self; menu.addItem(quit)
@@ -3739,6 +3790,13 @@ if CommandLine.arguments.dropFirst().first == "--pi-setup-ui-self-test" {
     _ = NSApplication.shared
     let passed = PiSetupView.contractSelfTest()
     print(passed ? "pi_setup_ui_contracts_passed" : "pi_setup_ui_contracts_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--authorization-ui-self-test" {
+    _ = NSApplication.shared
+    let passed = ExternalAuthorizationCoordinator.contractSelfTest()
+    print(passed ? "authorization_ui_contracts_passed" : "authorization_ui_contracts_failed")
     exit(passed ? 0 : 1)
 }
 

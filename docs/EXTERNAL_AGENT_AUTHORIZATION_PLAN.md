@@ -1,6 +1,6 @@
 # Native authorization for external management agents
 
-Status: proposed implementation plan. No runtime behavior described as proposed here is implemented by this document.
+Status: adopted implementation contract, 2026-10-07. The native popup, account-scoped remembered profiles, private leased session delivery, request/status tools, exact-action review, revocation, and file-grant compatibility are implemented in source. See [verification evidence and limits](EXTERNAL_AGENT_AUTHORIZATION_VERIFICATION.md). Verified application identity remains a future resolver mode; this implementation explicitly uses `account_scoped_integration` and never treats client names or shared interpreters as authentication.
 
 Date: 2026-10-07.
 
@@ -12,7 +12,7 @@ Keep the existing stdio facade and private Unix transport. Retain the current gr
 
 The selected persistence model is a remembered connection policy plus fresh, short-lived session credentials. Persist consent and its scope ceiling. Do not persist an indefinitely reusable external-agent bearer as the remembered identity.
 
-## Current implementation
+## Baseline before implementation
 
 - `backend/mcpme/__main__.py` rejects `management connect` without a credential file and includes that file reference in `management export` output. Its generic `call()` helper selects the owner token when a credential file is absent. Removing the argument without separating these code paths would grant unintended owner authority.
 - `backend/mcpme/management.py` implements a static typed tool catalog and dispatches calls using the supplied file credential. Its stdio process is separate from the resident supervisor.

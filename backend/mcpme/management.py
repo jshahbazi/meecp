@@ -22,10 +22,12 @@ from mcp.server.lowlevel import Server
 from mcp.server.models import InitializationOptions
 from mcp.shared.message import SessionMessage
 from mcp.types import CallToolResult, JSONRPCMessage, ServerCapabilities, TextContent, Tool, ToolsCapability
+from mcp.types import InitializeRequestParams
 
 from .gateway import MAX_MESSAGE_BYTES, MAX_PENDING, encode
 from .grants import GrantError
 from .policy import load_json
+from .authorization_client import AuthorizationError, SessionAuthorization
 
 UUID_SCHEMA = {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
 PATH_SCHEMA = {"type": "string", "minLength": 1, "maxLength": 4096}
@@ -101,6 +103,8 @@ SAFE_ERROR_CODES = frozenset({
     "grant_scope_changed", "management_execution_authority_invalid", "management_execution_revoked",
     "management_execution_expired", "recipe_unavailable", "recipe_version_collision", "invalid_preparation_form",
     "preparation_form_mismatch", "preparation_answer_invalid", "preparation_candidate_unavailable",
+    "authorization_required", "authorization_pending", "authorization_expired", "authorization_revoked",
+    "authorization_denied", "authorization_unavailable",
 })
 
 
@@ -206,6 +210,26 @@ def operations() -> dict[str, Operation]:
     return result
 
 
+def authorization_tools():
+    action = schema({"kind": {"type": "string", "enum": ["preparation", "resolution", "install"]},
+        "plan_id": UUID_SCHEMA, "plan_digest": DIGEST_SCHEMA, "idempotency_key": UUID_SCHEMA},
+        ("kind", "plan_id", "plan_digest"), allOf=[{"if": {"properties": {"kind": {
+            "enum": ["preparation", "resolution"]}}}, "then": {"required": ["idempotency_key"]}},
+            {"if": {"properties": {"kind": {"const": "install"}}},
+             "then": {"not": {"required": ["idempotency_key"]}}}])
+    return {
+        "mcpme_request_access": Tool(name="mcpme_request_access",
+            description="Request native owner consent for scoped management access or an exact saved plan. Returns promptly; poll authorization status, then explicitly call the intended operation.",
+            inputSchema=schema({"scopes": {"type": "array", "minItems": 1, "maxItems": 2,
+                "uniqueItems": True, "contains": {"const": "inspect"},
+                "items": {"type": "string", "enum": ["inspect", "plan"]}},
+                "action": action}, **{"not": {"required": ["scopes", "action"]}})),
+        "mcpme_get_authorization_status": Tool(name="mcpme_get_authorization_status",
+            description="Read only this live connection's authorization status. No manager data or credentials are returned.",
+            inputSchema=schema()),
+    }
+
+
 def tool_result(value: dict, *, error=False) -> CallToolResult:
     return CallToolResult(content=[TextContent(type="text", text=json.dumps(value, allow_nan=False, separators=(",", ":")))],
                           structuredContent=value, isError=error)
@@ -216,25 +240,47 @@ def failure(code: str) -> CallToolResult:
 
 
 class Management:
-    def __init__(self, state: Path, credential_file: Path, *, caller=None):
+    def __init__(self, state: Path, credential_file: Path | None = None, *, caller=None, profile=None, authorization=None):
         if caller is None:
             from .__main__ import call
             caller = call
         self.state, self.credential_file, self.caller = state, credential_file, caller
+        self.authorization = authorization if authorization is not None else (
+            SessionAuthorization(state, profile) if credential_file is None else None)
         self.operations = operations()
+        self.local_tools = authorization_tools()
         self.validators = {name: Draft202012Validator(operation.tool.inputSchema)
                            for name, operation in self.operations.items()}
+        self.validators.update({name: Draft202012Validator(tool.inputSchema) for name, tool in self.local_tools.items()})
+
+    def initialized(self, client):
+        if self.authorization is not None:
+            self.authorization.on_initialized(client)
+
+    async def close(self):
+        if self.authorization is not None:
+            await self.authorization.close()
 
     async def invoke(self, name: str, arguments: dict | None) -> CallToolResult:
         operation = self.operations.get(name)
-        if operation is None:
+        if operation is None and name not in self.local_tools:
             return failure("unknown_tool")
         try:
             if not isinstance(arguments, dict) or not self.validators[name].is_valid(arguments):
                 return failure("invalid_tool_arguments")
+            if name in self.local_tools:
+                if self.authorization is None:
+                    return tool_result({"api_version": 1, "status": "approved", "mode": "credential_file"}) if name == "mcpme_get_authorization_status" else failure("authorization_unavailable")
+                if name == "mcpme_get_authorization_status":
+                    return tool_result(self.authorization.status())
+                return tool_result(await self.authorization.request_access(arguments))
             async with asyncio.timeout(330):
-                value = await self.caller(self.state, operation.method, operation.route.format(**arguments),
-                    operation.body(arguments), credential_file=self.credential_file)
+                if self.authorization is not None:
+                    value = await self.authorization.invoke(name, arguments, operation.method,
+                        operation.route.format(**arguments), operation.body(arguments))
+                else:
+                    value = await self.caller(self.state, operation.method, operation.route.format(**arguments),
+                        operation.body(arguments), credential_file=self.credential_file)
             if not isinstance(value, dict):
                 return failure("management_request_failed")
             if "error" in value:
@@ -247,6 +293,8 @@ class Management:
             return result
         except asyncio.CancelledError:
             raise
+        except AuthorizationError as error:
+            return tool_result({"api_version": 1, "error": {"code": error.code}, **error.status}, error=True)
         except GrantError as error:
             return failure(error.code if error.code in SAFE_ERROR_CODES else "management_request_failed")
         except Exception:
@@ -257,7 +305,7 @@ class Management:
 
         @server.list_tools()
         async def list_tools():
-            return [operation.tool for operation in self.operations.values()]
+            return [operation.tool for operation in self.operations.values()] + list(self.local_tools.values())
 
         # The SDK's default validator includes caller arguments in error text.
         @server.call_tool(validate_input=False)
@@ -273,6 +321,9 @@ async def serve_streams(management: Management, reader, writer):
     read_send, read_receive = anyio.create_memory_object_stream(1)
     write_send, write_receive = anyio.create_memory_object_stream(1)
     write_lock = asyncio.Lock()
+    initialize_id = None
+    initialize_client = None
+    initialize_accepted = False
 
     async def emit(value):
         data = encode(value) + b"\n"
@@ -282,6 +333,7 @@ async def serve_streams(management: Management, reader, writer):
             await writer(data)
 
     async def input_task():
+        nonlocal initialize_id, initialize_client
         async with read_send:
             while True:
                 try:
@@ -299,6 +351,15 @@ async def serve_streams(management: Management, reader, writer):
                     message = JSONRPCMessage.model_validate(value)
                 except Exception:
                     return
+                if value.get("method") == "initialize" and initialize_id is None:
+                    try:
+                        params = InitializeRequestParams.model_validate(value.get("params"))
+                        initialize_id = value.get("id")
+                        initialize_client = params.clientInfo.model_dump(include={"name", "version"})
+                    except Exception:
+                        pass
+                if value.get("method") == "notifications/initialized" and initialize_accepted:
+                    management.initialized(initialize_client or {})
                 if "id" in value and "method" in value:
                     key = (type(value["id"]), value["id"])
                     if key in pending:
@@ -311,12 +372,15 @@ async def serve_streams(management: Management, reader, writer):
                 await read_send.send(SessionMessage(message))
 
     async def output_task():
+        nonlocal initialize_accepted
         async with write_receive:
             async for item in write_receive:
                 value = item.message.model_dump(by_alias=True, exclude_none=True)
                 if "error" in value:
                     # The SDK can stringify exceptions outside our tool handler.
                     value["error"] = {"code": -32000, "message": "The management request could not be completed."}
+                if value.get("id") == initialize_id and "result" in value and initialize_client is not None:
+                    initialize_accepted = True
                 await emit(value)
                 if "id" in value and "method" not in value:
                     pending.discard((type(value["id"]), value["id"]))
@@ -330,6 +394,8 @@ async def serve_streams(management: Management, reader, writer):
             async with read_receive, write_send:
                 await server.run(read_receive, write_send, options)
         finally:
+            with anyio.CancelScope(shield=True):
+                await management.close()
             # A closed SDK session must also stop a blocked stdout writer.
             # Durable manager operations live in the supervisor independently.
             group.cancel_scope.cancel()
@@ -340,10 +406,11 @@ async def serve_streams(management: Management, reader, writer):
         group.start_soon(run_server)
 
 
-async def run_management(state: Path, credential_file: Path):
+async def run_management(state: Path, credential_file: Path | None = None, *, profile=None):
     """Use the SDK with a private local API and terminate cleanly on EOF/signals."""
     from .grants import read_credential
-    read_credential(credential_file)
+    if credential_file is not None:
+        read_credential(credential_file)
     logging.disable(logging.CRITICAL)
     loop = asyncio.get_running_loop()
     reader = asyncio.StreamReader(limit=MAX_MESSAGE_BYTES)
@@ -372,7 +439,7 @@ async def run_management(state: Path, credential_file: Path):
             loop.add_signal_handler(sig, task.cancel)
             handlers.append(sig)
     try:
-        await serve_streams(Management(state, credential_file), reader, write)
+        await serve_streams(Management(state, credential_file, profile=profile), reader, write)
     except asyncio.CancelledError:
         pass
     finally:

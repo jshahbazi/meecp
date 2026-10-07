@@ -81,16 +81,24 @@ class GrantStore:
             raise GrantError("grant_revoked", 401)
         if time.time() >= row["expires_at"]:
             raise GrantError("grant_expired", 401)
+        native_session = json.loads(row["scope"]).get("native_session") is True
+        guard = getattr(self, "session_guard", None)
+        if native_session and guard is None:
+            raise GrantError("grant_revoked", 401)
+        if guard is not None:
+            guard(grant_id, required=native_session)
         return row
 
     def inspect(self, grant_id: str) -> dict:
         row = self._row(grant_id)
         scope = json.loads(row["scope"])
-        return {"grant_id": row["grant_id"], "mode": row["mode"], "created_at": row["created_at"],
+        result = {"grant_id": row["grant_id"], "mode": row["mode"], "created_at": row["created_at"],
                 "expires_at": row["expires_at"], "revoked": bool(row["revoked"]),
                 "expired": time.time() >= row["expires_at"], "operation_id": row["operation_id"],
-                "credential_file": str(self.root / (grant_id + ".json")),
                 **{key: value for key, value in scope.items() if key != "slot_digests"}}
+        if scope.get("native_session") is not True:
+            result["credential_file"] = str(self.root / (grant_id + ".json"))
+        return result
 
     def list(self) -> dict:
         return {"grants": [self.inspect(row[0]) for row in self.db.execute(
@@ -106,7 +114,7 @@ class GrantStore:
         except Exception:
             pass
 
-    def issue(self, payload: dict, *, plan: dict | None = None) -> dict:
+    def issue(self, payload: dict, *, plan: dict | None = None, export_credential: bool = True) -> dict:
         if not isinstance(payload, dict) or payload.get("mode") not in {"read", "prepare", "lifecycle", "install"}:
             raise GrantError("invalid_grant", 400)
         mode = payload["mode"]
@@ -136,6 +144,8 @@ class GrantStore:
                          "slot_digests": {value: self.registry.get_slot(value).package_digest for value in slots}}
         if set(payload) - allowed:
             raise GrantError("invalid_grant", 400)
+        if not export_credential:
+            scope["native_session"] = True
         grant_id, token = str(uuid.uuid4()), secrets.token_urlsafe(32)
         path = self.root / (grant_id + ".json")
         retired = []
@@ -151,7 +161,8 @@ class GrantStore:
                         raise GrantError("grant_limit", 409)
                 # Write the file before committing the record. If file publication
                 # fails, no capability becomes active; crash leftovers fail closed.
-                write_private_json(path, {"schema_version": 1, "grant_id": grant_id, "token": token})
+                if export_credential:
+                    write_private_json(path, {"schema_version": 1, "grant_id": grant_id, "token": token})
                 created = time.time()
                 self.db.execute("INSERT INTO management_grants VALUES (?,?,?,?,?,?,?,?)", (
                     grant_id, hashlib.sha256(token.encode()).hexdigest(), mode, created, created + ttl,
@@ -161,6 +172,8 @@ class GrantStore:
             raise
         for retired_id in retired:
             self._reclaim_credential(retired_id)
+        if not export_credential:
+            return {"grant_id": grant_id, "token": token, "expires_at": created + ttl}
         return self.inspect(grant_id)
 
     def authenticate(self, token: str) -> dict:

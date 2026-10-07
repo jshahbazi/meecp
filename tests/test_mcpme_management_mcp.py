@@ -52,7 +52,7 @@ async def test_sdk_prepare_plan_exact_grant_duplicate_apply_and_revocation(tmp_p
             assert set(initialized.capabilities.model_dump(exclude_none=True)) == {"tools"}
             listed = await client.list_tools()
             names = {tool.name for tool in listed.tools}
-            assert len(names) == 40
+            assert len(names) == 42
             assert not {"mcpme_authorize", "mcpme_revoke_grant", "mcpme_issue_grant"} & names
             assert all(tool.inputSchema["additionalProperties"] is False for tool in listed.tools)
             assert not host.workers and not host.owners and not host.registry.list_slots()
@@ -98,7 +98,7 @@ async def test_sdk_handshake_and_tool_list_require_no_host_or_slot_start(tmp_pat
     async with sdk(state, credential, tmp_path / "stderr") as client:
         initialized = await client.initialize()
         assert initialized.serverInfo.name == "mcpme-management"
-        assert len((await client.list_tools()).tools) == 40
+        assert len((await client.list_tools()).tools) == 42
         invalid = await client.call_tool("mcpme_apply_install", {"plan_id": str(uuid.uuid4()), "approved": SENTINEL})
         assert invalid.isError and invalid.structuredContent["error"]["code"] == "invalid_tool_arguments"
         unknown = await client.call_tool("mcpme_authorize", {"token": SENTINEL})

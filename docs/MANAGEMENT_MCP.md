@@ -1,6 +1,6 @@
 # Scoped management and MCP
 
-Owner-issued management grants support a separate tools-only MCP connection. The local owner CLI remains available. Ordinary app connections expose only that app's tools. The backend API identifies installed apps as slots. Phase 3 adds [exact preparation/resolution execution grants and recipe lifecycle tools](MANAGEMENT_PREPARATION_WORKFLOWS.md).
+Management MCP supports native connection approval with remembered, revocable consent. Explicit owner-issued file grants remain available. The local owner CLI remains available. Ordinary app connections expose only that app's tools. The backend API identifies installed apps as slots. Phase 3 adds [exact preparation/resolution execution grants and recipe lifecycle tools](MANAGEMENT_PREPARATION_WORKFLOWS.md).
 
 ## Authority
 
@@ -24,7 +24,7 @@ Revocation blocks further requests. Installation operation cancellation remains 
 
 These API scopes follow the same-user trust boundary. They do not isolate another process running with the owner's macOS account permissions.
 
-Opening the registry migrates schema 1 to schema 2 for grant records. Existing slots and operations are retained. Earlier builds reject schema 2, so downgrading requires a separately preserved pre-migration state directory.
+Opening the registry migrates earlier schemas through schema 5, preserving slots, settings, operations, and explicit grants. Schema 5 prevents earlier hosts from interpreting leased session grants without their lease/revision guards. Earlier builds reject this state, so downgrading requires a separately preserved pre-migration state directory. Do not manually lower the schema version while session grant records remain.
 
 ## CLI
 
@@ -56,15 +56,29 @@ The earlier registry retains at most 4,096 grants. When issuance reaches that li
 
 ## Connect an external agent
 
-Export a management registration for a particular grant:
+Choose **Copy Management Connection** in the native app's menu, or open **Approved Connections**. This creates an unapproved public profile and copies a registration containing the installed launcher, state selector, and `management connect --profile PROFILE_UUID`. No credential path or secret is exported. The owner CLI can create the same registration:
+
+```sh
+scripts/mcpme management export --json
+```
+
+Add that registration to your MCP client. Initialization and discovery complete locally before approval. After initialization, the app asks whether to allow inspection and setup planning. You can reduce access to inspection, deny access, or remember it for this macOS account. A reported client name is unverified display metadata. Remembered consent applies to the profile, installation, and account; it does not authenticate a particular application. Each connection receives a fresh one-hour session credential over a private Unix lease. The facade keeps it in memory; disconnect, revocation, expiry, and host restart invalidate its authority.
+
+**Approved Connections** lists profiles and active sessions, with **Disconnect** and **Revoke Access**. Copying a registration does not approve access, start Pi, or bind consent to an Add App draft. Per-app **Copy Connection** retains its invocation-only behavior.
+
+The catalog adds `mcpme_request_access` and `mcpme_get_authorization_status`. Access requests return promptly. Pending calls return structured authorization errors; after allowing access, explicitly repeat the intended call. Preparation/resolution execution and installation require a separate request with an exact saved plan ID/digest and, for execution, an idempotency key. The native review approves only that operation. Approval never automatically replays a tool call. Recipe mutation, app lifecycle changes, startup policy, removal, grant administration, and all internal `/v1/pi/*` APIs remain outside native inspection/planning consent.
+
+Bare `management connect` supports one-connection consent; remembering requires a profile. If the containing installed app is absent, the facade attempts one bounded launch. An unavailable app/UI produces an authorization error with instructions to open mcpme. Unattended clients can use an explicit file grant.
+
+To export a management registration for an existing file grant:
 
 ```sh
 scripts/mcpme --credential-file /absolute/private/grant.json management export --json
 ```
 
-The returned `mcpServers` configuration invokes the installed launcher with the state directory, credential-file reference, and `management connect`. Configure that entry in the intended MCP client. Export contains no credential value. Export again after relocating the app or credential file. A running supervisor is required for management calls; initialization does not open the app or start a slot.
+This compatibility configuration invokes the installed launcher with the state directory, credential-file reference, and `management connect`. It contains no credential value. Export again after relocating the app or credential file. Invalid explicit credential files fail without opening a consent request or selecting owner authority.
 
-The facade exposes 40 typed tools: the original 18 capabilities/draft/slot/installation/operation/lifecycle tools plus versioned recipe metadata/schema/registration/state, preparation source/forms/plan/job lifecycle, and resolution plan/job lifecycle tools. The [workflow contract](MANAGEMENT_PREPARATION_WORKFLOWS.md) lists exact names and scope. There are no grant-issuance tools, unrestricted shell tools, startup-setting/removal tools, upgrade tools, or automatic retries of failed calls. Tool visibility does not confer authority: the host rejects operations outside the connection's grant. Existing prepare grants permit static planning; execution requires a separately owner-issued exact-plan and attempt credential plus an admitted host runner.
+The facade exposes 42 typed tools: the existing 40 management tools plus connection access/status tools. The [workflow contract](MANAGEMENT_PREPARATION_WORKFLOWS.md) lists operation names and scope. There are no grant-issuance tools, unrestricted shell tools, startup-setting/removal tools, upgrade tools, or automatic retries of failed calls. Tool visibility does not confer authority: the host rejects operations outside the connection's grant. Existing prepare grants permit static planning; execution requires exact-plan and attempt approval plus an admitted host runner.
 
 The facade and CLI use the owner-only manager Unix socket, preserve Host/Origin checks, and have no TCP/proxy fallback. MCP uses revision `2025-11-25`, advertises only tools, bounds frames and responses to 1 MiB, permits at most 16 pending requests, and applies finite call/write deadlines. Malformed/oversized frames close the connection. Errors contain stable codes without source contents, credentials, or raw exceptions. EOF and signals shut down the facade.
 
@@ -85,6 +99,6 @@ The verifier copies the host and fixture into temporary paths with spaces, selec
 
 The owner CLI/API supports [pinned prepared-package downloads](PINNED_DOWNLOADS.md) and [configuration with secret references](CONFIGURATION_SECRETS.md). Existing grants and MCP tools grant no download or secret-store authority; an exact install grant covers only its reviewed plan's references. Native configuration/download controls, reviewed upgrades/recovery and pinned raw model preparation are implemented. Upgrade, operation cancellation/recovery and secret-store administration remain owner-only. Reference-document services remain later work. Owner-authorized app removal retains data; deleting retained data remains unsupported. Internal [Pi app setup](PI_SETUP.md) is implemented through owner-only `/v1/pi/*` routes and remains outside the scoped management MCP catalog.
 
-## Proposed native external-agent authorization
+## Native authorization contract
 
-The [native external-agent authorization plan](EXTERNAL_AGENT_AUTHORIZATION_PLAN.md) proposes a credential-free management connection export with remembered consent, short-lived session credentials, and native approval. This is proposed work; until its acceptance evidence is recorded, the implemented management flow remains explicit owner-issued file grants and `--credential-file` connections.
+The [external-agent authorization contract](EXTERNAL_AGENT_AUTHORIZATION_PLAN.md) describes the adopted scope, private bootstrap protocol, remembered consent, and acceptance criteria. Local verification evidence and remaining acceptance limits are recorded in [native authorization verification](EXTERNAL_AGENT_AUTHORIZATION_VERIFICATION.md).

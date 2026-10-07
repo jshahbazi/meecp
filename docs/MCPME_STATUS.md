@@ -12,6 +12,8 @@ Native builds now include a validated JSON Utilities starter. **Try JSON Utiliti
 
 Automatic Start at Login registration and next-login launch remain unverified for the development bundle. The tested legacy transfer preserved an explicitly owner-confirmed disabled preference; it did not validate enabled login-item transfer.
 
+External management agents now use **Copy Management Connection** and native approval without a credential-file path. Remembered consent is scoped to a public profile, state installation, and macOS account; reported client names are unverified. Fresh leased session credentials reuse the existing grant scope engine. Exact preparation, resolution, and installation plans require separate review, and internal Pi remains owner-only. **Approved Connections** exposes disconnect and revocation. Explicit file grants remain available. See [native authorization verification](EXTERNAL_AGENT_AUTHORIZATION_VERIFICATION.md) for tests and client acceptance limits.
+
 ## Supported scope
 
 - Apple silicon, macOS 26 or later.

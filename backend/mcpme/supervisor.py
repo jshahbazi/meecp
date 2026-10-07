@@ -390,6 +390,8 @@ class Supervisor(UpgradeHost):
                     if agent_preparation_factory is None else {}))
             from .pi_setup import PiSetup
             self.pi_setup = PiSetup(self)
+            from .authorization import AuthorizationBroker
+            self.authorization = AuthorizationBroker(self)
         except BaseException:
             if hasattr(self, "imports"):
                 self.imports.close()
@@ -2199,6 +2201,9 @@ class Supervisor(UpgradeHost):
 
     async def close(self):
         self.closing = True
+        # Close credential-free admission before joining any owned runner.
+        if hasattr(self, "authorization"):
+            await self.authorization.close()
         preparation_error = None
         if (self._preparation_close_task is None or self._preparation_close_task.done()
                 and (self._preparation_close_task.cancelled() or self._preparation_close_task.exception() is not None)):
@@ -2307,6 +2312,12 @@ def management_app(host: Supervisor, token: str, port: int):
                 payload = load_json(await request.body())
                 if not isinstance(payload, dict):
                     raise HostError("invalid_request")
+            if route.startswith("/v1/authorization/"):
+                principal = request.scope["mcpme.principal"]
+                if principal.get("owner") is not True or grant_id is not None:
+                    raise GrantError("grant_scope", 403)
+                result = host.authorization.owner_route(request.method, route, payload)
+                return JSONResponse({"api_version": 1, **result})
             if grant_id is not None:
                 if (route.startswith(("/v1/downloads", "/v1/secrets", "/v1/upgrade", "/v1/artifact-captures", "/v1/artifacts"))
                         or route.startswith("/v1/operations/") and request.method != "GET"):
@@ -2637,6 +2648,13 @@ def management_app(host: Supervisor, token: str, port: int):
             return JSONResponse({"api_version": 1, "error": {"code": "invalid_request"}}, status_code=400)
 
     app = Starlette(routes=[Route("/v1/capabilities", dispatch), Route("/v1/status", dispatch), Route("/v1/slots", dispatch),
+        Route("/v1/authorization/profiles", dispatch, methods=["GET", "POST"]),
+        Route("/v1/authorization/profiles/{profile_id}/revoke", dispatch, methods=["POST"]),
+        Route("/v1/authorization/requests", dispatch),
+        Route("/v1/authorization/requests/{request_id}", dispatch),
+        Route("/v1/authorization/requests/{request_id}/{decision}", dispatch, methods=["POST"]),
+        Route("/v1/authorization/sessions", dispatch),
+        Route("/v1/authorization/sessions/{session_id}/disconnect", dispatch, methods=["POST"]),
         Route("/v1/downloads", dispatch, methods=["GET", "POST"]),
         Route("/v1/downloads/{download_id}", dispatch),
         Route("/v1/downloads/{download_id}/cancel", dispatch, methods=["POST"]),
@@ -2718,6 +2736,7 @@ async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None, *,
     try:
         private_listener = bind_private_listener(host.root, "manager")
         await host.initialize()
+        await host.authorization.start(f"http://127.0.0.1:{port}")
         write_private_json(host.root / "manager-connection.json", {"api_version": 1,
             "endpoint": f"http://127.0.0.1:{port}", "token": token, "supervisor_pid": os.getpid()})
         if parent_pid is not None:

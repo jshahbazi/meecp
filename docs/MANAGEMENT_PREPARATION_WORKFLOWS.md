@@ -4,7 +4,7 @@ Phase 3 adds recipe and preparation lifecycle tools to the scoped management MCP
 
 ## Tools and grants
 
-The facade exposes 40 typed tools. The existing 18 draft, installation and app tools retain their scopes. The additional tools are:
+The facade exposes 42 typed tools: 40 management tools plus native authorization request/status tools. The existing 18 draft, installation and app tools retain their scopes. The additional workflow tools are:
 
 | Tools | Operation |
 | --- | --- |
@@ -56,7 +56,9 @@ scripts/mcpme recipes schema --json
 scripts/mcpme grants revoke GRANT_UUID --json
 ```
 
-Grant issuance and revocation are owner-management routes. The MCP tool list has no grant administration tool. Workflow credentials use the existing owner-only credential-file format and management export path. Tokens are returned only through the private credential file; metadata responses contain its reference.
+Grant issuance and revocation are owner-management routes. The MCP tool list has no grant administration tool. Explicit owner-issued workflow credentials use the owner-only credential-file format and compatibility export path. Their tokens are returned only through the private credential file; metadata responses contain its reference.
+
+[Native authorization](MANAGEMENT_MCP.md#connect-an-external-agent) also supports exact preparation/resolution approval through `mcpme_request_access`, binding the saved plan ID, digest, and idempotency key. The private live connection receives a fresh leased credential after native review. Approval requires an explicit subsequent execution call. Remembered inspection/planning consent does not authorize execution or recipe mutations.
 
 New modes default to 300 seconds and accept 1–3,600 seconds. Their expiry fences active work as well as queued admission. Revocation commits first, then the owner route drains only the grant's verified original job association. Expiry/revocation monitors cancel active owned work. The original process handles, journal and resource reservations remain held until cleanup settles. If an association is corrupt, cleanup does not select a replacement job; the revocation stays durable and execution fails closed.
 

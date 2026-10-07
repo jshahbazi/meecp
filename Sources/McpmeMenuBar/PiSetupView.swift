@@ -249,6 +249,9 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     private var actionRow: NSView!
 
     var blocksNavigation: Bool { busy || job?.active == true || restoredJobID != nil }
+    var authorizationPresentationBlocked: Bool {
+        settingsWindow?.isVisible == true || (job?.question?.kind == "secret" && !questionView.isHidden)
+    }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -640,7 +643,12 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         answering.bind(revised, eligible: true); answering.poll(); answering.beforeStart = { completion in completion(revised) }
         answering.startSetup()
         guard answering.currentQuestion?.id == questionID, !answering.questionView.isHidden,
-              answering.credentialField.isHidden, answering.answerField.numberOfItems == 2, answering.blocksNavigation else { return false }
+              answering.credentialField.isHidden, answering.answerField.numberOfItems == 2, answering.blocksNavigation,
+              !answering.authorizationPresentationBlocked else { return false }
+        answering.answerField.stringValue = "Personal"
+        // An independent authorization lifecycle cannot reset an inline Pi answer.
+        let consent = ExternalAuthorizationCoordinator(); consent.invalidate()
+        guard answering.answerField.stringValue == "Personal", answering.currentQuestion?.id == questionID else { return false }
         answering.bind(original, eligible: true); answering.answerField.stringValue = "Personal"; answering.answerQuestion()
         guard answerCount == 0, answering.questionView.isHidden else { return false }
         answering.bind(revised, eligible: true); answering.answerField.stringValue = "Personal"; answering.poll()
@@ -655,7 +663,7 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         question["question"] = "Enter the app credential."; question["options"] = []; question["credential_name"] = "API_KEY"
         row["question"] = question; row["stage"] = "waiting_for_user"
         answering.poll(); questionPoll?(row, nil)
-        guard !answering.credentialField.isHidden, answering.answerField.isHidden else { return false }
+        guard !answering.credentialField.isHidden, answering.answerField.isHidden, answering.authorizationPresentationBlocked else { return false }
         answering.credentialField.stringValue = "Synthetic credential"; answering.answerQuestion()
         guard answerCount == 2, answering.credentialField.stringValue.isEmpty else { return false }
         row.removeValue(forKey: "question"); row["stage"] = "thinking"; answerReply?(row, nil)

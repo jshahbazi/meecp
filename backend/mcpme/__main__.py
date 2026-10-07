@@ -300,8 +300,11 @@ def parser() -> argparse.ArgumentParser:
         item.add_argument("secret_id", type=uuid_argument)
         item.add_argument("--json", action="store_true")
     management = commands.add_parser("management").add_subparsers(dest="action", required=True)
-    management.add_parser("connect")
-    management.add_parser("export").add_argument("--json", action="store_true")
+    for action in ("connect", "export"):
+        item = management.add_parser(action)
+        item.add_argument("--profile", type=uuid_argument, help="Public remembered connection profile; contains no credential.")
+        if action == "export":
+            item.add_argument("--json", action="store_true")
     imports = commands.add_parser("imports").add_subparsers(dest="action", required=True)
     imports.add_parser("list").add_argument("--json", action="store_true")
     service = imports.add_parser("create-service")
@@ -457,17 +460,30 @@ async def execute(args) -> dict | None:
     if credential is not None and args.command in {"serve", "connect", "connections"}:
         return {"error": {"code": "management_credential_not_invocation"}}
     if args.command == "management":
-        if credential is None:
-            return {"error": {"code": "management_credential_required"}}
-        from .grants import read_credential
-        grant = read_credential(credential)
+        profile = getattr(args, "profile", None)
+        if credential is not None and profile is not None:
+            return {"error": {"code": "invalid_management_authorization"}}
+        if credential is not None:
+            from .grants import read_credential
+            grant = read_credential(credential)
         if args.action == "connect":
             from .management import run_management
-            await run_management(state, credential)
+            await run_management(state, credential, profile=profile)
             return None
-        return {"grant_id": grant["grant_id"], "configuration": {"mcpServers": {
-            "mcpme-management": {"command": str(cli_launcher()), "args": ["--state-dir", str(state),
-                "--credential-file", str(credential), "management", "connect"]}}}}
+        if credential is not None:
+            return {"grant_id": grant["grant_id"], "configuration": {"mcpServers": {
+                "mcpme-management": {"command": str(cli_launcher()), "args": ["--state-dir", str(state),
+                    "--credential-file", str(credential), "management", "connect"]}}}}
+        if profile is None:
+            await ensure_host(state)
+            result = await api("POST", "/v1/authorization/profiles", {})
+            if "error" in result:
+                return result
+            profile = uuid_argument(result["profile"]["profile_id"])
+        selectors = [] if state == DEFAULT_STATE.absolute() else ["--state-dir", str(state)]
+        return {"profile_id": profile, "configuration": {"mcpServers": {
+            "mcpme-management": {"command": str(cli_launcher()), "args": selectors +
+                ["management", "connect", "--profile", profile]}}}}
     if args.command == "authorize":
         workflow_plan = args.preparation_plan or args.resolution_plan
         recipe_options = (args.recipe_version, args.recipe_digest, args.recipe_actions, args.recipe_path)

@@ -13,6 +13,7 @@ import subprocess
 from build_mcpme_host import (ROOT, BuildCommandError, build as build_host, project_version, run,
                               refresh_command_inventory, refresh_command_resource_inventory)
 from build_preparation_toolchain import refresh_toolchain_manifest
+from build_pi_runtime import refresh_inventory as refresh_pi_inventory
 from prepare_json_package import prepare as prepare_json_package
 
 MACHO_MAGIC = {b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xce",
@@ -22,6 +23,7 @@ DEVELOPER_ID_REQUIREMENT = (
 )
 STARTER_PACKAGE_PATH = Path("starter-packages/json-utilities")
 PREPARED_PYTHON_ENTITLEMENTS = ROOT / "scripts/prepared-python-entitlements.plist"
+PI_NODE_ENTITLEMENTS = ROOT / "agents/pi/node-entitlements.plist"
 
 
 def prepare_starter_package(resources: Path) -> Path:
@@ -106,6 +108,12 @@ def prepared_python_entitlements(root: Path, path: Path, *, release: bool) -> Pa
     return PREPARED_PYTHON_ENTITLEMENTS if release and path == expected else None
 
 
+def runtime_entitlements(root: Path, path: Path, *, release: bool) -> Path | None:
+    if release and path == root / "Contents/Resources/host/pi-runtime/bin/node":
+        return PI_NODE_ENTITLEMENTS
+    return prepared_python_entitlements(root, path, release=release)
+
+
 def verify_signature(path: Path, certificate_hash: str | None = None, deep: bool = False):
     arguments = ["/usr/bin/codesign", "--verify", "--strict"]
     if deep:
@@ -164,7 +172,7 @@ def sign_runtime(root: Path, identity: str = "-", release: bool = False,
                 raise SystemExit("Bundled runtime contains an external native dependency")
         if not preserved:
             run(*signing_arguments(identity, release, keychain,
-                entitlements=prepared_python_entitlements(root, path, release=release)), str(path))
+                entitlements=runtime_entitlements(root, path, release=release)), str(path))
         verify_signature(path, identity if release else None)
         count += not preserved
     if signed_runtime is not None:
@@ -312,6 +320,8 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
         signed_files = sign_runtime(staged, identity, release, keychain, **command_signing)
     if (host / "preparation-toolchain/toolchain.json").is_file():
         refresh_toolchain_manifest(host / "preparation-toolchain")
+    if (host / "pi-runtime/inventory.json").is_file():
+        refresh_pi_inventory(host / "pi-runtime")
     starter_receipt = finalize_starter_package(starter, host, release=release)
     # Signing changes the reaper hash recorded by the host builder. Refresh that
     # receipt before sealing Resources; never leave development labels on a release.

@@ -537,9 +537,10 @@ def validate_package(root: Path) -> ValidatedPackage:
                 _check_host_command_schema(tool.output_schema, manifest.command.output_bytes)
         elif manifest.profile == "mcp-stdio":
             if (manifest.entrypoint is None or manifest.processes or manifest.model is not None
-                    or manifest.http is not None or manifest.adapter_process is not None or not manifest.resources.cpu_only
-                    or manifest.resources.memory_mb > 4096):
+                    or manifest.http is not None or manifest.adapter_process is not None):
                 raise PackageError("invalid_package_schema")
+            if manifest.resources.gpu and manifest.lifecycle.max_sessions != 1:
+                raise PackageError("invalid_resource_declaration")
         elif manifest.profile == "mcp-http":
             if manifest.http is None:
                 raise PackageError("http_configuration_required")

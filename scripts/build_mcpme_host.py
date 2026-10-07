@@ -171,6 +171,12 @@ def bundle_preparation_toolchain(destination: Path, runtime: Path) -> None:
     bundle(destination / "preparation-toolchain", runtime, template_root=ROOT / "templates")
 
 
+def bundle_pi_runtime(destination: Path) -> None:
+    """Ship Pi and Node as private app resources, independent of global tools."""
+    from build_pi_runtime import bundle
+    bundle(destination / "pi-runtime")
+
+
 def bundle_textgen_backend(destination: Path) -> None:
     from bundle_textgen_assets import bundle_backend
     bundle_backend(destination / "backend")
@@ -363,6 +369,7 @@ def build(destination: Path, version: str | None = None, *, textgen_engine: Path
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".venv"))
     bundle_model_template_assets(destination)
     bundle_preparation_toolchain(destination, runtime)
+    bundle_pi_runtime(destination)
     if textgen_engine is not None:
         bundle_textgen_toolchain(destination, textgen_engine)
     if textgen_signed_asset is not None:

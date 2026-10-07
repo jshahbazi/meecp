@@ -20,8 +20,8 @@
       },
       {
         "id": "text-generate-v1",
-        "version": "1.0.14",
-        "digest": "923c7d2ad7f913ab5491a31119cbba6e4433cc12593605dba1f2f004f4d57934"
+        "version": "1.0.21",
+        "digest": "ad814ce4186bd3474fe9759991208d80eca0f491d449a00c38aee44b23c5b1d2"
       },
       {
         "id": "service-text-generate-v1",
@@ -31,7 +31,7 @@
       {
         "id": "agent-unlocked-python-adapter-v1",
         "version": "1.0.0",
-        "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"
+        "digest": "30a6e459f76f4feabff58ff5481b5cc95f9589e03436a8aac109583a4cbfa26c"
       }
     ],
     "recipe_component_sets": [
@@ -71,13 +71,13 @@
       [
         {
           "id": "llamacpp-cpu-v1",
-          "version": "1.0.14",
-          "digest": "ce71166c4c91139ff88532f5a51ac9a0e0f265606a6a7ab9ebe03228f30609f5"
+          "version": "1.0.21",
+          "digest": "438e6822bfc22187f91b51f496a6575db5a1bfeb55e7ddf3216d60a98883554d"
         },
         {
           "id": "text-generate-v1",
-          "version": "1.0.14",
-          "digest": "923c7d2ad7f913ab5491a31119cbba6e4433cc12593605dba1f2f004f4d57934"
+          "version": "1.0.21",
+          "digest": "ad814ce4186bd3474fe9759991208d80eca0f491d449a00c38aee44b23c5b1d2"
         }
       ],
       [
@@ -101,7 +101,7 @@
         {
           "id": "agent-unlocked-python-adapter-v1",
           "version": "1.0.0",
-          "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"
+          "digest": "30a6e459f76f4feabff58ff5481b5cc95f9589e03436a8aac109583a4cbfa26c"
         }
       ]
     ],
@@ -115,7 +115,7 @@
       {
         "id": "agent-unlocked-python-adapter-v1",
         "version": "1.0.0",
-        "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"
+        "digest": "30a6e459f76f4feabff58ff5481b5cc95f9589e03436a8aac109583a4cbfa26c"
       }
     ],
     "providers": [

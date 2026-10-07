@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "pi": {
+    "package": "@earendil-works/pi-coding-agent",
+    "version": "1.0.2",
+    "source": "https://github.com/earendil-works/pi/tree/v1.0.2",
+    "tarball": "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-1.0.2.tgz",
+    "integrity": "sha512-3ZdIghMSELMGV3sKi5iASOb1Jwb696fLjmNu0aezaqDxTLLWWoRpqBYkGxJ1CgAMCbtfqXWEF0lcRrlVXmiEGQ==",
+    "license": "MIT",
+    "documentation": "https://pi.dev/docs/latest/sdk"
+  },
+  "node": {
+    "version": "24.15.0",
+    "platform": "darwin-arm64",
+    "archive": "https://nodejs.org/dist/v24.15.0/node-v24.15.0-darwin-arm64.tar.gz",
+    "sha256": "372331b969779ab5d15b949884fc6eaf88d5afe87bde8ba881d6400b9100ffc4",
+    "checksums": "https://nodejs.org/dist/v24.15.0/SHASUMS256.txt",
+    "licenses": "licenses/NODE-LICENSE.txt"
+  },
+  "dependencies": "package-lock.json",
+  "verified_date": "2026-10-06"
+}

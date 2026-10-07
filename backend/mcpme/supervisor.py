@@ -36,6 +36,7 @@ from .imports import ImportError as ImportDraftError, ImportStore
 from .private import PrivateStateError, check_private_file, ensure_private_directory, read_private_json, snapshot_package, write_private_json
 from .ownership_receipts import prepare_receipt, verify_receipt
 from .processes import OwnedProcess, OwnershipLost, ProcessOwner, _await_ownership
+from .pi_listeners import ListenerError, assert_loopback, monitor_listeners
 from .registry import Registry, RegistryError
 from .upgrade_host import UpgradeHost
 from .upgrades import UpgradeError, UpgradeStore
@@ -90,6 +91,11 @@ def capabilities(host=None) -> dict:
             "preparation_descriptor_schema_versions": [1], "recipe_bundle_schema_versions": [1],
             "recipe_management": "local_static_declarative", "recipe_execution": False,
             "automatic_preparation": False,
+            "pi_setup": {"engine": "pi", "credentials": "owner_only", "profiles": ["mcp-stdio"],
+                         "recipe_required": False, "dependency_ecosystems": ["python"],
+                         "execution": host is not None and not host.closing and
+                                      getattr(host, "pi_setup", None) is not None and not host.pi_setup.closed and
+                                      (host.pi_setup.runtime_root / "inventory.json").is_file()},
             "preparation_resolution": {"schema_versions": [1], "credentials": "owner_and_exact_execution_grants", "execution": False,
                                        "operations": ["resolve_dependencies", "discover_interface"]},
             "configuration": {"schema_versions": [1], "types": ["string", "integer", "boolean"],
@@ -382,6 +388,8 @@ class Supervisor(UpgradeHost):
             self.agent_preparations = factory(self.preparations, self.root / "agent-preparations",
                 **({"provider_registry": self.agent_provider_registry, "execution_admission": agent_execution_admission}
                     if agent_preparation_factory is None else {}))
+            from .pi_setup import PiSetup
+            self.pi_setup = PiSetup(self)
         except BaseException:
             if hasattr(self, "imports"):
                 self.imports.close()
@@ -856,9 +864,12 @@ class Supervisor(UpgradeHost):
         self.save_ledger(slot_id)
         return process
 
-    async def reap(self, slot_id: str, process: OwnedProcess):
+    async def reap(self, slot_id: str, process: OwnedProcess, *, join_audit=True):
         await process.stop()
         self.record_owned_exit(slot_id, process)
+        audit = getattr(self, "stdio_audits", {}).get(process.instance_id)
+        if join_audit and audit is not None and audit is not asyncio.current_task():
+            await _await_ownership(asyncio.gather(audit, return_exceptions=True))
 
     def record_owned_exit(self, slot_id: str, process: OwnedProcess):
         completion = self.ledger(slot_id).get(process.instance_id, {}).get("completion")
@@ -1007,12 +1018,14 @@ class Supervisor(UpgradeHost):
             await self.refresh_resolution_reservations()
             if slot.id in self.reservations:
                 return
-            memory = package.manifest.resources.memory_mb + self.resource_policy["headroom_mb"]
+            memory = package.manifest.resources.memory_mb * (package.manifest.lifecycle.max_sessions
+                if getattr(package.manifest, "profile", None) == "mcp-stdio" else 1) + self.resource_policy["headroom_mb"]
             gpu = package.manifest.resources.gpu
+            probes = list(getattr(getattr(self, "pi_setup", None), "probe_reservations", {}).values())
             if (sum(value["memory_mb"] for value in [*self.reservations.values(), *self.preparation_reservations.values(),
-                    *self.capture_reservations.values(), *self.resolution_reservations.values()])
+                    *self.capture_reservations.values(), *self.resolution_reservations.values(), *probes])
                     + memory > self.resource_policy["memory_budget_mb"]
-                    or gpu and any(value["gpu"] for value in self.reservations.values())):
+                    or gpu and any(value["gpu"] for value in [*self.reservations.values(), *probes])):
                 raise HostError("resource_blocked", 409)
             reservation = {"memory_mb": memory, "gpu": gpu}
             write_private_json(self.slot_directory(slot.id) / "reservation.json", reservation)
@@ -1059,9 +1072,13 @@ class Supervisor(UpgradeHost):
                 return
             if any(process.ownership_lost for process in self.owner(slot_id).instances.values()):
                 return
+            if slot_id in getattr(self, "stdio_admissions", set()) and (self.owner(slot_id).instances or self.ledger(slot_id)):
+                return
             if self.residents.get(slot_id):
                 return
             self.reservations.pop(slot_id, None)
+            if hasattr(self, "stdio_admissions"):
+                self.stdio_admissions.discard(slot_id)
             (self.slot_directory(slot_id) / "reservation.json").unlink(missing_ok=True)
 
     @staticmethod
@@ -1261,14 +1278,73 @@ class Supervisor(UpgradeHost):
 
     async def package_process(self, slot, *, io_mode="streams") -> OwnedProcess:
         package = self.package(slot)
-        entry = package.manifest.entrypoint
-        data = self.data_directory(slot)
-        runtime = ensure_private_directory(self.slot_directory(slot.id) / "runtime")
-        return await self.launch_package(slot, package,
-            executable=package.root / entry.executable, args=entry.args, cwd=package.root / entry.cwd,
-            env={"PATH": "/usr/bin:/bin", "HOME": str(data), "TMPDIR": str(runtime), "LANG": "en_US.UTF-8"},
-            io_mode=io_mode, startup_timeout=min(package.manifest.lifecycle.startup_timeout_seconds, 120),
-            stop_grace=package.manifest.lifecycle.stop_grace_seconds)
+        admitted = package.manifest.resources.memory_mb > 4096 or package.manifest.resources.gpu or not package.manifest.resources.cpu_only
+        if admitted:
+            await self.reserve_model(slot, package)
+            if not hasattr(self, "stdio_admissions"):
+                self.stdio_admissions = set()
+            self.stdio_admissions.add(slot.id)
+        try:
+            entry = package.manifest.entrypoint
+            data = self.data_directory(slot)
+            runtime = ensure_private_directory(self.slot_directory(slot.id) / "runtime")
+            process = await self.launch_package(slot, package,
+                executable=package.root / entry.executable, args=entry.args, cwd=package.root / entry.cwd,
+                env={"PATH": "/usr/bin:/bin", "HOME": str(data), "TMPDIR": str(runtime), "LANG": "en_US.UTF-8",
+                     "PYTHONDONTWRITEBYTECODE": "1"},
+                owned_group=True, io_mode=io_mode, startup_timeout=min(package.manifest.lifecycle.startup_timeout_seconds, 120),
+                stop_grace=package.manifest.lifecycle.stop_grace_seconds)
+            if not hasattr(self, "stdio_audits"):
+                self.stdio_audits = {}
+            process._listener_error = None
+            audit = asyncio.create_task(self.monitor_stdio_listeners(slot, process))
+            self.stdio_audits[process.instance_id] = audit
+            audit.add_done_callback(lambda done: self.stdio_audits.pop(process.instance_id, None))
+            self.track(audit)
+            return process
+        except BaseException:
+            if admitted:
+                await self.release_model(slot.id)
+            raise
+
+    async def monitor_stdio_listeners(self, slot, process):
+        try:
+            await monitor_listeners(process)
+        except ListenerError as error:
+            process._listener_error = error.code
+            worker = self.workers.get(slot.id)
+            if worker is not None:
+                with contextlib.suppress(RegistryError):
+                    if self.registry.get_slot(slot.id).generation == slot.generation:
+                        # Close admission before cleanup yields to another session.
+                        worker.closing = True
+            await _await_ownership(self.reap(slot.id, process, join_audit=False))
+            # The channel closes its session handles while stopping the gateway.
+            # Keep that cleanup separate from this audit, which reap() joins.
+            if not self.closing:
+                self.track(asyncio.create_task(self.fail_stdio_listener_slot(slot, error.code)))
+
+    async def fail_stdio_listener_slot(self, slot, code):
+        async def locked_cleanup():
+            try:
+                current = self.registry.get_slot(slot.id)
+            except RegistryError:
+                # Installation candidates own processes but have no slot yet.
+                return
+            if current.generation != slot.generation or current.package_digest != slot.package_digest:
+                return
+            await self.stop_gateway(slot.id)
+            for process in list(self.owner(slot.id).instances.values()):
+                if not process.ownership_lost:
+                    await self.reap(slot.id, process)
+            await self.release_model(slot.id)
+            current = self.registry.get_slot(slot.id)
+            if current.generation == slot.generation and current.error_code != "ownership_lost":
+                self.registry.update_slot(slot.id, observed_state="failed", error_code=code)
+        async def cleanup():
+            async with self.locks.setdefault(slot.id, asyncio.Lock()):
+                await locked_cleanup()
+        await _await_ownership(cleanup())
 
     async def check_candidate(self, slot, *, business_smoke: bool = True):
         package = self.package(slot)
@@ -1313,8 +1389,19 @@ class Supervisor(UpgradeHost):
                         raise HostError("smoke_probe_failed") from None
                     if result.isError or result.structuredContent != fixture.expected:
                         raise HostError("smoke_probe_failed")
+                await assert_loopback(process)
+        except ListenerError as error:
+            raise HostError(error.code) from None
+        except Exception:
+            if getattr(process, "_listener_error", None):
+                raise HostError(process._listener_error) from None
+            raise
         finally:
             await self.reap(slot.id, process)
+            if package.manifest.resources.memory_mb > 4096 or package.manifest.resources.gpu or not package.manifest.resources.cpu_only:
+                await self.release_model(slot.id)
+        if process._listener_error is not None:
+            raise HostError(process._listener_error)
 
     async def start_gateway(self, slot, active: bool, *, inactive_code="slot_stopped"):
         package = self.package(slot)
@@ -2123,7 +2210,7 @@ class Supervisor(UpgradeHost):
                         with contextlib.suppress(Exception, asyncio.CancelledError):
                             await _await_ownership(task)
                 failures = []
-                for runner in (self.agent_preparations, self.preparation_runner, self.capture_runner, self.resolution_runner):
+                for runner in (self.pi_setup, self.agent_preparations, self.preparation_runner, self.capture_runner, self.resolution_runner):
                     try:
                         await runner.close()
                     except (OwnershipLost, ArtifactError, PreparationError) as error:
@@ -2602,7 +2689,8 @@ def management_app(host: Supervisor, token: str, port: int):
     from .preparation_agent_host import agent_preparation_routes
     from .preparation_agent_providers import agent_provider_routes
     policy = agent_preparation_routes(LocalPolicy(app, token=token, port=port, authenticate=authenticate), host.agent_preparations)
-    return agent_provider_routes(policy, host.agent_provider_registry)
+    from .pi_setup import pi_setup_routes
+    return pi_setup_routes(agent_provider_routes(policy, host.agent_provider_registry), host.pi_setup)
 
 
 async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None, *, preparation_runner_factory=None, resolution_runner_factory=None, agent_preparation_factory=None):

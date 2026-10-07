@@ -114,6 +114,7 @@ def test_unsupported_platform_keeps_schema_one_and_other_family_discovery(packag
 async def test_authenticated_api_returns_current_package_support(public_command, packaged):
     public_command.agent_preparations = None
     public_command.agent_provider_registry = None
+    public_command.pi_setup = None
     app = management_app(public_command, "synthetic-capability-token", 19999)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
             base_url="http://127.0.0.1:19999") as client:

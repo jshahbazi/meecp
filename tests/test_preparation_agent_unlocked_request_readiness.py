@@ -74,11 +74,11 @@ def request_only_unlocked_handler(request):
 @pytest.mark.parametrize("license_reviewed", [False, True])
 async def test_unlocked_transport_derives_requirements_and_fixture_from_request(source, expected, license_reviewed):
     reference = {"id": "agent-unlocked-python-adapter-v1", "version": "1.0.0",
-        "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"}
+        "digest": "30a6e459f76f4feabff58ff5481b5cc95f9589e03436a8aac109583a4cbfa26c"}
     guide = python_adapter_guide(reference, unlocked=True)
     license_bytes = b"Synthetic original permission\n"
     request, captured = request_for(source={"worker.py": source}, recipe={
-        "id": "mcpme.agent-unlocked-python-adapter", "version": "1.0.0", "digest": "a" * 64},
+        "id": "mcpme.agent-unlocked-python-adapter", "version": "1.0.1", "digest": "a" * 64},
         guide=guide.model_dump(), selected_metadata=[{"path": "LICENSE", "bytes": len(license_bytes),
             "sha256": hashlib.sha256(license_bytes).hexdigest()}] if license_reviewed else [])
     transport = backend(request_only_unlocked_handler)

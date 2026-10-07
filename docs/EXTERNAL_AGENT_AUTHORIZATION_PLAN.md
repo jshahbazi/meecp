@@ -19,13 +19,46 @@ The selected persistence model is a remembered connection policy plus fresh, sho
 - `backend/mcpme/grants.py` and `backend/mcpme/management_workflow_grants.py` provide expiring, revocable grant records and exact operation bindings. Credential-file publication is coupled to issuance today.
 - `backend/mcpme_local_transport.py` verifies private Unix socket ownership and permissions. Management clients have no TCP fallback.
 - `Sources/McpmeMenuBar/main.swift` already holds the owner's manager connection, performs authenticated private requests, polls host state, and fences callbacks against host replacement. Native alerts and review sheets already exist.
+- Internal Pi setup now runs through a separate owner-only `/v1/pi/*` API and workspace/process broker. The Add App UI defaults to Pi and retains **Have your agent do it** for external preparation. Pi does not use management MCP grants.
 - No pending external-connection request queue or native management authorization UI currently exists.
 
-See [Management MCP](MANAGEMENT_MCP.md), [mcpme design](MCPME_DESIGN.md), and [management preparation workflows](MANAGEMENT_PREPARATION_WORKFLOWS.md) for the implemented contracts.
+See [Management MCP](MANAGEMENT_MCP.md), [mcpme design](MCPME_DESIGN.md), [management preparation workflows](MANAGEMENT_PREPARATION_WORKFLOWS.md), and [Pi setup](PI_SETUP.md) for the implemented contracts.
+
+## Compatibility with updated main
+
+Reviewed on 2026-10-07 against `main` commit `38a109d1500bbbd93d393e890072994b8b718a38`, which merges Pi app setup in PR #41. The original plan was based on `f6ea59f73e5a50575a83a2285c21288a54cf7088`. The authorization architecture remains applicable. Implementation must include the Pi access boundary and native coordination rules below.
+
+| Updated area | Evidence in the reviewed main | Consequence for this plan |
+| --- | --- | --- |
+| Management facade, CLI, grants, and private transport | `management.py`, `__main__.py`, `grants.py`, `management_workflow_grants.py`, and `mcpme_local_transport.py` are unchanged from the original base. | Keep the existing authorization refactor, bootstrap channel, remembered policy, and exact-action grant design. |
+| Internal Pi setup | `supervisor.py` declares `pi_setup.credentials` as `owner_only`; `pi_setup_routes()` rejects a non-owner or any principal with a grant ID before route dispatch. | All `/v1/pi/*` routes remain owner-only. No existing exact preparation/resolution grant authorizes a Pi job. |
+| Add App and connection exports | `main.swift` retains external instructions/specification export in **Have your agent do it** and per-app **Copy Connection**. | Add a distinct management connection export and saved-policy view. Do not attach connection consent to a setup draft. |
+| Questions and settings | `PiSetupView.swift` holds transient question/credential state and its own epoch; app requests retain host-generation fencing. | Authorization needs its own presentation epoch and must preserve Pi input, provider settings, and installation review. |
+| Supervisor shutdown and installed stdio processes | The host joins Pi shutdown with other runners and adds resource admission/listener checks for installed stdio packages. | Bootstrap shutdown must close its admission and settle sessions without bypassing existing process cleanup or package resource policy. |
+
+External setup remains the existing import/attach/plan/apply workflow, including separately granted preparation/resolution execution where supported. An external agent can prepare a package in its own workspace and return it through that workflow. The popup changes its management authorization; it does not make the agent a caller of Pi's internal coding tools.
+
+Preserve the owner-only fence for Pi settings, import creation through `/v1/pi/imports`, job creation/inspection/listing, answers, and cancellation. Neither base sessions nor exact-action credentials may configure the Pi provider, read Pi questions/credentials, start Pi work, or invoke its `run_command`/process broker. A future external-to-Pi delegation feature would require a separate explicit authority contract and is outside this plan.
+
+### Review verification
+
+The following existing compatibility tests passed on the reviewed main source after merging it into this documentation branch:
+
+```sh
+uv run --locked pytest -q \
+  tests/test_mcpme_management_cli.py \
+  tests/test_mcpme_management_mcp.py \
+  tests/test_mcpme_grants.py \
+  tests/test_management_workflow_grants.py \
+  tests/test_local_transport.py \
+  tests/test_pi_setup.py::test_pi_routes_require_owner_host_and_origin
+```
+
+Result: **156 passed in 71.88 seconds**, with 42 temporary-directory cleanup warnings involving protected synthetic bundles. No runtime source or tests were changed by this review. The selected Pi test checks unauthenticated access, a preparation grant against settings/jobs, owner access, and Host/Origin rejection; it does not establish the future all-route/all-grant matrix. Source inspection confirms the shared Pi principal fence. New popup, session, modal coordination, renewal, and installed Claude Code behavior remain unimplemented and unverified.
 
 ## User flow
 
-1. In mcpme, choose **Copy Management Connection**. mcpme creates an unapproved connection profile and exports the installed launcher plus a public profile ID. Adding that configuration does not approve access.
+1. In mcpme, choose **Copy Management Connection** from management connection settings. mcpme creates an unapproved connection profile and exports the installed launcher plus a public profile ID. Adding that configuration does not approve access. The existing per-app **Copy Connection** and Add App's **Have your agent do it** actions keep their separate purposes.
 2. Claude Code launches the executable. MCP initialization and static tool discovery complete immediately.
 3. mcpme displays a native request: the reported client name, observed launch identity, requested access, and the meaning of remembering it. The proposed setup scope is **Inspect apps and create setup plans**. The owner can approve, deny, or reduce the requested scope. Remembering is selected by default, matching the requested product behavior.
 4. Approval records the selected policy and gives the connected facade a fresh scoped session credential over private IPC. Credential material stays inside mcpme processes.
@@ -94,6 +127,8 @@ Store remembered profiles in owner-private state using the existing persistence 
 
 Represent access with a versioned finite enum and canonical ordered scope set, mapped to existing grant modes and selected-slot lifecycle permissions. Derive UI labels and the scope digest from that schema. Reject unknown labels and invalid combinations; owner scope reduction can select only a subset of the proposed ceiling. Remembered base access never includes exact execution/install authority, recipe mutation, startup policy changes, app removal, or owner grant administration.
 
+Every external session/action credential produces a non-owner principal and remains subject to the current route-specific grant checks. Adding a new owner-only capability to the host must not implicitly add it to a remembered scope or the MCP catalog. In particular, preserve the `/v1/pi/*` principal fence for every grant mode and for renewed sessions.
+
 Refactor issuance to separate grant validation/ledger publication from optional CLI credential-file export. Reuse the existing scope and exact-operation authorization engine. The supervisor mints a fresh random session bearer, retains only its hash and associations in the authoritative ledger, and delivers the raw bearer once over the still-bound bootstrap connection. The bridge holds it only in memory and supplies it through an explicit session-auth provider on subsequent manager requests. Missing management credentials never select the owner's token. Do not create a competing scope evaluator.
 
 Use a prepared handoff record until the bound bridge acknowledges receipt. Activate the session only after acknowledgment, or revoke the prepared record on deadline/disconnect. Losing acknowledgment must not leave usable authority. Approval, publication, delivery, and acknowledgment all retain request/generation binding.
@@ -110,7 +145,13 @@ The facade may hold base session authority and separate exact-action authority. 
 
 Add an authorization coordinator owned by `McpmeApp`; do not move authority decisions into presentation views. Extend existing polling with a lightweight pending-request summary and use existing host-generation fencing on every callback.
 
+Give the coordinator its own presentation epoch and states `idle`, `queued`, `presenting`, `submitting`, and `settled`. Bind callbacks and decisions to that epoch as well as host generation and the backend request bindings. Include coordinator invalidation in `resetHostRequestState()`, termination, and explicit host stop; clear its own state without resetting Pi questions or provider input.
+
 Present an app-owned panel or sheet that works when the management window is closed. It shows useful names and access descriptions; IDs/digests belong in expandable review details. Do not show tokens, file references, or raw source data. Provide **Allow**, **Deny**, a **Remember this connection** control, and explicit access choices.
+
+Arbitrate presentation with existing installation/recovery sheets, confirmation dialogs, Pi provider settings, and active credential entry. Queue external authorization while another modal or protected credential interaction owns focus; do not stack sheets, close another window, switch setup tabs, or cancel its work to display a popup. A normal inline Pi question is not itself a modal: preserve its text, question ID, answer state, and job progress if an independent authorization panel is shown. Running Pi in the background must not block connection approval for the entire job. Recheck presentation eligibility when the interaction ends, and revalidate the request before showing it. A queued request remains pending until its existing two-minute deadline; UI contention never pauses that deadline or implies consent.
+
+Pi questions and secret answers retain their existing job/import/revision/question binding and private delivery. Do not reuse that question endpoint, payload, credential store, or job journal for external consent. Authorization summaries use their own bounded client metadata and schema-derived scope labels; they do not copy Pi question text or source/provider content.
 
 Exact operation review should reuse the current installation/preparation review models. For a tool requiring escalation, return `authorization_required` without executing it. The agent submits a typed exact-action proposal through `mcpme_request_access`, including operation family, existing plan ID/digest, and required attempt/idempotency binding. Create a separate pending request tied to the already-approved session; do not convert it into another base-connection request.
 
@@ -130,6 +171,8 @@ Clients can poll status with bounded backoff and explicitly call the intended op
 
 If the native app is absent, the facade may attempt one launch of its verified containing installed app bundle through the platform launch mechanism. Keep a launch-attempt marker per connection/profile/deadline so status polling cannot launch it repeatedly. It must not launch an arbitrary path supplied by the MCP client, create a second supervisor, or treat launching as consent. The existing app lifecycle starts its host and begins request polling. Initialization still completes independently; the facade reports `pending` while launch/startup is in progress and registers with the bootstrap listener when available.
 
+When the app is already running, activation and reopened-window handling must use the same presentation arbitration. An authorization request must not replace an active setup draft, dismiss a Pi question/settings window, or steal focus from credential entry.
+
 If bundle lookup, app launch, host startup, or approval UI is unavailable, settle as sanitized `authorization_unavailable` by the bounded deadline with an instruction to open mcpme. A queued dialog behind another modal remains pending; a headless/noninteractive session or failed activation cannot imply approval. Headless/unattended clients can continue using explicit file grants. Do not retry launch indefinitely or auto-approve when UI is unavailable.
 
 Pending requests expire after two minutes initially. Denial, deadline, child EOF/death, cancellation, app quit, and supervisor replacement settle requests without usable authority. Test approval-versus-disconnect and delivery-loss races; grants minted for a lost handoff must be revoked.
@@ -138,18 +181,19 @@ Pending requests expire after two minutes initially. Denial, deadline, child EOF
 
 1. **Identity and protocol spike.** Test installed Claude Code variants, safe OS launch attribution, peer credential APIs, app activation, and immediate initialization with the app absent. Establish the verified-client versus account-scoped remembered-policy behavior. This gates the identity promise in the UI, not the rest of the feature.
 2. **Authorization refactor.** Split owner CLI, explicit file-grant, and approved-session credentials into explicit code paths. Separate grant issuance from file publication. Preserve existing CLI behavior and add tests proving management cannot fall through to owner authority.
-3. **Broker and persistence.** Add the private request-only listener, bounded pending-request state, remembered policy records, session issuance/renewal/revocation, owner decision routes, and generation/connection fencing.
-4. **Native authorization UI.** Add the coordinator, popup, saved-connection controls, and exact-plan reviews. Reuse owner transport and native lifecycle protections. Exercise cancel/revoke and host replacement before wiring the default export.
+3. **Broker and persistence.** Add the private request-only listener, bounded pending-request state, remembered policy records, session issuance/renewal/revocation, owner decision routes, and generation/connection fencing. Preserve all Pi route fences and close bootstrap admission before joining existing host shutdown cleanup.
+4. **Native authorization UI.** Add the coordinator, popup, saved-connection controls, distinct management export action, and exact-plan reviews. Reuse owner transport and native lifecycle protections. Exercise cancel/revoke, host replacement, and contention with Pi questions/settings and installation sheets before wiring the default export.
 5. **Management facade and export.** Add profile arguments, static request/status tools, per-call session credential selection, lifecycle cleanup, verified app launch, and credential-free native export. Preserve explicit `--credential-file` as an intentional compatibility mode; invalid explicit credentials fail rather than triggering popup or owner fallback.
 6. **Integration verification and documentation.** Run real MCP SDK and installed Claude Code flows, update implemented contracts and status, and make the new export the native default only after its acceptance criteria pass.
 
 Dependency-aware parallel work: after the spike defines the shared schemas, backend authorization/broker work and native presentation work can proceed concurrently. Facade integration depends on broker contracts. End-to-end verification depends on all three. Use scoped agents within the available concurrency limit.
 
-Primary implementation areas: `backend/mcpme/__main__.py`, `management.py`, `grants.py`, `management_workflow_grants.py`, `supervisor.py`, `backend/mcpme_local_transport.py`, and native controller/views under `Sources/McpmeMenuBar/`. Keep new broker/policy components in focused modules rather than expanding unrelated model code.
+Primary implementation areas: `backend/mcpme/__main__.py`, `management.py`, `grants.py`, `management_workflow_grants.py`, `supervisor.py`, `backend/mcpme_local_transport.py`, and native controller/views under `Sources/McpmeMenuBar/`. Integrate with the current `PiSetupView` only for presentation/lifecycle coordination; preserve `pi_setup.py` and its internal broker's owner-only contracts. Keep new broker/policy components in focused modules rather than expanding unrelated model code.
 
 ## Acceptance criteria
 
 - Exported normal configuration includes only launcher/state selection/public profile metadata; no credential path, bearer, secret environment value, or manual grant-file setup.
+- Per-app **Copy Connection** output is unchanged; external setup instructions/specification exports retain their draft bindings. **Copy Management Connection** creates a separate profile and never starts Pi or authorizes a draft by being copied.
 - A real stdio client initializes and discovers the stable tool catalog within a two-second local test budget while approval is pending or the app is absent. Human response time is outside this startup budget.
 - Fresh unapproved clients cannot call manager data/mutation routes or access owner authority. Approval creates precisely the selected base scope.
 - A remembered profile reconnects across client and host restarts under its approved identity policy, receiving a new session token. Changed identity, another state installation, scope increase, revocation, and ambiguous verified-client attribution follow the documented reapproval behavior.
@@ -157,9 +201,11 @@ Primary implementation areas: `backend/mcpme/__main__.py`, `management.py`, `gra
 - Test copied profile IDs against a different installation, explicit account-scoped fallback consent, simultaneous different-scope requests for one profile, and stale approval after a policy revision. Neither MCP names nor a shared interpreter establish verified client approval.
 - Revocation, expiry, scope reduction, disconnect, app quit, and host replacement block the next unauthorized call. Concurrent sessions cannot receive each other's credentials.
 - Preparation/resolution execution and installation retain exact plan/digest/idempotency bindings. Modified plans and replay attempts cannot reuse approval. Startup policy changes, removal, and grant issuance/revocation remain owner-only.
+- Every Pi route rejects external base/action credentials, including after renewal. Cover all routes and grant modes, malformed owner/grant combinations, and credential absence; no denial falls back to owner credentials. External management cannot access Pi provider settings, job questions/answers, or its execution broker.
 - Popup cancellation, denial, timeout, lost delivery, and approval/disconnect races leave no usable orphan session. Existing operations are not silently replayed or canceled solely by client reconnection.
 - App launch occurs at most once per bounded attempt despite repeated polling, selects only the containing installed bundle, and cannot bypass consent. Headless sessions, failed activation, and modal contention have bounded, nonapproving outcomes.
-- Logs, stderr, process arguments, environment, exported configuration, errors, and native display contain no credential values, raw client prompts, evidence, model responses, or exception dumps. Native requests display only bounded schema-derived labels/review metadata. Internal private policy metadata follows the declared schema.
+- Pi inline questions, active secret entry, provider settings, installation/recovery sheets, and a second queued connection request coexist with authorization without lost input, two simultaneous sheets, tab changes, or canceled jobs. Host replacement while a popup is open rejects its stale callback and clears authorization state. UI contention expires normally and cannot pause the request deadline; background Pi alone does not block authorization.
+- Logs, stderr, process arguments, environment, exported configuration, errors, and authorization UI contain no credential values, raw client/model prompts, evidence, model responses, or exception dumps. Authorization requests display only bounded client metadata and schema-derived labels/review metadata. Existing Pi inline questions retain their separate transient question contract. Internal private policy metadata follows the declared schema.
 - Existing explicit file-grant tests, management scope tests, private socket tests, and installed app connection tests continue to pass. Add targeted broker/native/session tests and end-to-end coverage; a documentation-only plan does not establish these results.
 
 ## Compatibility and rollout

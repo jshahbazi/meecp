@@ -455,6 +455,10 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private var publisherDownloadCard: NSView?
     private var advancedSetupToggle: NSButton?
     private var advancedSetupStack: NSStackView?
+    private var otherSetupExpanded = false
+    private var setupMethodPicker: NSSegmentedControl?
+    private var manualSetupStack: NSStackView?
+    private var externalAgentSetupCard: NSView?
     private var piSetupCard: NSView?
     private var preparedConfigurationCard: NSView?
     private var installationReviewCard: NSView?
@@ -1114,8 +1118,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let export = button("Export Setup Specification…", action: #selector(exportDraft)); self.exportDraftButton = export
         let attach = button("Import Prepared Package…", action: #selector(choosePackage)); self.attachButton = attach
         let cancel = button("Cancel Draft", action: #selector(cancelDraft)); self.cancelDraftButton = cancel
-        let handoff = workspaceStack([save, copy, export], horizontal: true, spacing: 8)
-        let handoffReturn = workspaceStack([attach, cancel], horizontal: true, spacing: 8)
+        let draftActions = workspaceStack([save, cancel], horizontal: true, spacing: 8)
+        let handoff = workspaceStack([copy, export], horizontal: true, spacing: 8)
         let engine = button("Choose Model Engine…", action: #selector(chooseModelEngine)); self.modelEngineButton = engine
         let profile = button("Use JevK5 Decision Tools", action: #selector(selectModelProfile)); self.modelProfileButton = profile
         let modelControls = workspaceStack([engine, profile], horizontal: true)
@@ -1159,8 +1163,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             return self.preparationView.reviewAgentProposal(context)
         }
         recipesView.onRegistryChange = { [weak self] in self?.preparationView.registryChanged(); self?.agentPreparationView.registryChanged() }
-        let prepareCard = workspaceCard("Other preparation options", subtitle: "Use an existing preparation path or hand this setup to an external coding agent.",
-                                        views: [recipes, preparationView, workspaceCard("Agent assistance", subtitle: "Review the exact captured files and configured provider before transfer. Candidate selection requires ordinary preparation review.", views: [agentPreparationView]), handoff, handoffReturn, modelControls])
+        let prepareCard = workspaceCard("Prepare from your source", subtitle: "Choose source files above, save your draft, then use a supported preparation recipe.",
+            views: [recipes, preparationView, workspaceCard("Use a configured preparation agent", subtitle: "Review the captured files and provider before sending them. The result returns through preparation review.", views: [agentPreparationView]), modelControls])
+        let externalAgentCard = workspaceCard("Have your agent do it", subtitle: "Describe the tools you want and optionally add source files above. Save your draft, copy the instructions to your coding agent, then import its prepared package for review.",
+            views: [handoff, attach])
+        externalAgentSetupCard = externalAgentCard
         configurationView.onChange = { [weak self] in self?.setupChanged() }
         configurationView.onCreateSecret = { [weak self] name in self?.createSecret(name) }
         let configureCard = workspaceCard("App settings", subtitle: "Choose the settings and credentials your app needs.", views: [configurationView])
@@ -1192,12 +1199,21 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let reviewCard = workspaceCard("Ready to add", subtitle: "Review your app's tools and access, then choose when it should run.",
                                        views: [briefSummary, nameRow, startupRow, reviewScroll, actions, workspaceStack([cancelOperation, stopOperation, recoverOperation], horizontal: true), showInstalled])
         installationReviewCard = reviewCard
-        let advancedToggle = NSButton(checkboxWithTitle: "Advanced setup options", target: self, action: #selector(toggleAdvancedSetup))
+        let advancedToggle = button("Other setup methods", action: #selector(toggleAdvancedSetup))
+        advancedToggle.isBordered = false; advancedToggle.imagePosition = .imageLeading; advancedToggle.alignment = .left
+        advancedToggle.setAccessibilityLabel("Show or hide other setup methods")
         advancedSetupToggle = advancedToggle
         for card in [starterCard, serviceCard] { content.removeArrangedSubview(card); card.removeFromSuperview() }
-        let advanced = workspaceStack([starterCard, serviceCard, captureCard, publisherToggle, downloadCard, prepareCard])
+        let methods = NSSegmentedControl(labels: ["Manual setup", "Have your agent do it"], trackingMode: .selectOne,
+                                         target: self, action: #selector(selectSetupMethod))
+        methods.selectedSegment = 0; methods.setAccessibilityLabel("Other app setup method")
+        setupMethodPicker = methods
+        let manual = workspaceStack([starterCard, serviceCard, captureCard, publisherToggle, downloadCard, prepareCard])
+        manualSetupStack = manual
+        for card in [starterCard, serviceCard, captureCard, publisherToggle, downloadCard, prepareCard] { workspaceFill(card, in: manual) }
+        let advanced = workspaceStack([methods, draftActions, manual, externalAgentCard])
         advancedSetupStack = advanced; advanced.isHidden = true
-        for card in [starterCard, serviceCard, captureCard, publisherToggle, downloadCard, prepareCard] { workspaceFill(card, in: advanced) }
+        for view in [methods, draftActions, manual, externalAgentCard] { workspaceFill(view, in: advanced) }
         for card in [sourceCard, label, configureCard, reviewCard, advancedToggle, advanced] {
             content.addArrangedSubview(card); workspaceFill(card, in: content, inset: 28)
         }
@@ -1267,7 +1283,18 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         starterLabel?.stringValue = bundledStarterPackage == nil ? "The included app is unavailable in this copy of mcpme." :
             "Included with mcpme. Review its tool and access before adding it."
         publisherDownloadCard?.isHidden = publisherDownloadToggle?.state != .on && downloadRows.isEmpty
-        advancedSetupStack?.isHidden = advancedSetupToggle?.state != .on
+        let manualWorkActive = preparationView.busy || preparationView.hasActiveJob || artifactCaptureView.blocksNavigation
+        let agentWorkActive = agentPreparationView.blocksNavigation
+        if manualWorkActive || agentWorkActive {
+            otherSetupExpanded = true
+            setupMethodPicker?.selectedSegment = 0
+        }
+        advancedSetupStack?.isHidden = !otherSetupExpanded
+        advancedSetupToggle?.image = NSImage(systemSymbolName: otherSetupExpanded ? "chevron.down" : "chevron.right", accessibilityDescription: nil)
+        advancedSetupToggle?.isEnabled = !manualWorkActive && !agentWorkActive
+        setupMethodPicker?.isEnabled = !setupRequest && !manualWorkActive && !agentWorkActive && !piSetupView.blocksNavigation
+        manualSetupStack?.isHidden = setupMethodPicker?.selectedSegment != 0
+        externalAgentSetupCard?.isHidden = setupMethodPicker?.selectedSegment != 1
         piSetupCard?.isHidden = currentDraft?.packagePath != nil || upgradeTarget != nil
         preparedConfigurationCard?.isHidden = currentDraft?.attachment == nil && setupPlan == nil
         installationReviewCard?.isHidden = currentDraft?.packagePath == nil && setupPlan == nil && setupOperation == nil
@@ -1277,7 +1304,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         configurationView.setEditable(editable)
         intentField?.isEditable = editable; documentRoleField?.isEnabled = editable && currentDraft?.isDocument == true
         documentRoleField?.isHidden = currentDraft?.isDocument != true || isDescriptionDraft(currentDraft)
-        saveDraftButton?.isEnabled = editable && currentDraft != nil && draftDirty
+        saveDraftButton?.isEnabled = editable && (currentDraft == nil ? !brief.isEmpty : draftDirty)
         copyInstructionsButton?.isEnabled = editable && currentDraft != nil
         exportDraftButton?.isEnabled = editable && currentDraft != nil
         attachButton?.isEnabled = editable && currentDraft != nil
@@ -1348,7 +1375,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     @objc private func togglePublisherDownload() { refreshWindow() }
-    @objc private func toggleAdvancedSetup() { refreshWindow() }
+    @objc private func toggleAdvancedSetup() { otherSetupExpanded.toggle(); refreshWindow() }
+    @objc private func selectSetupMethod() { refreshWindow() }
     @objc private func toggleSourceOptions() {
         sourceOptionsExpanded.toggle()
         refreshWindow()
@@ -2083,7 +2111,10 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         persistSetup(); refreshWindow()
     }
 
-    @objc private func saveDraft() { saveCurrentDraft { _ in } }
+    @objc private func saveDraft() {
+        if currentDraft == nil { createPiBrief { _ in } }
+        else { saveCurrentDraft { _ in } }
+    }
 
     private func hasDraftChanges(_ draft: ImportDraft) -> Bool {
         (nameField?.stringValue ?? draft.name) != draft.name || (intentField?.string ?? draft.intent) != draft.intent ||
@@ -3359,14 +3390,29 @@ extension McpmeApp {
             && !app.preparationView.busy
     }
 
-    /// Checks the first-app route and opt-in publisher controls without contacting a host.
+    /// Checks Pi-first onboarding and the fallback navigation without contacting a host.
     fileprivate static func onboardingControlsSelfTest() -> Bool {
         let app = McpmeApp()
         _ = app.makeSetupWorkspace(); app.refreshWindow()
         guard app.starterButton?.action == #selector(useStarterApp), app.starterButton?.isEnabled == false,
               app.publisherDownloadCard?.isHidden == true, app.downloadStartButton?.isEnabled == false,
               app.savedSetupsRow?.isHidden == true, app.sourceOptionsStack?.isHidden == true,
-              app.piSetupCard?.isHidden == false, app.installationReviewCard?.isHidden == true else { return false }
+              app.piSetupCard?.isHidden == false, app.installationReviewCard?.isHidden == true,
+              app.advancedSetupStack?.isHidden == true else { return false }
+        app.intentField?.string = "Keep this app description while choosing a setup method."
+        app.advancedSetupToggle?.performClick(nil)
+        guard app.advancedSetupStack?.isHidden == false, app.manualSetupStack?.isHidden == false,
+              app.externalAgentSetupCard?.isHidden == true, app.piSetupCard?.isHidden == false else { return false }
+        app.setupMethodPicker?.selectedSegment = 1; app.selectSetupMethod()
+        guard app.manualSetupStack?.isHidden == true, app.externalAgentSetupCard?.isHidden == false,
+              app.copyInstructionsButton?.action == #selector(copyAgentInstructions),
+              app.attachButton?.action == #selector(choosePackage) else { return false }
+        app.advancedSetupToggle?.performClick(nil)
+        guard app.advancedSetupStack?.isHidden == true,
+              app.intentField?.string == "Keep this app description while choosing a setup method." else { return false }
+        app.advancedSetupToggle?.performClick(nil)
+        guard app.externalAgentSetupCard?.isHidden == false else { return false }
+        app.advancedSetupToggle?.performClick(nil)
         app.sourceOptionsButton?.performClick(nil)
         guard app.sourceOptionsStack?.isHidden == false else { return false }
         app.sourceOptionsButton?.performClick(nil)

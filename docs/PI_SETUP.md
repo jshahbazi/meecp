@@ -38,11 +38,19 @@ answers use a secure field and remain in the host's secret store; Pi receives
 an opaque binding identity rather than the credential value. Ordinary
 implementation choices remain the agent's responsibility.
 
-**Advanced setup options** contains the included JSON Utilities app, existing
-service connection, model capture, publisher package download, and earlier
-preparation workflows. Existing prepared packages can still proceed directly to
-review. Reference-document services and model-engine packages have their own
-supported paths; the Pi verifier currently accepts `mcp-stdio` packages.
+Pi setup is the default. **Other setup methods** reveals two choices and keeps
+the current description, source, and saved draft:
+
+- **Manual setup** includes JSON Utilities, existing service connections, model
+  capture, publisher package downloads, and recipe-based preparation with
+  optional assistance from a configured preparation agent.
+- **Have your agent do it** lets you copy agent instructions or export a setup
+  specification, then import the resulting prepared package. This method needs
+  no setup model or provider configuration in mcpme.
+
+Existing prepared packages can still proceed directly to review.
+Reference-document services and model-engine packages have their own supported
+paths; the Pi verifier currently accepts `mcp-stdio` packages.
 
 Closing the window leaves an active setup running in the host. **Cancel Setup**
 stops owned setup work. Source files and the saved draft are retained. A host

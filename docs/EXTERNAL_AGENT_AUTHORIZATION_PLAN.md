@@ -58,7 +58,7 @@ Result: **156 passed in 71.88 seconds**, with 42 temporary-directory cleanup war
 
 ## User flow
 
-1. In mcpme, choose **Copy Management Connection** from management connection settings. mcpme creates an unapproved connection profile and exports the installed launcher plus a public profile ID. Adding that configuration does not approve access. The existing per-app **Copy Connection** and Add App's **Have your agent do it** actions keep their separate purposes.
+1. In mcpme, choose **Copy Management Connection** from management connection settings. mcpme creates an unapproved connection profile and copies instructions for the agent followed by the JSON configuration containing the installed launcher and public profile ID. Paste the whole text into the agent. Adding that configuration does not approve access. The existing per-app **Copy Connection** and Add App's **Have your agent do it** actions keep their separate purposes.
 2. Claude Code launches the executable. MCP initialization and static tool discovery complete immediately.
 3. mcpme displays a native request: the reported client name, observed launch identity, requested access, and the meaning of remembering it. The proposed setup scope is **Inspect apps and create setup plans**. The owner can approve, deny, or reduce the requested scope. Remembering is selected by default, matching the requested product behavior.
 4. Approval records the selected policy and gives the connected facade a fresh scoped session credential over private IPC. Credential material stays inside mcpme processes.

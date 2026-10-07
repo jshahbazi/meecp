@@ -81,7 +81,7 @@ Advanced Add App paths support pinned package downloads, typed configuration and
 
 ## Let an assistant manage apps
 
-mcpme has a separate [management MCP connection](docs/MANAGEMENT_MCP.md). Choose **Copy Management Connection**, add it to your client, and approve inspection/planning in the native popup. Remembered approval applies to this integration under your macOS account. Each connection receives a fresh scoped credential that expires and can be revoked. The installed facade can launch its containing app once when needed. Explicit owner-issued file grants remain available for read, prepare, selected app controls, and one reviewed installation plan.
+mcpme has a separate [management MCP connection](docs/MANAGEMENT_MCP.md). Choose **Copy Management Connection** and paste the copied instructions and JSON configuration into your agent, then approve inspection/planning in the native popup. Remembered approval applies to this integration under your macOS account. Each connection receives a fresh scoped credential that expires and can be revoked. The installed facade can launch its containing app once when needed. Explicit owner-issued file grants remain available for read, prepare, selected app controls, and one reviewed installation plan.
 
 Preparation access can save drafts and attach packages, but installation requires its own grant. Changing startup policies, removing apps, and issuing or revoking grants remain owner actions. Copy the management configuration into your MCP client using the guide; each app's ordinary MCP connection continues to expose its own tools.
 

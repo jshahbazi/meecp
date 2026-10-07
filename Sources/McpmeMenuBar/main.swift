@@ -778,7 +778,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                 "args": ["--state-dir", self.stateDirectory.path, "management", "connect", "--profile", id]]]]
             guard let data = try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
                   let text = String(data: data, encoding: .utf8) else { return }
-            NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+            let instructions = "Add mcpme as a local stdio MCP server using the configuration below. Connect and request inspection and setup-planning access. Wait for me to approve the mcpme popup, then list the installed apps to confirm the connection works."
+            NSPasteboard.general.clearContents(); NSPasteboard.general.setString(instructions + "\n\n" + text, forType: .string)
         }
     }
 

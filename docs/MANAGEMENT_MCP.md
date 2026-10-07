@@ -56,7 +56,13 @@ The earlier registry retains at most 4,096 grants. When issuance reaches that li
 
 ## Connect an external agent
 
-Choose **Copy Management Connection** in the native app's menu, or open **Approved Connections**. This creates an unapproved public profile and copies a registration containing the installed launcher, state selector, and `management connect --profile PROFILE_UUID`. No credential path or secret is exported. The owner CLI can create the same registration:
+Choose **Copy Management Connection** in the native app's menu, or open **Approved Connections**. This creates an unapproved public profile and copies an agent prompt followed by the JSON registration containing the installed launcher, state selector, and `management connect --profile PROFILE_UUID`. Paste the complete text into your agent. No credential path or secret is exported. The prompt is:
+
+```text
+Add mcpme as a local stdio MCP server using the configuration below. Connect and request inspection and setup-planning access. Wait for me to approve the mcpme popup, then list the installed apps to confirm the connection works.
+```
+
+The owner CLI can create the JSON registration:
 
 ```sh
 scripts/mcpme management export --json

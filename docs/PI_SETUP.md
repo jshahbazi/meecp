@@ -38,15 +38,18 @@ answers use a secure field and remain in the host's secret store; Pi receives
 an opaque binding identity rather than the credential value. Ordinary
 implementation choices remain the agent's responsibility.
 
-Pi setup is the default. **Other setup methods** reveals two choices and keeps
-the current description, source, and saved draft:
+Add App has three setup tabs. **Pi agent** is selected by default. Switching
+tabs keeps the current description, source, and saved draft and shows only the
+selected method's controls:
 
 - **Manual setup** includes JSON Utilities, existing service connections, model
   capture, publisher package downloads, and recipe-based preparation with
   optional assistance from a configured preparation agent.
 - **Have your agent do it** lets you copy agent instructions or export a setup
-  specification, then import the resulting prepared package. This method needs
-  no setup model or provider configuration in mcpme.
+  specification directly after entering a description; either action saves the
+  draft automatically. Importing an existing prepared package also works without
+  first creating a draft. This method needs no setup model or provider
+  configuration in mcpme.
 
 Existing prepared packages can still proceed directly to review.
 Reference-document services and model-engine packages have their own supported

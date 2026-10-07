@@ -453,9 +453,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private var starterLabel: NSTextField?
     private var publisherDownloadToggle: NSButton?
     private var publisherDownloadCard: NSView?
-    private var advancedSetupToggle: NSButton?
-    private var advancedSetupStack: NSStackView?
-    private var otherSetupExpanded = false
+    private var draftActionsStack: NSStackView?
+    private var appBriefCard: NSView?
     private var setupMethodPicker: NSSegmentedControl?
     private var manualSetupStack: NSStackView?
     private var externalAgentSetupCard: NSView?
@@ -946,6 +945,12 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let host = workspaceLabel("", size: 12, secondary: true); self.setupHostText = host
         content.addArrangedSubview(host); workspaceFill(host, in: content, inset: 28)
 
+        let methods = NSSegmentedControl(labels: ["Pi agent", "Manual setup", "Have your agent do it"], trackingMode: .selectOne,
+                                         target: self, action: #selector(selectSetupMethod))
+        methods.selectedSegment = 0; methods.segmentStyle = .rounded
+        methods.setAccessibilityLabel("App setup method"); setupMethodPicker = methods
+        content.addArrangedSubview(methods); workspaceFill(methods, in: content, inset: 28)
+
         let starter = button("Try JSON Utilities", action: #selector(useStarterApp)); self.starterButton = starter
         let starterLabel = workspaceLabel("Included with mcpme. No download or build setup required.", size: 12, secondary: true)
         self.starterLabel = starterLabel
@@ -1062,9 +1067,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             }
         }
         let sourceCard = workspaceCard("What would you like your assistant to do?",
-            subtitle: "Describe an app. Pi will build it, ask for anything it needs, and check that it works.",
-            views: [intentScroll, sourceOptionsButton, sourceOptions, piSetupView])
-        piSetupCard = sourceCard
+            subtitle: "Describe the tools and behavior you want. You can also add existing source files or a project link.",
+            views: [intentScroll, sourceOptionsButton, sourceOptions])
+        appBriefCard = sourceCard
+        let piCard = workspaceCard("Set up with Pi", subtitle: "Pi builds your app, asks for anything it needs, and checks that it works.", views: [piSetupView])
+        piSetupCard = piCard
 
         artifactCaptureView.available = { [weak self] in
             guard let self else { return false }
@@ -1119,6 +1126,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let attach = button("Import Prepared Package…", action: #selector(choosePackage)); self.attachButton = attach
         let cancel = button("Cancel Draft", action: #selector(cancelDraft)); self.cancelDraftButton = cancel
         let draftActions = workspaceStack([save, cancel], horizontal: true, spacing: 8)
+        draftActionsStack = draftActions
         let handoff = workspaceStack([copy, export], horizontal: true, spacing: 8)
         let engine = button("Choose Model Engine…", action: #selector(chooseModelEngine)); self.modelEngineButton = engine
         let profile = button("Use JevK5 Decision Tools", action: #selector(selectModelProfile)); self.modelProfileButton = profile
@@ -1165,8 +1173,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         recipesView.onRegistryChange = { [weak self] in self?.preparationView.registryChanged(); self?.agentPreparationView.registryChanged() }
         let prepareCard = workspaceCard("Prepare from your source", subtitle: "Choose source files above, save your draft, then use a supported preparation recipe.",
             views: [recipes, preparationView, workspaceCard("Use a configured preparation agent", subtitle: "Review the captured files and provider before sending them. The result returns through preparation review.", views: [agentPreparationView]), modelControls])
-        let externalAgentCard = workspaceCard("Have your agent do it", subtitle: "Describe the tools you want and optionally add source files above. Save your draft, copy the instructions to your coding agent, then import its prepared package for review.",
-            views: [handoff, attach])
+        let externalAgentCard = workspaceCard("Have your agent do it", subtitle: "Enter a description above, then copy the instructions to your coding agent. Your draft is saved automatically. No model setup in mcpme is needed.",
+            views: [handoff, workspaceLabel("When your agent finishes, import its prepared package to review and add the app. You can also import a package you already have.", size: 12, secondary: true), attach])
         externalAgentSetupCard = externalAgentCard
         configurationView.onChange = { [weak self] in self?.setupChanged() }
         configurationView.onCreateSecret = { [weak self] name in self?.createSecret(name) }
@@ -1199,22 +1207,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let reviewCard = workspaceCard("Ready to add", subtitle: "Review your app's tools and access, then choose when it should run.",
                                        views: [briefSummary, nameRow, startupRow, reviewScroll, actions, workspaceStack([cancelOperation, stopOperation, recoverOperation], horizontal: true), showInstalled])
         installationReviewCard = reviewCard
-        let advancedToggle = button("Other setup methods", action: #selector(toggleAdvancedSetup))
-        advancedToggle.isBordered = false; advancedToggle.imagePosition = .imageLeading; advancedToggle.alignment = .left
-        advancedToggle.setAccessibilityLabel("Show or hide other setup methods")
-        advancedSetupToggle = advancedToggle
         for card in [starterCard, serviceCard] { content.removeArrangedSubview(card); card.removeFromSuperview() }
-        let methods = NSSegmentedControl(labels: ["Manual setup", "Have your agent do it"], trackingMode: .selectOne,
-                                         target: self, action: #selector(selectSetupMethod))
-        methods.selectedSegment = 0; methods.setAccessibilityLabel("Other app setup method")
-        setupMethodPicker = methods
         let manual = workspaceStack([starterCard, serviceCard, captureCard, publisherToggle, downloadCard, prepareCard])
         manualSetupStack = manual
         for card in [starterCard, serviceCard, captureCard, publisherToggle, downloadCard, prepareCard] { workspaceFill(card, in: manual) }
-        let advanced = workspaceStack([methods, draftActions, manual, externalAgentCard])
-        advancedSetupStack = advanced; advanced.isHidden = true
-        for view in [methods, draftActions, manual, externalAgentCard] { workspaceFill(view, in: advanced) }
-        for card in [sourceCard, label, configureCard, reviewCard, advancedToggle, advanced] {
+        for card in [sourceCard, piCard, externalAgentCard, draftActions, manual, label, configureCard, reviewCard] {
             content.addArrangedSubview(card); workspaceFill(card, in: content, inset: 28)
         }
         return page
@@ -1286,16 +1283,17 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let manualWorkActive = preparationView.busy || preparationView.hasActiveJob || artifactCaptureView.blocksNavigation
         let agentWorkActive = agentPreparationView.blocksNavigation
         if manualWorkActive || agentWorkActive {
-            otherSetupExpanded = true
+            setupMethodPicker?.selectedSegment = 1
+        } else if piSetupView.blocksNavigation {
             setupMethodPicker?.selectedSegment = 0
         }
-        advancedSetupStack?.isHidden = !otherSetupExpanded
-        advancedSetupToggle?.image = NSImage(systemSymbolName: otherSetupExpanded ? "chevron.down" : "chevron.right", accessibilityDescription: nil)
-        advancedSetupToggle?.isEnabled = !manualWorkActive && !agentWorkActive
+        let method = setupMethodPicker?.selectedSegment ?? 0
         setupMethodPicker?.isEnabled = !setupRequest && !manualWorkActive && !agentWorkActive && !piSetupView.blocksNavigation
-        manualSetupStack?.isHidden = setupMethodPicker?.selectedSegment != 0
-        externalAgentSetupCard?.isHidden = setupMethodPicker?.selectedSegment != 1
-        piSetupCard?.isHidden = currentDraft?.packagePath != nil || upgradeTarget != nil
+        manualSetupStack?.isHidden = method != 1
+        externalAgentSetupCard?.isHidden = method != 2
+        draftActionsStack?.isHidden = method == 0
+        appBriefCard?.isHidden = currentDraft?.packagePath != nil || upgradeTarget != nil
+        piSetupCard?.isHidden = method != 0 || currentDraft?.packagePath != nil || upgradeTarget != nil
         preparedConfigurationCard?.isHidden = currentDraft?.attachment == nil && setupPlan == nil
         installationReviewCard?.isHidden = currentDraft?.packagePath == nil && setupPlan == nil && setupOperation == nil
         draftField?.isEnabled = intakeEnabled
@@ -1305,9 +1303,9 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         intentField?.isEditable = editable; documentRoleField?.isEnabled = editable && currentDraft?.isDocument == true
         documentRoleField?.isHidden = currentDraft?.isDocument != true || isDescriptionDraft(currentDraft)
         saveDraftButton?.isEnabled = editable && (currentDraft == nil ? !brief.isEmpty : draftDirty)
-        copyInstructionsButton?.isEnabled = editable && currentDraft != nil
-        exportDraftButton?.isEnabled = editable && currentDraft != nil
-        attachButton?.isEnabled = editable && currentDraft != nil
+        copyInstructionsButton?.isEnabled = editable && (currentDraft != nil || !brief.isEmpty)
+        exportDraftButton?.isEnabled = editable && (currentDraft != nil || !brief.isEmpty)
+        attachButton?.isEnabled = editable
         cancelDraftButton?.isEnabled = enabled && currentDraft?.editable == true && !preparationView.busy && !artifactCaptureView.blocksNavigation && !agentPreparationView.blocksNavigation && !piSetupView.blocksNavigation
         reviewButton?.isEnabled = editable && (currentDraft?.packagePath != nil || currentDraft == nil && !(pathField?.stringValue.isEmpty ?? true))
         reviewButton?.title = setupPlan == nil ? "Review App" : "Update Review"
@@ -1375,8 +1373,12 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     @objc private func togglePublisherDownload() { refreshWindow() }
-    @objc private func toggleAdvancedSetup() { otherSetupExpanded.toggle(); refreshWindow() }
-    @objc private func selectSetupMethod() { refreshWindow() }
+    @objc private func selectSetupMethod() {
+        if let draft = currentDraft, !draftDirty, setupPlan == nil, setupOperation == nil {
+            setupLabel?.stringValue = draftStatus(draft)
+        }
+        refreshWindow()
+    }
     @objc private func toggleSourceOptions() {
         sourceOptionsExpanded.toggle()
         refreshWindow()
@@ -1961,6 +1963,12 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private func draftStatus(_ draft: ImportDraft) -> String {
         if draft.editable, draft.packagePath == nil,
            ["local_folder", "application_directory"].contains(draft.sourceKind) || draft.isDocument && draft.documentRole == "instructions" {
+            if setupMethodPicker?.selectedSegment == 2 {
+                return "Copy the instructions to your agent, then import its prepared package."
+            }
+            if setupMethodPicker?.selectedSegment == 1 {
+                return "Save your draft, then choose a preparation method below."
+            }
             return draft.intent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "Describe the tools you want, then choose Set Up App."
                 : "Choose Set Up App to prepare this source with Pi."
@@ -2080,12 +2088,13 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     @objc private func choosePackage() {
-        guard currentDraft?.editable == true, !setupRequest, let window = window else { return }
+        guard intakeEnabled, currentDraft?.editable ?? true, let window = window else { return }
         let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.allowsMultipleSelection = false
-        panel.message = "Choose the prepared package for this draft"
+        panel.message = "Choose a prepared mcpme package"
         panel.beginSheetModal(for: window) { [weak self] response in
-            guard response == .OK, let url = panel.url else { return }
-            self?.saveCurrentDraft { [weak self] saved in
+            guard let self, response == .OK, let url = panel.url else { return }
+            if self.currentDraft == nil { self.beginImport(url); return }
+            self.saveCurrentDraft { [weak self] saved in
                 guard let self = self, saved, let draft = self.currentDraft else { return }
                 self.setupRequest = true; self.setupLabel?.stringValue = "Verifying prepared package…"; self.refreshWindow()
                 self.request("v1/imports/\(draft.id)/attach", method: "POST", body: ["revision": draft.revision, "package": url.path]) { [weak self] object, code in
@@ -2198,7 +2207,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private func exportedDraft(completion: @escaping ([String: Any]) -> Void) {
-        saveCurrentDraft { [weak self] saved in
+        saveHandoffDraft { [weak self] saved in
             guard let self = self, saved, let draft = self.currentDraft, draft.editable else { return }
             self.setupRequest = true; self.refreshWindow()
             self.request("v1/imports/\(draft.id)/export", method: "POST", body: ["revision": draft.revision]) { [weak self] object, code in
@@ -2209,6 +2218,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                 completion(object); self.refreshWindow()
             }
         }
+    }
+
+    private func saveHandoffDraft(completion: @escaping (Bool) -> Void) {
+        if currentDraft == nil { createPiBrief(completion: completion) }
+        else { saveCurrentDraft(completion: completion) }
     }
 
     @objc private func copyAgentInstructions() {
@@ -3390,7 +3404,7 @@ extension McpmeApp {
             && !app.preparationView.busy
     }
 
-    /// Checks Pi-first onboarding and the fallback navigation without contacting a host.
+    /// Checks exclusive setup tabs and preserves shared draft inputs without contacting a host.
     fileprivate static func onboardingControlsSelfTest() -> Bool {
         let app = McpmeApp()
         _ = app.makeSetupWorkspace(); app.refreshWindow()
@@ -3398,21 +3412,27 @@ extension McpmeApp {
               app.publisherDownloadCard?.isHidden == true, app.downloadStartButton?.isEnabled == false,
               app.savedSetupsRow?.isHidden == true, app.sourceOptionsStack?.isHidden == true,
               app.piSetupCard?.isHidden == false, app.installationReviewCard?.isHidden == true,
-              app.advancedSetupStack?.isHidden == true else { return false }
+              app.setupMethodPicker?.selectedSegment == 0,
+              app.manualSetupStack?.isHidden == true, app.externalAgentSetupCard?.isHidden == true,
+              app.draftActionsStack?.isHidden == true else { return false }
         app.intentField?.string = "Keep this app description while choosing a setup method."
-        app.advancedSetupToggle?.performClick(nil)
-        guard app.advancedSetupStack?.isHidden == false, app.manualSetupStack?.isHidden == false,
-              app.externalAgentSetupCard?.isHidden == true, app.piSetupCard?.isHidden == false else { return false }
+        app.pathField?.stringValue = "/tmp/setup-tab-source"
+        app.piSourceURL?.stringValue = "https://example.com/project"
         app.setupMethodPicker?.selectedSegment = 1; app.selectSetupMethod()
+        guard app.manualSetupStack?.isHidden == false, app.externalAgentSetupCard?.isHidden == true,
+              app.piSetupCard?.isHidden == true, app.draftActionsStack?.isHidden == false else { return false }
+        app.setupMethodPicker?.selectedSegment = 2; app.selectSetupMethod()
         guard app.manualSetupStack?.isHidden == true, app.externalAgentSetupCard?.isHidden == false,
+              app.piSetupCard?.isHidden == true, app.appBriefCard?.isHidden == false,
               app.copyInstructionsButton?.action == #selector(copyAgentInstructions),
+              app.exportDraftButton?.action == #selector(exportDraft),
               app.attachButton?.action == #selector(choosePackage) else { return false }
-        app.advancedSetupToggle?.performClick(nil)
-        guard app.advancedSetupStack?.isHidden == true,
-              app.intentField?.string == "Keep this app description while choosing a setup method." else { return false }
-        app.advancedSetupToggle?.performClick(nil)
-        guard app.externalAgentSetupCard?.isHidden == false else { return false }
-        app.advancedSetupToggle?.performClick(nil)
+        app.setupMethodPicker?.selectedSegment = 0; app.selectSetupMethod()
+        guard app.piSetupCard?.isHidden == false, app.manualSetupStack?.isHidden == true,
+              app.externalAgentSetupCard?.isHidden == true, app.draftActionsStack?.isHidden == true,
+              app.intentField?.string == "Keep this app description while choosing a setup method.",
+              app.pathField?.stringValue == "/tmp/setup-tab-source",
+              app.piSourceURL?.stringValue == "https://example.com/project" else { return false }
         app.sourceOptionsButton?.performClick(nil)
         guard app.sourceOptionsStack?.isHidden == false else { return false }
         app.sourceOptionsButton?.performClick(nil)

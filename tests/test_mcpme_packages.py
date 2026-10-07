@@ -85,7 +85,7 @@ def test_http_profile_requires_explicit_private_injection_contract(tmp_path):
     ({"host_api_version": True}, "invalid_package_schema"),
     ({"source_revision": "main"}, "source_unresolved"),
     ({"install_hook": "private input"}, "invalid_package_schema"),
-    ({"resources": {"memory_mb": 64, "cpu_only": False}}, "invalid_package_schema"),
+    ({"resources": {"memory_mb": 64, "cpu_only": True, "gpu": True}}, "invalid_resource_declaration"),
     ({"resources": {"memory_mb": 64, "cpu_only": 1}}, "invalid_package_schema"),
     ({"entrypoint": {"executable": "../private", "cwd": "."}}, "unsafe_package_path"),
     ({"entrypoint": {"executable": "LICENSE", "cwd": "."}}, "entrypoint_not_executable"),

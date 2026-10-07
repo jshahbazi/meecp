@@ -367,6 +367,7 @@ private enum PrivateFile {
 
 final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate, NSTextViewDelegate {
     private var statusItem: NSStatusItem!
+    private var statusMenuTracking = false
     private var process: Process?
     // Assigned only by the explicit native acceptance command. The normal app
     // continues to require its own live host Process and matching connection.
@@ -406,6 +407,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private var managementTabs: NSTabView?
     private var workspacePicker: NSSegmentedControl?
     private var setupHostText: NSTextField?
+    private var savedSetupsRow: NSView?
+    private var sourceOptionsButton: NSButton?
+    private var sourceOptionsStack: NSStackView?
+    private var sourceOptionsExpanded = false
+    private var briefSummary: NSTextField?
     private var pendingInstalledSelection: String?
     private var pendingAppRequests: Set<String> = []
     private var pathField: NSTextField?
@@ -447,6 +453,14 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private var starterLabel: NSTextField?
     private var publisherDownloadToggle: NSButton?
     private var publisherDownloadCard: NSView?
+    private var draftActionsStack: NSStackView?
+    private var appBriefCard: NSView?
+    private var setupMethodPicker: NSSegmentedControl?
+    private var manualSetupStack: NSStackView?
+    private var externalAgentSetupCard: NSView?
+    private var piSetupCard: NSView?
+    private var preparedConfigurationCard: NSView?
+    private var installationReviewCard: NSView?
     private var operationCancelButton: NSButton?
     private var operationRecoverButton: NSButton?
     private var operationStopButton: NSButton?
@@ -457,6 +471,8 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private let preparationView = PreparationWorkspaceView()
     private let serviceConnectionView = ServiceConnectionView()
     private let agentPreparationView = AgentPreparationView()
+    private let piSetupView = PiSetupView()
+    private var piSourceURL: NSTextField?
     private let stateDirectory: URL = {
         if let configured = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"], configured.hasPrefix("/") {
             return URL(fileURLWithPath: configured, isDirectory: true)
@@ -566,7 +582,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private func resetHostRequestState() {
         pollInFlight = false; importsPollInFlight = false; downloadsPolling = false
         setupRequest = false; detailRequests = []; pendingAppRequests = []
-        preparationView.invalidate(); recipesView.invalidate(); agentPreparationView.invalidate()
+        preparationView.invalidate(); recipesView.invalidate(); agentPreparationView.invalidate(); piSetupView.connectionReset()
         agentPreparationView.resetProviderConnection()
         serviceConnectionView.connectionReset()
     }
@@ -690,7 +706,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             self.hostAvailable = true
             self.projects = parsed.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }; self.operations = operations.compactMap(Operation.init)
             self.hostMessage = "\(parsed.filter { $0.state == "ready" }.count) ready / \(parsed.count) installed"
-            self.rebuildMenu(); self.refreshWindow(); self.pollTrackedOperations(); self.pollImports(); self.pollDownloads(); self.preparationView.poll(); self.artifactCaptureView.poll(); self.agentPreparationView.poll()
+            self.rebuildMenu(); self.refreshWindow(); self.pollTrackedOperations(); self.pollImports(); self.pollDownloads(); self.preparationView.poll(); self.artifactCaptureView.poll(); self.agentPreparationView.poll(); self.piSetupView.poll()
             if Date().timeIntervalSince(self.lastDetailRefresh) >= 6 {
                 var selected: Set<String> = []
                 if self.dashboard.isVisible, let id = self.dashboard.selectedID { selected.insert(id) }
@@ -702,6 +718,12 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private func configureDashboard() {
+        dashboard.onVisibilityChange = { [weak self] _ in
+            self?.updateStatusButtonSelection()
+            // Status buttons clear their mouse-tracking highlight after the
+            // action returns. Reapply the current selection on the next turn.
+            DispatchQueue.main.async { [weak self] in self?.updateStatusButtonSelection() }
+        }
         dashboard.onSelect = { [weak self] id in self?.showDetails(id) }
         dashboard.onControl = { [weak self] id, action in self?.control(id, action: action) }
         dashboard.onCopy = { [weak self] id in self?.copyConfiguration(id) }
@@ -713,11 +735,25 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         dashboard.onLogin = { [weak self] in self?.toggleLogin() }
     }
 
+    private func updateStatusButtonSelection() {
+        let selected = dashboard.isVisible || statusMenuTracking
+        statusItem.button?.state = selected ? .on : .off
+        statusItem.button?.highlight(selected)
+    }
+
     @objc private func handleStatusButton() {
         let event = NSApp.currentEvent
         if event?.type == .rightMouseUp || (event?.type == .leftMouseUp && event?.modifierFlags.contains(.control) == true) {
             guard let button = statusItem.button else { return }
+            statusMenuTracking = true
             dashboard.dismiss()
+            button.state = .on
+            button.highlight(true)
+            defer {
+                statusMenuTracking = false
+                updateStatusButtonSelection()
+                DispatchQueue.main.async { [weak self] in self?.updateStatusButtonSelection() }
+            }
             let menu = NSMenu()
             let open = NSMenuItem(title: "Open", action: #selector(openDashboard), keyEquivalent: "")
             open.target = self; menu.addItem(open)
@@ -736,8 +772,9 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     @objc private func toggleDashboard() {
         guard let button = statusItem.button, let window = button.window,
               let screen = window.screen ?? NSScreen.main else { return }
-        let anchor = window.convertToScreen(button.convert(button.bounds, to: nil))
-        dashboard.toggle(anchor: anchor, screen: screen)
+        let buttonFrame = window.convertToScreen(button.convert(button.bounds, to: nil))
+        let anchor = dashboardHighlightAnchor(button: buttonFrame, statusItem: window.frame)
+        dashboard.toggle(anchor: anchor, screen: screen, statusButtonFrame: buttonFrame)
         if dashboard.isVisible { poll() }
     }
 
@@ -821,7 +858,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         if let id = management?.selectedID { loadDetails(id) }
     }
 
-    @objc private func addProject() { showManagement(); selectWorkspace(1); chooseSource() }
+    @objc private func addProject() { showManagement(); selectWorkspace(1) }
 
     @objc private func changeWorkspace() { selectWorkspace(workspacePicker?.selectedSegment ?? 0) }
 
@@ -829,7 +866,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         workspacePicker?.selectedSegment = index
         managementTabs?.selectTabViewItem(at: index)
         if index == 0, let id = management?.selectedID { loadDetails(id) }
-        if index == 1 { window?.makeFirstResponder(chooseButton) }
+        if index == 1 { window?.makeFirstResponder(intentField) }
     }
 
     private func makeManagementWindow() {
@@ -900,12 +937,19 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         draftPicker.setAccessibilityLabel("Saved app draft"); self.draftField = draftPicker
         draftPicker.setContentHuggingPriority(.defaultLow, for: .horizontal)
         draftPicker.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let newDraft = button("New Draft", action: #selector(newDraft)); self.newDraftButton = newDraft
-        let draftsRow = workspaceStack([workspaceLabel("Resume setup", size: 12, weight: .medium),
+        let newDraft = button("Start New App", action: #selector(newDraft)); self.newDraftButton = newDraft
+        let draftsRow = workspaceStack([workspaceLabel("Saved setups", size: 12, weight: .medium),
                                        draftPicker, newDraft], horizontal: true)
+        self.savedSetupsRow = draftsRow
         content.addArrangedSubview(draftsRow); workspaceFill(draftsRow, in: content, inset: 28)
         let host = workspaceLabel("", size: 12, secondary: true); self.setupHostText = host
         content.addArrangedSubview(host); workspaceFill(host, in: content, inset: 28)
+
+        let methods = NSSegmentedControl(labels: ["Pi agent", "Manual setup", "Have your agent do it"], trackingMode: .selectOne,
+                                         target: self, action: #selector(selectSetupMethod))
+        methods.selectedSegment = 0; methods.segmentStyle = .rounded
+        methods.setAccessibilityLabel("App setup method"); setupMethodPicker = methods
+        content.addArrangedSubview(methods); workspaceFill(methods, in: content, inset: 28)
 
         let starter = button("Try JSON Utilities", action: #selector(useStarterApp)); self.starterButton = starter
         let starterLabel = workspaceLabel("Included with mcpme. No download or build setup required.", size: 12, secondary: true)
@@ -935,13 +979,13 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         drop.selectedSource = { [weak self] url in self?.beginImport(url) }
         drop.heightAnchor.constraint(equalToConstant: 66).isActive = true
         let path = NSTextField(labelWithString: "")
-        path.placeholderString = "Drop a source folder, prepared package, text document, or GGUF model"
+        path.placeholderString = "Drop a source folder, app, or document here"
         path.isSelectable = true; path.lineBreakMode = .byTruncatingMiddle
         path.setAccessibilityLabel("Selected source")
         path.setContentHuggingPriority(.defaultLow, for: .horizontal)
         path.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         self.pathField = path
-        let choose = button("Choose Files…", action: #selector(chooseSource)); self.chooseButton = choose
+        let choose = button("Choose…", action: #selector(chooseSource)); self.chooseButton = choose
         let sourceRow = workspaceStack([path, choose], horizontal: true)
         drop.addSubview(sourceRow)
         NSLayoutConstraint.activate([
@@ -955,22 +999,83 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let policy = NSPopUpButton(); policy.addItems(withTitles: ["Start manually", "Automatic when mcpme opens"])
         policy.target = self; policy.action = #selector(setupChanged); policy.setAccessibilityLabel("New app startup"); self.policyField = policy
         let start = NSButton(checkboxWithTitle: "Start after install", target: self, action: #selector(setupChanged)); self.startCheck = start
-        let settings = workspaceStack([name, policy, start], horizontal: true)
+        let nameRow = workspaceStack([workspaceLabel("App name", size: 12, weight: .medium), name], horizontal: true)
+        name.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let startupRow = workspaceStack([policy, start], horizontal: true)
         let intentScroll = NSScrollView(); intentScroll.hasVerticalScroller = true; intentScroll.borderType = .bezelBorder
-        let intent = NSTextView(); intent.delegate = self; intent.font = .systemFont(ofSize: 13)
+        let intent = AppBriefTextView(); intent.delegate = self; intent.font = .systemFont(ofSize: 14)
         intent.isRichText = false; intent.isAutomaticQuoteSubstitutionEnabled = false; intent.isAutomaticDashSubstitutionEnabled = false
         intent.isVerticallyResizable = true; intent.isHorizontallyResizable = false; intent.autoresizingMask = [.width]
-        intent.textContainer?.widthTracksTextView = true; intent.textContainerInset = NSSize(width: 8, height: 8)
+        intent.textContainer?.widthTracksTextView = true; intent.textContainerInset = NSSize(width: 10, height: 10)
         intent.setAccessibilityLabel("Requested tools and behavior"); intentScroll.documentView = intent; self.intentField = intent
-        intentScroll.heightAnchor.constraint(equalToConstant: 76).isActive = true
+        intentScroll.heightAnchor.constraint(equalToConstant: 132).isActive = true
         let role = NSPopUpButton(); role.addItems(withTitles: ["Choose how to use this document", "Use this information", "Use these instructions"])
         role.target = self; role.action = #selector(setupChanged); role.setAccessibilityLabel("Document role"); self.documentRoleField = role
-        let sourceCard = workspaceCard("1. Choose your source", subtitle: "Choose your app's directory, a setup brief, or an already prepared app. Source apps currently use your coding agent for preparation.",
-            views: [drop, settings, workspaceLabel("What should your assistant be able to do?", size: 12, weight: .medium), intentScroll, role])
+        let sourceURL = NSTextField(); sourceURL.placeholderString = "Project link (optional)"; sourceURL.delegate = self
+        sourceURL.setAccessibilityLabel("Project link"); self.piSourceURL = sourceURL
+        let sourceOptions = workspaceStack([drop, sourceURL, role], spacing: 10)
+        self.sourceOptionsStack = sourceOptions
+        for view in [drop, sourceURL, role] { workspaceFill(view, in: sourceOptions) }
+        let sourceOptionsButton = button("Add files or a project link (optional)", action: #selector(toggleSourceOptions))
+        sourceOptionsButton.isBordered = false; sourceOptionsButton.imagePosition = .imageLeading
+        sourceOptionsButton.alignment = .left
+        sourceOptionsButton.setAccessibilityLabel("Show or hide optional app source")
+        self.sourceOptionsButton = sourceOptionsButton
+
+        piSetupView.request = { [weak self] path, method, body, completion in
+            self?.request(path, method: method, body: body, completion: completion)
+        }
+        piSetupView.available = { [weak self] in
+            guard let self else { return false }
+            return !uiPreviewMode && self.connection() != nil && self.hostAvailable && !self.setupRequest && !self.stopping && !self.quitting &&
+                !self.preparationView.busy && !self.preparationView.hasActiveJob && !self.artifactCaptureView.blocksNavigation && !self.agentPreparationView.blocksNavigation
+        }
+        piSetupView.beforeStart = { [weak self] completion in
+            guard let self else { completion(nil); return }
+            if self.currentDraft == nil {
+                self.createPiBrief { [weak self] saved in
+                    guard let self, saved, let draft = self.currentDraft, let revision = draft.sourceRevision else { completion(nil); return }
+                    completion(PreparationContext(importID: draft.id, revision: draft.revision, sourceRevision: revision))
+                }
+                return
+            }
+            self.saveCurrentDraft { [weak self] saved in
+                guard let self, saved, let draft = self.currentDraft, draft.editable, draft.packagePath == nil,
+                      !draft.intent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      let sourceRevision = draft.sourceRevision else { completion(nil); return }
+                completion(PreparationContext(importID: draft.id, revision: draft.revision, sourceRevision: sourceRevision))
+            }
+        }
+        piSetupView.onStateChange = { [weak self] in self?.refreshWindow() }
+        piSetupView.onJobChange = { [weak self] id in
+            if let id { self?.savedSetup["pi_job_id"] = id } else { self?.savedSetup.removeValue(forKey: "pi_job_id") }
+            self?.persistSetup()
+        }
+        piSetupView.onReady = { [weak self] job in
+            guard let self, !self.draftDirty, !self.setupRequest, let current = self.currentDraft,
+                  current.id == job.importID, current.revision == job.revision, current.sourceRevision == job.sourceRevision else { return }
+            self.setupRequest = true; self.setupLabel?.stringValue = "Loading the prepared app…"; self.refreshWindow()
+            let expectedView = self.importViewGeneration
+            self.request("v1/imports/" + job.importID) { [weak self] object, code in
+                guard let self else { return }; self.setupRequest = false
+                guard expectedView == self.importViewGeneration, self.currentDraft?.id == job.importID,
+                      let object, let draft = ImportDraft(object), draft.id == job.importID, draft.revision == job.revision,
+                      draft.sourceRevision == job.sourceRevision, draft.packagePath != nil else {
+                    self.setupLabel?.stringValue = self.draftError(code ?? "pi_prepared_app_unavailable"); self.refreshWindow(); return
+                }
+                self.displayDraft(draft); self.reviewPackage()
+            }
+        }
+        let sourceCard = workspaceCard("What would you like your assistant to do?",
+            subtitle: "Describe the tools and behavior you want. You can also add existing source files or a project link.",
+            views: [intentScroll, sourceOptionsButton, sourceOptions])
+        appBriefCard = sourceCard
+        let piCard = workspaceCard("Set up with Pi", subtitle: "Pi builds your app, asks for anything it needs, and checks that it works.", views: [piSetupView])
+        piSetupCard = piCard
 
         artifactCaptureView.available = { [weak self] in
             guard let self else { return false }
-            return !uiPreviewMode && self.connection() != nil && self.hostAvailable && !self.setupRequest && !self.stopping && !self.quitting && (!self.agentPreparationView.blocksNavigation || self.artifactCaptureView.blocksNavigation)
+            return !uiPreviewMode && self.connection() != nil && self.hostAvailable && !self.setupRequest && !self.stopping && !self.quitting && !self.piSetupView.blocksNavigation && (!self.agentPreparationView.blocksNavigation || self.artifactCaptureView.blocksNavigation)
         }
         artifactCaptureView.request = { [weak self] path, method, body, completion in self?.request(path, method: method, body: body, completion: completion) }
         artifactCaptureView.beforeCapture = { [weak self] completion in self?.saveDraftBeforeNavigation(completion: completion) }
@@ -1020,15 +1125,16 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let export = button("Export Setup Specification…", action: #selector(exportDraft)); self.exportDraftButton = export
         let attach = button("Import Prepared Package…", action: #selector(choosePackage)); self.attachButton = attach
         let cancel = button("Cancel Draft", action: #selector(cancelDraft)); self.cancelDraftButton = cancel
-        let handoff = workspaceStack([save, copy, export], horizontal: true, spacing: 8)
-        let handoffReturn = workspaceStack([attach, cancel], horizontal: true, spacing: 8)
+        let draftActions = workspaceStack([save, cancel], horizontal: true, spacing: 8)
+        draftActionsStack = draftActions
+        let handoff = workspaceStack([copy, export], horizontal: true, spacing: 8)
         let engine = button("Choose Model Engine…", action: #selector(chooseModelEngine)); self.modelEngineButton = engine
         let profile = button("Use JevK5 Decision Tools", action: #selector(selectModelProfile)); self.modelProfileButton = profile
         let modelControls = workspaceStack([engine, profile], horizontal: true)
         let recipes = button("Manage Recipes…", action: #selector(showPreparationRecipes))
         preparationView.available = { [weak self] in
             guard let self else { return false }
-            return !uiPreviewMode && self.connection() != nil && self.hostAvailable && !self.setupRequest && !self.stopping && !self.quitting && (!self.agentPreparationView.blocksNavigation || self.preparationView.hasActiveJob)
+            return !uiPreviewMode && self.connection() != nil && self.hostAvailable && !self.setupRequest && !self.stopping && !self.quitting && !self.piSetupView.blocksNavigation && (!self.agentPreparationView.blocksNavigation || self.preparationView.hasActiveJob)
         }
         preparationView.request = { [weak self] path, method, body, completion in self?.request(path, method: method, body: body, completion: completion) }
         preparationView.onUpdatedDraft = { [weak self] object in
@@ -1040,7 +1146,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         preparationView.onAttached = { [weak self] in self?.pollImports() }
         agentPreparationView.available = { [weak self] in
             guard let self else { return false }
-            return !uiPreviewMode && self.connection() != nil && self.hostAvailable && !self.setupRequest && !self.stopping && !self.quitting &&
+            return !uiPreviewMode && self.connection() != nil && self.hostAvailable && !self.setupRequest && !self.stopping && !self.quitting && !self.piSetupView.blocksNavigation &&
                 (self.agentPreparationView.blocksNavigation || !self.preparationView.busy && !self.preparationView.hasActiveJob && !self.artifactCaptureView.blocksNavigation)
         }
         agentPreparationView.request = { [weak self] path, method, body, completion in
@@ -1065,13 +1171,17 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             return self.preparationView.reviewAgentProposal(context)
         }
         recipesView.onRegistryChange = { [weak self] in self?.preparationView.registryChanged(); self?.agentPreparationView.registryChanged() }
-        let prepareCard = workspaceCard("2. Prepare the app", subtitle: "Answer the detected questions and review the preparation plan. You can also export instructions for your coding agent.",
-                                        views: [recipes, preparationView, workspaceCard("Agent assistance", subtitle: "Review the exact captured files and configured provider before transfer. Candidate selection requires ordinary preparation review.", views: [agentPreparationView]), handoff, handoffReturn, modelControls])
+        let prepareCard = workspaceCard("Prepare from your source", subtitle: "Choose source files above, save your draft, then use a supported preparation recipe.",
+            views: [recipes, preparationView, workspaceCard("Use a configured preparation agent", subtitle: "Review the captured files and provider before sending them. The result returns through preparation review.", views: [agentPreparationView]), modelControls])
+        let externalAgentCard = workspaceCard("Have your agent do it", subtitle: "Enter a description above, then copy the instructions to your coding agent. Your draft is saved automatically. No model setup in mcpme is needed.",
+            views: [handoff, workspaceLabel("When your agent finishes, import its prepared package to review and add the app. You can also import a package you already have.", size: 12, secondary: true), attach])
+        externalAgentSetupCard = externalAgentCard
         configurationView.onChange = { [weak self] in self?.setupChanged() }
         configurationView.onCreateSecret = { [weak self] name in self?.createSecret(name) }
-        let configureCard = workspaceCard("Configure the prepared app", subtitle: "Choose nonsecret settings and saved secret references before reviewing the exact plan.", views: [configurationView])
+        let configureCard = workspaceCard("App settings", subtitle: "Choose the settings and credentials your app needs.", views: [configurationView])
+        preparedConfigurationCard = configureCard
 
-        let label = workspaceLabel("Choose a source to begin.", size: 13); self.setupLabel = label
+        let label = workspaceLabel("", size: 13); self.setupLabel = label
         label.setAccessibilityLabel("Setup status")
         let reviewScroll = NSScrollView(); reviewScroll.hasVerticalScroller = true; reviewScroll.borderType = .bezelBorder
         let text = NSTextView(); text.isEditable = false; text.isSelectable = true; text.font = .systemFont(ofSize: 13)
@@ -1091,9 +1201,17 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let recoverOperation = button("Recover Candidate", action: #selector(recoverSetupOperation)); self.operationRecoverButton = recoverOperation
         let stopOperation = button("Stop Candidate", action: #selector(stopSetupOperation)); self.operationStopButton = stopOperation
         stopOperation.toolTip = "Stop the exposed candidate and preserve its saved data while recovery remains required"
-        let reviewCard = workspaceCard("3. Review and install", subtitle: "Check the tools, declared access, and startup choices before adding this app.",
-                                       views: [label, reviewScroll, actions, workspaceStack([cancelOperation, stopOperation, recoverOperation], horizontal: true), showInstalled])
-        for card in [sourceCard, captureCard, publisherToggle, downloadCard, prepareCard, configureCard, reviewCard] {
+        let briefSummary = workspaceLabel("", size: 12, secondary: true)
+        briefSummary.isSelectable = true; briefSummary.maximumNumberOfLines = 3; briefSummary.lineBreakMode = .byTruncatingTail
+        briefSummary.setAccessibilityLabel("Requested app behavior"); self.briefSummary = briefSummary
+        let reviewCard = workspaceCard("Ready to add", subtitle: "Review your app's tools and access, then choose when it should run.",
+                                       views: [briefSummary, nameRow, startupRow, reviewScroll, actions, workspaceStack([cancelOperation, stopOperation, recoverOperation], horizontal: true), showInstalled])
+        installationReviewCard = reviewCard
+        for card in [starterCard, serviceCard] { content.removeArrangedSubview(card); card.removeFromSuperview() }
+        let manual = workspaceStack([starterCard, serviceCard, captureCard, publisherToggle, downloadCard, prepareCard])
+        manualSetupStack = manual
+        for card in [starterCard, serviceCard, captureCard, publisherToggle, downloadCard, prepareCard] { workspaceFill(card, in: manual) }
+        for card in [sourceCard, piCard, externalAgentCard, draftActions, manual, label, configureCard, reviewCard] {
             content.addArrangedSubview(card); workspaceFill(card, in: content, inset: 28)
         }
         return page
@@ -1128,33 +1246,70 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             return preparationContext
         }
         agentPreparationView.bind(agentContext, saved: !draftDirty); agentPreparationView.refreshAvailability()
+        let piEligible = currentDraft.map { draft in
+            draft.editable && draft.packagePath == nil &&
+            (["local_folder", "application_directory"].contains(draft.sourceKind) || draft.isDocument && selectedDocumentRole == "instructions") &&
+            !(intentField?.string ?? draft.intent).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        } ?? !(intentField?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        piSetupView.bind(preparationContext, eligible: piEligible); piSetupView.refreshAvailability()
         refreshActionButtons()
         if let id = pendingInstalledSelection, projects.contains(where: { $0.id == id }), management != nil {
             pendingInstalledSelection = nil; management?.select(id: id)
         }
         setupHostText?.stringValue = uiPreviewMode ? "Preview · setup actions are disabled." :
-            (hostAvailable ? "Drafts are kept when you switch views or close this window." : "Host unavailable. Setup will resume when the connection returns.")
+            (hostAvailable ? "" : "Waiting for mcpme to connect. Your saved setup is kept.")
+        setupHostText?.isHidden = !uiPreviewMode && hostAvailable
+        setupLabel?.isHidden = setupLabel?.stringValue.isEmpty != false
+        let brief = (intentField?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        briefSummary?.stringValue = brief.isEmpty ? "" : "Requested: " + brief
+        briefSummary?.isHidden = brief.isEmpty
+        savedSetupsRow?.isHidden = drafts.isEmpty && currentDraft == nil
+        let sourcePath = pathField?.stringValue ?? ""
+        sourceOptionsButton?.title = sourcePath.isEmpty ? "Add files or a project link (optional)" : "Source: " + URL(fileURLWithPath: sourcePath).lastPathComponent
+        let showsSource = sourceOptionsExpanded
+        sourceOptionsStack?.isHidden = !showsSource
+        sourceOptionsButton?.image = NSImage(systemSymbolName: showsSource ? "chevron.down" : "chevron.right", accessibilityDescription: nil)
         let operation = setupOperation.flatMap { id in operations.first { $0.id == id } }
         let active = operation.map { $0.active || $0.status == "recovery_required" } ?? (setupOperation != nil)
         let enabled = process?.isRunning == true && connection() != nil && !stopping && !quitting && !setupRequest && !active
-        let editable = enabled && (currentDraft?.editable ?? true) && !preparationView.busy && !preparationView.hasActiveJob && !artifactCaptureView.blocksNavigation && !agentPreparationView.blocksNavigation
+        let editable = enabled && (currentDraft?.editable ?? true) && !preparationView.busy && !preparationView.hasActiveJob && !artifactCaptureView.blocksNavigation && !agentPreparationView.blocksNavigation && !piSetupView.blocksNavigation
         chooseButton?.isEnabled = intakeEnabled; newDraftButton?.isEnabled = intakeEnabled
+        sourceOptionsButton?.isEnabled = !setupRequest && !piSetupView.blocksNavigation
+        piSourceURL?.isEditable = intakeEnabled && currentDraft == nil
         starterButton?.isEnabled = intakeEnabled && bundledStarterPackage != nil
         starterLabel?.stringValue = bundledStarterPackage == nil ? "The included app is unavailable in this copy of mcpme." :
             "Included with mcpme. Review its tool and access before adding it."
         publisherDownloadCard?.isHidden = publisherDownloadToggle?.state != .on && downloadRows.isEmpty
+        let manualWorkActive = preparationView.busy || preparationView.hasActiveJob || artifactCaptureView.blocksNavigation
+        let agentWorkActive = agentPreparationView.blocksNavigation
+        if manualWorkActive || agentWorkActive {
+            setupMethodPicker?.selectedSegment = 1
+        } else if piSetupView.blocksNavigation {
+            setupMethodPicker?.selectedSegment = 0
+        }
+        let method = setupMethodPicker?.selectedSegment ?? 0
+        setupMethodPicker?.isEnabled = !setupRequest && !manualWorkActive && !agentWorkActive && !piSetupView.blocksNavigation
+        manualSetupStack?.isHidden = method != 1
+        externalAgentSetupCard?.isHidden = method != 2
+        draftActionsStack?.isHidden = method == 0
+        appBriefCard?.isHidden = currentDraft?.packagePath != nil || upgradeTarget != nil
+        piSetupCard?.isHidden = method != 0 || currentDraft?.packagePath != nil || upgradeTarget != nil
+        preparedConfigurationCard?.isHidden = currentDraft?.attachment == nil && setupPlan == nil
+        installationReviewCard?.isHidden = currentDraft?.packagePath == nil && setupPlan == nil && setupOperation == nil
         draftField?.isEnabled = intakeEnabled
         nameField?.isEnabled = editable; policyField?.isEnabled = editable; startCheck?.isEnabled = editable
         if upgradeTarget != nil { nameField?.isEnabled = false; policyField?.isEnabled = false; startCheck?.isEnabled = false }
         configurationView.setEditable(editable)
         intentField?.isEditable = editable; documentRoleField?.isEnabled = editable && currentDraft?.isDocument == true
-        documentRoleField?.isHidden = currentDraft?.isDocument != true
-        saveDraftButton?.isEnabled = editable && currentDraft != nil && draftDirty
-        copyInstructionsButton?.isEnabled = editable && currentDraft != nil
-        exportDraftButton?.isEnabled = editable && currentDraft != nil
-        attachButton?.isEnabled = editable && currentDraft != nil
-        cancelDraftButton?.isEnabled = enabled && currentDraft?.editable == true && !preparationView.busy && !artifactCaptureView.blocksNavigation && !agentPreparationView.blocksNavigation
+        documentRoleField?.isHidden = currentDraft?.isDocument != true || isDescriptionDraft(currentDraft)
+        saveDraftButton?.isEnabled = editable && (currentDraft == nil ? !brief.isEmpty : draftDirty)
+        copyInstructionsButton?.isEnabled = editable && (currentDraft != nil || !brief.isEmpty)
+        exportDraftButton?.isEnabled = editable && (currentDraft != nil || !brief.isEmpty)
+        attachButton?.isEnabled = editable
+        cancelDraftButton?.isEnabled = enabled && currentDraft?.editable == true && !preparationView.busy && !artifactCaptureView.blocksNavigation && !agentPreparationView.blocksNavigation && !piSetupView.blocksNavigation
         reviewButton?.isEnabled = editable && (currentDraft?.packagePath != nil || currentDraft == nil && !(pathField?.stringValue.isEmpty ?? true))
+        reviewButton?.title = setupPlan == nil ? "Review App" : "Update Review"
+        reviewButton?.isHidden = setupPlan != nil && !draftDirty
         installButton?.isEnabled = enabled && setupPlan != nil && setupOperation == nil && !draftDirty
         planDetailsButton?.isEnabled = setupPlan != nil
         installButton?.title = upgradeTarget != nil ? "Apply Reviewed Upgrade" : startCheck?.state == .on ? "Add & Start App" : "Add App"
@@ -1196,7 +1351,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private var intakeEnabled: Bool {
-        !uiPreviewMode && !setupRequest && !stopping && !quitting && !artifactCaptureView.blocksNavigation && !agentPreparationView.blocksNavigation && connection() != nil
+        !uiPreviewMode && !setupRequest && !stopping && !quitting && !artifactCaptureView.blocksNavigation && !agentPreparationView.blocksNavigation && !piSetupView.blocksNavigation && connection() != nil
     }
 
     private var bundledStarterPackage: URL? {
@@ -1218,6 +1373,16 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     @objc private func togglePublisherDownload() { refreshWindow() }
+    @objc private func selectSetupMethod() {
+        if let draft = currentDraft, !draftDirty, setupPlan == nil, setupOperation == nil {
+            setupLabel?.stringValue = draftStatus(draft)
+        }
+        refreshWindow()
+    }
+    @objc private func toggleSourceOptions() {
+        sourceOptionsExpanded.toggle()
+        refreshWindow()
+    }
 
     private func pollSecrets() {
         guard !uiPreviewMode, connection() != nil else { return }
@@ -1695,6 +1860,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     func windowWillClose(_ notification: Notification) {
+        piSetupView.clearCredentialEntry()
         if notification.object as? NSWindow === window { agentPreparationView.clearCredentialEntry() }
         if notification.object as? NSWindow === window, draftDirty, currentDraft?.editable == true, !setupRequest {
             saveCurrentDraft { _ in }
@@ -1711,6 +1877,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         case 2: return "instructions"
         default: return nil
         }
+    }
+
+    private func isDescriptionDraft(_ draft: ImportDraft?) -> Bool {
+        guard let draft, draft.isDocument else { return false }
+        return draft.sourcePath.hasPrefix(stateDirectory.appendingPathComponent("pi-setup/briefs").path + "/")
     }
 
     private func pollImports() {
@@ -1768,9 +1939,12 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         restoringDraft = true; defer { restoringDraft = false }
         importViewGeneration &+= 1
         let changed = currentDraft?.id != draft.id || currentDraft?.revision != draft.revision || currentDraft?.packageDigest != draft.packageDigest
+        let changedApp = currentDraft?.id != draft.id
+        if !isDescriptionDraft(draft) || currentDraft != nil && changedApp { piSourceURL?.stringValue = "" }
         currentDraft = draft; draftDirty = false
         upgradeTarget = nil
-        pathField?.stringValue = draft.sourceKind == "service_connection" ? "Local service connection" : draft.sourceKind == "captured_artifact_collection" ? "Captured artifacts" : draft.sourcePath
+        pathField?.stringValue = isDescriptionDraft(draft) ? "" : draft.sourceKind == "service_connection" ? "Local service connection" : draft.sourceKind == "captured_artifact_collection" ? "Captured artifacts" : draft.sourcePath
+        if changedApp && !(pathField?.stringValue.isEmpty ?? true) { sourceOptionsExpanded = true }
         nameField?.stringValue = draft.name; intentField?.string = draft.intent
         policyField?.selectItem(at: draft.policy == "host" ? 1 : 0)
         startCheck?.state = draft.start ? .on : .off
@@ -1787,6 +1961,18 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private func draftStatus(_ draft: ImportDraft) -> String {
+        if draft.editable, draft.packagePath == nil,
+           ["local_folder", "application_directory"].contains(draft.sourceKind) || draft.isDocument && draft.documentRole == "instructions" {
+            if setupMethodPicker?.selectedSegment == 2 {
+                return "Copy the instructions to your agent, then import its prepared package."
+            }
+            if setupMethodPicker?.selectedSegment == 1 {
+                return "Save your draft, then choose a preparation method below."
+            }
+            return draft.intent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Describe the tools you want, then choose Set Up App."
+                : "Choose Set Up App to prepare this source with Pi."
+        }
         var message = draft.label + "."
         if draft.isDocument && draft.documentRole == "reference" && draft.packagePath == nil {
             message += " Reference document tools need a prepared document service."
@@ -1844,11 +2030,12 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         currentDraft = nil; draftDirty = false; setupPlan = nil; setupOperation = nil
         upgradeTarget = nil; setupSettings = ["schema_version": 1, "configuration": [String: Any](), "secret_references": [String: String]()]
         configurationView.configure(package: nil, settings: setupSettings)
-        pathField?.stringValue = ""; nameField?.stringValue = ""; intentField?.string = ""
+        pathField?.stringValue = ""; nameField?.stringValue = ""; intentField?.string = ""; piSourceURL?.stringValue = ""
         policyField?.selectItem(at: 0); startCheck?.state = .off; documentRoleField?.selectItem(at: 0)
-        reviewText?.string = ""; setupLabel?.stringValue = "Choose a source to begin."
+        sourceOptionsExpanded = false
+        reviewText?.string = ""; setupLabel?.stringValue = ""
         savedSetup.removeValue(forKey: "import_id"); updateDraftPicker(); persistSetup(); refreshWindow()
-        window?.makeFirstResponder(chooseButton)
+        window?.makeFirstResponder(intentField)
     }
 
     @objc private func chooseSource() {
@@ -1861,14 +2048,35 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         }
     }
 
+    private func createPiBrief(completion: @escaping (Bool) -> Void) {
+        guard intakeEnabled, currentDraft == nil else { completion(false); return }
+        let intent = (intentField?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !intent.isEmpty else { completion(false); return }
+        let name = (nameField?.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceURL = (piSourceURL?.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        setupRequest = true; setupLabel?.stringValue = "Saving app description…"; refreshWindow()
+        request("v1/pi/imports", method: "POST", body: ["name": name.isEmpty ? "New App" : name,
+                "intent": intent, "source_url": sourceURL, "start": startCheck?.state == .on, "start_policy": selectedPolicy]) { [weak self] object, code in
+            guard let self else { completion(false); return }
+            self.setupRequest = false
+            guard let object, let draft = ImportDraft(object) else {
+                self.setupLabel?.stringValue = self.draftError(code ?? "invalid_draft"); self.refreshWindow(); completion(false); return
+            }
+            self.drafts.insert(draft, at: 0); self.displayDraft(draft); completion(true)
+        }
+    }
+
     private func beginImport(_ source: URL, name suppliedName: String? = nil) {
         guard intakeEnabled else { return }
+        // Attaching source after writing a brief must keep the user's request.
+        let initialIntent = currentDraft == nil ? intentField?.string ?? "" : ""
         saveDraftBeforeNavigation { [weak self] saved in
             guard let self = self, saved else { return }
             let directory = (try? source.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
             let name = suppliedName ?? (directory ? source.lastPathComponent : source.deletingPathExtension().lastPathComponent)
             self.setupRequest = true; self.setupLabel?.stringValue = "Inspecting selected source…"; self.refreshWindow()
-            self.request("v1/imports", method: "POST", body: ["source": source.path, "source_mode": "automatic", "name": name, "start": false, "start_policy": "manual"]) { [weak self] object, code in
+            self.request("v1/imports", method: "POST", body: ["source": source.path, "source_mode": "automatic", "name": name,
+                    "intent": initialIntent, "start": false, "start_policy": "manual"]) { [weak self] object, code in
                 guard let self = self else { return }; self.setupRequest = false
                 guard let object = object, let draft = ImportDraft(object) else {
                     self.setupLabel?.stringValue = self.draftError(code ?? "invalid_draft"); self.refreshWindow(); return
@@ -1880,12 +2088,13 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     @objc private func choosePackage() {
-        guard currentDraft?.editable == true, !setupRequest, let window = window else { return }
+        guard intakeEnabled, currentDraft?.editable ?? true, let window = window else { return }
         let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.allowsMultipleSelection = false
-        panel.message = "Choose the prepared package for this draft"
+        panel.message = "Choose a prepared mcpme package"
         panel.beginSheetModal(for: window) { [weak self] response in
-            guard response == .OK, let url = panel.url else { return }
-            self?.saveCurrentDraft { [weak self] saved in
+            guard let self, response == .OK, let url = panel.url else { return }
+            if self.currentDraft == nil { self.beginImport(url); return }
+            self.saveCurrentDraft { [weak self] saved in
                 guard let self = self, saved, let draft = self.currentDraft else { return }
                 self.setupRequest = true; self.setupLabel?.stringValue = "Verifying prepared package…"; self.refreshWindow()
                 self.request("v1/imports/\(draft.id)/attach", method: "POST", body: ["revision": draft.revision, "package": url.path]) { [weak self] object, code in
@@ -1907,11 +2116,14 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             draftDirty = hasDraftChanges(draft)
             setupLabel?.stringValue = draftDirty ? "Unsaved draft changes." : draftStatus(draft)
         }
-        else { setupLabel?.stringValue = "Choose a source to begin." }
+        else { setupLabel?.stringValue = "" }
         persistSetup(); refreshWindow()
     }
 
-    @objc private func saveDraft() { saveCurrentDraft { _ in } }
+    @objc private func saveDraft() {
+        if currentDraft == nil { createPiBrief { _ in } }
+        else { saveCurrentDraft { _ in } }
+    }
 
     private func hasDraftChanges(_ draft: ImportDraft) -> Bool {
         (nameField?.stringValue ?? draft.name) != draft.name || (intentField?.string ?? draft.intent) != draft.intent ||
@@ -1970,11 +2182,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private func saveDraftBeforeNavigation(completion: @escaping (Bool) -> Void) {
-        guard !agentPreparationView.blocksNavigation else {
+        guard !agentPreparationView.blocksNavigation, !piSetupView.blocksNavigation else {
             updateDraftPicker(); completion(false); return
         }
         saveCurrentDraft { [weak self] saved in
-            guard let self, !self.agentPreparationView.blocksNavigation else { completion(false); return }
+            guard let self, !self.agentPreparationView.blocksNavigation, !self.piSetupView.blocksNavigation else { completion(false); return }
             guard !saved else { completion(true); return }
             guard self.draftDirty, !self.setupRequest, let draft = self.currentDraft,
                   draft.editable, let window = self.window else { completion(false); return }
@@ -1985,7 +2197,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             alert.beginSheetModal(for: window) { [weak self] response in
                 guard let self, self.importViewGeneration == expectedView, self.currentDraft?.id == draft.id,
                       self.currentDraft?.revision == draft.revision, !self.setupRequest,
-                      !self.agentPreparationView.blocksNavigation else { completion(false); return }
+                      !self.agentPreparationView.blocksNavigation, !self.piSetupView.blocksNavigation else { completion(false); return }
                 guard response == .alertSecondButtonReturn else {
                     self.updateDraftPicker(); completion(false); return
                 }
@@ -1995,7 +2207,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private func exportedDraft(completion: @escaping ([String: Any]) -> Void) {
-        saveCurrentDraft { [weak self] saved in
+        saveHandoffDraft { [weak self] saved in
             guard let self = self, saved, let draft = self.currentDraft, draft.editable else { return }
             self.setupRequest = true; self.refreshWindow()
             self.request("v1/imports/\(draft.id)/export", method: "POST", body: ["revision": draft.revision]) { [weak self] object, code in
@@ -2006,6 +2218,11 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                 completion(object); self.refreshWindow()
             }
         }
+    }
+
+    private func saveHandoffDraft(completion: @escaping (Bool) -> Void) {
+        if currentDraft == nil { createPiBrief(completion: completion) }
+        else { saveCurrentDraft(completion: completion) }
     }
 
     @objc private func copyAgentInstructions() {
@@ -2204,6 +2421,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         if let target = upgradeTarget { object["upgrade_slot_id"] = target }
         if let id = selectedDownload?["download_id"] as? String ?? savedSetup["download_id"] as? String, validUUID(id) { object["download_id"] = id }
         if let id = artifactCaptureView.job?.id ?? savedSetup["capture_id"] as? String, validUUID(id) { object["capture_id"] = id }
+        if let id = savedSetup["pi_job_id"] as? String, validUUID(id) { object["pi_job_id"] = id }
         if let choices = try? configurationView.settings() { object["settings"] = choices }
         PrivateFile.write(object, to: setupFile)
         savedSetup = object
@@ -2214,6 +2432,7 @@ final class McpmeApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         guard let object = PrivateFile.read(setupFile), integer(object["schema_version"]) == 1 else { return }
         savedSetup = object
         if let id = preparationUUID(object["capture_id"]) { artifactCaptureView.restore(id) }
+        if let id = preparationUUID(object["pi_job_id"]) { piSetupView.restore(id) }
         if let id = object["upgrade_slot_id"] as? String, validUUID(id) { upgradeTarget = id }
         setupSettings = object["settings"] as? [String: Any] ?? setupSettings
         pathField?.stringValue = object["package"] as? String ?? ""; nameField?.stringValue = object["name"] as? String ?? ""
@@ -2334,7 +2553,8 @@ private func nativeSelfTest() -> Bool {
             let anchor = NSRect(x: x, y: screen.maxY, width: 24, height: 24)
             let frames = dashboardFrames(anchor: anchor, screen: screen, showsDetails: true)
             guard let detail = frames.details, screen.contains(frames.menu), screen.contains(detail),
-                  detail.minX > frames.menu.maxX else { return false }
+                  detail.minX > frames.menu.maxX || detail.maxX < frames.menu.minX,
+                  frames.menu == dashboardFrames(anchor: anchor, screen: screen, showsDetails: false).menu else { return false }
         }
     }
     return true
@@ -2620,6 +2840,35 @@ private struct NativeRecipeAcceptanceContext {
 }
 
 extension McpmeApp {
+    /// Checks selection through panel visibility and nested context-menu tracking.
+    fileprivate static func statusButtonSelfTest() -> Bool {
+        guard let screen = NSScreen.main else { return false }
+        let app = McpmeApp()
+        app.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        defer { app.dashboard.dismiss(); NSStatusBar.system.removeStatusItem(app.statusItem) }
+        guard let button = app.statusItem.button, let window = button.window else { return false }
+        let buttonFrame = window.convertToScreen(button.convert(button.bounds, to: nil))
+        // The status window belongs to this item, including native highlight padding.
+        guard window.frame.width >= buttonFrame.width,
+              window.frame.width <= buttonFrame.width + 32 else { return false }
+        let highlight = dashboardHighlightAnchor(button: buttonFrame, statusItem: window.frame)
+        guard highlight.minX == window.frame.minX - 2,
+              highlight.minX < buttonFrame.minX,
+              highlight.minY == buttonFrame.minY else { return false }
+        app.configureDashboard()
+        let anchor = NSRect(x: screen.visibleFrame.maxX - 24, y: screen.visibleFrame.maxY, width: 24, height: 24)
+        app.dashboard.toggle(anchor: anchor, screen: screen)
+        guard button.state == .on, button.cell?.isHighlighted == true else { return false }
+        app.dashboard.dismiss()
+        guard button.state == .off, button.cell?.isHighlighted == false else { return false }
+        app.statusMenuTracking = true
+        app.dashboard.dismiss()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        guard button.state == .on, button.cell?.isHighlighted == true else { return false }
+        app.statusMenuTracking = false; app.updateStatusButtonSelection()
+        return button.state == .off && button.cell?.isHighlighted == false
+    }
+
     /// Developer-only acceptance: dialog choices are simulated by an owned
     /// fixture; production handlers and authenticated owner socket are real.
     fileprivate static func recipesNativeAcceptance(fixture: URL) -> Bool {
@@ -3155,12 +3404,39 @@ extension McpmeApp {
             && !app.preparationView.busy
     }
 
-    /// Checks the first-app route and opt-in publisher controls without contacting a host.
+    /// Checks exclusive setup tabs and preserves shared draft inputs without contacting a host.
     fileprivate static func onboardingControlsSelfTest() -> Bool {
         let app = McpmeApp()
         _ = app.makeSetupWorkspace(); app.refreshWindow()
         guard app.starterButton?.action == #selector(useStarterApp), app.starterButton?.isEnabled == false,
-              app.publisherDownloadCard?.isHidden == true, app.downloadStartButton?.isEnabled == false else { return false }
+              app.publisherDownloadCard?.isHidden == true, app.downloadStartButton?.isEnabled == false,
+              app.savedSetupsRow?.isHidden == true, app.sourceOptionsStack?.isHidden == true,
+              app.piSetupCard?.isHidden == false, app.installationReviewCard?.isHidden == true,
+              app.setupMethodPicker?.selectedSegment == 0,
+              app.manualSetupStack?.isHidden == true, app.externalAgentSetupCard?.isHidden == true,
+              app.draftActionsStack?.isHidden == true else { return false }
+        app.intentField?.string = "Keep this app description while choosing a setup method."
+        app.pathField?.stringValue = "/tmp/setup-tab-source"
+        app.piSourceURL?.stringValue = "https://example.com/project"
+        app.setupMethodPicker?.selectedSegment = 1; app.selectSetupMethod()
+        guard app.manualSetupStack?.isHidden == false, app.externalAgentSetupCard?.isHidden == true,
+              app.piSetupCard?.isHidden == true, app.draftActionsStack?.isHidden == false else { return false }
+        app.setupMethodPicker?.selectedSegment = 2; app.selectSetupMethod()
+        guard app.manualSetupStack?.isHidden == true, app.externalAgentSetupCard?.isHidden == false,
+              app.piSetupCard?.isHidden == true, app.appBriefCard?.isHidden == false,
+              app.copyInstructionsButton?.action == #selector(copyAgentInstructions),
+              app.exportDraftButton?.action == #selector(exportDraft),
+              app.attachButton?.action == #selector(choosePackage) else { return false }
+        app.setupMethodPicker?.selectedSegment = 0; app.selectSetupMethod()
+        guard app.piSetupCard?.isHidden == false, app.manualSetupStack?.isHidden == true,
+              app.externalAgentSetupCard?.isHidden == true, app.draftActionsStack?.isHidden == true,
+              app.intentField?.string == "Keep this app description while choosing a setup method.",
+              app.pathField?.stringValue == "/tmp/setup-tab-source",
+              app.piSourceURL?.stringValue == "https://example.com/project" else { return false }
+        app.sourceOptionsButton?.performClick(nil)
+        guard app.sourceOptionsStack?.isHidden == false else { return false }
+        app.sourceOptionsButton?.performClick(nil)
+        guard app.sourceOptionsStack?.isHidden == true else { return false }
         app.publisherDownloadToggle?.state = .on; app.togglePublisherDownload()
         guard app.publisherDownloadCard?.isHidden == false else { return false }
         app.publisherDownloadToggle?.state = .off
@@ -3195,8 +3471,15 @@ extension McpmeApp {
         updated["revision"] = 3; updated["name"] = "Newer name"
         guard let newer = ImportDraft(updated) else { return false }
         app.drafts = [newer]; app.updateDraftPicker()
-        return app.draftField?.selectedItem?.representedObject as? String == id
-            && app.draftField?.titleOfSelectedItem == "Newer name — Prepared package received"
+        guard app.draftField?.selectedItem?.representedObject as? String == id,
+              app.draftField?.titleOfSelectedItem == "Newer name — Prepared package received" else { return false }
+        let brief: [String: Any] = ["draft_id": id, "revision": 1, "state": "waiting_for_agent", "name": "New App",
+            "source": ["kind": "document", "locator": app.stateDirectory.appendingPathComponent("pi-setup/briefs/synthetic/app.md").path],
+            "intent": "Synthetic app behavior", "document_role": "instructions", "start": false, "start_policy": "manual"]
+        guard let briefDraft = ImportDraft(brief), app.isDescriptionDraft(briefDraft) else { return false }
+        app.currentDraft = briefDraft; app.intentField?.string = briefDraft.intent; app.refreshWindow()
+        return app.documentRoleField?.isHidden == true && app.savedSetupsRow?.isHidden == false
+            && app.briefSummary?.stringValue == "Requested: Synthetic app behavior"
     }
 
     /// Verifies recovery button availability without starting a host or issuing requests.
@@ -3283,7 +3566,7 @@ if CommandLine.arguments.dropFirst().first == "--dashboard-ui-self-test" {
     let application = NSApplication.shared
     application.setActivationPolicy(.accessory)
     application.finishLaunching()
-    let passed = dashboardViewSelfTest()
+    let passed = dashboardViewSelfTest() && McpmeApp.statusButtonSelfTest()
     print(passed ? "dashboard_ui_contracts_passed" : "dashboard_ui_contracts_failed")
     exit(passed ? 0 : 1)
 }
@@ -3449,6 +3732,13 @@ if CommandLine.arguments.dropFirst().first == "--recipes-native-acceptance" {
 if CommandLine.arguments.dropFirst().first == "--recipes-native-context-self-test" {
     let passed = NativeRecipeAcceptanceContext.contractSelfTest()
     print(passed ? "recipes_native_context_passed" : "recipes_native_context_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--pi-setup-ui-self-test" {
+    _ = NSApplication.shared
+    let passed = PiSetupView.contractSelfTest()
+    print(passed ? "pi_setup_ui_contracts_passed" : "pi_setup_ui_contracts_failed")
     exit(passed ? 0 : 1)
 }
 

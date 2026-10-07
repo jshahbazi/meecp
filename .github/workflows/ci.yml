@@ -49,6 +49,7 @@ jobs:
           .build/debug/McpmeMenuBar --native-self-test
           .build/debug/McpmeMenuBar --dashboard-ui-self-test
           .build/debug/McpmeMenuBar --management-ui-self-test
+          .build/debug/McpmeMenuBar --pi-setup-ui-self-test
       - name: Build and verify development DMG
         run: |
           uv run --locked python scripts/build_mcpme_dmg.py \

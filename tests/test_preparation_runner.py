@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -19,6 +20,7 @@ from mcpme.contracts import validate_package
 from mcpme.imports import ImportStore
 from mcpme.ownership_receipts import prepare_receipt, verify_receipt
 from mcpme.preparation_contracts import ExecutionPolicy, PreparationError, parse_descriptor
+from mcpme.preparation_components import parse_component_descriptor
 from mcpme.preparation_processes import PreparationExecutor
 from mcpme.preparation_runner import JournaledPreparationOwner, PreparationRunner, _workspace_size, implementation_digest
 from mcpme.preparation_verifier import VerificationReport, verify_prepared_package
@@ -29,6 +31,7 @@ from mcpme.recipes import RecipeStore
 from test_mcpme_packages import edit_manifest, make_package
 from test_mcpme_preparations import foundation
 from test_preparation_processes import group_reaper
+from test_preparation_components import v2_descriptor
 from test_preparation_verifier import probe_fixture
 
 
@@ -364,6 +367,113 @@ def pending_job(controlled):
     runner.store.set_workspace(job["job_id"], workspace)
     runner.store.transition(job["job_id"], "preparing")
     return runner.store.get(job["job_id"]), workspace
+
+
+def terminal_family_job(controlled, *, historical=False, retain_ownership=False):
+    """Model a persisted v2 descriptor from a previous host run."""
+    runner, _, _, _, raw, *_ = controlled
+    job, workspace = pending_job(controlled)
+    if retain_ownership:
+        receipt, metadata = prepare_receipt(workspace, uuid.uuid4().hex)
+        os.close(receipt)
+        runner.store.register_ownership(job["job_id"], metadata)
+    job = runner.store.transition(job["job_id"], "interrupted" if retain_ownership else "failed",
+                                  ownership_settled=not retain_ownership,
+                                  error_code="preparation_interrupted")
+    family = next(iter(runner.store.families.values()))
+    descriptor = v2_descriptor(family.component.reference)
+    descriptor["recipe"] = copy.deepcopy(raw["recipe"])
+    descriptor["components"][0]["input"] = {
+        "candidate_id": "a" * 64, "resolution_digest": "b" * 64, "source_license": "LICENSE"}
+    if historical:
+        # The same family/version previously shipped different implementation
+        # bytes. Retaining this identity cannot admit it to the current host.
+        descriptor["components"][0]["component"]["digest"] = "0" * 64
+    assert parse_component_descriptor(descriptor).schema_version == 2
+    with runner.store.imports._transaction():
+        row = runner.store.db.execute("SELECT data FROM preparation_job_inputs WHERE job_id=?",
+                                      (job["job_id"],)).fetchone()
+        inputs = json.loads(row["data"])
+        inputs["descriptor"] = descriptor
+        encoded = json.dumps(inputs, sort_keys=True, separators=(",", ":"))
+        runner.store.db.execute("UPDATE preparation_job_inputs SET data=? WHERE job_id=?",
+                                (encoded, job["job_id"]))
+    (workspace / "historical-input.txt").write_text("Retained recovery input.\n")
+    return job, workspace, family, descriptor, encoded
+
+
+async def test_restart_settled_historical_component_preserves_records_and_workspace(controlled, monkeypatch):
+    runner, imports, recipes, draft, raw, resources, released = controlled
+    job, workspace, family, descriptor, inputs_before = terminal_family_job(controlled, historical=True)
+    monkeypatch.setattr(family, "release", lambda *args: pytest.fail("historical component was dispatched"))
+    recipe_before = recipes.inspect(raw["recipe"]["id"], raw["recipe"]["version"])
+    source_before = imports.inspect(draft["draft_id"])
+    with pytest.raises(PreparationError, match="^unknown_preparation_component$"):
+        runner.store.family_for(parse_component_descriptor(descriptor))
+
+    assert not runner._startup_recovered
+    summaries = await runner.recover()
+    assert summaries[0]["job_id"] == job["job_id"] and runner._startup_recovered
+    await runner.recover()
+    await runner.close()
+
+    current = runner.store.get(job["job_id"])
+    assert {key: value for key, value in current.items() if key != "updated_at"} == {
+        key: value for key, value in job.items() if key != "updated_at"}
+    assert not current["reservation_retained"] and current["ownership_settled"]
+    assert workspace.is_dir() and (workspace / "historical-input.txt").read_text() == "Retained recovery input.\n"
+    assert runner.store.db.execute("SELECT data FROM preparation_job_inputs WHERE job_id=?",
+                                   (job["job_id"],)).fetchone()["data"] == inputs_before
+    assert recipes.inspect(raw["recipe"]["id"], raw["recipe"]["version"]) == recipe_before
+    assert imports.inspect(draft["draft_id"]) == source_before
+    assert released == [job["job_id"]] and not resources and not runner.tasks
+    # Recovery did not register or authorize the historical implementation.
+    with pytest.raises(PreparationError, match="^unknown_preparation_component$"):
+        runner.store.family_for(parse_component_descriptor(descriptor))
+
+
+async def test_restart_current_family_releases_inputs_and_workspace(controlled, monkeypatch):
+    runner, *_, resources, released = controlled
+    job, workspace, family, descriptor, _ = terminal_family_job(controlled)
+    calls = []
+    monkeypatch.setattr(family, "release", lambda identifier, value: calls.append((identifier, value.digest)))
+    await runner.recover()
+    assert calls == [(job["job_id"], parse_component_descriptor(descriptor).digest)]
+    assert not workspace.exists() and released == [job["job_id"]] and not resources
+    await runner.close()
+
+
+@pytest.mark.parametrize("failure", [PreparationError("preparation_family_current_inputs_denied"),
+                                     RuntimeError("synthetic_cleanup_failure")])
+async def test_restart_family_cleanup_keeps_other_failures_strict(controlled, monkeypatch, failure):
+    runner, *_, resources, released = controlled
+    job, workspace, family, *_ = terminal_family_job(controlled)
+    def failed_release(*args):
+        raise failure
+    with monkeypatch.context() as patch:
+        patch.setattr(family, "release", failed_release)
+        with pytest.raises(type(failure), match="^" + str(failure) + "$"):
+            await runner.recover()
+        assert workspace.is_dir() and released == [] and not resources
+    # Restoring legitimate cleanup lets shutdown retry reconciliation.
+    await runner.close()
+    assert not workspace.exists() and released == [job["job_id"]]
+
+
+async def test_restart_historical_component_does_not_drop_unknown_native_ownership(controlled, monkeypatch):
+    runner, *_, resources, released = controlled
+    job, workspace, _, _, inputs_before = terminal_family_job(controlled, historical=True, retain_ownership=True)
+    monkeypatch.setattr(runner.store, "release_family_inputs", lambda *args: pytest.fail("unsettled job was cleaned"))
+
+    await runner.recover()
+    current = runner.store.get(job["job_id"])
+    assert current["reservation_retained"] and not current["ownership_settled"]
+    assert runner.store.pending_ownership(job["job_id"]) and resources and released == []
+    assert workspace.is_dir() and runner.store.db.execute(
+        "SELECT data FROM preparation_job_inputs WHERE job_id=?", (job["job_id"],)).fetchone()["data"] == inputs_before
+    with pytest.raises(OwnershipLost):
+        await runner.close()
+    assert workspace.is_dir() and resources and released == []
 
 
 async def test_restart_unknown_or_mismatched_receipt_keeps_reservation(controlled):

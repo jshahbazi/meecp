@@ -2,31 +2,29 @@
 
 ## Current source after the CI repair
 
-The tracked source now uses TextGen engine/task/recipe 1.0.14. The probe
-confinement repair permits the trusted private interpreter up to 32 MiB while
-retaining the existing launcher/bootstrap/helper bounds, exact file identity checks and
-the existing total runtime bound. That backend change requires a new immutable
-TextGen component closure and recipe. The current release policy changes only
-the TextGen references; all other family, agent, service and command authority
-remains exact.
+The tracked source uses TextGen engine/task/recipe 1.0.21. Pi changes the complete
+backend source closure, so the old 1.0.14 recipe no longer matches the registered
+component identities. A fresh immutable recipe binds the current closure. The
+current release policy also binds the updated unlocked Python adapter; each
+family and recipe remains pinned to an exact version and digest.
 
 | Current source binding | SHA-256 |
 | --- | --- |
-| Release policy | 5bb20b7a8cde39368a5cc3d03a92a4ed3f69d92ac56c317b6f696432863925ea |
-| TextGen engine | ce71166c4c91139ff88532f5a51ac9a0e0f265606a6a7ab9ebe03228f30609f5 |
-| TextGen task | 923c7d2ad7f913ab5491a31119cbba6e4433cc12593605dba1f2f004f4d57934 |
-| TextGen recipe | 6f643fa3a1cb89ef2c4aa3c4efe0a3941b1d70c416a363f2d6d16cd2f8c23f45 |
+| Release policy | 29d0359e9846afff79061c0fd0d0bf265f88fd78deb6c62193af1ba614ca9dcc |
+| TextGen engine | 438e6822bfc22187f91b51f496a6575db5a1bfeb55e7ddf3216d60a98883554d |
+| TextGen task | ad814ce4186bd3474fe9759991208d80eca0f491d449a00c38aee44b23c5b1d2 |
+| TextGen recipe | 492417b5993266c3c8d1cc3c8f37c5f8282349d4956ba36272f68221018e4cf7 |
 
-The 1.0.14 recipe was generated with `write_textgen_recipe` using `uv run
---locked` and contains nine files. Focused unit and acceptance-harness controls
-pass: 254 tests, with 144 opt-in scanner integrations skipped. Lifecycle
-coverage includes upgrades from 1.0.13 with retained enabled snapshots,
-disable/revoke/remove/deprecate choices and collected tombstones. All historical
-recipe files are preserved. The signed v10 runtime/live acceptance below belongs
-to its recorded source and TextGen 1.0.13; it has not been rerun for 1.0.14.
-The exact selected13 policy is retained at
-`tests/fixtures/phase3-selected-textgen-1-0-13-policy.json`, SHA-256
-8a9a8fd69217352b49e0e338d4d652df8cebcac86609edae1190a88cd2d9a592.
+The recipe was generated with `write_textgen_recipe` using `uv run --locked` and
+contains nine files. Focused cold-host, capture, recipe upgrade, policy, and
+lifecycle controls pass. Upgrade coverage includes 1.0.14, retained enabled
+snapshots, owner opt-outs, and collected tombstones. Versions 1.0.15 through
+1.0.20 already exist in repository history, so their identities are not reused.
+
+The signed v10 runtime/live acceptance below retains its original source and
+TextGen 1.0.13. It has not been rerun for 1.0.21. Frozen selected13 and selected14
+policy bytes are retained in `tests/fixtures/phase3-selected-textgen-1-0-13-policy.json`
+and `tests/fixtures/phase3-selected-textgen-1-0-14-policy.json`, respectively.
 
 ## Recorded signed v10 acceptance
 

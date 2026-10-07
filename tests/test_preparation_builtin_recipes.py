@@ -200,6 +200,64 @@ def test_new_immutable_catalog_version_can_seed_when_older_version_stays_enabled
     assert len(store.list()) == 2 and store.inspect(old["recipe_id"], old["version"]) == before
 
 
+def test_unlocked_recipe_upgrade_migrates_historical_seed_without_collision(store, tmp_path, monkeypatch):
+    """The shipped 1.0.1 bundle can coexist with a seeded historical 1.0.0."""
+    historical = Path(__file__).parents[1] / "templates/builtin-recipes/agent-unlocked-python-adapter-v1-0-0"
+    old_root = tmp_path / "historical-catalog"
+    old_bundle = old_root / historical.name
+    old_bundle.parent.mkdir()
+    shutil.copytree(historical, old_bundle)
+    old_manifest = json.loads((old_bundle / "mcpme.recipe.json").read_bytes())
+    old_entry = {"recipe_id": old_manifest["id"], "version": old_manifest["version"],
+                 "directory": old_bundle.name, "digest": validate_bundle(old_bundle)["digest"]}
+    (old_root / "catalog.json").write_text(json.dumps({"schema_version": 1, "recipes": [old_entry]}))
+    old = store.add(old_bundle)
+    old["state"] = "enabled"
+    store._save(old)
+    before = store.inspect(old["recipe_id"], old["version"])
+
+    shipped = Path(__file__).parents[1] / "templates/builtin-recipes"
+    active_root = tmp_path / "active-catalog"
+    active_bundle = active_root / "agent-unlocked-python-adapter-v1-0-1"
+    active_bundle.parent.mkdir()
+    shutil.copytree(shipped / active_bundle.name, active_bundle)
+    active_entry = next(item for item in json.loads((shipped / "catalog.json").read_bytes())["recipes"]
+                        if item["recipe_id"] == old["recipe_id"])
+    (active_root / "catalog.json").write_text(json.dumps({"schema_version": 1, "recipes": [active_entry]}))
+    monkeypatch.setattr(seeds, "CATALOG_ROOT", active_root)
+    new = only(store)
+    assert new["ready"] is True and new["recipe"]["version"] == "1.0.1"
+    assert len(store.list()) == 2
+    assert store.inspect(old["recipe_id"], old["version"]) == before
+
+
+def test_unlocked_recipe_upgrade_preserves_historical_opt_out(store, tmp_path, monkeypatch):
+    historical = Path(__file__).parents[1] / "templates/builtin-recipes/agent-unlocked-python-adapter-v1-0-0"
+    old_root = tmp_path / "historical-catalog"
+    old_bundle = old_root / historical.name
+    old_bundle.parent.mkdir()
+    shutil.copytree(historical, old_bundle)
+    manifest = json.loads((old_bundle / "mcpme.recipe.json").read_bytes())
+    entry = {"recipe_id": manifest["id"], "version": manifest["version"], "directory": old_bundle.name,
+             "digest": validate_bundle(old_bundle)["digest"]}
+    (old_root / "catalog.json").write_text(json.dumps({"schema_version": 1, "recipes": [entry]}))
+    old = store.add(old_bundle)
+    preserved = store.disable(old["recipe_id"], old["version"])
+
+    shipped = Path(__file__).parents[1] / "templates/builtin-recipes"
+    active_root = tmp_path / "active-catalog"
+    active_bundle = active_root / "agent-unlocked-python-adapter-v1-0-1"
+    active_bundle.parent.mkdir()
+    shutil.copytree(shipped / active_bundle.name, active_bundle)
+    active_entry = next(item for item in json.loads((shipped / "catalog.json").read_bytes())["recipes"]
+                        if item["recipe_id"] == old["recipe_id"])
+    (active_root / "catalog.json").write_text(json.dumps({"schema_version": 1, "recipes": [active_entry]}))
+    monkeypatch.setattr(seeds, "CATALOG_ROOT", active_root)
+    new = only(store)
+    assert new["ready"] is False and new["blockers"] == ["builtin_recipe_lifecycle_preserved"]
+    assert store.inspect(old["recipe_id"], old["version"]) == preserved
+
+
 def test_lifecycle_change_between_add_and_enable_wins_across_connections(store, monkeypatch):
     add = store.add
     def interrupted(path):

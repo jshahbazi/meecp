@@ -1,6 +1,6 @@
 # mcpme: a menu bar host for local MCP services
 
-Status: architecture and delivery plan, updated 2026-10-03. Phase 1 and the defined Phase 2 core acceptance are implemented. Automatic preparation remains the next onboarding milestone; its merged foundation cannot execute builds yet. See [implementation status](MCPME_STATUS.md), [Phase 2 onboarding](PHASE2_ONBOARDING.md), and [automatic preparation](AUTOMATIC_PREPARATION.md) for the implementation boundaries. The original [JevK5 Menu Bar](DESIGN.md) remains separately buildable.
+Status: architecture and delivery plan, updated 2026-10-03. Phase 1 and the defined Phase 2 core acceptance are implemented. Automatic preparation remains the next onboarding milestone; its merged foundation cannot execute builds yet. See [implementation status](MCPME_STATUS.md), [Phase 2 onboarding](PHASE2_ONBOARDING.md), and [automatic preparation](AUTOMATIC_PREPARATION.md) for the implementation boundaries. The proposed [native external-agent authorization plan](EXTERNAL_AGENT_AUTHORIZATION_PLAN.md) covers credential-free management connection setup, remembered consent, session credentials, and native approval; it is not implemented until its acceptance evidence is recorded. The original [JevK5 Menu Bar](DESIGN.md) remains separately buildable.
 
 ## Product
 

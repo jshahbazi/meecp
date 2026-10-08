@@ -12,13 +12,13 @@ import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
-import build_mcpme_app as app_builder  # noqa: E402
-import build_mcpme_dmg as dmg_builder  # noqa: E402
-import build_mcpme_host as host_builder  # noqa: E402
-from build_mcpme_host import BuildCommandError  # noqa: E402
-from build_mcpme_host import project_version  # noqa: E402
-from mcpme.contracts import PackageError, validate_package  # noqa: E402
-from test_mcpme_packages import edit_manifest, make_package, relock  # noqa: E402
+import build_meecp_app as app_builder  # noqa: E402
+import build_meecp_dmg as dmg_builder  # noqa: E402
+import build_meecp_host as host_builder  # noqa: E402
+from build_meecp_host import BuildCommandError  # noqa: E402
+from build_meecp_host import project_version  # noqa: E402
+from meecp.contracts import PackageError, validate_package  # noqa: E402
+from test_meecp_packages import edit_manifest, make_package, relock  # noqa: E402
 
 
 CERTIFICATE = "A" * 40
@@ -29,7 +29,7 @@ SUBMISSION = "12345678-1234-1234-1234-123456789abc"
 @pytest.fixture
 def closed_release_source(tmp_path, monkeypatch):
     """A complete closed policy isolates TextGen preflight from CLI prerequisites."""
-    from mcpme.preparation_release_policy import ReleasePolicy
+    from meecp.preparation_release_policy import ReleasePolicy
     source = tmp_path / "preflight-source"
     policy = source / "templates/release-policies/phase3-v1.json"
     policy.parent.mkdir(parents=True)
@@ -45,10 +45,10 @@ def closed_release_source(tmp_path, monkeypatch):
 
 @pytest.fixture
 def active_command_source(closed_release_source):
-    from mcpme.preparation_release_command_admission import (
+    from meecp.preparation_release_command_admission import (
         COMMAND_COMPONENT, INSTALLED_PLATFORM_POLICY, RESOURCE_PLATFORM_POLICY,
     )
-    from mcpme.preparation_release_policy import ReleasePolicy
+    from meecp.preparation_release_policy import ReleasePolicy
     policy = closed_release_source / "templates/release-policies/phase3-v1.json"
     value = json.loads(policy.read_bytes())
     component = dict(zip(("id", "version", "digest"), COMMAND_COMPONENT))
@@ -109,21 +109,21 @@ def test_signed_textgen_source_build_is_rejected_before_credential_lookup(monkey
     monkeypatch.setattr(app_builder, "run", forbidden)
     monkeypatch.setattr(dmg_builder, "run", forbidden)
     with pytest.raises(SystemExit, match="^signed_textgen_preparation_not_supported$"):
-        app_builder.build(tmp_path / "mcpme.app", sign_identity=CERTIFICATE, textgen_engine=tmp_path / "engine")
+        app_builder.build(tmp_path / "meecp.app", sign_identity=CERTIFICATE, textgen_engine=tmp_path / "engine")
     with pytest.raises(SystemExit, match="^signed_textgen_preparation_not_supported$"):
-        dmg_builder.build(tmp_path / "mcpme.dmg", sign_identity=CERTIFICATE, textgen_engine=tmp_path / "engine")
+        dmg_builder.build(tmp_path / "meecp.dmg", sign_identity=CERTIFICATE, textgen_engine=tmp_path / "engine")
     assert policy.read_bytes() == before
-    assert not (tmp_path / "mcpme.app").exists() and not (tmp_path / "mcpme.dmg").exists()
+    assert not (tmp_path / "meecp.app").exists() and not (tmp_path / "meecp.dmg").exists()
     assert not (closed_release_source / ".build").exists()
 
 
 def test_supplied_development_textgen_app_cannot_enter_signed_release_path(monkeypatch, tmp_path):
-    app = tmp_path / "mcpme.app"
+    app = tmp_path / "meecp.app"
     (app / "Contents/Resources/host/preparation-toolchain/textgen-runtime").mkdir(parents=True)
     monkeypatch.setattr(dmg_builder, "developer_identity",
                         lambda *args, **kwargs: pytest.fail("development engine reached credential lookup"))
     with pytest.raises(SystemExit, match="^signed_textgen_preparation_not_supported$"):
-        dmg_builder.build(tmp_path / "mcpme.dmg", app=app, sign_identity=CERTIFICATE)
+        dmg_builder.build(tmp_path / "meecp.dmg", app=app, sign_identity=CERTIFICATE)
 
 
 @pytest.mark.parametrize("version", ["1", "1.2", "01.2.3", "1.2.3-alpha", "v1.2.3"])
@@ -145,7 +145,7 @@ def test_app_rejects_invalid_override_before_external_build(monkeypatch, tmp_pat
     called = []
     monkeypatch.setattr(app_builder, "run", lambda *args: called.append(args))
     with pytest.raises(SystemExit, match="release_version_requires_major_minor_patch"):
-        app_builder.build(tmp_path / "mcpme.app", version="1.2")
+        app_builder.build(tmp_path / "meecp.app", version="1.2")
     assert called == []
 
 
@@ -153,7 +153,7 @@ def test_dmg_rejects_invalid_override_before_external_build(monkeypatch, tmp_pat
     called = []
     monkeypatch.setattr(dmg_builder, "developer_identity", lambda *args: called.append(args))
     with pytest.raises(SystemExit, match="release_version_requires_major_minor_patch"):
-        dmg_builder.build(tmp_path / "mcpme.dmg", version="1.2")
+        dmg_builder.build(tmp_path / "meecp.dmg", version="1.2")
     assert called == []
 
 
@@ -168,7 +168,7 @@ def synthetic_starter(destination):
 @pytest.mark.parametrize("release", [False, True])
 def test_app_build_records_selected_version_and_validates_signed_starter(monkeypatch, tmp_path, release):
     source = tmp_path / "source"
-    for relative in ("Sources/McpmeMenuBar/main.swift", "Sources/McpmeMenuBar/Brand.swift",
+    for relative in ("Sources/MeecpMenuBar/main.swift", "Sources/MeecpMenuBar/Brand.swift",
                      "README.md", "model-manifest.json", "THIRD_PARTY_NOTICES.md",
                      "assets/brand/source.svg", "pyproject.toml"):
         path = source / relative
@@ -181,7 +181,7 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
         "[Review](reviews/DIRECTORY_ONBOARDING_REVIEW.md)\n")
     binary_directory = tmp_path / "native"
     binary_directory.mkdir()
-    (binary_directory / "McpmeMenuBar").write_bytes(b"synthetic native app")
+    (binary_directory / "MeecpMenuBar").write_bytes(b"synthetic native app")
     before = (source / "pyproject.toml").read_bytes()
     host_versions = []
     signed_starter = None
@@ -249,7 +249,7 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
     monkeypatch.setattr(app_builder, "developer_identity", lambda *args: CERTIFICATE)
     monkeypatch.setattr(app_builder, "sign_runtime", sign_runtime)
     monkeypatch.setattr(app_builder, "verify_signature", lambda *args, **kwargs: None)
-    app = app_builder.build(tmp_path / "mcpme.app", sign_identity=IDENTITY if release else None, version="2.4.6")
+    app = app_builder.build(tmp_path / "meecp.app", sign_identity=IDENTITY if release else None, version="2.4.6")
     resources = app / "Contents/Resources"
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
     receipt = json.loads((resources / "app-build.json").read_text())
@@ -263,7 +263,7 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
     if release:
         assert policy == {"synthetic_active_release_policy": True}
     else:
-        from mcpme.preparation_release_policy import ReleasePolicy
+        from meecp.preparation_release_policy import ReleasePolicy
         closed = ReleasePolicy.model_validate(policy)
         assert closed.admissions() == (None, None, None)
         assert closed.policy_id == "phase3-development-closed-v1"
@@ -274,7 +274,7 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
     assert resource["production_admission"] == "disabled"
     for relative, digest in host_receipt["artifact_sha256"].items():
         assert digest == app_builder.sha256(resources / "host" / relative)
-    assert {"bin/mcpme-handoff", "native-app.json"}.issubset(host_receipt["artifact_sha256"])
+    assert {"bin/meecp-handoff", "native-app.json"}.issubset(host_receipt["artifact_sha256"])
     assert set(host_receipt["artifact_sha256"]) == {
         str(path.relative_to(resources / "host"))
         for path in (resources / "host").rglob("*") if path.is_file() and not path.is_symlink()
@@ -284,7 +284,7 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
     verified = validate_package(starter)
     assert receipt["starter_packages"] == [{"path": "starter-packages/json-utilities",
         "package_id": "local.json-utilities", "version": "1.0.0", "package_digest": verified.digest,
-        "lock_sha256": app_builder.sha256(starter / "mcpme.lock.json")}]
+        "lock_sha256": app_builder.sha256(starter / "meecp.lock.json")}]
     assert verified.digest == validated_digest
     assert (resources / "docs/reviews/DIRECTORY_ONBOARDING_REVIEW.md").read_bytes() == review.read_bytes()
     assert (resources / "docs/AUTOMATIC_PREPARATION.md").read_bytes() == (source / "docs/AUTOMATIC_PREPARATION.md").read_bytes()
@@ -305,19 +305,19 @@ def test_final_starter_validation_rejects_unsigned_artifact_changes(monkeypatch,
     monkeypatch.setattr(app_builder, "run", validate)
     with pytest.raises(PackageError, match="artifact_(?:hash|size)_mismatch"):
         app_builder.finalize_starter_package(starter, tmp_path / "host", release=False)
-    assert calls[0][0] == str(tmp_path / "host/bin/mcpme")
+    assert calls[0][0] == str(tmp_path / "host/bin/meecp")
 
 
 def test_postbuild_host_inventory_binds_optional_legacy_handoff(tmp_path):
     host = tmp_path / "host"
     (host / "bin").mkdir(parents=True)
-    for relative in ("bin/mcpme-handoff", "native-app.json", "legacy-handoff.json"):
+    for relative in ("bin/meecp-handoff", "native-app.json", "legacy-handoff.json"):
         path = host / relative
         path.write_bytes(b"synthetic " + relative.encode())
     receipt = {"artifact_sha256": {}}
     app_builder.refresh_postbuild_host_artifacts(host, receipt, expected_legacy=True)
     assert set(receipt["artifact_sha256"]) == {
-        "bin/mcpme-handoff", "native-app.json", "legacy-handoff.json"}
+        "bin/meecp-handoff", "native-app.json", "legacy-handoff.json"}
     assert all(value == app_builder.sha256(host / key)
                for key, value in receipt["artifact_sha256"].items())
     (host / "legacy-handoff.json").unlink()
@@ -333,14 +333,14 @@ def test_postbuild_host_inventory_binds_optional_legacy_handoff(tmp_path):
 
 
 def test_all_native_helpers_and_extensions_get_hardened_signatures(monkeypatch, tmp_path):
-    native = tmp_path / "Contents/MacOS/mcpme"
+    native = tmp_path / "Contents/MacOS/meecp"
     extension = tmp_path / "Contents/Resources/host/python/site-packages/native.so"
-    reaper = tmp_path / "Contents/Resources/host/bin/mcpme-reap"
+    reaper = tmp_path / "Contents/Resources/host/bin/meecp-reap"
     resource_reaper = reaper.parent / "mcpme-command-resource-reap"
     for path in (native, extension, reaper, resource_reaper):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"\xcf\xfa\xed\xfe" + b"synthetic native file")
-    (reaper.parent / "mcpme").write_text("#!/bin/sh\n")
+    (reaper.parent / "meecp").write_text("#!/bin/sh\n")
     calls = []
 
     def run(*arguments):
@@ -368,7 +368,7 @@ def test_reviewed_command_pair_survives_runtime_signing(monkeypatch, tmp_path):
     import signed_command_helpers
     host = tmp_path / "Contents/Resources/host"
     paths = [host / "bin" / name for name in
-             ("mcpme-command-reap", "mcpme-command-resource-reap", "mcpme-reap")]
+             ("mcpme-command-reap", "mcpme-command-resource-reap", "meecp-reap")]
     for path in paths:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"\xcf\xfa\xed\xfe" + b"synthetic native file")
@@ -422,12 +422,12 @@ def test_active_command_source_requires_immutable_asset_before_credentials(monke
     monkeypatch.setattr(app_builder, "developer_identity", lambda *args: pytest.fail("missing asset reached credentials"))
     monkeypatch.setattr(app_builder, "run", lambda *args: pytest.fail("missing asset reached tools"))
     with pytest.raises(SystemExit, match="^signed_command_asset_required$"):
-        app_builder.build(tmp_path / "mcpme.app", sign_identity=CERTIFICATE, version="1.2.3")
+        app_builder.build(tmp_path / "meecp.app", sign_identity=CERTIFICATE, version="1.2.3")
     monkeypatch.setattr(dmg_builder, "developer_identity", lambda *args: pytest.fail("missing asset reached DMG credentials"))
     monkeypatch.setattr(dmg_builder, "run", lambda *args: pytest.fail("missing asset reached DMG tools"))
     with pytest.raises(SystemExit, match="^signed_command_asset_required$"):
-        dmg_builder.build(tmp_path / "mcpme.dmg", sign_identity=CERTIFICATE, version="1.2.3")
-    assert not (tmp_path / "mcpme.app").exists() and not (tmp_path / "mcpme.dmg").exists()
+        dmg_builder.build(tmp_path / "meecp.dmg", sign_identity=CERTIFICATE, version="1.2.3")
+    assert not (tmp_path / "meecp.app").exists() and not (tmp_path / "meecp.dmg").exists()
     assert not (active_command_source / ".build").exists()
 
 
@@ -443,14 +443,14 @@ def test_missing_command_asset_precedes_dmg_textgen_checks_without_tools(
     policy = active_command_source / "templates/release-policies/phase3-v1.json"
     before = policy.read_bytes()
     with pytest.raises(SystemExit, match="^signed_command_asset_required$"):
-        dmg_builder.build(tmp_path / "mcpme.dmg", version="1.2.3", sign_identity=CERTIFICATE, **options)
-    assert policy.read_bytes() == before and not (tmp_path / "mcpme.dmg").exists()
+        dmg_builder.build(tmp_path / "meecp.dmg", version="1.2.3", sign_identity=CERTIFICATE, **options)
+    assert policy.read_bytes() == before and not (tmp_path / "meecp.dmg").exists()
     assert not (active_command_source / ".build").exists()
 
 
 def test_supplied_active_command_app_is_checked_before_credentials(monkeypatch, tmp_path):
     import signed_command_helpers
-    app = tmp_path / "mcpme.app"
+    app = tmp_path / "meecp.app"
     policy = app / "Contents/Resources/host/templates/release-policies/phase3-v1.json"
     policy.parent.mkdir(parents=True)
     policy.write_text(json.dumps({"command": {"reviewed": True}}))
@@ -464,14 +464,14 @@ def test_supplied_active_command_app_is_checked_before_credentials(monkeypatch, 
     monkeypatch.setattr(dmg_builder, "developer_identity", lambda *args: pytest.fail("invalid pair reached credentials"))
     monkeypatch.setattr(dmg_builder, "run", lambda *args: pytest.fail("invalid pair reached tools"))
     with pytest.raises(SystemExit, match="^signed_command_helpers_invalid$"):
-        dmg_builder.build(tmp_path / "mcpme.dmg", app=app, sign_identity=CERTIFICATE)
+        dmg_builder.build(tmp_path / "meecp.dmg", app=app, sign_identity=CERTIFICATE)
     assert checked == [(app / "Contents/Resources/host", None)]
 
 
 def test_prebuilt_command_app_cannot_replace_helpers_during_dmg_build(monkeypatch, tmp_path):
     monkeypatch.setattr(dmg_builder, "developer_identity", lambda *args: pytest.fail("replacement reached credentials"))
     with pytest.raises(SystemExit, match="^command_asset_requires_source_build$"):
-        dmg_builder.build(tmp_path / "mcpme.dmg", app=tmp_path / "mcpme.app",
+        dmg_builder.build(tmp_path / "meecp.dmg", app=tmp_path / "meecp.app",
                           command_signed_asset=tmp_path / "asset.tar.gz", sign_identity=CERTIFICATE)
 
 
@@ -553,7 +553,7 @@ def fake_packaging(monkeypatch, tmp_path):
         (destination / "Contents/Info.plist").write_bytes(plistlib.dumps({
             "CFBundleShortVersionString": version or "0.1.0", "CFBundleVersion": "1",
             "LSMinimumSystemVersion": "26.0", "CFBundleIdentifier": "com.jshahbazi.mcpme",
-            "CFBundleExecutable": "mcpme", "CFBundlePackageType": "APPL"}))
+            "CFBundleExecutable": "meecp", "CFBundlePackageType": "APPL"}))
         return destination
 
     def run(*arguments):
@@ -569,7 +569,7 @@ def fake_packaging(monkeypatch, tmp_path):
         return ""
 
     def verify(image, workspace, metadata, certificate, gatekeeper):
-        assert {path.name for path in (workspace / "contents").iterdir()} == {"mcpme.app", "Applications"}
+        assert {path.name for path in (workspace / "contents").iterdir()} == {"meecp.app", "Applications"}
         return {"fake_contract_verification": True}
 
     monkeypatch.setattr(dmg_builder, "build_app", build_app)
@@ -655,7 +655,7 @@ def test_supplied_app_version_override_must_match(fake_packaging, tmp_path):
     (supplied / "Contents/Info.plist").write_bytes(plistlib.dumps({
         "CFBundleShortVersionString": "0.1.0", "CFBundleVersion": "1",
         "LSMinimumSystemVersion": "26.0", "CFBundleIdentifier": "com.jshahbazi.mcpme",
-        "CFBundleExecutable": "mcpme", "CFBundlePackageType": "APPL"}))
+        "CFBundleExecutable": "meecp", "CFBundlePackageType": "APPL"}))
     with pytest.raises(SystemExit, match="supplied_app_version_mismatch"):
         dmg_builder.build(tmp_path / "installer.dmg", app=supplied, version="2.4.6")
 
@@ -757,7 +757,7 @@ def test_publication_collision_preserves_existing_file(fake_packaging, monkeypat
 
 
 def test_private_runtime_uses_isolated_home_and_minimal_environment(monkeypatch, tmp_path):
-    app = tmp_path / "test Applications/mcpme.app"
+    app = tmp_path / "test Applications/meecp.app"
     captured = {}
 
     def run(arguments, **kwargs):
@@ -765,7 +765,7 @@ def test_private_runtime_uses_isolated_home_and_minimal_environment(monkeypatch,
 
     monkeypatch.setattr(dmg_builder.subprocess, "run", run)
     dmg_builder.verify_runtime(app, tmp_path)
-    assert captured["arguments"] == [str(app / "Contents/Resources/host/bin/mcpme"), "--help"]
+    assert captured["arguments"] == [str(app / "Contents/Resources/host/bin/meecp"), "--help"]
     assert captured["cwd"] == tmp_path / "test home"
     assert captured["env"] == {"HOME": str(tmp_path / "test home"), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
                                "LANG": "en_US.UTF-8", "TMPDIR": str(tmp_path)}

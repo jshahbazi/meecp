@@ -11,13 +11,13 @@ import threading
 import httpx
 import pytest
 
-from mcpme.grants import read_credential
-from mcpme.contracts import validate_package
-from mcpme.pi_setup import PiSetup, PiSetupError
-from mcpme.processes import OwnershipLost
-from mcpme.supervisor import Supervisor, management_app
-from test_mcpme_imports import source_folder
-from test_mcpme_packages import edit_manifest, make_package
+from meecp.grants import read_credential
+from meecp.contracts import validate_package
+from meecp.pi_setup import PiSetup, PiSetupError
+from meecp.processes import OwnershipLost
+from meecp.supervisor import Supervisor, management_app
+from test_meecp_imports import source_folder
+from test_meecp_packages import edit_manifest, make_package
 from test_preparation_processes import group_reaper
 
 
@@ -214,8 +214,8 @@ def _fixture_package(root, fixture_bytes):
 
 
 def _relock_probe_package(root):
-    manifest = (root / "mcpme.package.json").read_bytes()
-    lock = json.loads((root / "mcpme.lock.json").read_text())
+    manifest = (root / "meecp.package.json").read_bytes()
+    lock = json.loads((root / "meecp.lock.json").read_text())
     lock["manifest_sha256"] = hashlib.sha256(manifest).hexdigest()
     lock["artifacts"] = []
     for name in ("LICENSE", "bin/service", "verification.json"):
@@ -225,7 +225,7 @@ def _relock_probe_package(root):
         lock["artifacts"].append({"path": name, "sha256": digest, "size": len(data),
             "executable": bool(path.stat().st_mode & 0o111), "source": "prepared:sha256:" + digest,
             "provenance": "Synthetic native probe fixture", "license": "LICENSE"})
-    (root / "mcpme.lock.json").write_text(json.dumps(lock))
+    (root / "meecp.lock.json").write_text(json.dumps(lock))
 
 
 @pytest.mark.parametrize("data", [b"", b"{", b"{}", b"[]",
@@ -237,7 +237,7 @@ async def test_probe_rejects_malformed_or_incomplete_fixtures_before_launch(host
     package = _fixture_package(tmp_path / "package", data)
     async def forbidden(*args, **kwargs):
         pytest.fail("invalid_fixtures_executed_package")
-    monkeypatch.setattr("mcpme.processes.ProcessOwner.launch", forbidden)
+    monkeypatch.setattr("meecp.processes.ProcessOwner.launch", forbidden)
     with pytest.raises(PiSetupError, match="^pi_fixture_required$"):
         await host.pi_setup._verify(package, tmp_path / "verification")
 
@@ -252,7 +252,7 @@ async def test_probe_rejects_oversized_fixtures_without_unbounded_read(host, tmp
     monkeypatch.setattr(Path, "read_bytes", bounded_only)
     async def forbidden(*args, **kwargs):
         pytest.fail("oversized_fixtures_executed_package")
-    monkeypatch.setattr("mcpme.processes.ProcessOwner.launch", forbidden)
+    monkeypatch.setattr("meecp.processes.ProcessOwner.launch", forbidden)
     with pytest.raises(PiSetupError, match="^pi_fixture_required$"):
         await host.pi_setup._verify(package, tmp_path / "verification")
 
@@ -350,7 +350,7 @@ async def test_attachment_timeout_revokes_admission_before_commit(host, tmp_path
         assert release.wait(5), "attachment_test_release_missing"
         return result
     monkeypatch.setattr(host.imports, "stage_attachment", delayed)
-    monkeypatch.setattr("mcpme.pi_setup.DEADLINE", .2)
+    monkeypatch.setattr("meecp.pi_setup.DEADLINE", .2)
     draft = host.imports.create(source_folder(tmp_path), name="Validator", intent="Expose validation")
     job = await manager.start({"import_id": draft["draft_id"], "revision": draft["revision"]})
     try:
@@ -378,7 +378,7 @@ async def test_cancellation_after_attachment_commit_reports_completed_package(ho
         return result
     monkeypatch.setattr(host.imports, "admit_attachment", delayed)
     if boundary == "timeout":
-        monkeypatch.setattr("mcpme.pi_setup.DEADLINE", .2)
+        monkeypatch.setattr("meecp.pi_setup.DEADLINE", .2)
     draft = host.imports.create(source_folder(tmp_path), name="Validator", intent="Expose validation")
     job = await manager.start({"import_id": draft["draft_id"], "revision": draft["revision"]})
     cancellation = None
@@ -410,7 +410,7 @@ async def test_cleanup_ownership_loss_overrides_cancellation_and_blocks_shutdown
             pass
         async def close(self):
             raise OwnershipLost()
-    monkeypatch.setattr("mcpme.pi_tools.PiToolBroker", LostBroker)
+    monkeypatch.setattr("meecp.pi_tools.PiToolBroker", LostBroker)
     draft = host.imports.create(source_folder(tmp_path), name="Validator", intent="Expose validation")
     job = await manager.start({"import_id": draft["draft_id"], "revision": draft["revision"]})
     await asyncio.wait_for(started.wait(), 3)

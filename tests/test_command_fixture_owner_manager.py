@@ -5,10 +5,10 @@ from pathlib import Path
 import httpx
 import pytest
 
-from mcpme import __main__ as cli
-from mcpme.private import read_private_json
-from mcpme.supervisor import Supervisor
-from mcpme_local_transport import private_transport, socket_path
+from meecp import __main__ as cli
+from meecp.private import read_private_json
+from meecp.supervisor import Supervisor
+from meecp_local_transport import private_transport, socket_path
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = spec_from_file_location("command_fixture", ROOT / "scripts/verify_phase3_command_host.py")

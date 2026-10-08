@@ -10,9 +10,9 @@ import sys
 import pytest
 from mcp import ClientSession
 
-from mcpme.preparation_service import tools
-from mcpme.preparation_service_contracts import ServiceConnectionV1
-from mcpme.preparation_verifier import _owned_transport
+from meecp.preparation_service import tools
+from meecp.preparation_service_contracts import ServiceConnectionV1
+from meecp.preparation_verifier import _owned_transport
 from test_service_source_contracts import connection
 
 
@@ -20,10 +20,10 @@ from test_service_source_contracts import connection
 async def adapter(tmp_path, configuration, credential):
     root = tmp_path / "generated"; root.mkdir()
     (root / "service.json").write_text(json.dumps(configuration.portable()))
-    (root / "mcpme.package.json").write_text(json.dumps({"tools": [item.model_dump(exclude_none=True) for item in tools(configuration)]}))
+    (root / "meecp.package.json").write_text(json.dumps({"tools": [item.model_dump(exclude_none=True) for item in tools(configuration)]}))
     sender, receiver = socket.socketpair(); sender.setblocking(False)
     backend = str(Path(__file__).resolve().parents[1] / "backend")
-    code = "import sys;sys.path.insert(0,sys.argv[1]);from mcpme_service.server import main;main(sys.argv[2])"
+    code = "import sys;sys.path.insert(0,sys.argv[1]);from meecp_service.server import main;main(sys.argv[2])"
     process = await asyncio.create_subprocess_exec(sys.executable, "-I", "-B", "-c", code, backend, str(root),
         env={"PATH":"/usr/bin:/bin", "MCPME_SETTINGS_FD":str(receiver.fileno())}, pass_fds=(receiver.fileno(),),
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)

@@ -14,9 +14,9 @@ from mcp.types import ClientNotification, CancelledNotification, CancelledNotifi
 import pytest
 import uvicorn
 
-from mcpme.processes import _await_ownership
-from mcpme_textgen.adapter import BoundedTextGenerator
-from mcpme_textgen.service import AttachedTextModel, make_app
+from meecp.processes import _await_ownership
+from meecp_textgen.adapter import BoundedTextGenerator
+from meecp_textgen.service import AttachedTextModel, make_app
 
 
 class ControlledTransport:

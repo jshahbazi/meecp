@@ -136,8 +136,8 @@ ROOT_POLICY = json.loads(ROOT_POLICY_JSON)
 
 
 def references():
-    from mcpme.preparation_components import ComponentReference
-    from mcpme.preparation_textgen import ENGINE_ID, TASK_ID
+    from meecp.preparation_components import ComponentReference
+    from meecp.preparation_textgen import ENGINE_ID, TASK_ID
     keys = {item["id"]: ComponentReference.model_validate(item).key
         for group in ROOT_POLICY["preparation"]["recipe_component_sets"] for item in group}
     return keys[ENGINE_ID], keys[TASK_ID]
@@ -177,7 +177,7 @@ def test_actual_candidate_policy_requires_typed_exact_closed_record(driver, dama
 
 @pytest.mark.parametrize("previous_version", [None, "1.0.9", "1.0.10", "1.0.11", "1.0.13"])
 def test_textgen_keys_bind_actual_current_producer_to_literal_policy(driver, monkeypatch, previous_version):
-    from mcpme import preparation_textgen
+    from meecp import preparation_textgen
     assert ENGINE[0] == preparation_textgen.ENGINE_ID == "llamacpp-cpu-v1"
     assert TASK[0] == preparation_textgen.TASK_ID == "text-generate-v1"
     assert preparation_textgen.VERSION == "1.0.21"
@@ -192,7 +192,7 @@ def test_textgen_keys_bind_actual_current_producer_to_literal_policy(driver, mon
 
 def test_historical_driver_accepts_only_explicit_frozen_12_refs(driver, monkeypatch):
     from types import SimpleNamespace
-    from mcpme import preparation_textgen
+    from meecp import preparation_textgen
     monkeypatch.setattr(preparation_textgen, "VERSION", "1.0.12")
     monkeypatch.setattr(preparation_textgen, "references", lambda: [
         SimpleNamespace(id=ENGINE[0], key=ENGINE), SimpleNamespace(id=TASK[0], key=TASK)])
@@ -221,7 +221,7 @@ def test_historical13_policy_changes_only_textgen_references():
 
 
 def test_current21_policy_binds_textgen_and_agent_implementations():
-    from mcpme.preparation_release_policy import POLICY_PATH
+    from meecp.preparation_release_policy import POLICY_PATH
     expected = json.loads(historical13_fixture_bytes())
     expected["preparation"]["families"][3] = {"id": "text-generate-v1", "version": "1.0.21",
         "digest": "ad814ce4186bd3474fe9759991208d80eca0f491d449a00c38aee44b23c5b1d2"}
@@ -239,7 +239,7 @@ def test_current21_policy_binds_textgen_and_agent_implementations():
     assert json.loads(policy_path.read_bytes()) == expected
     assert hashlib.sha256(policy_path.read_bytes()).hexdigest() == (
         "29d0359e9846afff79061c0fd0d0bf265f88fd78deb6c62193af1ba614ca9dcc")
-    from mcpme import preparation_textgen
+    from meecp import preparation_textgen
     assert {item.key for item in preparation_textgen.references()} == {
         ("llamacpp-cpu-v1", "1.0.21", "438e6822bfc22187f91b51f496a6575db5a1bfeb55e7ddf3216d60a98883554d"),
         ("text-generate-v1", "1.0.21", "ad814ce4186bd3474fe9759991208d80eca0f491d449a00c38aee44b23c5b1d2")}
@@ -478,7 +478,7 @@ def test_fixture_source_inputs_are_bounded_regular_owned_bytes(driver, tmp_path,
 async def test_signed_composition_preserves_inputs_and_cannot_project_incomplete_cases(driver, tmp_path, monkeypatch, fault):
     app = tmp_path.resolve() / "Synthetic.app"
     host = app / "Contents/Resources/host"
-    native = app / "Contents/MacOS/mcpme"
+    native = app / "Contents/MacOS/meecp"
     native.parent.mkdir(parents=True); native.write_bytes(b"Synthetic native metadata"); native.chmod(0o700)
     policy = host / driver.command.POLICY_PATH; policy.parent.mkdir(parents=True)
     policy_value = copy.deepcopy(ROOT_POLICY)

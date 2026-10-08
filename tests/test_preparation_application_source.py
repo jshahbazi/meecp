@@ -11,9 +11,9 @@ import stat
 
 import pytest
 
-from mcpme.imports import ImportError, ImportStore
-from mcpme import preparation_application_source as intake
-from mcpme.preparation_components import original_file_records, read_snapshot
+from meecp.imports import ImportError, ImportStore
+from meecp import preparation_application_source as intake
+from meecp.preparation_components import original_file_records, read_snapshot
 
 
 def source_tree(tmp_path):
@@ -223,7 +223,7 @@ def test_automatic_copy_does_not_hold_sqlite_transaction(tmp_path, monkeypatch):
 
 
 def test_python_inspection_keeps_binary_assets_and_unknown_payload_bound(tmp_path, monkeypatch):
-    from mcpme.preparation_inspection import inspect_source
+    from meecp.preparation_inspection import inspect_source
     root = tmp_path / "source"
     root.mkdir()
     (root / "worker.py").write_text("def calculate(label: str) -> dict[str, bool]:\n    return {'ok': True}\n")

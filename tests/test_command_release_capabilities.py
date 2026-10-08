@@ -9,11 +9,11 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from mcpme.host_command import HostCommands
-from mcpme.preparation_admission import PublicPreparationAdmission
-from mcpme.preparation_contracts import PreparationError
-from mcpme import preparation_release_command_admission as release
-from mcpme.supervisor import capabilities, management_app
+from meecp.host_command import HostCommands
+from meecp.preparation_admission import PublicPreparationAdmission
+from meecp.preparation_contracts import PreparationError
+from meecp import preparation_release_command_admission as release
+from meecp.supervisor import capabilities, management_app
 from test_preparation_release_command_admission import packaged, policy
 
 
@@ -78,12 +78,12 @@ def test_current_profile_discovery_denies_changed_held_authority(public_command,
         "policy": public_command.commands.artifact.policy,
         "seal": packaged.app / "Contents/_CodeSignature/CodeResources",
         "build": packaged.host / "build.json",
-        "native": packaged.app / "Contents/MacOS/mcpme",
+        "native": packaged.app / "Contents/MacOS/meecp",
         "helper": packaged.helpers[0],
         "resource-helper": packaged.helpers[1],
         "inventory": packaged.host / "command-execution.json",
-        "source": packaged.host / "backend/mcpme/host_command.py",
-        "release-module": packaged.host / "backend/mcpme/preparation_release_command_admission.py",
+        "source": packaged.host / "backend/meecp/host_command.py",
+        "release-module": packaged.host / "backend/meecp/preparation_release_command_admission.py",
         "same-byte-helper": packaged.helpers[0],
     }[member]
     if member == "same-byte-helper":

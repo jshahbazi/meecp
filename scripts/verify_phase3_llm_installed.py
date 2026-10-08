@@ -41,8 +41,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 logging.disable(logging.CRITICAL)
 
-from mcpme.contracts import validate_package
-from mcpme_textgen.fixture import file_hash
+from meecp.contracts import validate_package
+from meecp_textgen.fixture import file_hash
 
 
 def require(value):
@@ -52,7 +52,7 @@ def require(value):
 
 @contextlib.contextmanager
 def isolated_workspace():
-    owned = {"root": Path(tempfile.mkdtemp(prefix="mcpme-installed-text-")).resolve(), "settled": False}
+    owned = {"root": Path(tempfile.mkdtemp(prefix="meecp-installed-text-")).resolve(), "settled": False}
     try:
         yield owned
     finally:
@@ -98,7 +98,7 @@ async def verify(args, report):
         policy.write_text(json.dumps({"memory_budget_mb": 1088, "headroom_mb": 64,
                                       "gpu_policy": "exclusive-residency"}))
         policy.chmod(0o600)
-        launcher, reaper = host / "bin/mcpme", host / "bin/mcpme-reap"
+        launcher, reaper = host / "bin/meecp", host / "bin/meecp-reap"
         env = {"HOME": str(home), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "TMPDIR": str(root),
                "LANG": "en_US.UTF-8", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1"}
         owner = None

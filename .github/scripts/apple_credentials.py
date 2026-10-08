@@ -41,7 +41,7 @@ def workspace() -> Path:
     runner_temp = os.environ.get("RUNNER_TEMP")
     if not runner_temp or not Path(runner_temp).is_absolute():
         raise ValueError("runner_temp_required")
-    return Path(runner_temp) / "mcpme-signing"
+    return Path(runner_temp) / "meecp-signing"
 
 
 def write_private(path: Path, value: bytes) -> None:
@@ -112,7 +112,7 @@ def setup() -> None:
         "-s", "-k", password, str(keychain))
     register_keychain(root, keychain)
     preflight_signing(keychain)
-    run("/usr/bin/xcrun", "notarytool", "store-credentials", "mcpme-notary",
+    run("/usr/bin/xcrun", "notarytool", "store-credentials", "meecp-notary",
         "--key", str(api_key), "--key-id", os.environ["APPLE_API_KEY_ID"],
         "--issuer", os.environ["APPLE_API_ISSUER_ID"], "--keychain", str(keychain))
     certificate.unlink()

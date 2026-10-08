@@ -15,21 +15,21 @@ from types import SimpleNamespace
 
 import pytest
 
-from mcpme.grants import GrantError, read_credential
-from mcpme.imports import ImportStore, ImportError as SourceImportError
-from mcpme.management import Management, operations
-from mcpme.management_workflow_grants import WorkflowGrantStore, OWNER_AUTHORITY
-from mcpme.preparation_contracts import PreparationError, canonical_bytes
-from mcpme.preparation_resolution import ResolutionStore
-from mcpme.preparations import PreparationStore
-from mcpme.recipes import RecipeStore, validate_bundle
-from test_mcpme_preparations import foundation, policy, recipe_bundle, descriptor
+from meecp.grants import GrantError, read_credential
+from meecp.imports import ImportStore, ImportError as SourceImportError
+from meecp.management import Management, operations
+from meecp.management_workflow_grants import WorkflowGrantStore, OWNER_AUTHORITY
+from meecp.preparation_contracts import PreparationError, canonical_bytes
+from meecp.preparation_resolution import ResolutionStore
+from meecp.preparations import PreparationStore
+from meecp.recipes import RecipeStore, validate_bundle
+from test_meecp_preparations import foundation, policy, recipe_bundle, descriptor
 from test_preparation_resolution import source, request
-from test_mcpme_grants import client, credential
-from test_mcpme_host import prepared
-from test_mcpme_management import registered
-from test_mcpme_management_cli import private_manager, execute
-from test_mcpme_management_mcp import sdk
+from test_meecp_grants import client, credential
+from test_meecp_host import prepared
+from test_meecp_management import registered
+from test_meecp_management_cli import private_manager, execute
+from test_meecp_management_mcp import sdk
 from test_preparation_processes import group_reaper
 from test_preparation_runner import controlled, planned, finished
 
@@ -78,7 +78,7 @@ def test_issuance_rejects_unreviewed_authority_fields_and_invalid_ttl(workflow,e
 
 def test_issuance_limit_keeps_existing_token_and_binding(workflow,monkeypatch):
     grants,store,*_=workflow
-    monkeypatch.setattr("mcpme.management_workflow_grants.MAX_GRANTS",1)
+    monkeypatch.setattr("meecp.management_workflow_grants.MAX_GRANTS",1)
     grant,key=issued(workflow)
     token=credential(grant)
     with pytest.raises(GrantError,match="^grant_limit$"):
@@ -96,14 +96,14 @@ def test_resolution_grant_plan_survives_unrelated_planning_after_plan_expiry(res
     job=start(resolution_workflow,grant,key)
     if state in {"running","succeeded"}:store.begin(job["job_id"],tmp_path/"unused-workspace")
     if state=="succeeded":
-        from mcpme.preparation_resolution import ResolutionRequestV1,result_from_files
+        from meecp.preparation_resolution import ResolutionRequestV1,result_from_files
         derived=tmp_path/"unused-workspace"/"derived";derived.mkdir(parents=True)
         (derived/"pyproject.toml").write_bytes(b"[project]\nname='synthetic'\nversion='1.0.0'\n")
         (derived/"uv.lock").write_bytes(b"version=1\n")
         result=result_from_files(ResolutionRequestV1.model_validate(plan["request"]),derived,[],None,1024)
         store.publish(job["job_id"],result)
     original=store.db.execute("SELECT data FROM resolution_plans WHERE plan_id=?",(plan["plan_id"],)).fetchone()[0]
-    monkeypatch.setattr("mcpme.preparation_resolution.time.time",lambda:plan["expires_at"]+1)
+    monkeypatch.setattr("meecp.preparation_resolution.time.time",lambda:plan["expires_at"]+1)
     def assert_current():
         if state=="running":assert store.check_authority(job["job_id"])
         elif state=="succeeded":
@@ -113,7 +113,7 @@ def test_resolution_grant_plan_survives_unrelated_planning_after_plan_expiry(res
             with pytest.raises(PreparationError,match="^resolution_authority_expired$"):
                 store.check_authority(job["job_id"])
     assert_current()
-    from mcpme.preparation_resolution import ResolutionRequestV1
+    from meecp.preparation_resolution import ResolutionRequestV1
     other=store.plan(ResolutionRequestV1.model_validate(plan["request"]),plan["candidate"],expires_in=300)
     assert other["plan_id"]!=plan["plan_id"]
     assert_current()
@@ -126,8 +126,8 @@ def test_resolution_grant_plan_survives_unrelated_planning_after_plan_expiry(res
 def test_expired_unused_resolution_plan_is_collected_without_grant_rollover(resolution_workflow,monkeypatch):
     grants,store,plan,*_=resolution_workflow
     grant,key=issued(resolution_workflow,"resolution",ttl_seconds=3600)
-    monkeypatch.setattr("mcpme.preparation_resolution.time.time",lambda:plan["expires_at"]+1)
-    from mcpme.preparation_resolution import ResolutionRequestV1
+    monkeypatch.setattr("meecp.preparation_resolution.time.time",lambda:plan["expires_at"]+1)
+    from meecp.preparation_resolution import ResolutionRequestV1
     other=store.plan(ResolutionRequestV1.model_validate(plan["request"]),plan["candidate"],expires_in=300)
     assert store.db.execute("SELECT 1 FROM resolution_plans WHERE plan_id=?",(plan["plan_id"],)).fetchone() is None
     with pytest.raises(PreparationError,match="^resolution_plan_not_found$"):
@@ -220,7 +220,7 @@ def test_revocation_and_expiry_hold_before_and_after_resource_admission(request,
     job = start(fixture, grant, key)
     assert store.check_authority(job["job_id"])
     if mode == "revoke": grants.revoke(grant["grant_id"])
-    else: monkeypatch.setattr("mcpme.management_workflow_grants.time.time", lambda: grant["expires_at"] + 1)
+    else: monkeypatch.setattr("meecp.management_workflow_grants.time.time", lambda: grant["expires_at"] + 1)
     code = "management_execution_revoked" if mode == "revoke" else "management_execution_expired"
     with pytest.raises(PreparationError, match="^"+code+"$"):
         store.check_authority(job["job_id"])
@@ -295,7 +295,7 @@ def test_recipe_changed_after_grant_never_registers(workflow, tmp_path):
     checked = validate_bundle(bundle)
     grant = grants.issue({"mode":"recipe-management", "recipe_id":checked["manifest"]["id"], "version":"1.0.0",
         "digest":checked["digest"], "actions":["register"], "path":str(bundle)})
-    from mcpme.recipe_sdk import relock_recipe
+    from meecp.recipe_sdk import relock_recipe
     (bundle / "README.md").write_text("Changed harmless fixture.\n")
     relock_recipe(bundle)
     with pytest.raises(GrantError, match="^grant_scope_changed$"):
@@ -324,7 +324,7 @@ def test_revocation_during_off_loop_input_validation_rolls_back(workflow, monkey
 
 
 async def test_revoked_grant_denies_actual_native_creation(workflow, group_reaper):
-    from mcpme.preparation_runner import JournaledPreparationOwner
+    from meecp.preparation_runner import JournaledPreparationOwner
     grants, store, _, imports, *_ = workflow
     grant, key = issued(workflow)
     job = start(workflow, grant, key)
@@ -369,7 +369,7 @@ async def test_actual_owned_child_authority_loss_joins_before_reservation_releas
         job = await runner.start(plan["plan_id"],plan["plan_digest"],key,grant_id=grant["grant_id"])
         await asyncio.wait_for(reached.wait(),5)
         if mode=="revoke":grants.revoke(grant["grant_id"])
-        else:monkeypatch.setattr("mcpme.management_workflow_grants.time.time",lambda:grant["expires_at"]+1)
+        else:monkeypatch.setattr("meecp.management_workflow_grants.time.time",lambda:grant["expires_at"]+1)
         final = await finished(runner,job["job_id"])
         code="management_execution_revoked" if mode=="revoke" else "management_execution_expired"
         assert final["error_code"]==code and final["state"]=="failed"
@@ -389,21 +389,21 @@ async def test_real_sdk_static_recipe_surface_and_legacy_execution_denials(tmp_p
             await session.initialize()
             listed = await session.list_tools()
             names = {tool.name for tool in listed.tools}
-            required = {"mcpme_list_recipes", "mcpme_get_recipe", "mcpme_get_recipe_schema", "mcpme_register_recipe",
-                "mcpme_start_preparation", "mcpme_cancel_preparation", "mcpme_plan_resolution", "mcpme_start_resolution"}
-            assert required <= names and not {"mcpme_issue_grant", "mcpme_revoke_grant"} & names
-            result = await session.call_tool("mcpme_list_recipes", {})
+            required = {"meecp_list_recipes", "meecp_get_recipe", "meecp_get_recipe_schema", "meecp_register_recipe",
+                "meecp_start_preparation", "meecp_cancel_preparation", "meecp_plan_resolution", "meecp_start_resolution"}
+            assert required <= names and not {"meecp_issue_grant", "meecp_revoke_grant"} & names
+            result = await session.call_tool("meecp_list_recipes", {})
             assert not result.isError and result.structuredContent["recipes"]
             record = result.structuredContent["recipes"][0]
-            inspected = await session.call_tool("mcpme_get_recipe", {"recipe_id": record["recipe_id"], "version": record["version"]})
+            inspected = await session.call_tool("meecp_get_recipe", {"recipe_id": record["recipe_id"], "version": record["version"]})
             assert not inspected.isError and inspected.structuredContent["digest"] == record["digest"]
-            schema = await session.call_tool("mcpme_get_recipe_schema", {})
+            schema = await session.call_tool("meecp_get_recipe_schema", {})
             assert not schema.isError and schema.structuredContent["manifest"]["additionalProperties"] is False
             key = str(uuid.uuid4())
-            for name,args in (("mcpme_start_preparation", {"plan_id":key,"plan_digest":"a"*64,"idempotency_key":key}),
-                              ("mcpme_start_resolution", {"plan_id":key,"plan_digest":"a"*64,"idempotency_key":key}),
-                              ("mcpme_cancel_preparation", {"job_id":key}),
-                              ("mcpme_enable_recipe", {"recipe_id":record["recipe_id"],"version":record["version"]})):
+            for name,args in (("meecp_start_preparation", {"plan_id":key,"plan_digest":"a"*64,"idempotency_key":key}),
+                              ("meecp_start_resolution", {"plan_id":key,"plan_digest":"a"*64,"idempotency_key":key}),
+                              ("meecp_cancel_preparation", {"job_id":key}),
+                              ("meecp_enable_recipe", {"recipe_id":record["recipe_id"],"version":record["version"]})):
                 denied = await session.call_tool(name,args)
                 assert denied.isError and denied.structuredContent["error"]["code"] == "grant_scope"
             assert host.preparations.list() == host.resolutions.list() == []
@@ -420,12 +420,12 @@ async def test_real_sdk_recipe_grant_exact_static_registration_no_admin_or_execu
         assert grant["mode"]=="recipe-management"
         async with sdk(host.root,grant["credential_file"],tmp_path / "recipe-sdk-stderr") as session:
             await session.initialize()
-            added=await session.call_tool("mcpme_register_recipe",{"path":str(bundle)})
+            added=await session.call_tool("meecp_register_recipe",{"path":str(bundle)})
             assert not added.isError and added.structuredContent["digest"]==checked["digest"]
             assert added.structuredContent["state"]=="proposed" and added.structuredContent["runnable"] is False
-            enabled=await session.call_tool("mcpme_enable_recipe",{"recipe_id":checked["manifest"]["id"],"version":"1.0.0"})
+            enabled=await session.call_tool("meecp_enable_recipe",{"recipe_id":checked["manifest"]["id"],"version":"1.0.0"})
             assert not enabled.isError and enabled.structuredContent["runnable"] is False
-            denied=await session.call_tool("mcpme_disable_recipe",{"recipe_id":checked["manifest"]["id"],"version":"1.0.0"})
+            denied=await session.call_tool("meecp_disable_recipe",{"recipe_id":checked["manifest"]["id"],"version":"1.0.0"})
             assert denied.isError and denied.structuredContent["error"]["code"]=="grant_scope"
             async with client(host,credential(grant)) as api:
                 for path,body in (("/v1/grants",{"mode":"read"}),("/v1/secrets",{"name":"never","value":"never"}),
@@ -538,7 +538,7 @@ def test_actual_original_774_reader_denies_new_authority_database(workflow):
 root=pathlib.Path(sys.argv[1]); state=pathlib.Path(sys.argv[2])
 sys.path[:0]=[str(root/'backend'),str(root/'vendor')]
 data=subprocess.run(['git','show','774b43cd2688be8ce8138c5a3d516dbc09ea3f3b:backend/mcpme/imports.py'],cwd=root,capture_output=True,check=True).stdout
-module=types.ModuleType('mcpme._original_imports_774');sys.modules[module.__name__]=module
+module=types.ModuleType('meecp._original_imports_774');sys.modules[module.__name__]=module
 exec(compile(data,'original-imports-774','exec'),module.__dict__)
 try:
  reader=module.ImportStore(state)
@@ -587,7 +587,7 @@ def test_revocation_cleanup_keeps_original_binding_after_expiry_or_plan_change(r
         table="preparation_execution_plans" if kind=="preparation" else "resolution_plans"
         changed={**plan,"expires_at":0}
         store.db.execute("UPDATE "+table+" SET data=? WHERE plan_id=?",(canonical_bytes(changed).decode(),plan["plan_id"]))
-    monkeypatch.setattr("mcpme.management_workflow_grants.time.time",lambda:grant["expires_at"]+1)
+    monkeypatch.setattr("meecp.management_workflow_grants.time.time",lambda:grant["expires_at"]+1)
     grants.revoke(grant["grant_id"])
     assert grants.cleanup_job(grant["grant_id"])==(kind,job["job_id"])
     with pytest.raises(PreparationError,match="^management_execution_revoked$"):
@@ -621,14 +621,14 @@ async def test_real_sdk_bound_attempt_and_owner_revocation_joins_actual_child(tm
     The only executed workload is a synthetic sleeping Python child. It does
     not build/probe a package or contact a provider/model service.
     """
-    from mcpme.preparation_runner import PreparationRunner
+    from meecp.preparation_runner import PreparationRunner
     _,reaper=prepared
     folder=tmp_path/"sdk-source";folder.mkdir()
     (folder/"validator.py").write_text("def validate_json(document): return {'valid':True}\n")
     (folder/"LICENSE").write_text("Synthetic permission notice.\n")
     (folder/"pyproject.toml").write_text("[project]\nname='synthetic'\nversion='1.0.0'\n")
     lock=b"version=1\nrevision=3\n";(folder/"uv.lock").write_bytes(lock)
-    monkeypatch.setattr("mcpme.preparation_runner.load_private_toolchain",lambda *args:SimpleNamespace(identity="d"*64,uv=tmp_path/"unused-uv"))
+    monkeypatch.setattr("meecp.preparation_runner.load_private_toolchain",lambda *args:SimpleNamespace(identity="d"*64,uv=tmp_path/"unused-uv"))
     async with private_manager(tmp_path/"sdk-host",reaper) as host:
         resources={};released=[];owned=[];reached=asyncio.Event()
         async def reserve(identifier,policy):resources[identifier]=policy
@@ -662,17 +662,17 @@ async def test_real_sdk_bound_attempt_and_owner_revocation_joins_actual_child(tm
         async with sdk(host.root,grant["credential_file"],tmp_path/"owned-sdk-stderr") as session:
             await session.initialize()
             payload={"plan_id":plan["plan_id"],"plan_digest":plan["plan_digest"],"idempotency_key":key}
-            first=await session.call_tool("mcpme_start_preparation",payload)
+            first=await session.call_tool("meecp_start_preparation",payload)
             assert not first.isError
             identifier=first.structuredContent["job_id"]
             await asyncio.wait_for(reached.wait(),5)
-            second=await session.call_tool("mcpme_start_preparation",payload)
+            second=await session.call_tool("meecp_start_preparation",payload)
             assert not second.isError and second.structuredContent["job_id"]==identifier
-            listed=await session.call_tool("mcpme_list_preparations",{})
+            listed=await session.call_tool("meecp_list_preparations",{})
             assert not listed.isError and [job["job_id"] for job in listed.structuredContent["preparations"]]==[identifier]
-            inspected=await session.call_tool("mcpme_get_preparation",{"job_id":identifier})
+            inspected=await session.call_tool("meecp_get_preparation",{"job_id":identifier})
             assert not inspected.isError and inspected.structuredContent["management_authority"]["grant_id"]==grant["grant_id"]
-            denied=await session.call_tool("mcpme_get_preparation",{"job_id":str(uuid.uuid4())})
+            denied=await session.call_tool("meecp_get_preparation",{"job_id":str(uuid.uuid4())})
             assert denied.isError and denied.structuredContent["error"]["code"]=="grant_scope"
             revoked=await execute(host.root,"grants","revoke",grant["grant_id"])
             assert revoked["revoked"]
@@ -701,19 +701,19 @@ async def test_real_sdk_exact_execution_grant_cannot_enable_disabled_runner(tmp_
         assert grant["mode"]=="preparation-execution"
         async with sdk(host.root,grant["credential_file"],tmp_path/"execution-sdk-stderr") as session:
             await session.initialize()
-            wrong=await session.call_tool("mcpme_start_preparation",{"plan_id":plan["plan_id"],"plan_digest":plan["plan_digest"],"idempotency_key":str(uuid.uuid4())})
+            wrong=await session.call_tool("meecp_start_preparation",{"plan_id":plan["plan_id"],"plan_digest":plan["plan_digest"],"idempotency_key":str(uuid.uuid4())})
             assert wrong.isError and wrong.structuredContent["error"]["code"]=="grant_scope"
-            exact=await session.call_tool("mcpme_start_preparation",{"plan_id":plan["plan_id"],"plan_digest":plan["plan_digest"],"idempotency_key":key})
+            exact=await session.call_tool("meecp_start_preparation",{"plan_id":plan["plan_id"],"plan_digest":plan["plan_digest"],"idempotency_key":key})
             assert exact.isError and exact.structuredContent["error"]["code"]=="preparation_runner_unavailable"
-            inspected=await session.call_tool("mcpme_inspect_import",{"draft_id":draft["draft_id"]})
+            inspected=await session.call_tool("meecp_inspect_import",{"draft_id":draft["draft_id"]})
             assert not inspected.isError and inspected.structuredContent["source"]==draft["source"]
-            listed=await session.call_tool("mcpme_list_preparations",{})
+            listed=await session.call_tool("meecp_list_preparations",{})
             assert not listed.isError and listed.structuredContent["preparations"]==[]
         assert host.preparations.list()==host.resolutions.list()==[] and host.workflow_grants.inspect(grant["grant_id"])["job_id"] is None
         assert not host.workers and not host.owners and not host.registry.list_slots()
 
 
-@pytest.mark.parametrize("name", ["mcpme_start_preparation", "mcpme_start_resolution", "mcpme_register_recipe", "mcpme_get_recipe"])
+@pytest.mark.parametrize("name", ["meecp_start_preparation", "meecp_start_resolution", "meecp_register_recipe", "meecp_get_recipe"])
 async def test_facade_unknown_fields_do_not_reach_api(name):
     called=False
     async def caller(*args,**kwargs):

@@ -11,10 +11,10 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from mcpme.preparation_agent_backend import OpenAIResponsesBackend
-from mcpme.preparation_agent_contracts import AnalysisRequestV1, parse_task
-from mcpme.preparation_agent_coordinator import AgentAttemptStore, AgentCoordinator
-from mcpme.preparation_contracts import PreparationError
+from meecp.preparation_agent_backend import OpenAIResponsesBackend
+from meecp.preparation_agent_contracts import AnalysisRequestV1, parse_task
+from meecp.preparation_agent_coordinator import AgentAttemptStore, AgentCoordinator
+from meecp.preparation_contracts import PreparationError
 
 
 def request_for(source=None, **overrides):

@@ -14,9 +14,9 @@ import sys
 
 import pytest
 
-from mcpme.downloads import DownloadError
-from mcpme.pi_tools import MAX_COMMAND_RESULT, MAX_FILE, MAX_OUTPUT, MAX_READ, PiToolBroker, PiToolError
-from mcpme.processes import OwnedProcess, OwnershipLost
+from meecp.downloads import DownloadError
+from meecp.pi_tools import MAX_COMMAND_RESULT, MAX_FILE, MAX_OUTPUT, MAX_READ, PiToolBroker, PiToolError
+from meecp.processes import OwnedProcess, OwnershipLost
 from test_preparation_processes import group_reaper
 
 
@@ -204,7 +204,7 @@ async def test_fetch_failure_does_not_publish_or_log_payload(broker, monkeypatch
     broker.network = Network([data])
     args = {"url": "https://example.com/file", "path": "download"}
     if failure == "hash": args["sha256"] = "0" * 64
-    if failure == "limit": monkeypatch.setattr("mcpme.pi_tools.MAX_FETCH", 4)
+    if failure == "limit": monkeypatch.setattr("meecp.pi_tools.MAX_FETCH", 4)
     if failure == "redirect": broker.network.failure = DownloadError("download_redirect_blocked")
     if failure == "exception": broker.network.failure = RuntimeError("private-response https://private-path")
     result = await broker.invoke("fetch_url", args)

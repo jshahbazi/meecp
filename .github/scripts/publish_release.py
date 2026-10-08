@@ -216,7 +216,7 @@ def validate_receipt(path: Path, receipt: dict, version: str, commit: str) -> No
 
 
 def validated_assets(directory: Path, version: str, commit: str) -> list[Path]:
-    binary = directory / f"mcpme-{version}-arm64.dmg"
+    binary = directory / f"meecp-{version}-arm64.dmg"
     receipt_path = binary.with_name(binary.name + ".build.json")
     paths = [binary, receipt_path]
     allowed_names = {path.name for path in paths} | {"SHA256SUMS.txt"}
@@ -411,11 +411,11 @@ def pull_request_notes(previous_tag: str | None, commit: str) -> str:
 def release_notes(version: str, commit: str) -> str:
     changes = pull_request_notes(previous_release_tag("v" + version), commit)
     notes = (
-        f"mcpme {version} for Apple silicon Macs running macOS 26 or later.\n\n"
+        f"meecp {version} for Apple silicon Macs running macOS 26 or later.\n\n"
         + changes
         + "## Installation\n\n"
         "The DMG contains the Developer ID signed, Apple notarized app.\n\n"
-        "- DMG: open mcpme.app on the read-only image and choose Install and Restart.\n"
+        "- DMG: open meecp.app on the read-only image and choose Install and Restart.\n"
         "  It stages the signed app, gracefully quits the current copy, replaces the\n"
         "  installation, and launches it. Manual dragging remains available after quitting.\n\n"
         "The DMG installer waits up to 75 seconds for graceful shutdown and restores the\n"
@@ -465,11 +465,11 @@ def publish(directory: Path, version: str | None = None) -> str:
                     f"repos/{REPOSITORY}/git/refs", "--raw-field", "ref=refs/tags/" + tag,
                     "--raw-field", "sha=" + commit)
     verify_tag(tag, commit)
-    with tempfile.TemporaryDirectory(prefix="mcpme-release-notes-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="meecp-release-notes-") as temporary:
         notes = Path(temporary) / "notes.md"
         notes.write_text(content, encoding="utf-8")
         checked_command("release", "create", tag, "--repo", GH_REPOSITORY, "--draft",
-                        "--verify-tag", "--target", commit, "--title", "mcpme " + version,
+                        "--verify-tag", "--target", commit, "--title", "meecp " + version,
                         "--notes-file", str(notes))
     checked_command("release", "upload", tag, "--repo", GH_REPOSITORY,
                     *(str(path) for path in assets))

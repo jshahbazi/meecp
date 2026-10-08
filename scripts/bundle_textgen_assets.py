@@ -18,7 +18,8 @@ POLICY_FILES = ("__init__.py", "server.py", "contracts.py", "state.py")
 
 def bundle_backend(destination: Path):
     """Copy the static family implementation even without an admitted engine."""
-    for name, files in (("mcpme_textgen", tuple(sorted((ROOT / "backend/mcpme_textgen").glob("*.py")))),
+    textgen_files = tuple(sorted((ROOT / "backend/meecp_textgen").glob("*.py")))
+    for name, files in (("meecp_textgen", textgen_files), ("mcpme_textgen", textgen_files),
                         ("jevk5_app", tuple(ROOT / "backend/jevk5_app" / name for name in POLICY_FILES))):
         target = destination / name
         target.mkdir(parents=True, exist_ok=True)
@@ -54,7 +55,7 @@ def bundle(host: Path, engine: Path):
     from build_preparation_toolchain import refresh_toolchain_manifest
     import sys
     sys.path.insert(0, str(ROOT / "backend"))
-    from mcpme.model_intake import copy_artifact
+    from meecp.model_intake import copy_artifact
     target = host / "preparation-toolchain/textgen-runtime"
     if target.exists() or not (host / "preparation-toolchain/toolchain.json").is_file():
         raise ValueError("textgen_assets_destination_invalid")

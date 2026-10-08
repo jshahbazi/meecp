@@ -8,12 +8,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from mcpme.imports import ImportError, ImportStore
-from mcpme.preparation_contracts import PreparationError, contract_digest
-from mcpme.preparation_forms import FormField, OnboardingFormV1, PreparationForms
-from mcpme.preparations import PreparationStore
-from mcpme.recipe_sdk import relock_recipe, scaffold_recipe
-from mcpme.recipes import RecipeStore
+from meecp.imports import ImportError, ImportStore
+from meecp.preparation_contracts import PreparationError, contract_digest
+from meecp.preparation_forms import FormField, OnboardingFormV1, PreparationForms
+from meecp.preparations import PreparationStore
+from meecp.recipe_sdk import relock_recipe, scaffold_recipe
+from meecp.recipes import RecipeStore
 
 
 @pytest.fixture
@@ -115,7 +115,7 @@ def test_memory_questions_obey_existing_draft_requirements(form_source):
 def test_required_recipe_schema_without_editable_field_has_explicit_blocker(form_source, tmp_path):
     service, draft, _ = form_source
     scaffold_recipe(tmp_path / "incomplete", "test.incomplete")
-    path = tmp_path / "incomplete" / "mcpme.recipe.json"
+    path = tmp_path / "incomplete" / "meecp.recipe.json"
     manifest = json.loads(path.read_text())
     manifest["input_schema"]["properties"]["mode"] = {"type": "string"}
     manifest["input_schema"]["required"].append("mode")

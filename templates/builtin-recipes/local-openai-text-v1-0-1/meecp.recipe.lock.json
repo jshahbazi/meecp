@@ -1,0 +1,41 @@
+{
+  "artifacts": [
+    {
+      "license": "LICENSE",
+      "origin": "meecp-recipe-sdk-v1",
+      "path": "LICENSE",
+      "sha256": "4be78795230eef6d9133360ed678144b68ab84bbb3b2dab36e79470f16f8b45d",
+      "size": 1075
+    },
+    {
+      "license": "LICENSE",
+      "origin": "meecp-recipe-sdk-v1",
+      "path": "README.md",
+      "sha256": "058fb8560287055a7fc6e90a51b92905865029a077d1227362d8e54aa197993b",
+      "size": 839
+    },
+    {
+      "license": "LICENSE",
+      "origin": "meecp-recipe-sdk-v1",
+      "path": "THIRD_PARTY_NOTICES.md",
+      "sha256": "d2edc294d69e4a3a8b4b17b3e46de9a3a422537938cb38e60d0fa8b6c5fd6205",
+      "size": 361
+    },
+    {
+      "license": "LICENSE",
+      "origin": "meecp-recipe-sdk-v1",
+      "path": "fixtures/synthetic.json",
+      "sha256": "2780fbfa55be0c13e5172cb8fca91bd6eed92fa0165928675a2dec5aa075f2d0",
+      "size": 200
+    },
+    {
+      "license": "LICENSE",
+      "origin": "meecp service implementation source",
+      "path": "service-provenance.json",
+      "sha256": "593e8bcfef1cbe90ca5b18d6ca1b69f5b5b54bea31adc0a0be9a3e2db6dbf954",
+      "size": 1044
+    }
+  ],
+  "manifest_sha256": "c1b8397bfb8aec91b95a69a6f3b819f0bbb3d67d669c3d9f3c83faa3dce753e7",
+  "schema_version": 1
+}

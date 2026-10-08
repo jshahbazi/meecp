@@ -12,7 +12,7 @@ The new bundle was generated into the previously nonexistent
 seven files and validates to digest
 `29214dca106f1e1e0e2c8895b6a1a9ee658386b432fcb0fc08b96d5da54d736c`.
 
-Only these source controls changed: `backend/mcpme/preparation_textgen.py`
+Only these source controls changed: `backend/meecp/preparation_textgen.py`
 version `1.0.5` to `1.0.6`, the one text-generation catalog entry, and the
 exact public model-provenance path in `.github/scripts/scan_secrets.py`.
 Changing the family version changes the producer identity for that module and
@@ -31,7 +31,7 @@ Focused verification passed 90 text-generation tests, 20 lifecycle harness
 tests, and the fixed-count secret scanner. Core recipe checks passed 81 tests;
 one pre-existing CLI assertion failed because this integration catalog already
 contains the agent recipe entries that the older test expected to omit
-(`test_mcpme_recipe_cli.py::test_owner_add_enable_variant_and_restart_through_private_cli`).
+(`test_meecp_recipe_cli.py::test_owner_add_enable_variant_and_restart_through_private_cli`).
 That failure is recorded as `catalog_expected_subset_stale` in the author
 packet. Root verification corrected the CLI test's closed inventory to all seven
 current recipe IDs.

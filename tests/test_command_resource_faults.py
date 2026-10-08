@@ -5,8 +5,8 @@ import subprocess
 
 import pytest
 
-from mcpme.command_resource_execution_v1 import CommandExecutionError, read_resource_completion
-from mcpme.command_resource_policy_v1 import ResourcePolicyV1
+from meecp.command_resource_execution_v1 import CommandExecutionError, read_resource_completion
+from meecp.command_resource_policy_v1 import ResourcePolicyV1
 from test_command_resource_v1 import ROOT, binaries, executor, spec, pytestmark
 
 
@@ -15,7 +15,7 @@ from test_command_resource_v1 import ROOT, binaries, executor, spec, pytestmark
     ("membership", "membership_changed"), ("overflow", "arithmetic_overflow"),
     ("identity_capacity", "identity_capacity_exceeded"), ("enumeration_full", "process_threshold")])
 async def test_native_sampler_errors_latch_failure_and_settle_exact_tree(binaries, tmp_path, fault, reason):
-    header = (ROOT / "scripts/mcpme-command-resource-v1.h").read_text()
+    header = (ROOT / "scripts/meecp-command-resource-v1.h").read_text()
     replacements = {
         "metric": ("proc_pid_rusage(pid, RUSAGE_INFO_V1, (rusage_info_t *)&first)", "(errno = EIO, -1)"),
         "identity": ("    if (!held_exit && (before.pbi_pid", "    after.pbi_start_tvusec ^= 1;\n    if (!held_exit && (before.pbi_pid"),
@@ -29,7 +29,7 @@ async def test_native_sampler_errors_latch_failure_and_settle_exact_tree(binarie
     assert header.count(before) == 1
     (tmp_path / "mcpme-command-resource-v1.h").write_text(header.replace(before, after))
     source = tmp_path / "helper.c"
-    source.write_bytes((ROOT / "scripts/mcpme-command-resource-reap.c").read_bytes())
+    source.write_bytes((ROOT / "scripts/meecp-command-resource-reap.c").read_bytes())
     helper = tmp_path / "helper"
     compiled = subprocess.run(["clang", "-Wall", "-Wextra", "-Werror", "-O2", str(source), "-o", str(helper)],
         capture_output=True, timeout=30)
@@ -60,7 +60,7 @@ async def test_actual_sampler_gap_and_pass_budget_cancel(binaries, tmp_path, pol
 
 @pytest.mark.asyncio
 async def test_native_unknown_policy_fails_before_source_execution(binaries, tmp_path, monkeypatch):
-    import mcpme.command_resource_execution_v1 as module
+    import meecp.command_resource_execution_v1 as module
     owner = executor(binaries, tmp_path / "state")
     monkeypatch.setattr(module, "POLICY", "unsupported-policy")
     try:
@@ -77,13 +77,13 @@ async def test_native_unknown_policy_fails_before_source_execution(binaries, tmp
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fallback", [False, True])
 async def test_leader_exit_between_waitid_and_live_usage_read(binaries, tmp_path, fallback):
-    header = (ROOT / "scripts/mcpme-command-resource-v1.h").read_text()
+    header = (ROOT / "scripts/meecp-command-resource-v1.h").read_text()
     if not fallback:
         condition = "if ((result == RR_METRIC || result == RR_IDENTITY) && first[i] == leader && !leader_exited)"
         assert header.count(condition) == 1
         header = header.replace(condition, "if (0)")
     (tmp_path / "mcpme-command-resource-v1.h").write_text(header)
-    native = (ROOT / "scripts/mcpme-command-resource-reap.c").read_text()
+    native = (ROOT / "scripts/meecp-command-resource-reap.c").read_text()
     line = "                resource_stopped = resource_sample(&monitor, child, exited);"
     assert native.count(line) == 1
     # After the first real sample and source release, terminate the original

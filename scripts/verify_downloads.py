@@ -34,7 +34,7 @@ import os
 from pathlib import Path
 import sys
 
-from mcpme.downloads import DownloadManager
+from meecp.downloads import DownloadManager
 
 class SyntheticNetwork:
     @asynccontextmanager
@@ -98,7 +98,7 @@ except Exception:
 
 
 async def verify(host_path: Path, package_path: Path) -> dict:
-    with tempfile.TemporaryDirectory(prefix="mcpme-downloads-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="meecp-downloads-") as temporary:
         root = Path(temporary).resolve()
         host = root / "relocated host"
         shutil.copytree(host_path, host, symlinks=True)
@@ -107,7 +107,7 @@ async def verify(host_path: Path, package_path: Path) -> dict:
         archive = root / "pinned package.zip"
         pins = prepare(package, archive)
         state = root / "private state"
-        launcher, reaper = host / "bin/mcpme", host / "bin/mcpme-reap"
+        launcher, reaper = host / "bin/meecp", host / "bin/meecp-reap"
         environment = {"PATH": "/usr/bin:/bin", "HOME": str(root), "LANG": "en_US.UTF-8"}
         process = None
 

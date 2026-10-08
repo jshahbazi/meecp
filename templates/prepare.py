@@ -16,7 +16,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
-from mcpme.contracts import (  # noqa: E402
+from meecp.contracts import (  # noqa: E402
     Access, Configuration, Lifecycle, PackageError, PackageManifest, Resources, Tool, Validation,
     package_relative_path, validate_package,
 )
@@ -265,8 +265,8 @@ def prepare(args: argparse.Namespace, *, runtime_builder=None, check_canceled=No
             (destination / "callable.json").write_text(json.dumps({"module": args.module,
                 "function": args.function, "tool": tools[0].model_dump(exclude_none=True)}) + "\n")
         elif is_http:
-            shutil.copyfile(ROOT / "backend/mcpme/http_service.py", destination / "http_runtime.py")
-            shutil.copyfile(ROOT / "backend/mcpme/policy.py", destination / "http_policy.py")
+            shutil.copyfile(ROOT / "backend/meecp/http_service.py", destination / "http_runtime.py")
+            shutil.copyfile(ROOT / "backend/meecp/policy.py", destination / "http_policy.py")
             (destination / "http-factory.json").write_text(json.dumps({"module": args.module, "factory": args.http_factory}) + "\n")
         entrypoint = {"executable": "bin/service", "args": args.entrypoint_arg, "cwd": "."}
     execution = ({"processes": [{"id": "service", "role": "adapter", "entrypoint": entrypoint, "depends_on": [],
@@ -283,7 +283,7 @@ def prepare(args: argparse.Namespace, *, runtime_builder=None, check_canceled=No
         "access": access.model_dump(), "configuration": configuration.model_dump(), "validation": validation.model_dump(),
         "resources": resources.model_dump(), "licenses": licenses,
     })
-    (destination / "mcpme.package.json").write_text(json.dumps(manifest.model_dump(exclude_none=True), indent=2) + "\n")
+    (destination / "meecp.package.json").write_text(json.dumps(manifest.model_dump(exclude_none=True), indent=2) + "\n")
     artifacts = []
     for path in sorted(destination.rglob("*")):
         if check_canceled is not None:
@@ -295,7 +295,7 @@ def prepare(args: argparse.Namespace, *, runtime_builder=None, check_canceled=No
                 raise PreparationError("unsafe_generated_artifact")
             path.chmod(0o700 if path.stat().st_mode & 0o111 else 0o600)
             relative = path.relative_to(destination).as_posix()
-            if relative == "mcpme.package.json":
+            if relative == "meecp.package.json":
                 continue
             license_path = ("source/" + args.source_license if relative.startswith("source/")
                             else "licenses/DEPENDENCIES.md" if relative.startswith("python/site-packages/")
@@ -309,10 +309,10 @@ def prepare(args: argparse.Namespace, *, runtime_builder=None, check_canceled=No
                 "provenance": "Exported source hashes; versioned adapter; pinned private runtime and uv wheel closure.",
                 "license": license_path})
     lock = {"schema_version": 1, "package_id": manifest.package_id, "version": manifest.version,
-            "manifest_sha256": digest(destination / "mcpme.package.json"), "artifacts": artifacts,
+            "manifest_sha256": digest(destination / "meecp.package.json"), "artifacts": artifacts,
             "build": {"recipe": "templates/prepare.py " + args.template + " v1",
-                      "builder": "mcpme external-agent preparation v1", "toolchain": toolchain}}
-    (destination / "mcpme.lock.json").write_text(json.dumps(lock, separators=(",", ":")) + "\n")
+                      "builder": "meecp external-agent preparation v1", "toolchain": toolchain}}
+    (destination / "meecp.lock.json").write_text(json.dumps(lock, separators=(",", ":")) + "\n")
     return validate_package(destination)
 
 

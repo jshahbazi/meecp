@@ -18,11 +18,11 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
-from mcpme.command_execution_v2 import CommandExecutionError
-from mcpme.contracts import PackageError, validate_package
-from mcpme.host_command import HostCommandAdmission
-from mcpme.supervisor import Supervisor, HostError
-from test_mcpme_host import install, finish
+from meecp.command_execution_v2 import CommandExecutionError
+from meecp.contracts import PackageError, validate_package
+from meecp.host_command import HostCommandAdmission
+from meecp.supervisor import Supervisor, HostError
+from test_meecp_host import install, finish
 
 ROOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.skipif(platform.system() != "Darwin" or platform.machine() != "arm64" or
@@ -37,7 +37,7 @@ def digest(path):
 def native(tmp_path_factory):
     root = tmp_path_factory.mktemp("host-command-native")
     paths = []
-    for source, name in [("scripts/mcpme-reap.c", "reaper"), ("scripts/mcpme-command-reap.c", "command-reaper"),
+    for source, name in [("scripts/meecp-reap.c", "reaper"), ("scripts/meecp-command-reap.c", "command-reaper"),
                          ("tests/fixtures/host_command_target.c", "target")]:
         path = root / name
         subprocess.run(["clang", "-Wall", "-Wextra", "-Werror", "-O2", str(ROOT / source), "-o", str(path)],
@@ -69,13 +69,13 @@ def package(tmp_path, native, mode="echo", deadline=1000, smoke=True):
                    "output_schema": output_schema}], "resources": {"memory_mb": 32, "cpu_only": True}, "licenses": ["LICENSE"]}
     if smoke:
         manifest["validation"] = {"fixtures": [{"tool": "probe", "arguments": {"ok": True}, "expected": {"ok": True}}]}
-    (root / "mcpme.package.json").write_text(json.dumps(manifest))
+    (root / "meecp.package.json").write_text(json.dumps(manifest))
     lock = {"schema_version": 1, "package_id": manifest["package_id"], "version": manifest["version"],
-        "manifest_sha256": digest(root / "mcpme.package.json"), "artifacts": [{"path": name, "sha256": digest(root / name),
+        "manifest_sha256": digest(root / "meecp.package.json"), "artifacts": [{"path": name, "sha256": digest(root / name),
           "size": (root / name).stat().st_size, "executable": name == "target", "source": manifest["source_revision"],
           "provenance": "Compiled synthetic fixture with local clang.", "license": "LICENSE"} for name in ("target", "LICENSE")],
         "build": {"recipe": "test-host-command-v1", "builder": "test", "toolchain": "clang"}}
-    (root / "mcpme.lock.json").write_text(json.dumps(lock))
+    (root / "meecp.lock.json").write_text(json.dumps(lock))
     return root
 
 
@@ -126,7 +126,7 @@ async def test_closed_admission_and_schema_one_unchanged(tmp_path, native):
         assert not host.registry.list_slots()
     finally:
         await host.close()
-    manifest_path = root / "mcpme.package.json"
+    manifest_path = root / "meecp.package.json"
     value = json.loads(manifest_path.read_text())
     value["schema_version"] = 1
     manifest_path.write_text(json.dumps(value))
@@ -206,7 +206,7 @@ async def test_installed_stdio_bridge_preserves_schema_and_call(tmp_path, native
     host = host_at(tmp_path / "state", native)
     try:
         slot = await install(host, root, "Stdio")
-        params = StdioServerParameters(command=str(ROOT / "scripts/mcpme"), args=["--state-dir", str(host.root), "connect", "--slot", slot.id])
+        params = StdioServerParameters(command=str(ROOT / "scripts/meecp"), args=["--state-dir", str(host.root), "connect", "--slot", slot.id])
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as client:
                 await client.initialize()
@@ -246,7 +246,7 @@ async def test_generation_change_fences_settled_output(tmp_path, native):
 
 @pytest.mark.asyncio
 async def test_response_write_fences_generation_after_backpressure(tmp_path, native, monkeypatch):
-    import mcpme.host_command as module
+    import meecp.host_command as module
     root = package(tmp_path, native)
     host = host_at(tmp_path / "state", native)
     try:
@@ -315,7 +315,7 @@ async def test_actual_installed_backend_death_and_ancestor_group_kill(tmp_path, 
         "import asyncio, os, sys",
         "from pathlib import Path",
         "from test_host_command import host_at, sdk_call",
-        "from test_mcpme_host import install",
+        "from test_meecp_host import install",
         "async def main():",
         "    host = host_at(Path(sys.argv[1]), tuple(Path(x) for x in sys.argv[3:]))",
         "    slot = await install(host, Path(sys.argv[2]), 'Crash')",
@@ -365,8 +365,8 @@ async def test_actual_installed_backend_death_and_ancestor_group_kill(tmp_path, 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("sync_fails", [False, True])
 async def test_installed_restart_during_receipt_sync_retains_exact_reservation(tmp_path, native, sync_fails):
-    from mcpme.command_execution_v2 import SEED_SIZE
-    source = (ROOT / "scripts/mcpme-command-reap.c").read_text()
+    from meecp.command_execution_v2 import SEED_SIZE
+    source = (ROOT / "scripts/meecp-command-reap.c").read_text()
     needle = "if (fsync(receipt_fd)) return -1;"
     assert source.count(needle) == 1
     replacement = "usleep(1200000); if (1) return -1;" if sync_fails else "usleep(1200000); " + needle
@@ -382,7 +382,7 @@ async def test_installed_restart_during_receipt_sync_retains_exact_reservation(t
         "import asyncio, sys",
         "from pathlib import Path",
         "from test_host_command import host_at, sdk_call",
-        "from test_mcpme_host import install",
+        "from test_meecp_host import install",
         "async def main():",
         "    host = host_at(Path(sys.argv[1]), tuple(Path(x) for x in sys.argv[3:]))",
         "    slot = await install(host, Path(sys.argv[2]), 'Sync')",
@@ -525,13 +525,13 @@ async def test_fresh_http_session_can_initialize_while_healthy_command_active(tm
 
 
 def set_schema(root, schema):
-    path = root / "mcpme.package.json"
+    path = root / "meecp.package.json"
     manifest = json.loads(path.read_text())
     manifest["tools"][0]["input_schema"] = schema
     manifest["tools"][0]["output_schema"] = schema
     manifest.pop("validation", None)
     path.write_text(json.dumps(manifest))
-    lock_path = root / "mcpme.lock.json"
+    lock_path = root / "meecp.lock.json"
     lock = json.loads(lock_path.read_text())
     lock["manifest_sha256"] = digest(path)
     lock_path.write_text(json.dumps(lock))

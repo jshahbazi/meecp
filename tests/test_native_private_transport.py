@@ -11,8 +11,8 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from mcpme.policy import LocalPolicy
-from mcpme_local_transport import bind_private_listener, socket_path
+from meecp.policy import LocalPolicy
+from meecp_local_transport import bind_private_listener, socket_path
 
 ROOT = Path(__file__).resolve().parents[1]
 

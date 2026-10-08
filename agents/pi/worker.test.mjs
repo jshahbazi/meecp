@@ -37,7 +37,7 @@ function completion(reply, delta, finishReason) {
 }
 
 async function workerRun(start, toolHandler, { cancelOnTool = false } = {}) {
-  const directory = await mkdtemp(join(tmpdir(), "mcpme-pi-test-"));
+  const directory = await mkdtemp(join(tmpdir(), "meecp-pi-test-"));
   await writeFile(join(directory, "AGENTS.md"), "Untrusted sentinel: DO NOT include discovered-context-sentinel");
   await mkdir(join(directory, ".pi/extensions"), { recursive: true });
   await writeFile(join(directory, ".pi/extensions/trap.js"),
@@ -241,7 +241,7 @@ test("compatible local providers accept an empty key without using inherited cre
   try {
     const result = await workerRun({ ...start(provider.url), api_key: "" });
     assert.deepEqual(result.frames.at(-1), { type: "done", success: true });
-    assert.equal(provider.requests[0].authorization, "Bearer mcpme-no-api-key");
+    assert.equal(provider.requests[0].authorization, "Bearer meecp-no-api-key");
     assert.equal(result.stderr, "");
   } finally { await provider.close(); }
 });

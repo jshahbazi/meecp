@@ -61,14 +61,14 @@ async def call(client, name, arguments=None):
 
 async def verify(args, report):
     checks = report["checks"]
-    with tempfile.TemporaryDirectory(prefix="mcpme-http-phase2-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="meecp-http-phase2-") as temporary:
         root = Path(temporary).resolve()
         original_host = args.host.resolve()
-        if (original_host / "Contents/Resources/host/bin/mcpme").is_file():
+        if (original_host / "Contents/Resources/host/bin/meecp").is_file():
             original_host = original_host / "Contents/Resources/host"
         host = root / "relocated private host"
         await asyncio.to_thread(shutil.copytree, original_host, host, symlinks=True)
-        launcher, reaper = host / "bin/mcpme", host / "bin/mcpme-reap"
+        launcher, reaper = host / "bin/meecp", host / "bin/meecp-reap"
         home, state = root / "private home", root / "private state"
         home.mkdir(mode=0o700)
         state.mkdir(mode=0o700)

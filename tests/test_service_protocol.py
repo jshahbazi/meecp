@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from mcpme_service.protocol import completion, ServiceFailure
+from meecp_service.protocol import completion, ServiceFailure
 
 
 @pytest.mark.parametrize("fault,code", [(None, None), ("auth", "service_http_rejected"),

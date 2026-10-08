@@ -32,12 +32,12 @@ SCHEMA = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required
 ENABLED_HOST = (
     "import asyncio,json,logging,sys\nfrom pathlib import Path\n"
     "sys.path[:0]=[sys.argv[1],sys.argv[2]]\nlogging.disable(logging.CRITICAL)\n"
-    "import mcpme.supervisor as module\n"
-    "from mcpme.host_command import HostCommandAdmission\n"
-    "from mcpme.preparation_command_owner import CommandPreparationResourceAdmission\n"
-    "from mcpme.command_resource_execution_v1 import _platform_policy\n"
-    "from mcpme.preparation_command import CommandFamily\n"
-    "from mcpme.preparation_runner import PreparationRunner\n"
+    "import meecp.supervisor as module\n"
+    "from meecp.host_command import HostCommandAdmission\n"
+    "from meecp.preparation_command_owner import CommandPreparationResourceAdmission\n"
+    "from meecp.command_resource_execution_v1 import _platform_policy\n"
+    "from meecp.preparation_command import CommandFamily\n"
+    "from meecp.preparation_runner import PreparationRunner\n"
     "root=Path(sys.argv[4]).parent.parent\n"
     "command=json.loads((root/'command-execution.json').read_bytes())\n"
     "resource=json.loads((root/'command-resource-execution.json').read_bytes())\n"
@@ -81,7 +81,7 @@ def command_authority_settled(path):
     if path.name == "command-reservations.json":
         return (set(value) == {"version", "entries"} and type(value["version"]) is int
             and value["version"] == 1 and type(value["entries"]) is list and not value["entries"])
-    from mcpme.command_execution_v2 import validate_command_journal, verify_command_completion
+    from meecp.command_execution_v2 import validate_command_journal, verify_command_completion
     validate_command_journal(value)
     return all(item["state"] == "settled" and verify_command_completion(path.parent, item)[0]
         for item in value["entries"])
@@ -108,7 +108,7 @@ class CommandHarness(onboarding.Harness):
         shutil.copyfile(self.fixture, source / "command"); (source / "command").chmod(0o700)
         for name in ("command.input.schema.json", "command.output.schema.json"):
             (source / name).write_text(json.dumps(SCHEMA, sort_keys=True))
-        (source / "LICENSE").write_text("Synthetic mcpme tests/fixtures/host_command_target.c acceptance fixture notice.\n")
+        (source / "LICENSE").write_text("Synthetic meecp tests/fixtures/host_command_target.c acceptance fixture notice.\n")
         return {path.name: digest(path) for path in source.iterdir()}
 
     async def start(self, state, environment, home, *, enabled):
@@ -200,7 +200,7 @@ class CommandHarness(onboarding.Harness):
         never adopts or signals a recorded PID. It checks public replacement
         admission and durable recovery, and deliberately retains this state.
         """
-        from mcpme.supervisor import HostError
+        from meecp.supervisor import HostError
         self.lease["safe_to_remove"] = False
         host = command_host.make_host(self.host, state, inventory)
         try:
@@ -241,9 +241,9 @@ class CommandHarness(onboarding.Harness):
         return result
 
     async def case(self, label):
-        from mcpme.contracts import Tool, validate_package
-        from mcpme.preparation_forms import _choice
-        from mcpme.preparation_inputs import parse_preparation_receipt
+        from meecp.contracts import Tool, validate_package
+        from meecp.preparation_forms import _choice
+        from meecp.preparation_inputs import parse_preparation_receipt
         onboarding.stage("source_intake", label)
         base, state, home, environment = self.new_case(label)
         source = base / "ordinary source"; source.mkdir(mode=0o700)
@@ -374,7 +374,7 @@ async def verify(host, native, fixture, report):
     build = onboarding.verify_host_payload(host)
     _, inventory = command_host.verify_payload(host)
     resource = json.loads((host / "command-resource-execution.json").read_bytes())
-    require(resource["helper"] == "bin/mcpme-command-resource-reap"
+    require(resource["helper"] == "bin/meecp-command-resource-reap"
         and digest(host / resource["helper"]) == resource["helper_sha256"]
         and resource["production_admission"] == "disabled" and resource["configuration_authority"] == "inventory-only"
         and resource["hard_aggregate_enforced"] is False and resource["lifetime_coverage_complete"] is False,

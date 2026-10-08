@@ -14,7 +14,7 @@ import sys
 
 import pytest
 
-from mcpme.pi_tools import MAX_OUTPUT, MAX_READ, PiToolBroker
+from meecp.pi_tools import MAX_OUTPUT, MAX_READ, PiToolBroker
 from test_preparation_processes import gone, group_reaper
 
 

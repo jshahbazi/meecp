@@ -6,7 +6,7 @@ It does not enable a compiler, dependency resolver, source probe or preparation 
 
 ## Host-owned component contract
 
-[`preparation_components.py`](../backend/mcpme/preparation_components.py) defines
+[`preparation_components.py`](../backend/meecp/preparation_components.py) defines
 `ComponentProtocol.validate_source(descriptor, draft, recipe) -> SourceBinding`.
 The host constructs a `ComponentRegistry` from implementations it owns. A source
 or recipe bundle cannot register a Python module, plugin path or executable hook.
@@ -42,7 +42,7 @@ contract routing only. It supplies no native compilation or runtime support.
 
 ## Static inspection contract
 
-[`preparation_inspection.py`](../backend/mcpme/preparation_inspection.py) exposes
+[`preparation_inspection.py`](../backend/meecp/preparation_inspection.py) exposes
 `inspect_source(draft) -> dict`. It uses the already imported snapshot, never the
 mutable original directory. It checks the exact closed selected-file tree,
 original byte hashes and original folder digest serialization before parsing,

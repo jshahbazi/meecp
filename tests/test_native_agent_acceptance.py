@@ -21,7 +21,7 @@ def agent_harness(monkeypatch):
 
 
 def test_fixture_factory_does_not_enable_other_families_or_live_dispatch(tmp_path, monkeypatch, agent_harness):
-    from mcpme.supervisor import Supervisor
+    from meecp.supervisor import Supervisor
 
     observed = {}
 
@@ -38,7 +38,7 @@ def test_fixture_factory_does_not_enable_other_families_or_live_dispatch(tmp_pat
         finally:
             await host.close()
 
-    monkeypatch.setattr("mcpme.supervisor.serve", serve)
+    monkeypatch.setattr("meecp.supervisor.serve", serve)
     root = Path(__file__).resolve().parents[1]
     monkeypatch.setattr(sys, "argv", ["fixture", str(root / "backend"), str(root / "backend"),
         str(tmp_path / "state"), str(tmp_path / "unused-reaper"), "0", str(root / "scripts/agent_acceptance_fixture.py")])
@@ -53,7 +53,7 @@ def test_fixture_factory_does_not_enable_other_families_or_live_dispatch(tmp_pat
 async def test_simulation_derives_all_role_outputs_from_encoded_review(monkeypatch, factor, requirement):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))
     from agent_acceptance_fixture import request_only_unlocked_handler
-    from mcpme.preparation_agent_guides import builtin_analysis_guides
+    from meecp.preparation_agent_guides import builtin_analysis_guides
     from test_preparation_agent import request_for, backend
     guide = next(g for g in builtin_analysis_guides() if g.component.id == "agent-unlocked-python-adapter-v1")
     code = f"def multiply(n):\n return n*{factor}\n"
@@ -77,7 +77,7 @@ async def test_simulation_derives_all_role_outputs_from_encoded_review(monkeypat
     "scope_escape", "scope_recipe", "wrong_nonce", "expired", "manager_replaced", "marker_hardlink",
     "fixture_mode", "claimed_nonce", "existing_output", "dangling_output"])
 def test_compiled_agent_fixture_rejects_unowned_scope_before_claim(native_recipe_driver, tmp_path, fault):
-    workspace = tmp_path.resolve() / ("mcpme-native-onboarding-" + str(uuid.uuid4()))
+    workspace = tmp_path.resolve() / ("meecp-native-onboarding-" + str(uuid.uuid4()))
     root = workspace / "agent"
     state, home, temporary = (root / name for name in ("state", "home", "tmp"))
     for directory in (workspace, root, state, home, temporary):

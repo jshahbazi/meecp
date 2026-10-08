@@ -7,10 +7,10 @@ import time
 
 import pytest
 
-from mcpme.grants import GrantError
-from mcpme.private import read_private_json, write_private_json
+from meecp.grants import GrantError
+from meecp.private import read_private_json, write_private_json
 from test_native_authorization import access, api, decision, frame
-from test_mcpme_upgrade_host import UpgradeFixture, settle
+from test_meecp_upgrade_host import UpgradeFixture, settle
 
 
 async def request_upgrade(reader, writer, plan):

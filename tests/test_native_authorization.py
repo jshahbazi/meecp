@@ -10,12 +10,12 @@ import uuid
 import httpx
 import pytest
 
-from mcpme.authorization import scope_digest
-from mcpme.grants import GrantError, plan_digest
-from mcpme.private import read_private_json, write_private_json
-from mcpme.supervisor import Supervisor, management_app
-from mcpme_local_transport import socket_path
-from test_mcpme_host import prepared
+from meecp.authorization import scope_digest
+from meecp.grants import GrantError, plan_digest
+from meecp.private import read_private_json, write_private_json
+from meecp.supervisor import Supervisor, management_app
+from meecp_local_transport import socket_path
+from test_meecp_host import prepared
 
 
 async def frame(reader, writer, value):

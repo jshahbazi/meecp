@@ -11,14 +11,14 @@ import tarfile
 
 import pytest
 
-from mcpme.contracts import validate_package
-from mcpme.preparation_builder import (
+from meecp.contracts import validate_package
+from meecp.preparation_builder import (
     CommandSpec, PrivateToolchain, _dependency_notices, _wheel_requests,
     load_private_toolchain, prepare_bound,
 )
-from mcpme import preparation_builder
-from mcpme.preparation_contracts import PreparationError
-from test_mcpme_preparations import descriptor
+from meecp import preparation_builder
+from meecp.preparation_contracts import PreparationError
+from test_meecp_preparations import descriptor
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))

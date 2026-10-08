@@ -9,15 +9,15 @@ import sys
 
 import pytest
 
-from mcpme.preparation_contracts import PreparationError, parse_descriptor
-from mcpme.preparation_verifier import verify_prepared_package
-from test_mcpme_packages import edit_manifest, make_package, relock
+from meecp.preparation_contracts import PreparationError, parse_descriptor
+from meecp.preparation_verifier import verify_prepared_package
+from test_meecp_packages import edit_manifest, make_package, relock
 
 
 @pytest.fixture(scope="module")
 def probe_reaper(tmp_path_factory):
-    output = tmp_path_factory.mktemp("probe-reaper") / "mcpme-reap"
-    source = Path(__file__).resolve().parents[1] / "scripts/mcpme-reap.c"
+    output = tmp_path_factory.mktemp("probe-reaper") / "meecp-reap"
+    source = Path(__file__).resolve().parents[1] / "scripts/meecp-reap.c"
     subprocess.run(["cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", str(source), "-o", str(output)],
                    check=True, capture_output=True)
     return output

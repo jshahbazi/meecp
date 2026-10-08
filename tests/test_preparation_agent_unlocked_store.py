@@ -10,14 +10,14 @@ import uuid
 
 import pytest
 
-from mcpme.imports import ImportStore
-from mcpme.recipes import RecipeStore
-from mcpme.preparation_agent_adapter_store import CODE_PATH, original_snapshot
-from mcpme.preparation_agent_unlocked_contracts import canonical_dependency_project
-from mcpme.preparation_agent_unlocked_store import AgentUnlockedInputStore, UnlockedCompletionRequestV1
-from mcpme.preparation_components import ComponentReference
-from mcpme.preparation_contracts import PreparationError, contract_digest
-from mcpme.preparation_resolution import ResolutionRequestV1, result_from_files
+from meecp.imports import ImportStore
+from meecp.recipes import RecipeStore
+from meecp.preparation_agent_adapter_store import CODE_PATH, original_snapshot
+from meecp.preparation_agent_unlocked_contracts import canonical_dependency_project
+from meecp.preparation_agent_unlocked_store import AgentUnlockedInputStore, UnlockedCompletionRequestV1
+from meecp.preparation_components import ComponentReference
+from meecp.preparation_contracts import PreparationError, contract_digest
+from meecp.preparation_resolution import ResolutionRequestV1, result_from_files
 from test_preparation_agent_unlocked_contracts import captured, proposal
 
 
@@ -34,8 +34,8 @@ def bundle(path, reference=REFERENCE):
         "licenses": ["LICENSE"], "provenance": {"origin": "synthetic", "publisher": "test"},
         "requirements": {"host_api_version": 1, "package_schema": 1, "protocol": "2025-11-25", "os": "macos",
             "architecture": "arm64", "capabilities": ["declarative-composition"]}}
-    data = json.dumps(manifest).encode(); (path/"mcpme.recipe.json").write_bytes(data)
-    (path/"mcpme.recipe.lock.json").write_text(json.dumps({"schema_version": 1,
+    data = json.dumps(manifest).encode(); (path/"meecp.recipe.json").write_bytes(data)
+    (path/"meecp.recipe.lock.json").write_text(json.dumps({"schema_version": 1,
         "manifest_sha256": hashlib.sha256(data).hexdigest(), "artifacts": [{"path": "LICENSE", "size": len(license_data),
             "sha256": hashlib.sha256(license_data).hexdigest(), "license": "LICENSE", "origin": "synthetic"}]}))
     return path
@@ -43,7 +43,7 @@ def bundle(path, reference=REFERENCE):
 
 @pytest.fixture
 def foundation(tmp_path, monkeypatch, request):
-    from mcpme import recipes as module
+    from meecp import recipes as module
     original = module.builtin_components
     monkeypatch.setattr(module, "builtin_components", lambda: {**original(), COMPONENT+"@1.0.0": {
         "digest": REFERENCE.digest, "input_schema": {"type": "object", "additionalProperties": False}, "dependencies": []}})
@@ -166,9 +166,9 @@ def test_resolution_mismatch_never_creates_completed_input(foundation, tmp_path,
 
 
 async def test_completed_input_writer_repeated_cancel_joins_before_recovery(foundation, tmp_path, monkeypatch):
-    from mcpme.preparation_agent_unlocked_resolution import AgentUnlockedResolutionStore, OwnedAgentUnlockedResolutionRunner
-    from mcpme.preparation_runner import _Attempt
-    from mcpme import preparation_agent_unlocked_store as module
+    from meecp.preparation_agent_unlocked_resolution import AgentUnlockedResolutionStore, OwnedAgentUnlockedResolutionRunner
+    from meecp.preparation_runner import _Attempt
+    from meecp import preparation_agent_unlocked_store as module
     imports, recipes, draft, store, job, plan, proposed = foundation
     item, resolution_job, result, directory = synthetic_resolution(foundation, tmp_path)
     runner = OwnedAgentUnlockedResolutionRunner(AgentUnlockedResolutionStore(imports, store),tmp_path/"absent",tmp_path/"absent-reaper")

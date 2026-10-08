@@ -9,9 +9,9 @@ import threading
 
 import pytest
 
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_release_policy import AgentExecutionAdmission, ReleasePolicy, POLICY_PATH, _load_policy, release_admissions
-from mcpme.preparation_agent_providers import AgentProviderRegistry, OpenAIResponsesAdapter
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_release_policy import AgentExecutionAdmission, ReleasePolicy, POLICY_PATH, _load_policy, release_admissions
+from meecp.preparation_agent_providers import AgentProviderRegistry, OpenAIResponsesAdapter
 from test_preparation_agent_providers import choices, update, SYNTHETIC
 
 
@@ -43,8 +43,8 @@ def test_shipped_policy_closed_and_environment_cannot_activate(monkeypatch):
 
 
 def test_shipped_agent_policy_tuples_match_registered_implementations():
-    from mcpme.recipes import builtin_components
-    from mcpme.preparation_agent_guides import builtin_analysis_guides
+    from meecp.recipes import builtin_components
+    from meecp.preparation_agent_guides import builtin_analysis_guides
 
     root = Path(__file__).parents[1]
     policy = ReleasePolicy.model_validate(json.loads((root / POLICY_PATH).read_bytes()))
@@ -108,7 +108,7 @@ def test_active_policy_cannot_authorize_itself_with_source_config(tmp_path):
 
 @pytest.mark.parametrize("damage", [None, "missing_dependency", "wrong_component", "missing_agent_family", "missing_agent_closure", "wrong_adapter", "changed_policy"])
 def test_accepted_artifact_still_requires_exact_registered_closures(tmp_path, monkeypatch, damage):
-    from mcpme import recipes, preparation_release_artifact
+    from meecp import recipes, preparation_release_artifact
     adapter = OpenAIResponsesAdapter()
     ref = dict(zip(("id", "version", "digest"), KEY))
     value = closed()
@@ -178,7 +178,7 @@ def test_revoked_credential_and_changed_adapter_stop_advertised_execution(tmp_pa
 
 
 async def test_canceled_startup_joins_held_artifact_inspection(monkeypatch):
-    from mcpme import preparation_release_policy as module
+    from meecp import preparation_release_policy as module
     entered, release, exited = threading.Event(), threading.Event(), threading.Event()
     def held():
         entered.set()

@@ -1,0 +1,34 @@
+{
+  "artifacts": [
+    {
+      "license": "LICENSE",
+      "origin": "meecp-shipped-recipe-v1",
+      "path": "LICENSE",
+      "sha256": "4be78795230eef6d9133360ed678144b68ab84bbb3b2dab36e79470f16f8b45d",
+      "size": 1075
+    },
+    {
+      "license": "LICENSE",
+      "origin": "meecp-shipped-recipe-v1",
+      "path": "README.md",
+      "sha256": "b873f174ff68272a012d59439d7ae21c5625fc78fdd8aa80a0ef4a4a60b7a646",
+      "size": 642
+    },
+    {
+      "license": "LICENSE",
+      "origin": "meecp-shipped-recipe-v1",
+      "path": "THIRD_PARTY_NOTICES.md",
+      "sha256": "f7dc269979eca2234bb8b3792305bd8104d6737535b695b27609f35eab734ba7",
+      "size": 384
+    },
+    {
+      "license": "LICENSE",
+      "origin": "meecp-shipped-recipe-v1",
+      "path": "fixtures/metadata.json",
+      "sha256": "936d88eaaee409d5fe9e501f15bc1923b3b9090f554c2f3d732b9488982dc9d7",
+      "size": 156
+    }
+  ],
+  "manifest_sha256": "106494b05cb095e6ac2b00b3219a3e71e1c73679f5e7c5b1a2bd48bdade23739",
+  "schema_version": 1
+}

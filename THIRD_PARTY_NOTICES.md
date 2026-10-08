@@ -2,9 +2,9 @@
 
 The app bundles public JevK5 model weights and a minimal upstream Python client. Their source, licenses, and attribution remain separate from the application code.
 
-The first mcpme CLI host bundles CPython 3.12.13 and the server dependencies in `uv.lock`. It does not include the JevK5 weights or inference engine. Its build receipt records source-file and launcher hashes plus the compiler identity. The deterministic example uses the macOS system Swift/Foundation runtime and includes its source and MIT license in the prepared package.
+The first meecp CLI host bundles CPython 3.12.13 and the server dependencies in `uv.lock`. It does not include the JevK5 weights or inference engine. Its build receipt records source-file and launcher hashes plus the compiler identity. The deterministic example uses the macOS system Swift/Foundation runtime and includes its source and MIT license in the prepared package.
 
-The native mcpme app wraps that host with AppKit and ServiceManagement. The separately prepared `local.jevk5` package includes the pinned model and verified relocated engine below, its own private Python and locked dependencies, the unmodified vendored scorer, and the host-attached adapter in `backend/mcpme_jevk5`. Its package lock records the complete artifact tree. The recovery builder preserves the original JevK5 bundle and changes only a copied bundle's native handoff entrypoint and signatures.
+The native meecp app wraps that host with AppKit and ServiceManagement. The separately prepared `local.jevk5` package includes the pinned model and verified relocated engine below, its own private Python and locked dependencies, the unmodified vendored scorer, and the host-attached adapter in `backend/meecp_jevk5`. Its package lock records the complete artifact tree. The recovery builder preserves the original JevK5 bundle and changes only a copied bundle's native handoff entrypoint and signatures.
 
 | Component | Pinned source / local build | License |
 |---|---|---|
@@ -16,7 +16,7 @@ The native mcpme app wraps that host with AppKit and ServiceManagement. The sepa
 | OpenSSL | Bundled dependency of llama-server | Apache-2.0 |
 | CPython standalone runtime | uv-managed CPython 3.12.13, python-build-standalone | Python Software Foundation and included component licenses |
 | MCP Python SDK | 1.30.0, official modelcontextprotocol/python-sdk | MIT |
-| Native TLS trust integration | Private truststore 0.10.4 fork; macOS certificate network fetching disabled; exact wheel provenance in `backend/mcpme/_native_tls/upstream.json` | MIT; `backend/mcpme/_native_tls/LICENSE` |
+| Native TLS trust integration | Private truststore 0.10.4 fork; macOS certificate network fetching disabled; exact wheel provenance in `backend/meecp/_native_tls/upstream.json` | MIT; `backend/meecp/_native_tls/LICENSE` |
 | Server dependencies | Exact versions in `uv.lock` | Licenses retained in bundled wheel metadata |
 
 The app's Resources include runtime license files and the complete package license metadata from the installed wheels. CPython includes its own component license directory. Vendored JevK5 files are unmodified upstream files; the application-specific cache and service wrapper is in `backend/jevk5_app`. Bundled Mach-O files have relocated load paths; the copied ggml library's compiled Homebrew backend directory string is disabled so plugins load from the bundle's working directory. Source and packaged SHA-256 values are recorded in `runtime-manifest.json`.

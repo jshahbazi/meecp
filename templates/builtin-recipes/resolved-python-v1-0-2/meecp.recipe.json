@@ -1,0 +1,38 @@
+{
+  "form": [],
+  "id": "mcpme.resolved-python",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "kind": "declarative",
+  "licenses": [
+    "LICENSE"
+  ],
+  "provenance": {
+    "origin": "meecp-shipped-recipe-v1",
+    "publisher": "meecp contributors"
+  },
+  "requirements": {
+    "architecture": "arm64",
+    "capabilities": [
+      "declarative-composition"
+    ],
+    "host_api_version": 1,
+    "os": "macos",
+    "package_schema": 1,
+    "protocol": "2025-11-25"
+  },
+  "schema_version": 1,
+  "steps": [
+    {
+      "component": "resolved-python-v1",
+      "config": {},
+      "digest": "e5b174b7626e3bb89cd4a8727099662d111608e1465b01218342bb68f10a6b90",
+      "version": "1.0.1"
+    }
+  ],
+  "version": "1.0.2",
+  "worker_api_version": 1
+}

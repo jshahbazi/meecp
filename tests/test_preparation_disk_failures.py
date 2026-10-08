@@ -18,9 +18,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from mcpme.preparation_builder import CommandSpec
-from mcpme.preparation_runner import JournaledPreparationOwner
-from mcpme.preparations import RECEIPT_NAME
+from meecp.preparation_builder import CommandSpec
+from meecp.preparation_runner import JournaledPreparationOwner
+from meecp.preparations import RECEIPT_NAME
 from test_preparation_runner import controlled, finished, foundation, group_reaper, started
 
 
@@ -28,7 +28,7 @@ from test_preparation_runner import controlled, finished, foundation, group_reap
 async def test_post_build_enospc_cannot_attach_or_release_before_owned_cleanup(
     controlled, monkeypatch, capfd, boundary, hold_cleanup,
 ):
-    import mcpme.preparation_runner as runner_module
+    import meecp.preparation_runner as runner_module
 
     runner, imports, _, draft, _, resources, released = controlled
     child_handles = []

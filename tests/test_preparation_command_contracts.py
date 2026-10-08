@@ -6,11 +6,11 @@ import copy
 import pytest
 from pydantic import ValidationError
 
-from mcpme.imports import ImportStore
-from mcpme.preparation_contracts import PreparationError, contract_digest
-from mcpme.preparation_inputs import OriginalSourceReference, candidate_contract_digest, parse_bound_inputs
-from mcpme.recipes import RecipeStore, builtin_components
-from test_mcpme_recipes import recipe
+from meecp.imports import ImportStore
+from meecp.preparation_contracts import PreparationError, contract_digest
+from meecp.preparation_inputs import OriginalSourceReference, candidate_contract_digest, parse_bound_inputs
+from meecp.recipes import RecipeStore, builtin_components
+from test_meecp_recipes import recipe
 from test_preparation_inputs import bind, source_binding, view  # noqa: F401
 
 

@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from mcpme.contracts import validate_package
+from meecp.contracts import validate_package
 
 
 ROOT = Path(__file__).resolve().parents[1]

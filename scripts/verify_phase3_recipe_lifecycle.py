@@ -113,10 +113,10 @@ import asyncio,logging,os,sys,threading
 from pathlib import Path
 sys.path[:0]=[sys.argv[1],sys.argv[2]]
 logging.disable(logging.CRITICAL)
-from mcpme.supervisor import serve
-from mcpme.preparation_runner import PreparationRunner,JournaledPreparationOwner
-from mcpme.preparation_resolution_runner import OwnedResolutionRunner
-from mcpme.preparation_resolved_python import ResolvedPythonComponent
+from meecp.supervisor import serve
+from meecp.preparation_runner import PreparationRunner,JournaledPreparationOwner
+from meecp.preparation_resolution_runner import OwnedResolutionRunner
+from meecp.preparation_resolved_python import ResolvedPythonComponent
 mode=sys.argv[6]; control=int(sys.argv[7]); status=int(sys.argv[8])
 released=threading.Event(); used=False
 def listener():
@@ -229,7 +229,7 @@ class Barrier:
 class ReceiptHold:
     """Withhold and restore the exact owned inode using private directory FDs."""
     def __init__(self, state, job):
-        from mcpme.ownership_receipts import verify_receipt
+        from meecp.ownership_receipts import verify_receipt
         self.verify_receipt = verify_receipt
         connection = sqlite3.connect((state / "imports.sqlite").as_uri() + "?mode=ro", uri=True, timeout=5)
         try:
@@ -353,7 +353,7 @@ class LifecycleHarness(onboarding.Harness):
 
     async def request(self, state, route, body=None, expected_error=None):
         import httpx
-        from mcpme_local_transport import private_transport, socket_path
+        from meecp_local_transport import private_transport, socket_path
         connection = private_json(state / "manager-connection.json")
         async with httpx.AsyncClient(base_url=connection["endpoint"], trust_env=False, timeout=30,
                 follow_redirects=False, transport=private_transport(socket_path(state, "manager")),

@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from mcpme import preparation_onnx as onnx
-from mcpme.preparation_artifacts import AcquisitionRequestV1
-from mcpme.preparation_capture import AttachImportTargetV1, CapturePolicyV1, CreateImportTargetV1
-from mcpme.supervisor import Supervisor
+from meecp import preparation_onnx as onnx
+from meecp.preparation_artifacts import AcquisitionRequestV1
+from meecp.preparation_capture import AttachImportTargetV1, CapturePolicyV1, CreateImportTargetV1
+from meecp.supervisor import Supervisor
 
 
 @pytest.mark.parametrize("source_kind", ["captured", "folder"])

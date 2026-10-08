@@ -16,9 +16,9 @@ from types import SimpleNamespace
 from pydantic import ValidationError
 import pytest
 
-from mcpme import preparation_artifacts as artifacts
-from mcpme.imports import ImportStore
-from mcpme.preparation_contracts import canonical_bytes, contract_digest
+from meecp import preparation_artifacts as artifacts
+from meecp.imports import ImportStore
+from meecp.preparation_contracts import canonical_bytes, contract_digest
 
 
 BUDGET = 8 * 1024 * 1024

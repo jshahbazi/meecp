@@ -1,4 +1,4 @@
-# JevK5 Menu Bar
+# meecp
 
 - Build a standalone Apple silicon macOS app. Keep it independent of Brekko.
 - Read `docs/DESIGN.md` before changing component contracts.

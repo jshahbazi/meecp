@@ -5,9 +5,9 @@ from pathlib import Path
 import httpx
 import pytest
 
-from mcpme.grants import read_credential
-from mcpme.supervisor import Supervisor, management_app
-from mcpme import __main__ as cli
+from meecp.grants import read_credential
+from meecp.supervisor import Supervisor, management_app
+from meecp import __main__ as cli
 
 
 async def test_owner_service_intake_auth_and_revoke_are_static(tmp_path):
@@ -60,7 +60,7 @@ async def test_owner_service_intake_auth_and_revoke_are_static(tmp_path):
 
 
 async def test_cli_service_uses_registry_and_reference_only(monkeypatch, tmp_path):
-    from mcpme.preparation_service_routes import registry
+    from meecp.preparation_service_routes import registry
     import uuid
     calls = []; secret = str(uuid.uuid4())
     async def call(state, method, path, body=None):
@@ -76,9 +76,9 @@ async def test_cli_service_uses_registry_and_reference_only(monkeypatch, tmp_pat
 
 
 async def test_service_capability_requires_exact_admitted_ready_closure(tmp_path):
-    from mcpme.preparation_admission import PublicPreparationAdmission
-    from mcpme.preparation_service import references
-    from mcpme.supervisor import capabilities
+    from meecp.preparation_admission import PublicPreparationAdmission
+    from meecp.preparation_service import references
+    from meecp.supervisor import capabilities
     refs = references()
     assert "service_connection" in capabilities()["import_sources"]
     assert capabilities()["service_intake"]["execution"] is False
@@ -86,7 +86,9 @@ async def test_service_capability_requires_exact_admitted_ready_closure(tmp_path
     host = Supervisor(tmp_path / "state", tmp_path / "unused", public_admission=admission)
     try:
         assert capabilities(host)["service_intake"]["execution"] is True
-        host.recipes.disable("mcpme.local-openai-text", "1.0.0")
+        active = next(item for item in host.builtin_recipe_metadata["recipes"]
+                      if item["recipe_id"] == "mcpme.local-openai-text")
+        host.recipes.disable(active["recipe_id"], active["version"])
         assert capabilities(host)["service_intake"]["execution"] is False
         assert host.preparations.list() == []
     finally:

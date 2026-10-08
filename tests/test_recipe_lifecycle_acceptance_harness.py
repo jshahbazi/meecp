@@ -23,8 +23,8 @@ def lifecycle(monkeypatch):
 
 @pytest.mark.parametrize("registry", ["current", "old", "duplicate"])
 def test_barrier_factory_admits_only_registered_current_python_reference(lifecycle, monkeypatch, tmp_path, registry):
-    from mcpme.preparation_resolved_python import ResolvedPythonComponent
-    from mcpme.supervisor import Supervisor
+    from meecp.preparation_resolved_python import ResolvedPythonComponent
+    from meecp.supervisor import Supervisor
 
     reference = ResolvedPythonComponent().reference.key
     assert reference[0] == "resolved-python-v1" and reference[1] != "1.0.0"
@@ -54,7 +54,7 @@ def test_barrier_factory_admits_only_registered_current_python_reference(lifecyc
     status_read, status_write = os.pipe()
     try:
         os.write(control_write, b"G")
-        monkeypatch.setattr("mcpme.supervisor.serve", serve)
+        monkeypatch.setattr("meecp.supervisor.serve", serve)
         monkeypatch.setattr(threading, "Thread", thread)
         monkeypatch.setattr(logging.root.manager, "disable", logging.root.manager.disable)
         backend = str(Path(__file__).resolve().parents[1] / "backend")
@@ -185,7 +185,7 @@ async def test_terminal_row_waits_for_physical_resource_settlement(lifecycle, tm
 @pytest.mark.asyncio
 @pytest.mark.parametrize("replacement", [False, True])
 async def test_receipt_hold_preserves_inode_and_refuses_replacement(lifecycle, tmp_path, replacement):
-    from mcpme.ownership_receipts import prepare_receipt, acknowledge_nonlaunch
+    from meecp.ownership_receipts import prepare_receipt, acknowledge_nonlaunch
     state = tmp_path / "state"
     workspace = state / "workspace"
     workspace.mkdir(parents=True, mode=0o700)
@@ -281,7 +281,7 @@ async def test_payload_rejection_precedes_target_imports(lifecycle, tmp_path, mo
     else:
         listener = socket.socket(socket.AF_UNIX)
         # macOS Unix socket names are shorter than pytest's descriptive paths.
-        socket_root = Path(tempfile.mkdtemp(prefix="mcpme-a0r-sock-", dir="/private/tmp"))
+        socket_root = Path(tempfile.mkdtemp(prefix="meecp-a0r-sock-", dir="/private/tmp"))
         listener.bind(str(socket_root / "socket"))
         (socket_root / "socket").rename(host / "socket")
     imported = []

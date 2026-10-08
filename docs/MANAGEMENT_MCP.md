@@ -32,15 +32,15 @@ Opening the registry migrates earlier schemas through schema 5, preserving slots
 Use your installed launcher's absolute path. These examples use the checkout launcher and default installation:
 
 ```sh
-scripts/mcpme authorize --prepare --ttl-seconds 3600 --json
-scripts/mcpme authorize --read-only --json
-scripts/mcpme authorize --slot SLOT_UUID --action start --action stop --ttl-seconds 3600 --json
-scripts/mcpme install inspect --plan PLAN_UUID --json
-scripts/mcpme authorize --plan PLAN_UUID --json
-scripts/mcpme authorize --upgrade-plan PLAN_UUID --json
-scripts/mcpme grants list --json
-scripts/mcpme grants inspect GRANT_UUID --json
-scripts/mcpme grants revoke GRANT_UUID --json
+scripts/meecp authorize --prepare --ttl-seconds 3600 --json
+scripts/meecp authorize --read-only --json
+scripts/meecp authorize --slot SLOT_UUID --action start --action stop --ttl-seconds 3600 --json
+scripts/meecp install inspect --plan PLAN_UUID --json
+scripts/meecp authorize --plan PLAN_UUID --json
+scripts/meecp authorize --upgrade-plan PLAN_UUID --json
+scripts/meecp grants list --json
+scripts/meecp grants inspect GRANT_UUID --json
+scripts/meecp grants revoke GRANT_UUID --json
 ```
 
 Replace uppercase placeholders with returned identities. Issuance/revocation requires local owner authority; scoped credentials cannot issue or revoke grants. `--plan` authorizes the existing plan's start choices. It does not add Start authority to a stopped-install plan.
@@ -48,8 +48,8 @@ Replace uppercase placeholders with returned identities. Issuance/revocation req
 Select a scoped credential before an ordinary management command:
 
 ```sh
-scripts/mcpme --credential-file /absolute/private/grant.json install apply --plan PLAN_UUID --json
-scripts/mcpme --credential-file /absolute/private/grant.json operations get OPERATION_UUID --json
+scripts/meecp --credential-file /absolute/private/grant.json install apply --plan PLAN_UUID --json
+scripts/meecp --credential-file /absolute/private/grant.json operations get OPERATION_UUID --json
 ```
 
 Global `--state-dir` and `--credential-file` options precede the command. Scoped management credentials cannot be used for `serve`, app `connect`, or app connection export. App invocation credentials never authorize management routes.
@@ -61,43 +61,43 @@ The earlier registry retains at most 4,096 grants. When issuance reaches that li
 Choose **Copy Management Connection** in the native app's menu, or open **Approved Connections**. This creates an unapproved public profile and copies an agent prompt followed by the JSON registration containing the installed launcher, state selector, and `management connect --profile PROFILE_UUID`. Paste the complete text into your agent. No credential path or secret is exported. The prompt is:
 
 ```text
-Add mcpme as a local stdio MCP server using the configuration below. Connect and request inspection and setup-planning access. Wait for me to approve the mcpme popup, then list the installed apps to confirm the connection works.
+Add meecp as a local stdio MCP server using the configuration below. Connect and request inspection and setup-planning access. Wait for me to approve the meecp popup, then list the installed apps to confirm the connection works.
 ```
 
 The owner CLI can create the JSON registration:
 
 ```sh
-scripts/mcpme management export --json
+scripts/meecp management export --json
 ```
 
 Add that registration to your MCP client. Initialization and discovery complete locally before approval. After initialization, the app asks whether to allow inspection and setup planning. You can reduce access to inspection, deny access, or remember it for this macOS account. A reported client name is unverified display metadata. Remembered consent applies to the profile, installation, and account; it does not authenticate a particular application. Each connection receives a fresh one-hour session credential over a private Unix lease. The facade keeps it in memory; disconnect, revocation, expiry, and host restart invalidate its authority.
 
 **Approved Connections** lists profiles and active sessions, with **Disconnect** and **Revoke Access**. Copying a registration does not approve access, start Pi, or bind consent to an Add App draft. Per-app **Copy Connection** retains its invocation-only behavior.
 
-The catalog adds `mcpme_request_access` and `mcpme_get_authorization_status`. Access requests return promptly. Pending calls return structured authorization errors; after allowing access, explicitly repeat the intended call. Preparation/resolution execution, installation, and upgrade application require a separate request with an exact saved plan ID/digest and, for execution, an idempotency key. The native review approves only that operation, including the exact upgrade plan and slot snapshot. Approval never automatically replays a tool call. Recipe mutation, app lifecycle changes, startup policy, removal, grant administration, and all internal `/v1/pi/*` APIs remain outside native inspection/planning consent.
+The catalog adds `meecp_request_access` and `meecp_get_authorization_status`. Access requests return promptly. Pending calls return structured authorization errors; after allowing access, explicitly repeat the intended call. Preparation/resolution execution, installation, and upgrade application require a separate request with an exact saved plan ID/digest and, for execution, an idempotency key. The native review approves only that operation, including the exact upgrade plan and slot snapshot. Approval never automatically replays a tool call. Recipe mutation, app lifecycle changes, startup policy, removal, grant administration, and all internal `/v1/pi/*` APIs remain outside native inspection/planning consent.
 
-Bare `management connect` supports one-connection consent; remembering requires a profile. If the containing installed app is absent, the facade attempts one bounded launch. An unavailable app/UI produces an authorization error with instructions to open mcpme. Unattended clients can use an explicit file grant.
+Bare `management connect` supports one-connection consent; remembering requires a profile. If the containing installed app is absent, the facade attempts one bounded launch. An unavailable app/UI produces an authorization error with instructions to open meecp. Unattended clients can use an explicit file grant.
 
 To export a management registration for an existing file grant:
 
 ```sh
-scripts/mcpme --credential-file /absolute/private/grant.json management export --json
+scripts/meecp --credential-file /absolute/private/grant.json management export --json
 ```
 
 This compatibility configuration invokes the installed launcher with the state directory, credential-file reference, and `management connect`. It contains no credential value. Export again after relocating the app or credential file. Invalid explicit credential files fail without opening a consent request or selecting owner authority.
 
-The facade exposes 45 typed tools: the existing 40 management tools, connection access/status tools, and the three upgrade tools `mcpme_inspect_upgrade_plan`, `mcpme_plan_upgrade`, and `mcpme_apply_upgrade`. The [workflow contract](MANAGEMENT_PREPARATION_WORKFLOWS.md) lists operation names and scope. There are no grant-issuance tools, unrestricted shell tools, startup-setting/removal tools, or automatic retries of failed calls. Tool visibility does not confer authority: the host rejects operations outside the connection's grant. Read grants may inspect saved upgrade plans; prepare grants may create upgrade plans; an exact upgrade grant may apply only its saved plan against its reviewed slot snapshot and binds one durable operation. Upgrade cancellation and recovery remain owner-only.
+The facade exposes 45 typed tools: the existing 40 management tools, connection access/status tools, and the three upgrade tools `meecp_inspect_upgrade_plan`, `meecp_plan_upgrade`, and `meecp_apply_upgrade`. The [workflow contract](MANAGEMENT_PREPARATION_WORKFLOWS.md) lists operation names and scope. There are no grant-issuance tools, unrestricted shell tools, startup-setting/removal tools, or automatic retries of failed calls. Tool visibility does not confer authority: the host rejects operations outside the connection's grant. Read grants may inspect saved upgrade plans; prepare grants may create upgrade plans; an exact upgrade grant may apply only its saved plan against its reviewed slot snapshot and binds one durable operation. Upgrade cancellation and recovery remain owner-only.
 
-Upgrade access is split by action. `mcpme_inspect_upgrade_plan` is read-scoped, `mcpme_plan_upgrade` requires preparation authority, and `mcpme_apply_upgrade` requires a separate owner-issued upgrade grant bound to the exact plan digest, slot UUID and expected slot generation. The native popup displays the candidate, configuration and exact plan identity before the owner approves that grant. A remembered base connection never includes upgrade application authority.
+Upgrade access is split by action. `meecp_inspect_upgrade_plan` is read-scoped, `meecp_plan_upgrade` requires preparation authority, and `meecp_apply_upgrade` requires a separate owner-issued upgrade grant bound to the exact plan digest, slot UUID and expected slot generation. The native popup displays the candidate, configuration and exact plan identity before the owner approves that grant. A remembered base connection never includes upgrade application authority.
 
 ```sh
-scripts/mcpme --credential-file /absolute/private/upgrade-grant.json upgrade apply --plan PLAN_UUID --json
+scripts/meecp --credential-file /absolute/private/upgrade-grant.json upgrade apply --plan PLAN_UUID --json
 ```
 
-An agent's upgrade sequence is: `mcpme_plan_upgrade` (omit `settings` to retain the
-current settings), `mcpme_inspect_upgrade_plan`, `mcpme_request_access` with
-`kind=upgrade`, the exact plan ID and digest, then an explicit `mcpme_apply_upgrade`
-after the popup approves it, followed by `mcpme_get_operation`.
+An agent's upgrade sequence is: `meecp_plan_upgrade` (omit `settings` to retain the
+current settings), `meecp_inspect_upgrade_plan`, `meecp_request_access` with
+`kind=upgrade`, the exact plan ID and digest, then an explicit `meecp_apply_upgrade`
+after the popup approves it, followed by `meecp_get_operation`.
 
 The facade and CLI use the owner-only manager Unix socket, preserve Host/Origin checks, and have no TCP/proxy fallback. MCP uses revision `2025-11-25`, advertises only tools, bounds frames and responses to 1 MiB, permits at most 16 pending requests, and applies finite call/write deadlines. Malformed/oversized frames close the connection. Errors contain stable codes without source contents, credentials, or raw exceptions. EOF and signals shut down the facade.
 

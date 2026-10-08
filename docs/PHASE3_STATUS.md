@@ -206,7 +206,7 @@ Full Python/27 private host opt-ins bind source 3ddaaddc/signed v9. The approved
 six-path delta to 24bae has its own focused/scanner/native checks. All 805 other
 Git blobs, host Python bytes, 162 effective requirements and nonartifact toolchain
 metadata match. Among 33 changed host Mach-O members, 32 loadable bodies match
-with CMS excluded. The newly compiled host/bin/mcpme-handoff body differs even
+with CMS excluded. The newly compiled host/bin/meecp-handoff body differs even
 with UUID masked; exact helper source/compile inputs are unchanged.
 
 The final review accepts source-level transfer only within independently
@@ -246,7 +246,7 @@ CLI flags for those guarantees remain false. The sole casefold filesystem skip
 is preserved; separate collision controls retain their narrower coverage.
 
 Developer ID signing is verified. Notarization, public distribution and updating
-the user's installed /Applications/mcpme.app are unclaimed. Publication means
+the user's installed /Applications/meecp.app are unclaimed. Publication means
 pushing the verified working branch; D09 records its first exact remote verification.
 Later metadata recording retains the runtime anchor and requires no receipt rewrite.
 

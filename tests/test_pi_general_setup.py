@@ -17,16 +17,16 @@ import pytest
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-from mcpme.contracts import PackageError, validate_package
-from mcpme.grants import read_credential
-from mcpme.pi_questions import PiQuestionError
-from mcpme.pi_setup import PiSetupError
-from mcpme.processes import ProcessOwner
-from mcpme.supervisor import HostError, Supervisor, management_app
-from test_mcpme_host import prepared
-from test_mcpme_host import finish
-from test_mcpme_imports import source_folder
-from test_mcpme_packages import edit_manifest, make_package
+from meecp.contracts import PackageError, validate_package
+from meecp.grants import read_credential
+from meecp.pi_questions import PiQuestionError
+from meecp.pi_setup import PiSetupError
+from meecp.processes import ProcessOwner
+from meecp.supervisor import HostError, Supervisor, management_app
+from test_meecp_host import prepared
+from test_meecp_host import finish
+from test_meecp_imports import source_folder
+from test_meecp_packages import edit_manifest, make_package
 from test_pi_setup import configure, _relock_probe_package, _PROBE_SERVER
 from test_preparation_processes import gone, group_reaper
 
@@ -138,7 +138,7 @@ async def test_changed_source_draft_cannot_answer_pending_question(host, tmp_pat
 
 async def test_human_wait_pauses_deadline_and_answer_resumes_it(host, tmp_path, monkeypatch):
     manager = host.pi_setup
-    monkeypatch.setattr("mcpme.pi_setup.DEADLINE", .25)
+    monkeypatch.setattr("meecp.pi_setup.DEADLINE", .25)
     job, _, _, answered, _ = await question_work(host, tmp_path, monkeypatch, wait_after=True)
     try:
         assert manager.deadlines[job["id"]].when() is None
@@ -214,12 +214,12 @@ def large_package(tmp_path, prepared, *, gpu=False, sessions=2):
     original, reaper = prepared
     root = tmp_path / "package"
     shutil.copytree(original, root)
-    path = root / "mcpme.package.json"
+    path = root / "meecp.package.json"
     manifest = json.loads(path.read_bytes())
     manifest["resources"] = {"memory_mb": 8192, "cpu_only": not gpu, "gpu": gpu}
     manifest["lifecycle"]["max_sessions"] = sessions
     path.write_text(json.dumps(manifest))
-    lock_path = root / "mcpme.lock.json"
+    lock_path = root / "meecp.lock.json"
     lock = json.loads(lock_path.read_bytes())
     lock["manifest_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
     lock_path.write_text(json.dumps(lock))
@@ -306,11 +306,11 @@ async def test_installed_stdio_launcher_reaps_child_service_with_session(host, t
     subprocess.run(["/usr/bin/cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", str(source), "-o", str(launcher)],
                    check=True, capture_output=True, timeout=15)
     launcher.chmod(0o700)
-    manifest_path = root / "mcpme.package.json"
+    manifest_path = root / "meecp.package.json"
     manifest = json.loads(manifest_path.read_bytes())
     manifest["entrypoint"] = {"executable": "bin/launcher", "args": [], "cwd": "."}
     manifest_path.write_text(json.dumps(manifest))
-    lock_path = root / "mcpme.lock.json"
+    lock_path = root / "meecp.lock.json"
     lock = json.loads(lock_path.read_bytes())
     lock["manifest_sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     data = launcher.read_bytes()
@@ -680,12 +680,12 @@ async def test_installed_stdio_audits_late_child_listener_and_closes_admission(h
     subprocess.run(["/usr/bin/cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", str(source), "-o", str(launcher)],
                    check=True, capture_output=True, timeout=15)
     launcher.chmod(0o700)
-    manifest_path = root / "mcpme.package.json"
+    manifest_path = root / "meecp.package.json"
     manifest = json.loads(manifest_path.read_bytes())
     manifest["entrypoint"] = {"executable": "bin/launcher", "args": [mode], "cwd": "."}
     manifest["access"] = {"network": ["Synthetic local child service"]}
     manifest_path.write_text(json.dumps(manifest))
-    lock_path = root / "mcpme.lock.json"
+    lock_path = root / "meecp.lock.json"
     lock = json.loads(lock_path.read_bytes())
     lock["manifest_sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     data = launcher.read_bytes()

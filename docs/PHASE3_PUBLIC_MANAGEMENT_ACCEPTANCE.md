@@ -19,8 +19,8 @@ The scoped SDK connection uses the exact native app entrypoint exported by the
 production bundled CLI. The driver binds it to the already validated native/host
 pair, state directory and credential file; it rejects a substituted command,
 state, credential, injected environment or extra server. The host's internal
-`bin/mcpme` remains the driver's CLI process entry, while the production export
-selects `Contents/MacOS/mcpme` for the management facade. Port-free regression
+`bin/meecp` remains the driver's CLI process entry, while the production export
+selects `Contents/MacOS/meecp` for the management facade. Port-free regression
 controls call the actual CLI parser, credential reader and export implementation
 under original and relocated synthetic app layouts, then stop at the SDK transport
 boundary. Those location fixtures do not establish signed execution.
@@ -28,7 +28,7 @@ boundary. Those location fixtures do not establish signed execution.
 Run only after the signed candidate and its clean source commit are frozen:
 
 ```sh
-python3.12 -B scripts/verify_phase3_public_management.py --host /absolute/mcpme.app/Contents/Resources/host --native /absolute/mcpme.app/Contents/MacOS/mcpme --source-root /absolute/source --output /private/tmp/fresh-management-acceptance.json
+python3.12 -B scripts/verify_phase3_public_management.py --host /absolute/meecp.app/Contents/Resources/host --native /absolute/meecp.app/Contents/MacOS/meecp --source-root /absolute/source --output /private/tmp/fresh-management-acceptance.json
 ```
 
 The driver must come from that source tree, using Python 3.12. The source HEAD

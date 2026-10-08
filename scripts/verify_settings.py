@@ -27,7 +27,7 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-from mcpme.contracts import validate_package  # noqa: E402
+from meecp.contracts import validate_package  # noqa: E402
 
 
 SYNTHETIC_VALUE = "phase2 synthetic service key"
@@ -152,7 +152,7 @@ def synthetic_package(host: Path, base: Path, output: Path) -> None:
 
 
 async def verify(host_path: Path, package_path: Path) -> dict:
-    with tempfile.TemporaryDirectory(prefix="mcpme-settings-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="meecp-settings-") as temporary:
         root = Path(temporary).resolve()
         host, package, state = root / "relocated host", root / "synthetic package", root / "private state"
         shutil.copytree(host_path, host, symlinks=True)
@@ -160,7 +160,7 @@ async def verify(host_path: Path, package_path: Path) -> dict:
             synthetic_package(host, package_path, package)
         except Exception:
             raise VerificationError("settings_fixture_failed") from None
-        launcher, reaper = host / "bin/mcpme", host / "bin/mcpme-reap"
+        launcher, reaper = host / "bin/meecp", host / "bin/meecp-reap"
         environment = {"PATH": "/usr/bin:/bin", "HOME": str(root), "LANG": "en_US.UTF-8"}
         process = None
 

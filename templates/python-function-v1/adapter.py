@@ -39,7 +39,7 @@ async def serve():
     input_validator = Draft202012Validator(tool.inputSchema)
     output_validator = Draft202012Validator(tool.outputSchema) if tool.outputSchema else None
     lock = anyio.Lock()
-    server = Server("mcpme-python-function", version="1.0.0")
+    server = Server("meecp-python-function", version="1.0.0")
 
     @server.list_tools()
     async def list_tools():

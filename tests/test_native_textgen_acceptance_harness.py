@@ -17,9 +17,9 @@ def module(monkeypatch):
 
 
 def test_factory_admits_only_exact_textgen_task(module, monkeypatch, tmp_path):
-    from mcpme import supervisor, preparation_runner
+    from meecp import supervisor, preparation_runner
     engine, task, onnx = ("engine", "1", "a" * 64), ("task", "1", "b" * 64), ("onnx", "1", "c" * 64)
-    selected = ModuleType("mcpme.preparation_textgen")
+    selected = ModuleType("meecp.preparation_textgen")
     selected.references = lambda: (SimpleNamespace(key=engine), SimpleNamespace(key=task))
     monkeypatch.setitem(sys.modules, selected.__name__, selected)
     calls = []
@@ -81,7 +81,7 @@ def test_model_residents_are_distinguished_from_owned_host_gateway(module):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("version", ["1.0.2", "7.2.1"])
 async def test_recipe_lifecycle_uses_selected_host_version(module, monkeypatch, tmp_path, version):
-    selected = ModuleType("mcpme.preparation_textgen")
+    selected = ModuleType("meecp.preparation_textgen")
     selected.VERSION = version
     monkeypatch.setitem(sys.modules, selected.__name__, selected)
     harness = module.Harness(tmp_path, tmp_path, tmp_path, {"safe_to_remove": True}, tmp_path)
@@ -173,8 +173,8 @@ async def test_official_sdk_cancellation_maps_observed_request_to_error(module):
 
 @pytest.mark.asyncio
 async def test_relocation_unjoined_owner_preserves_receipt(module, monkeypatch, tmp_path):
-    from mcpme import processes
-    verifier = ModuleType("mcpme.preparation_textgen_verifier")
+    from meecp import processes
+    verifier = ModuleType("meecp.preparation_textgen_verifier")
     workspace = tmp_path / "probe"
     workspace.mkdir()
     closed = []

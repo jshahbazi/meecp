@@ -7,7 +7,7 @@ Use this for an independently launchable foreground stdio MCP server whose sessi
 For an existing Python module:
 
 ```sh
-uv run --locked --project /absolute/path/to/mcpme python /absolute/path/to/mcpme/templates/prepare.py existing-mcp \
+uv run --locked --project /absolute/path/to/meecp python /absolute/path/to/meecp/templates/prepare.py existing-mcp \
   --setup-export /absolute/path/to/setup-export.json \
   --module my_server --tool-spec /absolute/path/to/tools.json \
   --source-license LICENSE --package-id local.my-server --name "My Server" \
@@ -22,7 +22,7 @@ Check that stdout contains only MCP messages, errors and logs never disclose cal
 
 For the HTTP profile, revise the draft requirements to `profile: "mcp-http"` and select a Python module factory that returns a configured low-level `mcp.server.Server`. The factory registers the declared `tools/list` and `tools/call` handlers and returns once. It does not bind a listener, run an event loop, or start another server. Add `--http-factory create_server` to the module generator command above. The generator supplies the private HTTP wrapper, authentication policy, one adapter process, identity readiness declaration, and `descriptor-v1` injection contract. It imports no selected source during preparation.
 
-The host launches that resident after an authorized install. An inherited `--mcpme-config-fd` supplies its selected loopback port, private key, generation, nonce, and finite lifecycle bounds. The wrapper binds `127.0.0.1`, authenticates every route, checks Host and Origin, exposes authenticated `/health`, and serves stateful Streamable HTTP at `/mcp` with explicit DELETE session termination. Public HTTP and stdio clients share the resident through the host gateway. Restart creates a new generation and private key. The package needs no original source folder, global interpreter, or agent workspace at runtime.
+The host launches that resident after an authorized install. An inherited `--meecp-config-fd` supplies its selected loopback port, private key, generation, nonce, and finite lifecycle bounds. The wrapper binds `127.0.0.1`, authenticates every route, checks Host and Origin, exposes authenticated `/health`, and serves stateful Streamable HTTP at `/mcp` with explicit DELETE session termination. Public HTTP and stdio clients share the resident through the host gateway. Restart creates a new generation and private key. The package needs no original source folder, global interpreter, or agent workspace at runtime.
 
 Supply optional `--configuration-spec /absolute/path/to/configuration.json` for the closed typed configuration declaration and `--access-spec /absolute/path/to/access.json` for declared access and secret names. The host delivers configured values and resolved secret material through `MCPME_SETTINGS_FD`; factories may read that descriptor once at startup. Only nonsecret declarations and secret reference IDs belong in requirements or exported files. Never print settings or place secret material in source, package metadata, argv, or environment values. Supply `--validation-spec /absolute/path/to/validation.json` for at most four synthetic `{ "tool", "arguments", "expected" }` fixtures. Inspection validates their tool schemas and 16 KiB per-fixture bound without execution; activation must receive each expected structured result before exposure.
 

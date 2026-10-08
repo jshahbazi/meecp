@@ -8,13 +8,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from mcpme.contracts import validate_package
-from mcpme.imports import ImportError
-from mcpme.ownership_receipts import MAGIC, prepare_receipt
-from mcpme.preparation_contracts import PreparationError, parse_descriptor
-from mcpme.preparations import PreparationStore
-from mcpme.preparation_verifier import VerificationReport
-from test_mcpme_preparations import candidate, foundation, policy
+from meecp.contracts import validate_package
+from meecp.imports import ImportError
+from meecp.ownership_receipts import MAGIC, prepare_receipt
+from meecp.preparation_contracts import PreparationError, parse_descriptor
+from meecp.preparations import PreparationStore
+from meecp.preparation_verifier import VerificationReport
+from test_meecp_preparations import candidate, foundation, policy
 
 
 def plan_for(foundation, **kwargs):
@@ -62,7 +62,7 @@ def test_tampered_plan_digest_and_expired_intent_do_not_reserve(foundation, monk
     plan = plan_for(foundation, expires_in=1)
     with pytest.raises(PreparationError, match="preparation_plan_mismatch"):
         jobs.authorize_start(plan["plan_id"], "c" * 64, str(uuid.uuid4()))
-    monkeypatch.setattr("mcpme.preparation_authority.time.time", lambda: plan["expires_at"] + 1)
+    monkeypatch.setattr("meecp.preparation_authority.time.time", lambda: plan["expires_at"] + 1)
     with pytest.raises(PreparationError, match="preparation_authority_expired"):
         jobs.authorize_start(plan["plan_id"], plan["plan_digest"], str(uuid.uuid4()))
     assert jobs.list() == []
@@ -91,7 +91,7 @@ def test_authority_expiry_fences_resource_wait_not_admitted_scope(foundation, mo
     plan = plan_for(foundation, expires_in=1)
     job = jobs.authorize_start(plan["plan_id"], plan["plan_digest"], str(uuid.uuid4()))
     jobs.transition(job["job_id"], "snapshotting")
-    monkeypatch.setattr("mcpme.preparation_authority.time.time", lambda: plan["expires_at"] + 1)
+    monkeypatch.setattr("meecp.preparation_authority.time.time", lambda: plan["expires_at"] + 1)
     with pytest.raises(PreparationError, match="preparation_authority_expired"):
         jobs.transition(job["job_id"], "preparing")
     assert jobs.get(job["job_id"])["state"] == "snapshotting"
@@ -102,7 +102,7 @@ def test_started_scope_remains_bound_after_review_expiry(foundation, monkeypatch
     job = start(foundation)
     jobs.transition(job["job_id"], "snapshotting")
     admitted = jobs.transition(job["job_id"], "preparing")
-    monkeypatch.setattr("mcpme.preparation_authority.time.time", lambda: admitted["authority_expires_at"] + 1)
+    monkeypatch.setattr("meecp.preparation_authority.time.time", lambda: admitted["authority_expires_at"] + 1)
     assert jobs.check_authority(job["job_id"])["state"] == "preparing"
     jobs.cancel(job["job_id"])
     with pytest.raises(PreparationError, match="preparation_canceled"):
@@ -174,7 +174,7 @@ def test_cancel_retains_reservation_until_publication_hash_thread_joins(foundati
 
     if publication == "verification":
         jobs.begin_verification_publication(identifier)
-        monkeypatch.setattr("mcpme.preparations.validate_package", paused_validation)
+        monkeypatch.setattr("meecp.preparations.validate_package", paused_validation)
         publish = lambda: jobs.record_verified(identifier, package, verification=report)
         error = "preparation_receipt_mismatch"
     else:
@@ -182,7 +182,7 @@ def test_cancel_retains_reservation_until_publication_hash_thread_joins(foundati
         jobs.begin_attachment(identifier)
         stage = foundation[0].stage_attachment(job["binding"]["import_id"], job["binding"]["revision"],
                                               package.root, expected_digest=package.digest)
-        monkeypatch.setattr("mcpme.imports.validate_package", paused_validation)
+        monkeypatch.setattr("meecp.imports.validate_package", paused_validation)
         publish = lambda: jobs.admit(identifier, stage)
         error = "preparation_not_verified"
 

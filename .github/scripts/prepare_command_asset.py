@@ -48,7 +48,7 @@ def prepare(requested: Path) -> Path:
                 or hashlib.sha256(contents).hexdigest() != archive["sha256"]):
             raise ValueError()
         output = output_path(requested)
-        with tempfile.TemporaryDirectory(prefix=".mcpme-command-asset-", dir=output.parent) as directory:
+        with tempfile.TemporaryDirectory(prefix=".meecp-command-asset-", dir=output.parent) as directory:
             stage = Path(directory)
             staged_archive = stage / "command-native-v1.tar.gz"
             descriptor = os.open(staged_archive, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)

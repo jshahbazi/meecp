@@ -7,10 +7,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from mcpme import preparation_textgen as textgen
-from mcpme.preparation_artifacts import CapturedArtifactCollectionV1
-from mcpme.preparation_components import ComponentRegistry, parse_component_descriptor
-from mcpme.preparation_contracts import PreparationError
+from meecp import preparation_textgen as textgen
+from meecp.preparation_artifacts import CapturedArtifactCollectionV1
+from meecp.preparation_components import ComponentRegistry, parse_component_descriptor
+from meecp.preparation_contracts import PreparationError
 
 
 def collection(**changes):
@@ -121,7 +121,7 @@ def test_producer_identity_binds_service_runtime_bytes(monkeypatch, filename):
 
     def changed(path, limit):
         data = read(path, limit)
-        if path.parent.name == "mcpme_service" and path.name == filename:
+        if path.parent.name == "meecp_service" and path.name == filename:
             return data + b"\n# Synthetic producer identity change.\n"
         return data
 
@@ -148,14 +148,14 @@ def test_textgen_form_preserves_draft_name_and_reduces_saved_memory_to_current_c
 
 
 def test_host_assets_bind_model_template_tokenizer_and_schema():
-    from mcpme_textgen.service import model_declaration
+    from meecp_textgen.service import model_declaration
     assert textgen.model_contract() == model_declaration()
     assert len(textgen.task_tools()) == 2
     assert len(textgen.task_fixtures()) == 1
 
 
 @pytest.mark.parametrize("name", ["preparation_textgen_verifier.py", "preparation_contracts.py", "recipes.py",
-                                   "imports.py", "ownership_receipts.py", "mcpme_local_transport.py"])
+                                   "imports.py", "ownership_receipts.py", "meecp_local_transport.py"])
 def test_verifier_implementation_changes_component_identity(tmp_path, monkeypatch, name):
     before = textgen.references()
     original = textgen._read
@@ -167,9 +167,9 @@ def test_verifier_implementation_changes_component_identity(tmp_path, monkeypatc
 
 
 def test_generic_store_selects_full_text_composition_and_static_candidate(tmp_path, monkeypatch):
-    from mcpme.imports import ImportStore
-    from mcpme.preparations import PreparationStore
-    from mcpme.recipes import RecipeStore
+    from meecp.imports import ImportStore
+    from meecp.preparations import PreparationStore
+    from meecp.recipes import RecipeStore
     monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: pytest.fail("static inspection launched a process"))
     family = textgen.TextGenerationFamily(None)
     with ImportStore(tmp_path / "state") as imports:
@@ -191,7 +191,7 @@ def test_generic_store_selects_full_text_composition_and_static_candidate(tmp_pa
 
 def candidate_metadata(tmp_path):
     """Extra family-contract checks; package byte hashing is tested separately."""
-    from mcpme.contracts import ModelArtifact, ManagedProcess
+    from meecp.contracts import ModelArtifact, ManagedProcess
     source = draft(); value = descriptor(source)
     manifest = SimpleNamespace(profile="model-service", adapter_process="adapter",
         model=ModelArtifact.model_validate(textgen.model_contract()),
@@ -206,7 +206,8 @@ def candidate_metadata(tmp_path):
         sha256=textgen.MODEL_SHA256, size=textgen.MODEL_BYTES)
     records["licenses/Qwen-LICENSE"] = SimpleNamespace(path="licenses/Qwen-LICENSE", sha256=textgen.LICENSE_SHA256)
     backend = Path(textgen.__file__).resolve().parents[1]
-    paths = [*sorted((backend / "mcpme_textgen").glob("*.py")),
+    paths = [*sorted((backend / "meecp_textgen").glob("*.py")),
+             *sorted((backend / "mcpme_textgen").glob("*.py")),
              *[backend / "jevk5_app" / name for name in ("__init__.py", "server.py", "contracts.py", "state.py")]]
     for path in paths:
         name = "backend/" + path.relative_to(backend).as_posix()
@@ -235,7 +236,7 @@ def test_base_manifest_match_cannot_replace_model_engine_adapter_or_capture(tmp_
     if change == "extra_plugin":
         package.lock.artifacts.append(SimpleNamespace(path="llama/plugins/extra.so", sha256="0" * 64, size=1))
     if change == "adapter_code":
-        next(a for a in package.lock.artifacts if a.path == "backend/mcpme_textgen/adapter.py").sha256 = "0" * 64
+        next(a for a in package.lock.artifacts if a.path == "backend/meecp_textgen/adapter.py").sha256 = "0" * 64
     if change == "extra_code":
         package.lock.artifacts.append(SimpleNamespace(path="backend/extra.py", sha256="0" * 64, size=1))
     if change == "capture":

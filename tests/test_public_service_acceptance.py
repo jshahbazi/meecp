@@ -42,7 +42,7 @@ def test_exact_shipped_service_policy_required(tmp_path, fault):
         with pytest.raises(driver.common.AcceptanceError): driver.active_policy(tmp_path)
     else:
         assert driver.active_policy(tmp_path) == driver.common.digest(path)
-        from mcpme.preparation_service import references
+        from meecp.preparation_service import references
         assert tuple(ref.key for ref in references()) == driver.REFERENCES
 
 
@@ -78,7 +78,7 @@ async def test_fixture_validates_actual_authenticated_loopback_protocol():
 
 
 def context(tmp_path):
-    workspace = tmp_path.resolve() / ("mcpme-native-onboarding-" + str(uuid.uuid4()))
+    workspace = tmp_path.resolve() / ("meecp-native-onboarding-" + str(uuid.uuid4()))
     root = workspace / "service_guard"; state, home, temporary = (root / name for name in ("state", "home", "tmp"))
     for path in (workspace, root, state, home, temporary): path.mkdir(mode=0o700)
     manager = state / "manager-connection.json"; private_json(manager, {"synthetic": True})
@@ -140,8 +140,8 @@ async def test_actual_parent_service_intake_obeys_closed_host_gate(native_recipe
     """Full production parent callbacks reach real owner routes, never a probe."""
     import asyncio
     import uvicorn
-    from mcpme.supervisor import Supervisor, management_app, HostServer, bind_listener
-    from mcpme_local_transport import bind_private_listener
+    from meecp.supervisor import Supervisor, management_app, HostServer, bind_listener
+    from meecp_local_transport import bind_private_listener
     state, home, temporary, manager, marker, proof, fixture, output, case = context(tmp_path)
     manager.unlink()  # Only the synthetic placeholder created by this fixture.
     host = Supervisor(state, tmp_path / "unused-reaper")

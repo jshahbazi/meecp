@@ -48,7 +48,7 @@ def test_recovery_refreshes_transport_without_modifying_original(tmp_path, build
     output = builder.build(source, tmp_path / "Recovery.app")
     resources = output / "Contents/Resources"
     assert (resources / "backend/jevk5_app/__main__.py").read_bytes() == (ROOT / "backend/jevk5_app/__main__.py").read_bytes()
-    assert (resources / "backend/mcpme_local_transport.py").read_bytes() == (ROOT / "backend/mcpme_local_transport.py").read_bytes()
+    assert (resources / "backend/meecp_local_transport.py").read_bytes() == (ROOT / "backend/meecp_local_transport.py").read_bytes()
     assert (output / "Contents/MacOS/jevk5-mcp").read_bytes() == (ROOT / "scripts/jevk5-mcp").read_bytes()
     assert (output / "Contents/MacOS/JevK5MenuBar").read_bytes() == b"synthetic-updated-native"
     for name in ("models/fixture.gguf", "python/fixture", "vendor/fixture", "licenses/fixture"):

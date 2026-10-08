@@ -3,13 +3,13 @@ import uuid
 
 import pytest
 
-from mcpme.preparation_admission import PublicPreparationAdmission
-from mcpme.preparation_agent_host import AgentPreparationHost
-from mcpme.preparation_agent_providers import AgentProviderRegistry, OpenAIResponsesAdapter
-from mcpme.preparation_agent_public_resolution import PublicAgentResolutionStore, PublicAgentResolutionRunner
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_release_policy import AgentExecutionAdmission
-from mcpme.supervisor import Supervisor
+from meecp.preparation_admission import PublicPreparationAdmission
+from meecp.preparation_agent_host import AgentPreparationHost
+from meecp.preparation_agent_providers import AgentProviderRegistry, OpenAIResponsesAdapter
+from meecp.preparation_agent_public_resolution import PublicAgentResolutionStore, PublicAgentResolutionRunner
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_release_policy import AgentExecutionAdmission
+from meecp.supervisor import Supervisor
 from test_preparation_agent_unlocked import foundation
 from test_preparation_agent_providers import choices, update
 

@@ -44,10 +44,10 @@ directory and bounded diagnostic. Cleanup does not discover or signal PIDs.
 Use a freshly compiled native binary and a complete clean reviewed host:
 
 ```sh
-swift build --product McpmeMenuBar
+swift build --product MeecpMenuBar
 uv run --locked python scripts/verify_phase3_native_onnx.py \
   --host /absolute/path/to/frozen-host \
-  --native /absolute/path/to/.build/debug/McpmeMenuBar \
+  --native /absolute/path/to/.build/debug/MeecpMenuBar \
   --model /absolute/path/to/pinned/yolo11n.onnx \
   --output /absolute/path/to/new-bounded-report.json
 ```
@@ -64,7 +64,7 @@ Focused failure checks:
 ```sh
 uv run --locked pytest -q --tb=no --disable-warnings \
   tests/test_native_onnx_acceptance_harness.py
-.build/debug/McpmeMenuBar --artifact-capture-ui-self-test
+.build/debug/MeecpMenuBar --artifact-capture-ui-self-test
 ```
 
 The Python checks inject retained capture jobs, readers, job references and GC

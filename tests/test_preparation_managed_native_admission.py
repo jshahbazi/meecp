@@ -6,9 +6,9 @@ import threading
 
 import pytest
 
-from mcpme.processes import ProcessOwner
-from mcpme.process_graph_accounting_v1 import FixedProcessGraphV1
-from test_mcpme_preparations import foundation
+from meecp.processes import ProcessOwner
+from meecp.process_graph_accounting_v1 import FixedProcessGraphV1
+from test_meecp_preparations import foundation
 from test_preparation_processes import group_reaper
 from test_preparation_probe_confinement import private_runtime
 from test_preparation_runner import controlled, finished, started

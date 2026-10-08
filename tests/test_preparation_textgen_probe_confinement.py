@@ -15,10 +15,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_textgen_probe_confinement import role_profile, SANDBOX
-from mcpme import preparation_textgen_probe_confinement as confinement
-from mcpme.processes import ProcessOwner
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_textgen_probe_confinement import role_profile, SANDBOX
+from meecp import preparation_textgen_probe_confinement as confinement
+from meecp.processes import ProcessOwner
 from test_preparation_verifier import probe_reaper
 
 pytestmark = pytest.mark.skipif(platform.system() != "Darwin" or platform.machine() != "arm64"
@@ -129,11 +129,11 @@ def binding_fixture(tmp_path, monkeypatch, probe_reaper):
     """Only exercise host binding guards; no synthetic model can prove A4."""
     root=tmp_path/"bound-package"; root.mkdir()
     names=("bin/textgen-engine","bin/textgen-adapter","python/bin/python3.12",
-           "llama/llama-server.real","model.gguf","mcpme.package.json","mcpme.lock.json")
+           "llama/llama-server.real","model.gguf","meecp.preparation.json","meecp.package.json","meecp.lock.json")
     for name in names:
         path=root/name;path.parent.mkdir(parents=True,exist_ok=True)
         path.write_bytes(b"bounded binding fixture");path.chmod(0o700 if "/" in name else 0o600)
-    package=SimpleNamespace(root=root,digest="a"*64,lock=SimpleNamespace(
+    package=SimpleNamespace(root=root,digest="a"*64,metadata_paths=(root/names[-2],root/names[-1]),lock=SimpleNamespace(
         artifacts=[SimpleNamespace(path=name) for name in names[:-2]]))
     descriptor=SimpleNamespace(digest="b"*64)
     workspace=tmp_path/"workspace";workspace.mkdir(mode=0o700)
@@ -194,7 +194,7 @@ def test_host_launcher_identity_is_required(binding_fixture):
 
 
 async def test_capture_worker_remains_owned_through_repeated_cancellation():
-    from mcpme.preparation_textgen_verifier import _joined
+    from meecp.preparation_textgen_verifier import _joined
     entered,release,finished=threading.Event(),threading.Event(),threading.Event()
     def work():
         entered.set();release.wait(3);finished.set()
@@ -210,8 +210,8 @@ async def test_capture_worker_remains_owned_through_repeated_cancellation():
 
 
 async def test_managed_family_supplies_host_factory(monkeypatch):
-    from mcpme.preparation_textgen import TextGenerationFamily
-    from mcpme import preparation_textgen_verifier as verifier
+    from meecp.preparation_textgen import TextGenerationFamily
+    from meecp import preparation_textgen_verifier as verifier
     seen={}
     async def verify(*args,**kwargs):seen.update(kwargs);return "report"
     monkeypatch.setattr(verifier,"verify_textgen_package",verify)
@@ -222,8 +222,8 @@ async def test_managed_family_supplies_host_factory(monkeypatch):
 @pytest.mark.parametrize("host",["0.0.0.0","::1","localhost","127.0.0.2"])
 def test_pinned_bootstrap_rejects_nonexact_host_configuration(host):
     import json
-    from mcpme_textgen.__main__ import read_config
-    from mcpme_textgen.service import model_declaration
+    from meecp_textgen.__main__ import read_config
+    from meecp_textgen.service import model_declaration
     read,write=os.pipe()
     try:
         os.write(write,json.dumps({"endpoint":{"host":host,"port":49001},"model":model_declaration()}).encode())
@@ -259,7 +259,7 @@ async def test_actual_native_task_rechecks_bound_metadata_before_creation(bindin
         else:key.write_bytes(b"changed")
         return await original(*args,**kwargs)
     monkeypatch.setattr(owner,"_launch",delayed)
-    from mcpme.processes import ProcessError
+    from meecp.processes import ProcessError
     try:
         with pytest.raises((PreparationError,ProcessError)):
             await owner.launch(executable,args,cwd,env,admit=guard,expected_reaper=reaper,
@@ -270,7 +270,7 @@ async def test_actual_native_task_rechecks_bound_metadata_before_creation(bindin
 
 @pytest.mark.parametrize("mutation",["runtime","missing","executable","hash","malformed"])
 def test_managed_factory_rejects_unbound_host_toolchain(binding_fixture,monkeypatch,mutation):
-    from mcpme import preparation_builder,preparation_inputs,recipes
+    from meecp import preparation_builder,preparation_inputs,recipes
     package,descriptor,workspace,reaper,identity=binding_fixture
     records={"textgen-runtime/bin/textgen-"+role:{"sha256":identity,"executable":True}
              for role in ("engine","adapter")}
@@ -291,7 +291,7 @@ def test_managed_factory_rejects_unbound_host_toolchain(binding_fixture,monkeypa
 
 @pytest.mark.parametrize("ending",["cancel","deadline"])
 async def test_verifier_joins_factory_before_close_or_terminal_result(tmp_path,monkeypatch,ending):
-    from mcpme import preparation_textgen_verifier as verifier
+    from meecp import preparation_textgen_verifier as verifier
     from test_preparation_textgen import descriptor,draft
     entered,release=threading.Event(),threading.Event()
     package=SimpleNamespace(root=tmp_path,digest="a"*64)

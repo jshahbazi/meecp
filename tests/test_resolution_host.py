@@ -8,12 +8,12 @@ import uuid
 import httpx
 import pytest
 
-from mcpme.grants import read_credential
-from mcpme.preparation_contracts import contract_digest
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_inspection import inspect_source
-from mcpme.preparation_resolution import ResolutionPolicyV1, ResolutionRequestV1
-from mcpme.supervisor import HostError, Supervisor, management_app
+from meecp.grants import read_credential
+from meecp.preparation_contracts import contract_digest
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_inspection import inspect_source
+from meecp.preparation_resolution import ResolutionPolicyV1, ResolutionRequestV1
+from meecp.supervisor import HostError, Supervisor, management_app
 from test_artifact_capture_api import body as capture_body
 from test_preparation_resolution import policy
 
@@ -171,7 +171,7 @@ async def test_resolution_cost_blocks_model_and_capture_and_survives_restart(tmp
             await host.reserve_model(SimpleNamespace(id=str(uuid.uuid4())), package)
         capture = capture_body(tmp_path / "selected")
         queued = host.captures.begin(capture["request"], capture["policy"], capture["target"], capture["idempotency_key"], host.validate_capture_target)
-        from mcpme.preparation_capture import CapturePolicyV1
+        from meecp.preparation_capture import CapturePolicyV1
         with pytest.raises(HostError, match="resource_blocked"):
             await host.reserve_capture(queued["capture_id"], CapturePolicyV1.model_validate(capture["policy"]))
         await host.capture_runner.recover()
@@ -198,7 +198,7 @@ async def test_resolution_charge_is_joined_under_repeated_cancel_and_static_satu
         raw_policy = {**policy(), "memory_mb": 128, "disk_bytes": 1024**2}
         job, _ = job_for(host, tmp_path, raw_policy)
         resource_id = "resolution:" + job["job_id"]
-        from mcpme import supervisor as module
+        from meecp import supervisor as module
         original = module.write_private_json
         def paused(path, value):
             if path.parent == host.resolution_reservation_root:

@@ -4,7 +4,7 @@ This development integration combines the reviewed host-command implementation w
 
 ## Distribution contract
 
-The CLI builder compiles, ad-hoc signs and hashes `bin/mcpme-command-reap`. Its `command-execution.json` inventory binds helper/source identities, macOS 26 arm64, explicit package schema 2, component `macos26-arm64-command-v3`, and publication receipt format 3. The inventory declares disabled production admission and the remaining aggregate-resource and signed-native-app gates. No runtime code interprets this inventory as permission. The existing trusted Supervisor constructor remains the sole development admission seam. The app builder refreshes the inventory's helper hash after signing before it refreshes the enclosing host receipt.
+The CLI builder compiles, ad-hoc signs and hashes `bin/meecp-command-reap`. Its `command-execution.json` inventory binds helper/source identities, macOS 26 arm64, explicit package schema 2, component `macos26-arm64-command-v3`, and publication receipt format 3. The inventory declares disabled production admission and the remaining aggregate-resource and signed-native-app gates. No runtime code interprets this inventory as permission. The existing trusted Supervisor constructor remains the sole development admission seam. The app builder refreshes the inventory's helper hash after signing before it refreshes the enclosing host receipt.
 
 The host receipt hashes every payload file, including private Python, installed dependencies and launchers. The runtime copier rejects external or directory symlinks, bounds traversal and bytes before copying, emits regular files, and excludes bytecode. The harness requires bytecode-disabled execution and an exact complete file set.
 

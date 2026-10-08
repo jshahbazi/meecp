@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from mcpme import preparation_builtin_recipes as seeds
-from mcpme.imports import ImportStore
-from mcpme.preparation_textgen import VERSION
-from mcpme.recipes import RecipeStore, builtin_components, validate_bundle
+from meecp import preparation_builtin_recipes as seeds
+from meecp.imports import ImportStore
+from meecp.preparation_textgen import VERSION
+from meecp.recipes import RecipeStore, builtin_components, validate_bundle
 
 
 def versions(monkeypatch, old_version):

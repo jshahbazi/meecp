@@ -1,4 +1,6 @@
-# JevK5 menu bar app
+# meecp: JevK5 decision component
+
+This document preserves the original standalone JevK5 decision component contract. The current meecp host architecture is described in [MEECP_DESIGN.md](MEECP_DESIGN.md); JevK5 model and tool names remain unchanged.
 
 Status: implementation design, 2026-09-30. First local build: Apple silicon, macOS 26 or newer (the bundled Homebrew runtime targets macOS 26). Repository: `/Users/johnshahbazian/development/jevk5-menubar`.
 
@@ -49,7 +51,7 @@ State is stored in `~/Library/Application Support/JevK5/`, mode 0700. `connectio
 
 Validate Host and Origin for every route and require authentication. Reject external origins, bind only to 127.0.0.1, disable CORS, bound bodies to 1 MiB, and disable access and exception logging. This implements the local-transport protections in the [MCP transport specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports). The token protects other local users and browser requests; processes already running as the same user can read the connection file and are within the trust boundary.
 
-As of 2026-10-02, bundled stdio clients and native controls use HTTP over an owner-only Unix socket with no TCP fallback. The socket is stored in a mode-0700 directory under `/private/tmp`, derived from the owner UID and the resolved private-state path; its mode is 0600. Native controls also verify the connected peer UID. The legacy TCP endpoint remains available for direct HTTP clients. Updated bridges require the updated service or a migrated mcpme gateway serving the legacy private-socket alias. Python launchers use safe-path mode (`-P`) with explicit bundled import paths. The inference scorer uses a dedicated proxy-disabled, redirect-disabled opener restricted to the loopback engine URL.
+As of 2026-10-02, bundled stdio clients and native controls use HTTP over an owner-only Unix socket with no TCP fallback. The socket is stored in a mode-0700 directory under `/private/tmp`, derived from the owner UID and the resolved private-state path; its mode is 0600. Native controls also verify the connected peer UID. The legacy TCP endpoint remains available for direct HTTP clients. Updated bridges require the updated service or a migrated meecp gateway serving the legacy private-socket alias. Python launchers use safe-path mode (`-P`) with explicit bundled import paths. The inference scorer uses a dedicated proxy-disabled, redirect-disabled opener restricted to the loopback engine URL.
 
 ## Packaging and delivery
 

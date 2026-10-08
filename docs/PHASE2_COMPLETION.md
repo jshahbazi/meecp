@@ -1,7 +1,7 @@
 # Phase 2 completion audit
 
 This audit follows the Phase 2 delivery and acceptance requirements in
-[MCPME_DESIGN.md](MCPME_DESIGN.md#phase-2-agent-installation-and-recovery).
+[MEECP_DESIGN.md](MEECP_DESIGN.md#phase-2-agent-installation-and-recovery).
 It records implementation and verification separately. The normative Phase 2
 implementation and acceptance checks passed on Apple silicon macOS 26 on
 2026-10-02. The verified runtime implementation commit is

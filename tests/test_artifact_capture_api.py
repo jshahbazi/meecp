@@ -10,10 +10,10 @@ import uuid
 import httpx
 import pytest
 
-from mcpme.grants import read_credential
-from mcpme.preparation_capture import CapturePolicyV1
-from mcpme.supervisor import HostError, Supervisor, capabilities, management_app
-from test_mcpme_imports import source_folder
+from meecp.grants import read_credential
+from meecp.preparation_capture import CapturePolicyV1
+from meecp.supervisor import HostError, Supervisor, capabilities, management_app
+from test_meecp_imports import source_folder
 
 
 def body(root, *, target=None, key="synthetic-capture"):
@@ -146,7 +146,7 @@ async def test_queued_capture_cost_blocks_model_and_disk_admission(tmp_path, mon
         with pytest.raises(HostError, match="resource_blocked"):
             await host.reserve_model(slot, package)
         assert host.capture_reservations[queued["capture_id"]]["memory_mb"] == 64
-        monkeypatch.setattr("mcpme.supervisor.shutil.disk_usage", lambda _: SimpleNamespace(free=256 * 1024**2))
+        monkeypatch.setattr("meecp.supervisor.shutil.disk_usage", lambda _: SimpleNamespace(free=256 * 1024**2))
         with pytest.raises(HostError, match="resource_blocked"):
             await host.reserve_capture(queued["capture_id"], CapturePolicyV1.model_validate(payload["policy"]))
         await host.capture_runner.recover()

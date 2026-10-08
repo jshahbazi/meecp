@@ -8,9 +8,9 @@ import uuid
 
 import pytest
 
-from mcpme.ownership_receipts import acknowledge_nonlaunch, prepare_receipt, verify_receipt
-from mcpme.processes import ProcessError, ProcessOwner
-from test_mcpme_processes import reaper
+from meecp.ownership_receipts import acknowledge_nonlaunch, prepare_receipt, verify_receipt
+from meecp.processes import ProcessError, ProcessOwner
+from test_meecp_processes import reaper
 
 
 async def _launch(owner, workspace, executable, **kwargs):

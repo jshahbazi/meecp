@@ -18,12 +18,12 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "backend"), str(ROOT / "vendor")]
 
-from mcpme.contracts import validate_package
-from mcpme.model_intake import copy_artifact
-from mcpme.preparation_builder import _dependency_notices
-from mcpme_textgen.fixture import (LICENSE_SHA256, MODEL_BYTES, MODEL_FILENAME, MODEL_REVISION,
+from meecp.contracts import validate_package
+from meecp.model_intake import copy_artifact
+from meecp.preparation_builder import _dependency_notices
+from meecp_textgen.fixture import (LICENSE_SHA256, MODEL_BYTES, MODEL_FILENAME, MODEL_REVISION,
                                   MODEL_SHA256, TOKENIZER_SHA256, digest, file_hash, tokenizer_metadata)
-from mcpme_textgen.service import make_app, model_declaration
+from meecp_textgen.service import make_app, model_declaration
 
 
 def require(value):
@@ -68,7 +68,7 @@ def prepare(destination: Path, weights: Path, engine_build: Path, host: Path):
         require(digest(tokenizer_metadata(output / "models" / MODEL_FILENAME)) == TOKENIZER_SHA256)
         ignored = shutil.ignore_patterns("__pycache__", "*.pyc")
         shutil.copytree(host / "python", output / "python", symlinks=False, ignore=ignored)
-        shutil.copytree(ROOT / "backend/mcpme_textgen", output / "backend/mcpme_textgen", ignore=ignored)
+        shutil.copytree(ROOT / "backend/meecp_textgen", output / "backend/meecp_textgen", ignore=ignored)
         # Reuse the existing route/authentication policy without modifying it.
         (output / "backend/jevk5_app").mkdir()
         for name in ("__init__.py", "server.py", "contracts.py", "state.py"):
@@ -87,7 +87,7 @@ def prepare(destination: Path, weights: Path, engine_build: Path, host: Path):
             "Private CPython licensing is in licenses/python-LICENSE.txt. "
             "Locked Python wheel metadata and license files are retained in python/site-packages; "
             "dependency-notices.json binds each distribution and license text. "
-            "The MCP wrapper and bootstrap come from the selected mcpme source revision.\n")
+            "The MCP wrapper and bootstrap come from the selected meecp source revision.\n")
         (output / "bin").mkdir()
         command("/usr/bin/cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                 str(ROOT / "scripts/textgen-package-launcher.c"), "-o", str(output / "bin/textgen-engine"))
@@ -130,14 +130,14 @@ def prepare(destination: Path, weights: Path, engine_build: Path, host: Path):
             "resources": {"memory_mb": 1024, "cpu_only": True, "gpu": False},
             "licenses": ["THIRD_PARTY_NOTICES.md", *[str(p.relative_to(output))
                           for p in sorted((output / "licenses").rglob("*")) if p.is_file()]]}
-        (output / "mcpme.package.json").write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n")
+        (output / "meecp.package.json").write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n")
         artifacts = []
         for path in sorted(output.rglob("*")):
             if path.is_dir():
                 path.chmod(0o755)
             elif path.is_file():
                 path.chmod(0o755 if path.stat().st_mode & 0o111 else 0o644)
-                if path.name == "mcpme.package.json":
+                if path.name == "meecp.package.json":
                     continue
                 relative = str(path.relative_to(output))
                 artifacts.append({"path": relative, "sha256": file_hash(path), "size": path.stat().st_size,
@@ -145,10 +145,10 @@ def prepare(destination: Path, weights: Path, engine_build: Path, host: Path):
                     "provenance": "Exact selected local closure; identities in text-generation-origin.json and dependency-notices.json.",
                     "license": "licenses/Qwen-LICENSE" if relative.startswith("models/") else "THIRD_PARTY_NOTICES.md"})
         lock = {"schema_version": 1, "package_id": manifest["package_id"], "version": manifest["version"],
-                "manifest_sha256": file_hash(output / "mcpme.package.json"), "artifacts": artifacts,
+                "manifest_sha256": file_hash(output / "meecp.package.json"), "artifacts": artifacts,
                 "build": {"recipe": "text-generate-llamacpp-v1: exact CPU fixture; external development generator",
-                          "builder": "mcpme text fixture v1", "toolchain": "Apple clang; selected private CPython 3.12"}}
-        (output / "mcpme.lock.json").write_text(json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n")
+                          "builder": "meecp text fixture v1", "toolchain": "Apple clang; selected private CPython 3.12"}}
+        (output / "meecp.lock.json").write_text(json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n")
         validate_package(output)
         require(not destination.exists())
         os.rename(output, destination)

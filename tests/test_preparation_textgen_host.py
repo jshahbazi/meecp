@@ -7,12 +7,12 @@ import uuid
 
 import pytest
 
-from mcpme import preparation_textgen as textgen
-from mcpme.preparation_artifacts import AcquisitionRequestV1
-from mcpme.preparation_capture import AttachImportTargetV1, CapturePolicyV1, CreateImportTargetV1
-from mcpme.preparation_contracts import ExecutionPolicy, contract_digest
-from mcpme.preparation_inputs import adapt_descriptor
-from mcpme.supervisor import Supervisor
+from meecp import preparation_textgen as textgen
+from meecp.preparation_artifacts import AcquisitionRequestV1
+from meecp.preparation_capture import AttachImportTargetV1, CapturePolicyV1, CreateImportTargetV1
+from meecp.preparation_contracts import ExecutionPolicy, contract_digest
+from meecp.preparation_inputs import adapt_descriptor
+from meecp.supervisor import Supervisor
 
 
 @pytest.mark.parametrize("source_kind", ["captured", "folder"])

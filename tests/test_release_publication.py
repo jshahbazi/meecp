@@ -42,7 +42,7 @@ def assets(publisher, tmp_path):
         "notarization_ticket_stapled": True, "notary_submission_id": SUBMISSION,
         "source_commit": COMMIT, "source_tree_dirty": False,
     }
-    binary = directory / f"mcpme-{VERSION}-arm64.dmg"
+    binary = directory / f"meecp-{VERSION}-arm64.dmg"
     binary.write_bytes(b"synthetic signed dmg")
     receipt = {
         "schema_version": 1, "distribution": "notarized_drag_install_dmg",
@@ -57,7 +57,7 @@ def assets(publisher, tmp_path):
 
 
 def change_receipt(directory, change):
-    path = directory / f"mcpme-{VERSION}-arm64.dmg.build.json"
+    path = directory / f"meecp-{VERSION}-arm64.dmg.build.json"
     value = json.loads(path.read_text())
     change(value)
     path.write_text(json.dumps(value))
@@ -139,7 +139,7 @@ def install_github(monkeypatch, publisher, directory, *, remote_change=None, tag
             assert "--draft" in arguments
             assert "--verify-tag" in arguments
             assert arguments[arguments.index("--target") + 1] == COMMIT
-            assert arguments[arguments.index("--title") + 1] == "mcpme " + version
+            assert arguments[arguments.index("--title") + 1] == "meecp " + version
             notes = Path(arguments[arguments.index("--notes-file") + 1]).read_text()
             assert "DMG:" in notes and "ZIP" not in notes and COMMIT in notes
             assert "SHA-256 hashes for the DMG and its build receipt" in notes
@@ -500,11 +500,11 @@ def test_invalid_explicit_release_version_blocks_before_github(publisher, assets
 def test_explicit_version_is_used_for_asset_and_release_verification(
         publisher, assets, monkeypatch, operation):
     selected = "0.2.0"
-    binary = assets / f"mcpme-{VERSION}-arm64.dmg"
+    binary = assets / f"meecp-{VERSION}-arm64.dmg"
     receipt = binary.with_name(binary.name + ".build.json")
     value = json.loads(receipt.read_text())
     value["version"] = selected
-    destination = assets / f"mcpme-{selected}-arm64.dmg"
+    destination = assets / f"meecp-{selected}-arm64.dmg"
     binary.rename(destination)
     receipt.unlink()
     destination.with_name(destination.name + ".build.json").write_text(json.dumps(value))
@@ -561,7 +561,7 @@ def test_invalid_version_has_no_github_or_output_writes(publisher, monkeypatch, 
 
 
 @pytest.mark.parametrize("variable,value", [
-    ("GITHUB_REPOSITORY", "someone-else/mcpme"), ("GITHUB_SHA", "main"),
+    ("GITHUB_REPOSITORY", "someone-else/meecp"), ("GITHUB_SHA", "main"),
     ("GITHUB_SHA", "A" * 40), ("GITHUB_SHA", "a" * 39),
 ])
 def test_invalid_source_context_is_blocked(publisher, monkeypatch, variable, value):
@@ -632,8 +632,8 @@ def test_receipt_hash_size_and_version_must_match(publisher, assets, monkeypatch
 
 
 @pytest.mark.parametrize("unexpected", [
-    "other.dmg", "debug.log", f"mcpme-{VERSION}-arm64.zip",
-    f"mcpme-{VERSION}-arm64.zip.build.json",
+    "other.dmg", "debug.log", f"meecp-{VERSION}-arm64.zip",
+    f"meecp-{VERSION}-arm64.zip.build.json",
 ])
 def test_unrelated_files_cannot_be_published(publisher, assets, unexpected):
     (assets / unexpected).write_text("unrelated")
@@ -643,7 +643,7 @@ def test_unrelated_files_cannot_be_published(publisher, assets, unexpected):
 
 @pytest.mark.parametrize("suffix", ["dmg", "dmg.build.json"])
 def test_missing_or_symlinked_assets_are_rejected(publisher, assets, tmp_path, suffix):
-    binary = assets / f"mcpme-{VERSION}-arm64.{suffix}"
+    binary = assets / f"meecp-{VERSION}-arm64.{suffix}"
     target = tmp_path / f"outside.{suffix}"
     binary.rename(target)
     with pytest.raises(publisher.PublicationError, match="release_asset_set_invalid"):
@@ -657,7 +657,7 @@ def test_checksum_manifest_covers_dmg_and_receipt(publisher, assets):
     paths = publisher.validated_assets(assets, VERSION, COMMIT)
     manifest = (assets / "SHA256SUMS.txt").read_text().splitlines()
     assert {path.name for path in paths} == {
-        f"mcpme-{VERSION}-arm64.dmg", f"mcpme-{VERSION}-arm64.dmg.build.json", "SHA256SUMS.txt",
+        f"meecp-{VERSION}-arm64.dmg", f"meecp-{VERSION}-arm64.dmg.build.json", "SHA256SUMS.txt",
     }
     assert len(manifest) == 2
     for line in manifest:
@@ -709,9 +709,9 @@ def assert_in_notes(notes, expected):
     (lambda release: release["assets"][0].update(digest="sha256:" + "0" * 64), "digest_mismatch"),
     (lambda release: release["assets"][0].update(size=0), "digest_mismatch"),
     (lambda release: release["assets"].pop(), "asset_set_invalid"),
-    (lambda release: release["assets"][0].update(name=f"mcpme-{VERSION}-arm64.zip"), "asset_set_invalid"),
+    (lambda release: release["assets"][0].update(name=f"meecp-{VERSION}-arm64.zip"), "asset_set_invalid"),
     (lambda release: release["assets"].append(dict(release["assets"][0],
-                                                name=f"mcpme-{VERSION}-arm64.zip")), "asset_set_invalid"),
+                                                name=f"meecp-{VERSION}-arm64.zip")), "asset_set_invalid"),
     (lambda release: release.update(target_commitish="main"), "metadata_invalid"),
     (lambda release: release.update(draft=False), "metadata_invalid"),
 ])
@@ -755,8 +755,8 @@ def test_resolved_release_id_must_be_a_positive_integer(publisher, monkeypatch, 
 
 @pytest.mark.parametrize("change", [
     lambda value: value.update(id=RELEASE_ID + 1),
-    lambda value: value.update(html_url=f"https://github.com/someone-else/mcpme/releases/tag/{DRAFT_TAG}"),
-    lambda value: value.update(html_url="https://github.com/jshahbazi/mcpme/releases/tag/untagged-not-hex"),
+    lambda value: value.update(html_url=f"https://github.com/someone-else/meecp/releases/tag/{DRAFT_TAG}"),
+    lambda value: value.update(html_url="https://github.com/jshahbazi/meecp/releases/tag/untagged-not-hex"),
 ])
 def test_wrong_release_id_or_untrusted_draft_url_blocks_publication(publisher, assets, monkeypatch, change):
     calls = install_github(monkeypatch, publisher, assets, remote_change=change)

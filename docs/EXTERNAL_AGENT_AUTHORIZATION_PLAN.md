@@ -6,7 +6,7 @@ Date: 2026-10-07.
 
 ## Objective and decisions
 
-Let an ordinary MCP client such as Claude Code launch mcpme, request management access, and receive authorization through the native app. The normal exported connection must contain no credential-file path, bearer token, or secret environment variable. Approved connections should be remembered across client sessions and host restarts, with owner-visible revocation.
+Let an ordinary MCP client such as Claude Code launch meecp, request management access, and receive authorization through the native app. The normal exported connection must contain no credential-file path, bearer token, or secret environment variable. Approved connections should be remembered across client sessions and host restarts, with owner-visible revocation.
 
 Keep the existing stdio facade and private Unix transport. Retain the current grant scopes, per-request authorization, and exact preparation, resolution, and installation bindings. This work changes how authorization is obtained and managed; it does not add unrestricted execution or grant external clients owner authority.
 
@@ -14,15 +14,15 @@ The selected persistence model is a remembered connection policy plus fresh, sho
 
 ## Baseline before implementation
 
-- `backend/mcpme/__main__.py` rejects `management connect` without a credential file and includes that file reference in `management export` output. Its generic `call()` helper selects the owner token when a credential file is absent. Removing the argument without separating these code paths would grant unintended owner authority.
-- `backend/mcpme/management.py` implements a static typed tool catalog and dispatches calls using the supplied file credential. Its stdio process is separate from the resident supervisor.
-- `backend/mcpme/grants.py` and `backend/mcpme/management_workflow_grants.py` provide expiring, revocable grant records and exact operation bindings. Credential-file publication is coupled to issuance today.
-- `backend/mcpme_local_transport.py` verifies private Unix socket ownership and permissions. Management clients have no TCP fallback.
-- `Sources/McpmeMenuBar/main.swift` already holds the owner's manager connection, performs authenticated private requests, polls host state, and fences callbacks against host replacement. Native alerts and review sheets already exist.
+- `backend/meecp/__main__.py` rejects `management connect` without a credential file and includes that file reference in `management export` output. Its generic `call()` helper selects the owner token when a credential file is absent. Removing the argument without separating these code paths would grant unintended owner authority.
+- `backend/meecp/management.py` implements a static typed tool catalog and dispatches calls using the supplied file credential. Its stdio process is separate from the resident supervisor.
+- `backend/meecp/grants.py` and `backend/meecp/management_workflow_grants.py` provide expiring, revocable grant records and exact operation bindings. Credential-file publication is coupled to issuance today.
+- `backend/meecp_local_transport.py` verifies private Unix socket ownership and permissions. Management clients have no TCP fallback.
+- `Sources/MeecpMenuBar/main.swift` already holds the owner's manager connection, performs authenticated private requests, polls host state, and fences callbacks against host replacement. Native alerts and review sheets already exist.
 - Internal Pi setup now runs through a separate owner-only `/v1/pi/*` API and workspace/process broker. The Add App UI defaults to Pi and retains **Have your agent do it** for external preparation. Pi does not use management MCP grants.
 - No pending external-connection request queue or native management authorization UI currently exists.
 
-See [Management MCP](MANAGEMENT_MCP.md), [mcpme design](MCPME_DESIGN.md), [management preparation workflows](MANAGEMENT_PREPARATION_WORKFLOWS.md), and [Pi setup](PI_SETUP.md) for the implemented contracts.
+See [Management MCP](MANAGEMENT_MCP.md), [meecp design](MEECP_DESIGN.md), [management preparation workflows](MANAGEMENT_PREPARATION_WORKFLOWS.md), and [Pi setup](PI_SETUP.md) for the implemented contracts.
 
 ## Compatibility with updated main
 
@@ -30,7 +30,7 @@ Reviewed on 2026-10-07 against `main` commit `38a109d1500bbbd93d393e890072994b8b
 
 | Updated area | Evidence in the reviewed main | Consequence for this plan |
 | --- | --- | --- |
-| Management facade, CLI, grants, and private transport | `management.py`, `__main__.py`, `grants.py`, `management_workflow_grants.py`, and `mcpme_local_transport.py` are unchanged from the original base. | Keep the existing authorization refactor, bootstrap channel, remembered policy, and exact-action grant design. |
+| Management facade, CLI, grants, and private transport | `management.py`, `__main__.py`, `grants.py`, `management_workflow_grants.py`, and `meecp_local_transport.py` are unchanged from the original base. | Keep the existing authorization refactor, bootstrap channel, remembered policy, and exact-action grant design. |
 | Internal Pi setup | `supervisor.py` declares `pi_setup.credentials` as `owner_only`; `pi_setup_routes()` rejects a non-owner or any principal with a grant ID before route dispatch. | All `/v1/pi/*` routes remain owner-only. No existing exact preparation/resolution grant authorizes a Pi job. |
 | Add App and connection exports | `main.swift` retains external instructions/specification export in **Have your agent do it** and per-app **Copy Connection**. | Add a distinct management connection export and saved-policy view. Do not attach connection consent to a setup draft. |
 | Questions and settings | `PiSetupView.swift` holds transient question/credential state and its own epoch; app requests retain host-generation fencing. | Authorization needs its own presentation epoch and must preserve Pi input, provider settings, and installation review. |
@@ -46,9 +46,9 @@ The following existing compatibility tests passed on the reviewed main source af
 
 ```sh
 uv run --locked pytest -q \
-  tests/test_mcpme_management_cli.py \
-  tests/test_mcpme_management_mcp.py \
-  tests/test_mcpme_grants.py \
+  tests/test_meecp_management_cli.py \
+  tests/test_meecp_management_mcp.py \
+  tests/test_meecp_grants.py \
   tests/test_management_workflow_grants.py \
   tests/test_local_transport.py \
   tests/test_pi_setup.py::test_pi_routes_require_owner_host_and_origin
@@ -58,11 +58,11 @@ Result: **156 passed in 71.88 seconds**, with 42 temporary-directory cleanup war
 
 ## User flow
 
-1. In mcpme, choose **Copy Management Connection** from management connection settings. mcpme creates an unapproved connection profile and copies instructions for the agent followed by the JSON configuration containing the installed launcher and public profile ID. Paste the whole text into the agent. Adding that configuration does not approve access. The existing per-app **Copy Connection** and Add App's **Have your agent do it** actions keep their separate purposes.
+1. In meecp, choose **Copy Management Connection** from management connection settings. meecp creates an unapproved connection profile and copies instructions for the agent followed by the JSON configuration containing the installed launcher and public profile ID. Paste the whole text into the agent. Adding that configuration does not approve access. The existing per-app **Copy Connection** and Add App's **Have your agent do it** actions keep their separate purposes.
 2. Claude Code launches the executable. MCP initialization and static tool discovery complete immediately.
-3. mcpme displays a native request: the reported client name, observed launch identity, requested access, and the meaning of remembering it. The proposed setup scope is **Inspect apps and create setup plans**. The owner can approve, deny, or reduce the requested scope. Remembering is selected by default, matching the requested product behavior.
-4. Approval records the selected policy and gives the connected facade a fresh scoped session credential over private IPC. Credential material stays inside mcpme processes.
-5. On a later connection, mcpme re-evaluates the saved identity mode, installation/account, and requested scope. A passing policy may automatically approve a new session within that scope. This does not authenticate a client merely because it reports the saved name. Changed verified identity or broader requested scope produces another popup.
+3. meecp displays a native request: the reported client name, observed launch identity, requested access, and the meaning of remembering it. The proposed setup scope is **Inspect apps and create setup plans**. The owner can approve, deny, or reduce the requested scope. Remembering is selected by default, matching the requested product behavior.
+4. Approval records the selected policy and gives the connected facade a fresh scoped session credential over private IPC. Credential material stays inside meecp processes.
+5. On a later connection, meecp re-evaluates the saved identity mode, installation/account, and requested scope. A passing policy may automatically approve a new session within that scope. This does not authenticate a client merely because it reports the saved name. Changed verified identity or broader requested scope produces another popup.
 6. Running preparation/resolution or applying an installation produces a separate native review of the exact plan. Approval creates the existing exact operation authority. The connected agent never needs to copy a grant file.
 7. **Approved Connections** shows saved profiles and active sessions. **Disconnect** ends a session; **Revoke Access** disables the policy and its derived active authority.
 
@@ -71,7 +71,7 @@ Proposed exported entry, with placeholders for the actual installed launcher and
 ```json
 {
   "mcpServers": {
-    "mcpme-management": {
+    "meecp-management": {
       "command": "<absolute-installed-launcher>",
       "args": ["management", "connect", "--profile", "<public-profile-uuid>"]
     }
@@ -81,11 +81,11 @@ Proposed exported entry, with placeholders for the actual installed launcher and
 
 The profile ID selects a remembered registration. It is not a bearer credential and is insufficient to authorize a connection by itself. Resolve the containing installation and state directory before looking up the profile. Default-state installations use the current CLI default and need no state-directory argument; a nondefault export retains its explicit state selector. Do not search arbitrary state directories or accept an ambiguous profile lookup.
 
-Bare `management connect` can request one-connection approval without a profile. Durable remembering requires the stable profile exported by mcpme; do not discover a saved approval by matching only a client-supplied name.
+Bare `management connect` can request one-connection approval without a profile. Durable remembering requires the stable profile exported by meecp; do not discover a saved approval by matching only a client-supplied name.
 
 ## Remembered identity and trust boundary
 
-Vanilla MCP stdio does not supply authenticated application identity. `initialize.clientInfo` is client-supplied display metadata. The mcpme bridge executable is shared by every integration. A public UUID, reported name, parent PID, or generic Node/Python executable alone cannot establish a unique trusted client.
+Vanilla MCP stdio does not supply authenticated application identity. `initialize.clientInfo` is client-supplied display metadata. The meecp bridge executable is shared by every integration. A public UUID, reported name, parent PID, or generic Node/Python executable alone cannot establish a unique trusted client.
 
 Preserve the documented same-macOS-user trust boundary. This is consent and scope control for local integrations, not isolation from another process with equivalent account permissions. Do not claim the popup cryptographically authenticates Claude Code.
 
@@ -95,7 +95,7 @@ Implement a versioned launch-identity resolver and test it before committing to 
 - For a signed native launcher, evaluate its designated signing requirement and resolved executable identity. Define which normal signed updates retain approval and which publisher/path changes require review.
 - For interpreter-based launchers, a shared interpreter is insufficient. Evaluate whether the invoked entry point and its integrity can be observed dependably without collecting full command lines or secret arguments. Never guess when attribution is ambiguous.
 - If reliable client attribution is unavailable, offer approval for the current connection. Remembering in this case requires a separate explicit owner choice of **Remember this integration for this macOS account**. Bind that policy to the particular profile, installation, and account; it is not a global allowlist. Never label it as verified application identity. Its automatic access is limited to inspection and planning; executing a plan still requires native review.
-- Bind every policy to the mcpme state-installation identity. Copies of configuration targeting another installation require approval there.
+- Bind every policy to the meecp state-installation identity. Copies of configuration targeting another installation require approval there.
 
 Do not require Claude Code to implement a new keypair or credential protocol. Such a requirement would undermine compatibility with ordinary MCP clients. A stronger authenticated-client enrollment protocol can be considered separately if a client supports it.
 
@@ -143,7 +143,7 @@ The facade may hold base session authority and separate exact-action authority. 
 
 ### Native integration
 
-Add an authorization coordinator owned by `McpmeApp`; do not move authority decisions into presentation views. Extend existing polling with a lightweight pending-request summary and use existing host-generation fencing on every callback.
+Add an authorization coordinator owned by `MeecpApp`; do not move authority decisions into presentation views. Extend existing polling with a lightweight pending-request summary and use existing host-generation fencing on every callback.
 
 Give the coordinator its own presentation epoch and states `idle`, `queued`, `presenting`, `submitting`, and `settled`. Bind callbacks and decisions to that epoch as well as host generation and the backend request bindings. Include coordinator invalidation in `resetHostRequestState()`, termination, and explicit host stop; clear its own state without resetting Pi questions or provider input.
 
@@ -153,7 +153,7 @@ Arbitrate presentation with existing installation/recovery sheets, confirmation 
 
 Pi questions and secret answers retain their existing job/import/revision/question binding and private delivery. Do not reuse that question endpoint, payload, credential store, or job journal for external consent. Authorization summaries use their own bounded client metadata and schema-derived scope labels; they do not copy Pi question text or source/provider content.
 
-Exact operation review should reuse the current installation/preparation review models. For a tool requiring escalation, return `authorization_required` without executing it. The agent submits a typed exact-action proposal through `mcpme_request_access`, including operation family, existing plan ID/digest, and required attempt/idempotency binding. Create a separate pending request tied to the already-approved session; do not convert it into another base-connection request.
+Exact operation review should reuse the current installation/preparation review models. For a tool requiring escalation, return `authorization_required` without executing it. The agent submits a typed exact-action proposal through `meecp_request_access`, including operation family, existing plan ID/digest, and required attempt/idempotency binding. Create a separate pending request tied to the already-approved session; do not convert it into another base-connection request.
 
 The owner UI fetches the authoritative plan summary, revalidates it at approval, and issues the existing exact operation grant to the bound session. This includes upgrade application: the popup shows the candidate, configuration, slot snapshot and safe plan digest, and the resulting grant binds one durable upgrade operation. The agent explicitly calls the operation after approval. Remembered consent never automatically approves a newly proposed plan or upgrade. Provider transfer disclosures remain part of the existing preparation review. Exact plan identity and safe digest details must be inspectable before approval without exposing raw source, prompts, credentials, or command lines.
 
@@ -163,7 +163,7 @@ The approval coordinator clears pending UI state on app quit or host replacement
 
 Do not wait for human approval inside `initialize`. Claude Code has an MCP startup timeout, and changing client timeout settings should not be a prerequisite for this feature. [Claude Code MCP reference](https://code.claude.com/docs/en/mcp)
 
-Handle initialization, ping, and discovery locally with a stable versioned catalog: the existing static management tools plus `mcpme_request_access` and `mcpme_get_authorization_status`. This is an additive catalog change; update exact-catalog tests and client compatibility records. Before approval, `tools/list` returns static schemas only, and every existing tool invocation remains gated. No live host data, slot IDs, paths, recipes, resources, or manager capabilities are returned before authorization.
+Handle initialization, ping, and discovery locally with a stable versioned catalog: the existing static management tools plus `meecp_request_access` and `meecp_get_authorization_status`. This is an additive catalog change; update exact-catalog tests and client compatibility records. Before approval, `tools/list` returns static schemas only, and every existing tool invocation remains gated. No live host data, slot IDs, paths, recipes, resources, or manager capabilities are returned before authorization.
 
 The request tool accepts a typed scope proposal and returns promptly. For an exported profile, the bridge initiates bootstrap only after receiving `notifications/initialized`; malformed/pre-initialization traffic cannot generate a popup. Status is one of `not_requested`, `pending`, `approved`, `denied`, `expired`, `revoked`, or `unavailable`. Denied/pending management calls return stable structured errors containing only safe status/request identifiers. Status is limited to the calling IPC connection's requests; arbitrary profile/request IDs cannot query another caller's state.
 
@@ -173,7 +173,7 @@ If the native app is absent, the facade may attempt one launch of its verified c
 
 When the app is already running, activation and reopened-window handling must use the same presentation arbitration. An authorization request must not replace an active setup draft, dismiss a Pi question/settings window, or steal focus from credential entry.
 
-If bundle lookup, app launch, host startup, or approval UI is unavailable, settle as sanitized `authorization_unavailable` by the bounded deadline with an instruction to open mcpme. A queued dialog behind another modal remains pending; a headless/noninteractive session or failed activation cannot imply approval. Headless/unattended clients can continue using explicit file grants. Do not retry launch indefinitely or auto-approve when UI is unavailable.
+If bundle lookup, app launch, host startup, or approval UI is unavailable, settle as sanitized `authorization_unavailable` by the bounded deadline with an instruction to open meecp. A queued dialog behind another modal remains pending; a headless/noninteractive session or failed activation cannot imply approval. Headless/unattended clients can continue using explicit file grants. Do not retry launch indefinitely or auto-approve when UI is unavailable.
 
 Pending requests expire after two minutes initially. Denial, deadline, child EOF/death, cancellation, app quit, and supervisor replacement settle requests without usable authority. Test approval-versus-disconnect and delivery-loss races; grants minted for a lost handoff must be revoked.
 
@@ -188,7 +188,7 @@ Pending requests expire after two minutes initially. Denial, deadline, child EOF
 
 Dependency-aware parallel work: after the spike defines the shared schemas, backend authorization/broker work and native presentation work can proceed concurrently. Facade integration depends on broker contracts. End-to-end verification depends on all three. Use scoped agents within the available concurrency limit.
 
-Primary implementation areas: `backend/mcpme/__main__.py`, `management.py`, `grants.py`, `management_workflow_grants.py`, `supervisor.py`, `backend/mcpme_local_transport.py`, and native controller/views under `Sources/McpmeMenuBar/`. Integrate with the current `PiSetupView` only for presentation/lifecycle coordination; preserve `pi_setup.py` and its internal broker's owner-only contracts. Keep new broker/policy components in focused modules rather than expanding unrelated model code.
+Primary implementation areas: `backend/meecp/__main__.py`, `management.py`, `grants.py`, `management_workflow_grants.py`, `supervisor.py`, `backend/meecp_local_transport.py`, and native controller/views under `Sources/MeecpMenuBar/`. Integrate with the current `PiSetupView` only for presentation/lifecycle coordination; preserve `pi_setup.py` and its internal broker's owner-only contracts. Keep new broker/policy components in focused modules rather than expanding unrelated model code.
 
 ## Acceptance criteria
 
@@ -216,4 +216,4 @@ Existing credential-file registrations continue to work. Offer a native replacem
 
 Introduce versioned policy storage with atomic publication and conservative handling of corrupt/unknown records. Disable automatic approval for unsupported policy versions. Rollback disables popup bootstrap and saved-policy activation without altering installed apps or granting broader authority. Explain any stale new-client configuration and offer the established explicit-grant connection path.
 
-After implementation, update `MANAGEMENT_MCP.md`, `MCPME_DESIGN.md`, `MCPME_STATUS.md`, native connection instructions, and verification records to distinguish proposed behavior from measured acceptance evidence.
+After implementation, update `MANAGEMENT_MCP.md`, `MEECP_DESIGN.md`, `MEECP_STATUS.md`, native connection instructions, and verification records to distinguish proposed behavior from measured acceptance evidence.

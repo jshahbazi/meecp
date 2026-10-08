@@ -11,10 +11,10 @@ import threading
 
 import pytest
 
-from mcpme import preparation_release_command_admission as release
-from mcpme.host_command import HostCommandAdmission
-from mcpme.preparation_command_owner import CommandPreparationResourceAdmission
-from mcpme.preparation_contracts import PreparationError, canonical_bytes, load_contract
+from meecp import preparation_release_command_admission as release
+from meecp.host_command import HostCommandAdmission
+from meecp.preparation_command_owner import CommandPreparationResourceAdmission
+from meecp.preparation_contracts import PreparationError, canonical_bytes, load_contract
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,7 +31,7 @@ def policy(**changes):
 def packaged(tmp_path, monkeypatch):
     app = tmp_path.resolve() / "Synthetic metadata.app"
     host = app / "Contents/Resources/host"
-    (host / "backend/mcpme").mkdir(parents=True)
+    (host / "backend/meecp").mkdir(parents=True)
     (host / "bin").mkdir()
     (app / "Contents/MacOS").mkdir()
     (app / "Contents/_CodeSignature").mkdir()
@@ -39,11 +39,11 @@ def packaged(tmp_path, monkeypatch):
     policy_path = host / release.POLICY_PATH
     policy_path.parent.mkdir(parents=True)
     policy_path.write_bytes(b"{}")
-    native = app / "Contents/MacOS/mcpme"
+    native = app / "Contents/MacOS/meecp"
     native.write_bytes(b"Synthetic native metadata; never executed.")
     native.chmod(0o700)
     for name in (*release.COMPONENT_FILES, "preparation_release_command_admission.py", "preparation_release_artifact.py"):
-        shutil.copyfile(ROOT / "backend/mcpme" / name, host / "backend/mcpme" / name)
+        shutil.copyfile(ROOT / "backend/meecp" / name, host / "backend/meecp" / name)
     commands = []
     for name in ("mcpme-command-reap", "mcpme-command-resource-reap"):
         path = host / "bin" / name
@@ -69,7 +69,7 @@ def packaged(tmp_path, monkeypatch):
     for name, value in (("command-execution.json", installed), ("command-resource-execution.json", resource)):
         (host / name).write_bytes(canonical_bytes(value))
     (app / "Contents/Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "com.jshahbazi.mcpme",
-        "CFBundleExecutable": "mcpme", "CFBundleShortVersionString": "0.1.0"}))
+        "CFBundleExecutable": "meecp", "CFBundleShortVersionString": "0.1.0"}))
     build = {"host_version": "0.1.0", "artifact_sha256": {}, "source_commit": "1" * 40,
         "source_tree_dirty": False, "python": "Synthetic private Python", "toolchain": "Synthetic compiler",
         "signing": "developer_id", "distribution": "bundled_native_app_host"}
@@ -89,7 +89,7 @@ def packaged(tmp_path, monkeypatch):
         receipt["host_receipt_sha256"] = hashlib.sha256(data).hexdigest()
         (app / "Contents/Resources/app-build.json").write_bytes(canonical_bytes(receipt))
     refresh()
-    monkeypatch.setattr(release, "__file__", str(host / "backend/mcpme/preparation_release_command_admission.py"))
+    monkeypatch.setattr(release, "__file__", str(host / "backend/meecp/preparation_release_command_admission.py"))
     monkeypatch.setattr(release, "installed_platform_policy", lambda: release.INSTALLED_PLATFORM_POLICY)
     monkeypatch.setattr(release, "resource_platform_policy", lambda: release.RESOURCE_PLATFORM_POLICY)
     checks = []
@@ -216,12 +216,12 @@ def test_closed_membership_source_and_file_identity_reject_before_signature(pack
     elif fault == "directory-link":
         original = packaged.host / "bin"; other = packaged.host / "other-bin"; original.rename(other); original.symlink_to(other)
     elif fault == "source-module":
-        (packaged.host / "backend/mcpme/host_command.py").write_bytes(b"Changed source")
+        (packaged.host / "backend/meecp/host_command.py").write_bytes(b"Changed source")
         packaged.refresh()
     elif fault == "own-module-missing":
-        (packaged.host / "backend/mcpme/preparation_release_command_admission.py").unlink(); packaged.refresh()
+        (packaged.host / "backend/meecp/preparation_release_command_admission.py").unlink(); packaged.refresh()
     elif fault == "app-executable-link":
-        binary = packaged.app / "Contents/MacOS/mcpme"; other = packaged.app / "Contents/MacOS/other"; binary.rename(other); binary.symlink_to(other)
+        binary = packaged.app / "Contents/MacOS/meecp"; other = packaged.app / "Contents/MacOS/other"; binary.rename(other); binary.symlink_to(other)
     elif fault == "writable": helper.chmod(0o777)
     else:
         uid = os.getuid(); monkeypatch.setattr(release.os, "getuid", lambda: uid + 1)
@@ -278,7 +278,7 @@ def test_platform_mismatch_cannot_hide_any_artifact_denial(packaged, monkeypatch
     queries = []
     monkeypatch.setattr(release, "installed_platform_policy", lambda: queries.append(True) or "a" * 64)
     if fault == "helper": packaged.helpers[0].write_bytes(b"Changed helper")
-    elif fault == "source": (packaged.host / "backend/mcpme/host_command.py").write_bytes(b"Changed source")
+    elif fault == "source": (packaged.host / "backend/meecp/host_command.py").write_bytes(b"Changed source")
     elif fault == "inventory": (packaged.host / "command-execution.json").write_bytes(b"{}")
     elif fault == "membership": (packaged.host / "extra").write_bytes(b"Extra member")
     elif fault == "held-policy": proof.policy.write_bytes(b"Changed policy")
@@ -338,19 +338,19 @@ def test_constructor_requires_original_full_artifact_proof(packaged, fault):
     elif fault == "wrong-root":
         proof = release.ReleaseArtifactProof(proof.identities, proof.critical, packaged.host / "other-policy", b"{}")
     elif fault == "partial":
-        omitted = packaged.host / "backend/mcpme/preparation_release_command_admission.py"
+        omitted = packaged.host / "backend/meecp/preparation_release_command_admission.py"
         proof = release.ReleaseArtifactProof(tuple(record for record in proof.identities if record[0] != omitted),
             proof.critical, proof.policy, proof.policy_bytes)
     elif fault == "stale-policy": proof.policy.write_bytes(b'{"changed":true}')
     elif fault == "stale-seal": (packaged.app / "Contents/_CodeSignature/CodeResources").write_bytes(b"Changed seal")
-    else: (packaged.host / "backend/mcpme/preparation_release_command_admission.py").write_bytes(b"Changed adapter")
+    else: (packaged.host / "backend/meecp/preparation_release_command_admission.py").write_bytes(b"Changed adapter")
     with pytest.raises(PreparationError, match="^command_release_not_admitted$"):
         release.command_release_admission(policy(), packaged.host, artifact=proof)
     assert not packaged.checks
 
 
 def service(packaged, monkeypatch):
-    from mcpme.host_command import HostCommands
+    from meecp.host_command import HostCommands
     proof = packaged.capture()
     admission, _ = release.command_release_admission(policy(), packaged.host, artifact=proof)
     monkeypatch.setattr(HostCommands, "current", lambda self, slot: True)
@@ -367,8 +367,8 @@ def test_installed_checks_retain_authority_at_publication_and_native_boundary(pa
     assert owner.artifact is not None and owner.current(None) and owner.admit(None)
     assert owner.executor("slot").before_native_create(None) is True
     path = {"policy": owner.artifact.policy, "seal": packaged.app / "Contents/_CodeSignature/CodeResources",
-        "build": packaged.host / "build.json", "native": packaged.app / "Contents/MacOS/mcpme",
-        "module": packaged.host / "backend/mcpme/preparation_release_command_admission.py"}[member]
+        "build": packaged.host / "build.json", "native": packaged.app / "Contents/MacOS/meecp",
+        "module": packaged.host / "backend/meecp/preparation_release_command_admission.py"}[member]
     path.write_bytes(path.read_bytes() + b"changed")
     assert owner.current(None) is False and owner.admit(None) is False
     assert owner.executor("slot").before_native_create(None) is False
@@ -386,7 +386,7 @@ async def test_joined_full_boundary_denies_changed_noncritical_payload(packaged,
     monkeypatch.setattr(release.HostCommands, operation, original)
     arguments = (None,) if operation == "session" else (None, "probe", {}, 1)
     assert await getattr(owner, operation)(*arguments) == "synthetic"
-    (packaged.host / "backend/mcpme/preparation_release_command_admission.py").write_bytes(b"Changed payload")
+    (packaged.host / "backend/meecp/preparation_release_command_admission.py").write_bytes(b"Changed payload")
     with pytest.raises(release.InstalledCommandError, match="^command_authority_changed$"):
         await getattr(owner, operation)(*arguments)
     assert len(calls) == 1
@@ -421,13 +421,13 @@ async def test_canceled_full_boundary_joins_worker_before_return_and_never_enter
 # These fixtures compile and execute original unsigned native helpers/targets.
 # The enclosing metadata/signature replies remain explicitly synthetic.
 from test_host_command import native, package, sdk_call
-from test_mcpme_host import install
+from test_meecp_host import install
 
 
 @pytest.mark.asyncio
 async def test_actual_installed_call_and_last_native_fence_retain_original_proof(packaged, tmp_path, native, monkeypatch):
-    from mcpme import command_execution_v2
-    from mcpme.supervisor import Supervisor
+    from meecp import command_execution_v2
+    from meecp.supervisor import Supervisor
     shutil.copyfile(native[1], packaged.helpers[0])
     packaged.helpers[0].chmod(0o700)
     packaged.installed["helper_sha256"] = hashlib.sha256(packaged.helpers[0].read_bytes()).hexdigest()
@@ -463,8 +463,8 @@ async def test_actual_installed_call_and_last_native_fence_retain_original_proof
 
 @pytest.mark.asyncio
 async def test_actual_queued_invocation_revocation_joins_owned_helper(packaged, tmp_path, native, monkeypatch):
-    from mcpme.command_execution_v2 import SEED_SIZE
-    from mcpme.supervisor import Supervisor
+    from meecp.command_execution_v2 import SEED_SIZE
+    from meecp.supervisor import Supervisor
     shutil.copyfile(native[1], packaged.helpers[0])
     packaged.helpers[0].chmod(0o700)
     packaged.installed["helper_sha256"] = hashlib.sha256(packaged.helpers[0].read_bytes()).hexdigest()

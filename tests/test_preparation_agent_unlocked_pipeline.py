@@ -15,18 +15,18 @@ import uuid
 
 import pytest
 
-from mcpme.preparation_agent_unlocked import COMPONENT_ID, component_catalog
-from mcpme.preparation_agent_unlocked_contracts import DEPENDENCY_NAMESPACE
-from mcpme.preparation_agent_unlocked_resolution import OwnedAgentUnlockedResolutionRunner
-from mcpme.preparation_agent_adapter_store import CODE_PATH
-from mcpme.preparation_agent_host import AgentPreparationHost
-from mcpme.preparation_contracts import PreparationError, canonical_bytes
-from mcpme.preparation_inputs import parse_preparation_receipt
-from mcpme.preparation_runner import PreparationRunner
-from mcpme.preparation_verifier import verify_prepared_package
-from mcpme.processes import ProcessOwner
-from mcpme.supervisor import Supervisor
-from mcpme.contracts import validate_package
+from meecp.preparation_agent_unlocked import COMPONENT_ID, component_catalog
+from meecp.preparation_agent_unlocked_contracts import DEPENDENCY_NAMESPACE
+from meecp.preparation_agent_unlocked_resolution import OwnedAgentUnlockedResolutionRunner
+from meecp.preparation_agent_adapter_store import CODE_PATH
+from meecp.preparation_agent_host import AgentPreparationHost
+from meecp.preparation_contracts import PreparationError, canonical_bytes
+from meecp.preparation_inputs import parse_preparation_receipt
+from meecp.preparation_runner import PreparationRunner
+from meecp.preparation_verifier import verify_prepared_package
+from meecp.processes import ProcessOwner
+from meecp.supervisor import Supervisor
+from meecp.contracts import validate_package
 from test_preparation_agent_unlocked_request_readiness import request_only_unlocked_handler
 from test_preparation_agent_host import provider, completed
 
@@ -50,7 +50,7 @@ async def test_unlocked_adapter_explicit_resolution_confined_build_attach_and_re
     finally:
         sys.path.pop(0)
     before = helper.verify_host_payload(host_root)
-    retained = Path(tempfile.mkdtemp(prefix="mcpme-agent-unlocked-pipeline-")).resolve(); retained.chmod(0o700)
+    retained = Path(tempfile.mkdtemp(prefix="meecp-agent-unlocked-pipeline-")).resolve(); retained.chmod(0o700)
     source = retained/"unfamiliar-source"; source.mkdir(mode=0o700)
     (source/"worker.py").write_text("import humanize\ndef double(n):\n return int(humanize.intcomma(n*2).replace(',', ''))\n")
     (source/"LICENSE").write_text("Synthetic original-code permission.\n")
@@ -74,7 +74,7 @@ async def test_unlocked_adapter_explicit_resolution_confined_build_attach_and_re
         "a5_scope_complete": False, "hard_aggregate_resource_enforced": False, "all_owners_joined": False}
     try:
         phase = "public_denials"
-        public = Supervisor(retained/"public-state",host_root/"bin/mcpme-reap")
+        public = Supervisor(retained/"public-state",host_root/"bin/meecp-reap")
         try:
             assert public.preparation_runner.enabled is False and public.resolution_runner.enabled is False
             assert not public.agent_preparations.providers
@@ -85,7 +85,7 @@ async def test_unlocked_adapter_explicit_resolution_confined_build_attach_and_re
             await public.close()
         evidence["public_execution_defaults_closed"] = True
         phase = "intake"
-        host = Supervisor(retained/"state", host_root/"bin/mcpme-reap", preparation_runner_factory=preparation_factory,
+        host = Supervisor(retained/"state", host_root/"bin/meecp-reap", preparation_runner_factory=preparation_factory,
             resolution_runner_factory=resolution_factory, agent_preparation_factory=agent_factory)
         family = next(value for value in host.preparations.families.values() if value.component.reference.id == COMPONENT_ID)
         assert family.component.reference.digest == component_catalog()[COMPONENT_ID+"@1.0.0"]["digest"]
@@ -149,7 +149,7 @@ async def test_unlocked_adapter_explicit_resolution_confined_build_attach_and_re
         assert not host.preparation_reservations and not host.resolution_reservations
         attachment = host.imports.inspect(draft["draft_id"])["attachment"]
         package_root = Path(attachment["path"]); package = validate_package(package_root)
-        receipt = parse_preparation_receipt((package_root/"mcpme.preparation.json").read_bytes())
+        receipt = parse_preparation_receipt((package_root/"meecp.preparation.json").read_bytes())
         dependency_root = package_root/"source"/DEPENDENCY_NAMESPACE
         dependency_project = tomllib.loads((dependency_root/"pyproject.toml").read_text())
         assert "humanize" in dependency_project["project"]["dependencies"]
@@ -184,8 +184,8 @@ async def test_unlocked_adapter_explicit_resolution_confined_build_attach_and_re
         shutil.rmtree(retained/"state")
         phase = "relocation"
         probe = retained/"probe"; probe.mkdir(mode=0o700)
-        owner = ProcessOwner(host_root/"bin/mcpme-reap")
-        report = await verify_prepared_package(moved,descriptor,host_root/"bin/mcpme-reap",probe,
+        owner = ProcessOwner(host_root/"bin/meecp-reap")
+        report = await verify_prepared_package(moved,descriptor,host_root/"bin/meecp-reap",probe,
             timeout_seconds=30,owner=owner,confine_private_python=True)
         assert report.tools_checked == report.fixtures_checked == 1 and report.package_digest == package.digest
         assert not owner.instances and not owner._launches and not owner._pending_ids

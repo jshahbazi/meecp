@@ -4,7 +4,7 @@ Prepared packages can declare typed nonsecret configuration and logical secret n
 
 ## Declare the package contract
 
-Query `mcpme capabilities --json` for `configuration.schema_versions` before targeting this optional package-schema-1 extension. Older hosts reject unknown manifest fields. A manifest may contain:
+Query `meecp capabilities --json` for `configuration.schema_versions` before targeting this optional package-schema-1 extension. Older hosts reject unknown manifest fields. A manifest may contain:
 
 ```json
 {
@@ -31,9 +31,9 @@ Configuration values appear in plans, owner/read-authorized details, and exporte
 Use an existing owner-only UTF-8 file containing the exact secret bytes. The CLI requires current-user ownership, mode 0600, a regular file with one link, safe ancestors, and no symlink. Values are nonempty, at most 4,096 UTF-8 bytes, with no NUL. A trailing newline is retained as part of the value.
 
 ```sh
-scripts/mcpme secrets create --name "Service credential" --file /absolute/private/service-secret.txt --json
-scripts/mcpme secrets list --json
-scripts/mcpme secrets inspect SECRET_UUID --json
+scripts/meecp secrets create --name "Service credential" --file /absolute/private/service-secret.txt --json
+scripts/meecp secrets list --json
+scripts/meecp secrets inspect SECRET_UUID --json
 ```
 
 Creation returns `secret_id`, `name`, `status`, and `created_at`. Inspection never returns a value, value hash, or value length. Records live in the host's owner-only `secrets/records` directory; this milestone uses private files, without a Keychain backend. The host retains at most 4,096 reference records. List returns the latest 100 metadata summaries and the total count.
@@ -51,10 +51,10 @@ Save this settings envelope in a private mode-0600 JSON file, replacing `SECRET_
 Both maps are required when supplying an envelope. The secret map must exactly match the package's declared logical names. An optional field with no selected value or default stays absent. Planning fills defaults and binds the effective settings and reference IDs into `settings_digest` and the complete `plan_digest`:
 
 ```sh
-scripts/mcpme install plan --package /absolute/path/to/package --settings /absolute/private/settings.json --name "My App" --json
-scripts/mcpme install inspect --plan PLAN_UUID --json
-scripts/mcpme install apply --plan PLAN_UUID --json
-scripts/mcpme operations get OPERATION_UUID --json
+scripts/meecp install plan --package /absolute/path/to/package --settings /absolute/private/settings.json --name "My App" --json
+scripts/meecp install inspect --plan PLAN_UUID --json
+scripts/meecp install apply --plan PLAN_UUID --json
+scripts/meecp operations get OPERATION_UUID --json
 ```
 
 Plans and slot state contain reference IDs, with no credential material or credential-derived digests. Missing, revoked, unsafe, or corrupt references produce `secret_reference_unavailable`. The host checks references at plan/apply, before launch, after spawn acknowledgment, and before candidate exposure. Edited settings fail their generation-bound digest check. A retry of an already recorded installation recovers its operation.
@@ -78,7 +78,7 @@ selected_secrets = settings["secrets"]
 Packages declaring configuration or secrets receive this descriptor, including when all optional values are absent. Packages without either declaration retain their existing launch interface. Stdio session children and declared model-service processes receive only the selected package settings. The gateway receives no secret material. Descriptor delivery has a finite deadline; failed or canceled delivery waits for the owned child's cleanup. The host puts no values in argv, environment values, package artifacts, import exports, operation journals, or error responses. Package authors must preserve the same privacy rules in their own code.
 
 ```sh
-scripts/mcpme secrets revoke SECRET_UUID --json
+scripts/meecp secrets revoke SECRET_UUID --json
 ```
 
 References are immutable. Rotation creates a new reference and requires a newly reviewed installation or configuration upgrade. Revocation durably replaces the active record with a metadata tombstone and prevents later resolution and new starts. Already delivered values may remain in a running process; stop that app when retiring its credential. Removing an app retains its nonsecret settings and referenced records. This is not a secure-erasure guarantee.

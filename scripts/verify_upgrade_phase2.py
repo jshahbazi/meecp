@@ -78,8 +78,8 @@ TOOL = {"name": "persistent_counter", "description": "Read or write only the app
 HARNESS = '''import asyncio,sys
 from pathlib import Path
 sys.path[:0] = [sys.argv[1], sys.argv[2]]
-from mcpme.private import write_private_json
-from mcpme.supervisor import Supervisor,HostError,serve
+from meecp.private import write_private_json
+from meecp.supervisor import Supervisor,HostError,serve
 target, marker, release = sys.argv[5], Path(sys.argv[6]), Path(sys.argv[7])
 original = Supervisor.start_gateway
 async def gateway(self, slot, active, **kwargs):
@@ -136,11 +136,11 @@ def package_revision(source: Path, destination: Path | None, version: str, *, co
 
 
 async def verify(host_path: Path) -> dict:
-    with tempfile.TemporaryDirectory(prefix="mcpme upgrade acceptance ") as temporary:
+    with tempfile.TemporaryDirectory(prefix="meecp upgrade acceptance ") as temporary:
         root = Path(temporary).resolve()
         host = root / "relocated host"
         shutil.copytree(host_path, host, symlinks=True)
-        state, launcher, reaper = root / "private state", host / "bin/mcpme", host / "bin/mcpme-reap"
+        state, launcher, reaper = root / "private state", host / "bin/meecp", host / "bin/meecp-reap"
         environment = {"PATH": "/usr/bin:/bin", "HOME": str(root), "LANG": "en_US.UTF-8"}
         process = None
         phase = "start"
@@ -252,7 +252,7 @@ async def verify(host_path: Path) -> dict:
                             observed = True
                             completion = entry.get("completion", {})
                             path = directory / "ownership-receipts" / (identity + ".receipt")
-                            expected = b"MCPMEOR1" + identity.encode("ascii") + completion.get("nonce", "").encode("ascii") + b"C"
+                            expected = b"MEECPOR1" + identity.encode("ascii") + completion.get("nonce", "").encode("ascii") + b"C"
                             if not path.exists() or path.read_bytes() != expected:
                                 all_completed = False
                     if all_completed:

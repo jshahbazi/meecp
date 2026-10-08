@@ -62,8 +62,8 @@ def blank_png(width, height):
 
 
 def copy_selected_model(source, target, size, digest):
-    from mcpme.preparation_builder import _opened
-    from mcpme.preparation_contracts import PreparationError
+    from meecp.preparation_builder import _opened
+    from meecp.preparation_contracts import PreparationError
     total, value = 0, hashlib.sha256()
     with _opened(source) as original, target.open("xb") as copied:
         while chunk := original.read(1024*1024):
@@ -80,7 +80,7 @@ async def transport(process):
     import anyio
     from mcp.shared.message import SessionMessage
     from mcp.types import JSONRPCMessage
-    from mcpme.preparation_contracts import PreparationError
+    from meecp.preparation_contracts import PreparationError
     incoming_send, incoming = anyio.create_memory_object_stream(1)
     outgoing, outgoing_receive = anyio.create_memory_object_stream(1)
     async def read():
@@ -110,10 +110,10 @@ async def transport(process):
 
 async def max_probe(package, reaper, workspace, memory_mb):
     from mcp import ClientSession
-    from mcpme.preparation_contracts import PreparationError
-    from mcpme.preparation_probe_confinement import ProbeConfinementV1
-    from mcpme.preparation_verifier import capture_confined_probe_launch
-    from mcpme.processes import ProcessOwner, _await_ownership, _watch_ownership
+    from meecp.preparation_contracts import PreparationError
+    from meecp.preparation_probe_confinement import ProbeConfinementV1
+    from meecp.preparation_verifier import capture_confined_probe_launch
+    from meecp.processes import ProcessOwner, _await_ownership, _watch_ownership
     owner, process = ProcessOwner(reaper), None
     started = time.monotonic()
     try:
@@ -169,7 +169,7 @@ async def max_probe(package, reaper, workspace, memory_mb):
         if not process.peak_memory_bytes or process.peak_memory_bytes > memory_mb*1024**2:
             raise PreparationError("phase3_onnx_memory_limit")
         def validate_finished():
-            from mcpme.contracts import validate_package
+            from meecp.contracts import validate_package
             identity.check()
             current = validate_package(package.root)
             if current.digest != package.digest:
@@ -201,9 +201,9 @@ async def max_probe(package, reaper, workspace, memory_mb):
 
 
 async def relocation_probe(package_root, descriptor, reaper, workspace):
-    from mcpme.preparation_contracts import PreparationError
-    from mcpme.preparation_verifier import verify_prepared_package
-    from mcpme.processes import ProcessOwner, _await_ownership
+    from meecp.preparation_contracts import PreparationError
+    from meecp.preparation_verifier import verify_prepared_package
+    from meecp.processes import ProcessOwner, _await_ownership
     owner = ProcessOwner(reaper)
     try:
         return await verify_prepared_package(package_root, descriptor, reaper, workspace,
@@ -222,15 +222,15 @@ async def verify(host, model, base):
     _host_paths(host)
     receipt = await asyncio.to_thread(host_hashes,host)
     _host_imports(host)
-    from mcpme.contracts import validate_package
-    from mcpme.preparation_artifacts import AcquisitionRequestV1
-    from mcpme.preparation_capture import CapturePolicyV1, CreateImportTargetV1
-    from mcpme.preparation_contracts import ExecutionPolicy, PreparationError
-    from mcpme.preparation_onnx import MODEL_BYTES, MODEL_SHA256
-    from mcpme.processes import _await_ownership
-    from mcpme.supervisor import Supervisor
+    from meecp.contracts import validate_package
+    from meecp.preparation_artifacts import AcquisitionRequestV1
+    from meecp.preparation_capture import CapturePolicyV1, CreateImportTargetV1
+    from meecp.preparation_contracts import ExecutionPolicy, PreparationError
+    from meecp.preparation_onnx import MODEL_BYTES, MODEL_SHA256
+    from meecp.processes import _await_ownership
+    from meecp.supervisor import Supervisor
     _check_module_origins(host)
-    product = Supervisor(base / "state", host / "bin/mcpme-reap")
+    product = Supervisor(base / "state", host / "bin/meecp-reap")
     imports, capture_store, store = product.imports, product.captures, product.preparations
     forms, coordinator, runner = product.preparation_forms, product.capture_runner, product.preparation_runner
     reserved = product.preparation_reservations
@@ -246,7 +246,7 @@ async def verify(host, model, base):
             raise PreparationError("phase3_onnx_default_registration_failed")
         # Only this private development host executes. Product defaults stay gated.
         runner.enabled = True
-        from mcpme.preparation_onnx import component_reference
+        from meecp.preparation_onnx import component_reference
         runner.enabled_families = frozenset({component_reference().key})
         async with asyncio.timeout(WALL_SECONDS):
             stage("capture")
@@ -306,10 +306,10 @@ async def verify(host, model, base):
                 raise PreparationError("phase3_onnx_relocation_identity_mismatch")
             probe = base / "probe"; probe.mkdir(mode=0o700)
             stage("relocation_probe")
-            report = await relocation_probe(relocated,descriptor,host / "bin/mcpme-reap",probe)
+            report = await relocation_probe(relocated,descriptor,host / "bin/meecp-reap",probe)
             stage("max_image_probe")
             maximum_workspace = base / "maximum probe"; maximum_workspace.mkdir(mode=0o700)
-            max_report = await max_probe(package,host / "bin/mcpme-reap",maximum_workspace,descriptor.resources.memory_mb)
+            max_report = await max_probe(package,host / "bin/meecp-reap",maximum_workspace,descriptor.resources.memory_mb)
             after = await files(validate_package,relocated)
             if after.digest != digest:
                 raise PreparationError("phase3_onnx_probe_mutated_package")
@@ -342,7 +342,7 @@ def main():
     parser.add_argument("--keep-artifacts",action="store_true")
     options = parser.parse_args()
     os.umask(0o077)
-    base = Path(tempfile.mkdtemp(prefix="mcpme-phase3-onnx-",dir="/private/tmp")).resolve()
+    base = Path(tempfile.mkdtemp(prefix="meecp-phase3-onnx-",dir="/private/tmp")).resolve()
     result,failed = None,False
     try:
         if not options.model.is_absolute() or options.model.resolve() != options.model:

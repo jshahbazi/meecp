@@ -9,9 +9,9 @@ import uuid
 import pytest
 import uvicorn
 
-from mcpme.grants import read_credential
-from mcpme.supervisor import Supervisor, management_app
-from mcpme_local_transport import bind_private_listener, socket_path
+from meecp.grants import read_credential
+from meecp.supervisor import Supervisor, management_app
+from meecp_local_transport import bind_private_listener, socket_path
 from test_preparation_agent_providers import SYNTHETIC, choices, update
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def agent_native_wire_client(tmp_path_factory):
     if platform.system() != "Darwin":
         pytest.skip("production native transport requires macOS")
-    source = (ROOT / "Sources/McpmeMenuBar/main.swift").read_text()
+    source = (ROOT / "Sources/MeecpMenuBar/main.swift").read_text()
     # Compile the actual production response gate and its two validators, so
     # this control cannot silently replace api_version with schema_version.
     helpers = source[source.index("private func integer("):source.index("private func fallbackConnectionName(")]
@@ -80,7 +80,7 @@ exit(0)
 
 
 async def test_production_native_parser_consumes_owner_and_denial_envelopes(tmp_path, agent_native_wire_client, monkeypatch):
-    from mcpme.preparation_agent_backend import OpenAIResponsesBackend
+    from meecp.preparation_agent_backend import OpenAIResponsesBackend
     async def forbidden(*args, **kwargs):
         raise AssertionError("wire acceptance attempted provider dispatch")
     monkeypatch.setattr(OpenAIResponsesBackend, "complete", forbidden)

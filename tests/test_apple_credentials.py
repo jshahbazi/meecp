@@ -24,7 +24,7 @@ def credentials(monkeypatch, tmp_path):
 def test_missing_credentials_fail_before_any_keychain_creation(credentials, tmp_path):
     with pytest.raises(ValueError, match="signing_credentials_missing"):
         credentials.setup()
-    assert not (tmp_path / "mcpme-signing").exists()
+    assert not (tmp_path / "meecp-signing").exists()
 
 
 def test_credential_files_are_private_and_never_overwritten(credentials, tmp_path):

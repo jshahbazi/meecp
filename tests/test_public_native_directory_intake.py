@@ -6,8 +6,8 @@ import os
 import pytest
 import uvicorn
 
-from mcpme.supervisor import Supervisor, management_app
-from mcpme_local_transport import bind_private_listener, socket_path
+from meecp.supervisor import Supervisor, management_app
+from meecp_local_transport import bind_private_listener, socket_path
 from test_native_directory_acceptance_guards import context
 from test_recipe_native_management_acceptance import file_identity, native_recipe_driver, private_json
 

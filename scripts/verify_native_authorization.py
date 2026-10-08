@@ -22,12 +22,12 @@ from mcp.client.stdio import stdio_client
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
-from mcpme.__main__ import call
-from mcpme.authorization import process_start
-from mcpme.contracts import validate_package
-from mcpme.grants import GrantError
-from mcpme.private import ensure_private_directory, read_private_json
-from mcpme_local_transport import checked_socket, socket_path
+from meecp.__main__ import call
+from meecp.authorization import process_start
+from meecp.contracts import validate_package
+from meecp.grants import GrantError
+from meecp.private import ensure_private_directory, read_private_json
+from meecp_local_transport import checked_socket, socket_path
 
 
 def receipt(stage):
@@ -43,7 +43,7 @@ def same_process(identity):
 
 @asynccontextmanager
 async def client(configuration):
-    entry = configuration["mcpServers"]["mcpme-management"]
+    entry = configuration["mcpServers"]["meecp-management"]
     with open(os.devnull, "w") as errors:
         async with stdio_client(StdioServerParameters(command=entry["command"], args=entry["args"]), errlog=errors) as (read, write):
             async with ClientSession(read, write) as session:
@@ -64,7 +64,7 @@ async def tool(session, name, arguments):
 async def approved(session):
     async with asyncio.timeout(120):
         while True:
-            value = await tool(session, "mcpme_get_authorization_status", {})
+            value = await tool(session, "meecp_get_authorization_status", {})
             assert value["status"] not in {"denied", "expired", "revoked", "unavailable"}, "native_approval_unavailable"
             if value["status"] == "approved":
                 return
@@ -75,7 +75,7 @@ def upgrade_candidate(starter, destination):
     """Give the copied synthetic starter a distinct, fully locked version."""
     shutil.copytree(starter, destination)
     destination.chmod(0o700)
-    manifest_path, lock_path = destination / "mcpme.package.json", destination / "mcpme.lock.json"
+    manifest_path, lock_path = destination / "meecp.package.json", destination / "meecp.lock.json"
     manifest = json.loads(manifest_path.read_bytes())
     lock = json.loads(lock_path.read_bytes())
     manifest["version"] = lock["version"] = "1.0.1"
@@ -90,10 +90,10 @@ def upgrade_candidate(starter, destination):
 
 
 async def verify(app):
-    executable = app / "Contents/MacOS/mcpme"
+    executable = app / "Contents/MacOS/meecp"
     starter = app / "Contents/Resources/starter-packages/json-utilities"
     assert executable.is_file() and starter.is_dir(), "native_bundle_invalid"
-    scope = Path(tempfile.mkdtemp(prefix="mcpme-native-authorization-")).resolve()
+    scope = Path(tempfile.mkdtemp(prefix="meecp-native-authorization-")).resolve()
     state = scope / "state"
     supervisor = None
     slot_ids = set()
@@ -114,30 +114,30 @@ async def verify(app):
         assert exported.returncode == 0 and len(output) < 8192, "native_export_failed"
         registration = json.loads(output)
         configuration = registration["configuration"]
-        assert "--credential-file" not in configuration["mcpServers"]["mcpme-management"]["args"]
+        assert "--credential-file" not in configuration["mcpServers"]["meecp-management"]["args"]
         async with client(configuration) as session:
             receipt("native_base_pending")
             await approved(session)
-            await tool(session, "mcpme_capabilities", {})
+            await tool(session, "meecp_capabilities", {})
             initial = (await call(state, "GET", "/v1/authorization/sessions"))["sessions"]
             assert len(initial) == 1
-            plan = await tool(session, "mcpme_plan_install", {"package": str(starter), "name": "Authorization fixture", "start": False})
+            plan = await tool(session, "meecp_plan_install", {"package": str(starter), "name": "Authorization fixture", "start": False})
             slot_ids.add(plan["slot_id"])
-            denied = await session.call_tool("mcpme_apply_install", {"plan_id": plan["plan_id"]})
+            denied = await session.call_tool("meecp_apply_install", {"plan_id": plan["plan_id"]})
             assert denied.isError and denied.structuredContent["error"]["code"] == "authorization_required"
-            await tool(session, "mcpme_request_access", {"action": {"kind": "install", "plan_id": plan["plan_id"], "plan_digest": plan["plan_digest"]}})
+            await tool(session, "meecp_request_access", {"action": {"kind": "install", "plan_id": plan["plan_id"], "plan_digest": plan["plan_digest"]}})
             receipt("native_exact_plan_pending")
             await approved(session)
             assert not (await call(state, "GET", "/v1/status"))["operations"], "native_work_replayed"
-            operation = await tool(session, "mcpme_apply_install", {"plan_id": plan["plan_id"]})
+            operation = await tool(session, "meecp_apply_install", {"plan_id": plan["plan_id"]})
             async with asyncio.timeout(45):
                 while True:
-                    status = await tool(session, "mcpme_get_operation", {"operation_id": operation["operation_id"]})
+                    status = await tool(session, "meecp_get_operation", {"operation_id": operation["operation_id"]})
                     if status["status"] == "completed":
                         break
                     assert status["status"] in {"pending", "running"}, "native_install_failed"
                     await asyncio.sleep(0.2)
-            installed = await tool(session, "mcpme_inspect_slot", {"slot_id": plan["slot_id"]})
+            installed = await tool(session, "meecp_inspect_slot", {"slot_id": plan["slot_id"]})
             connection_path = state / "slots" / installed["slot_id"] / "connection.json"
             connection_before = read_private_json(connection_path)
             data = ensure_private_directory(Path(installed.get("data_path") or connection_path.parent / "data"))
@@ -145,32 +145,32 @@ async def verify(app):
             marker.write_bytes(b"synthetic native upgrade persistence")
             marker.chmod(0o600)
             candidate = upgrade_candidate(starter, scope / "upgrade-candidate")
-            upgrade = await tool(session, "mcpme_plan_upgrade", {"slot_id": installed["slot_id"], "package": str(candidate)})
-            inspected = await tool(session, "mcpme_inspect_upgrade_plan", {"plan_id": upgrade["plan_id"]})
+            upgrade = await tool(session, "meecp_plan_upgrade", {"slot_id": installed["slot_id"], "package": str(candidate)})
+            inspected = await tool(session, "meecp_inspect_upgrade_plan", {"plan_id": upgrade["plan_id"]})
             assert inspected["plan_digest"] == upgrade["plan_digest"], "native_upgrade_review_changed"
             assert inspected["slot_id"] == installed["slot_id"] and inspected["package"]["version"] == "1.0.1"
             assert inspected["package_digest"] != installed["package_digest"], "native_upgrade_candidate_unchanged"
-            denied = await session.call_tool("mcpme_apply_upgrade", {"plan_id": upgrade["plan_id"]})
+            denied = await session.call_tool("meecp_apply_upgrade", {"plan_id": upgrade["plan_id"]})
             assert denied.isError and denied.structuredContent["error"]["code"] == "authorization_required"
             before = (await call(state, "GET", "/v1/status"))["operations"]
             assert len(before) == 1 and before[0]["operation_id"] == operation["operation_id"]
-            await tool(session, "mcpme_request_access", {"action": {"kind": "upgrade", "plan_id": upgrade["plan_id"],
+            await tool(session, "meecp_request_access", {"action": {"kind": "upgrade", "plan_id": upgrade["plan_id"],
                 "plan_digest": upgrade["plan_digest"]}})
             receipt("native_upgrade_plan_pending")
             await approved(session)
             after = (await call(state, "GET", "/v1/status"))["operations"]
             assert [item["operation_id"] for item in after] == [item["operation_id"] for item in before], "native_upgrade_replayed"
-            upgraded = await tool(session, "mcpme_apply_upgrade", {"plan_id": upgrade["plan_id"]})
+            upgraded = await tool(session, "meecp_apply_upgrade", {"plan_id": upgrade["plan_id"]})
             async with asyncio.timeout(45):
                 while True:
-                    status = await tool(session, "mcpme_get_operation", {"operation_id": upgraded["operation_id"]})
+                    status = await tool(session, "meecp_get_operation", {"operation_id": upgraded["operation_id"]})
                     if status["status"] == "completed":
                         break
                     assert status["status"] in {"pending", "running"}, "native_upgrade_failed"
                     await asyncio.sleep(0.2)
-            retried = await tool(session, "mcpme_apply_upgrade", {"plan_id": upgrade["plan_id"]})
+            retried = await tool(session, "meecp_apply_upgrade", {"plan_id": upgrade["plan_id"]})
             assert retried["operation_id"] == upgraded["operation_id"], "native_upgrade_duplicate_operation"
-            listed = (await tool(session, "mcpme_list_slots", {}))["slots"]
+            listed = (await tool(session, "meecp_list_slots", {}))["slots"]
             assert len(listed) == 1, "native_upgrade_duplicate_entry"
             current = listed[0]
             assert current["slot_id"] == installed["slot_id"] and current["public_port"] == installed["public_port"]
@@ -189,7 +189,7 @@ async def verify(app):
             renewed = (await call(state, "GET", "/v1/authorization/sessions"))["sessions"]
             assert len(renewed) == 1 and renewed[0]["session_id"] != initial[0]["session_id"]
             await call(state, "POST", "/v1/authorization/profiles/" + registration["profile_id"] + "/revoke", {})
-            denied = await session.call_tool("mcpme_capabilities", {})
+            denied = await session.call_tool("meecp_capabilities", {})
             assert denied.isError, "native_revocation_failed"
     finally:
         if process.returncode is None:

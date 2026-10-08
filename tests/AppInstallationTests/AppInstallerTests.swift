@@ -9,9 +9,9 @@ final class AppInstallerTests: XCTestCase {
     private var destination: URL!
 
     override func setUpWithError() throws {
-        root = FileManager.default.temporaryDirectory.appendingPathComponent("mcpme-install-tests-" + UUID().uuidString, isDirectory: true)
-        source = root.appendingPathComponent("mounted/mcpme.app", isDirectory: true)
-        destination = root.appendingPathComponent("test Applications/mcpme.app", isDirectory: true)
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("meecp-install-tests-" + UUID().uuidString, isDirectory: true)
+        source = root.appendingPathComponent("mounted/meecp.app", isDirectory: true)
+        destination = root.appendingPathComponent("test Applications/meecp.app", isDirectory: true)
         try fixture(source, version: "new")
     }
 
@@ -20,7 +20,7 @@ final class AppInstallerTests: XCTestCase {
     private func fixture(_ app: URL, version: String) throws {
         let contents = app.appendingPathComponent("Contents", isDirectory: true)
         try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
-        let info = ["CFBundleIdentifier": AppInstaller.bundleIdentifier, "CFBundleExecutable": "mcpme", "CFBundlePackageType": "APPL"]
+        let info = ["CFBundleIdentifier": AppInstaller.bundleIdentifier, "CFBundleExecutable": "meecp", "CFBundlePackageType": "APPL"]
         try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
             .write(to: contents.appendingPathComponent("Info.plist"))
         try version.write(to: contents.appendingPathComponent("version"), atomically: true, encoding: .utf8)
@@ -32,7 +32,7 @@ final class AppInstallerTests: XCTestCase {
 
     private func workspaces() throws -> [URL] {
         try FileManager.default.contentsOfDirectory(at: destination.deletingLastPathComponent(), includingPropertiesForKeys: nil)
-            .filter { $0.lastPathComponent.hasPrefix(".mcpme-install-") }
+            .filter { $0.lastPathComponent.hasPrefix(".meecp-install-") }
     }
 
     func testReplacementVerifiesBeforeStoppingAndPreservesExternalData() throws {
@@ -49,7 +49,7 @@ final class AppInstallerTests: XCTestCase {
         }, launch: { app in
             XCTAssertEqual(app, self.destination); XCTAssertEqual(try self.version(app), "new")
             let recovery = try XCTUnwrap(self.workspaces().first)
-            XCTAssertEqual(try self.version(recovery.appendingPathComponent("mcpme.app")), "old")
+            XCTAssertEqual(try self.version(recovery.appendingPathComponent("meecp.app")), "old")
             events.append("launch")
         })
         try AppInstaller.install(from: source, to: destination, hooks: hooks)
@@ -117,7 +117,7 @@ final class AppInstallerTests: XCTestCase {
         }
         XCTAssertEqual(try version(destination), "new")
         let workspace = try XCTUnwrap(workspaces().first)
-        XCTAssertEqual(try version(workspace.appendingPathComponent("mcpme.app")), "old")
+        XCTAssertEqual(try version(workspace.appendingPathComponent("meecp.app")), "old")
         XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("RECOVERY.md").path))
     }
 
@@ -145,7 +145,7 @@ final class AppInstallerTests: XCTestCase {
 
     func testUnrelatedBundleIsRejectedBeforeStop() throws {
         try fixture(destination, version: "foreign")
-        let info: [String: Any] = ["CFBundleIdentifier": "org.example.other", "CFBundleExecutable": "mcpme", "CFBundlePackageType": "APPL"]
+        let info: [String: Any] = ["CFBundleIdentifier": "org.example.other", "CFBundleExecutable": "meecp", "CFBundlePackageType": "APPL"]
         try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
             .write(to: destination.appendingPathComponent("Contents/Info.plist"))
         XCTAssertThrowsError(try AppInstaller.install(from: source, to: destination,
@@ -171,8 +171,8 @@ final class AppInstallerTests: XCTestCase {
     func testDestinationPrefersTheRunningPersonalInstallation() throws {
         let system = root.appendingPathComponent("system Applications")
         let personal = root.appendingPathComponent("personal Applications")
-        let systemApp = system.appendingPathComponent("mcpme.app", isDirectory: true)
-        let personalApp = personal.appendingPathComponent("mcpme.app", isDirectory: true)
+        let systemApp = system.appendingPathComponent("meecp.app", isDirectory: true)
+        let personalApp = personal.appendingPathComponent("meecp.app", isDirectory: true)
         try fixture(systemApp, version: "system"); try fixture(personalApp, version: "personal")
         XCTAssertEqual(AppInstaller.selectDestination(system: system, personal: personal, running: [personalApp]), personalApp)
         XCTAssertEqual(AppInstaller.selectDestination(system: system, personal: personal, running: []), systemApp)

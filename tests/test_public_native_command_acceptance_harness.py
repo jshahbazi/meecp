@@ -59,7 +59,7 @@ def release_input(module, tmp_path):
     host = app / "Contents/Resources/host"
     policy = host / module.POLICY_PATH
     policy.parent.mkdir(parents=True)
-    native = app / "Contents/MacOS/mcpme"
+    native = app / "Contents/MacOS/meecp"
     native.parent.mkdir(parents=True)
     native.write_bytes(b"Synthetic metadata; never executed.")
     native.chmod(0o700)

@@ -16,20 +16,20 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-from mcpme_local_transport import socket_path  # noqa: E402
+from meecp_local_transport import socket_path  # noqa: E402
 
 
 async def verify(host_path: Path) -> dict:
-    with tempfile.TemporaryDirectory(prefix="mcpme-preparation-foundation-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="meecp-preparation-foundation-") as temporary:
         root = Path(temporary).resolve()
         host = root / "relocated-host"
         shutil.copytree(host_path, host, symlinks=True)
-        launcher, reaper = host / "bin/mcpme", host / "bin/mcpme-reap"
+        launcher, reaper = host / "bin/meecp", host / "bin/meecp-reap"
         state = root / "state"
         # No development tools/Python cache are discoverable by these commands.
         environment = {"PATH": "/usr/bin:/bin", "HOME": str(root), "LANG": "en_US.UTF-8",
                        "PYTHONHOME": "/nonexistent", "PYTHONUSERBASE": "/nonexistent"}
-        (root / "mcpme.py").write_text("raise RuntimeError('unsafe current-directory module imported')\n")
+        (root / "meecp.py").write_text("raise RuntimeError('unsafe current-directory module imported')\n")
         process = None
 
         def command(*arguments, expected_error=None):

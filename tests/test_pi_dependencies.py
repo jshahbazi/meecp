@@ -10,11 +10,11 @@ import tomllib
 
 import pytest
 
-from mcpme.pi_dependencies import (
+from meecp.pi_dependencies import (
     MARKER, MCP_VERSION, PYTHON_VERSION, _Installer, _profile, dependency_project, install_dependencies,
 )
-from mcpme.pi_tools import PiToolBroker
-from mcpme.preparation_contracts import PreparationError
+from meecp.pi_tools import PiToolBroker
+from meecp.preparation_contracts import PreparationError
 from test_preparation_processes import group_reaper
 
 
@@ -82,13 +82,13 @@ async def test_dependency_result_publishes_public_lock_and_private_copied_runtim
         assert result["success"], result["output"]
         metadata = json.loads(result["output"])
         runtime = Path(metadata["runtime_path"])
-        assert runtime == project / ".mcpme-runtime"
+        assert runtime == project / ".meecp-runtime"
         assert Path(metadata["python_path"]).is_file()
         assert not Path(metadata["python_path"]).is_symlink()
         assert (project / "uv.lock").read_bytes() == (runtime / "uv.lock").read_bytes()
         assert b"https://pypi.org/simple" in (project / "uv.lock").read_bytes()
         assert metadata["versions"] == [{"name": "mcp", "version": MCP_VERSION}]
-        assert not list(broker.workspace.glob(".mcpme-dependencies-*"))
+        assert not list(broker.workspace.glob(".meecp-dependencies-*"))
         # Repeated installs replace only the previously generated dependency tree.
         (runtime / "old-file").write_text("previous dependency")
         repeated = await broker.invoke("install_dependencies", {"ecosystem": "python", "project_path": "app"})
@@ -113,7 +113,7 @@ async def test_rejection_precedes_install_and_preserves_source(tmp_path, group_r
         assert result == {"success": False, "output": "pi_dependency_direct_url_unsupported"}
         assert calls == [] and (project / "pyproject.toml").read_bytes() == original
         assert not (project / "uv.lock").exists()
-        assert not list(broker.workspace.glob(".mcpme-dependencies-*"))
+        assert not list(broker.workspace.glob(".meecp-dependencies-*"))
     finally:
         await broker.close()
 
@@ -161,7 +161,7 @@ async def test_cancel_settles_installer_child_before_workspace_cleanup(tmp_path,
         with pytest.raises(asyncio.CancelledError):
             await task
         assert not broker.owner.instances
-        assert not list(broker.workspace.glob(".mcpme-dependencies-*"))
+        assert not list(broker.workspace.glob(".meecp-dependencies-*"))
     finally:
         await broker.close()
 
@@ -185,7 +185,7 @@ def test_resolver_profile_allows_only_exact_installer_and_broker(tmp_path):
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS installer confinement")
 async def test_actual_installer_sandbox_denies_external_connections_user_files_and_group_escape(tmp_path, group_reaper):
     from types import SimpleNamespace
-    from mcpme.preparation_processes import PreparationExecutor
+    from meecp.preparation_processes import PreparationExecutor
     work = tmp_path.resolve() / "work"
     work.mkdir(mode=0o700)
     secret = tmp_path.resolve() / "outside-source"
@@ -221,7 +221,7 @@ async def test_node_reports_missing_host_runtime_without_running_installer(tmp_p
 
 @pytest.mark.skipif(os.environ.get("MCPME_PI_DEPENDENCY_LIVE_TEST") != "1", reason="explicit public PyPI integration check")
 async def test_private_uv_live_public_registry_install_is_locked_copied_and_offline(tmp_path, group_reaper):
-    host_root = Path(os.environ.get("MCPME_PI_HOST_ROOT", "/Applications/mcpme.app/Contents/Resources/host")).resolve()
+    host_root = Path(os.environ.get("MCPME_PI_HOST_ROOT", "/Applications/meecp.app/Contents/Resources/host")).resolve()
     assert platform.system() == "Darwin" and platform.machine() == "arm64"
     broker = PiToolBroker(tmp_path.resolve() / "workspace", group_reaper, read_roots=[host_root])
     project = project_fixture(broker, '[project]\nname="pi-public-smoke"\nversion="1.0.0"\ndependencies=["anyio==4.11.0"]\n')
@@ -237,8 +237,8 @@ async def test_private_uv_live_public_registry_install_is_locked_copied_and_offl
         assert all(not item.is_symlink() for item in runtime.rglob("*"))
         # The finished app can import SDK dependencies with its copied Python,
         # without giving that interpreter any outbound network permission.
-        from mcpme.preparation_processes import PreparationExecutor
-        from mcpme.preparation_builder import load_private_toolchain
+        from meecp.preparation_processes import PreparationExecutor
+        from meecp.preparation_builder import load_private_toolchain
         toolchain = load_private_toolchain(host_root)
         python = Path(metadata["python_path"])
         profile = _profile(runtime, toolchain, python, python)

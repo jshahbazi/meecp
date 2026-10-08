@@ -3,10 +3,10 @@ from pathlib import Path
 
 import pytest
 
-from mcpme.preparation_agent_adapter_store import CODE_PATH
-from mcpme.preparation_agent_unlocked_builder import copy_unlocked_snapshot
-from mcpme.preparation_agent_unlocked_contracts import DEPENDENCY_NAMESPACE
-from mcpme.preparation_contracts import PreparationError
+from meecp.preparation_agent_adapter_store import CODE_PATH
+from meecp.preparation_agent_unlocked_builder import copy_unlocked_snapshot
+from meecp.preparation_agent_unlocked_contracts import DEPENDENCY_NAMESPACE
+from meecp.preparation_contracts import PreparationError
 from test_preparation_agent_unlocked_store import foundation, synthetic_resolution
 
 
@@ -34,7 +34,7 @@ def test_copy_preserves_original_and_separate_derived_inputs(foundation,tmp_path
 
 @pytest.mark.parametrize("change",["nested_destination","root_destination","original","derived"])
 def test_copy_rejects_post_write_namespace_or_source_substitution(foundation,tmp_path,monkeypatch,change):
-    from mcpme import preparation_agent_unlocked_builder as module
+    from meecp import preparation_agent_unlocked_builder as module
     draft,result,path,destination = inputs(foundation,tmp_path)
     original = module._write_file
     def altered(root,name,data):

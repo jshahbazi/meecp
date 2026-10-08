@@ -78,7 +78,7 @@ def public_capabilities(value):
 
 class PublicPythonHarness(common.Harness):
     async def start(self, state, environment, home, *, enabled):
-        # The base's false branch is exactly bin/mcpme serve. The caller's
+        # The base's false branch is exactly bin/meecp serve. The caller's
         # selection changes no execution authority, including on restart.
         return await common.Harness.start(self, state, environment, home, enabled=False)
 
@@ -212,7 +212,7 @@ async def verify(host_path, native_path, model, report):
         common.verify_host_payload(host); common._host_imports(host)
         harnesses = []
         try:
-            roots = {label: root / ("mcpme-native-onboarding-" + label) for label in ("python", "mixed", "onnx")}
+            roots = {label: root / ("meecp-native-onboarding-" + label) for label in ("python", "mixed", "onnx")}
             for directory in roots.values():
                 directory.mkdir(mode=0o700)
             python = PublicPythonHarness(roots["python"], host, native, lease); harnesses.append(python)

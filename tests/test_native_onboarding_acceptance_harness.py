@@ -16,8 +16,8 @@ def harness_module(monkeypatch):
 
 
 def test_native_factory_admits_only_exact_bundled_python_family(tmp_path, monkeypatch, harness_module):
-    from mcpme.preparation_resolved_python import ResolvedPythonComponent
-    from mcpme.supervisor import Supervisor
+    from meecp.preparation_resolved_python import ResolvedPythonComponent
+    from meecp.supervisor import Supervisor
 
     observed = {}
 
@@ -31,7 +31,7 @@ def test_native_factory_admits_only_exact_bundled_python_family(tmp_path, monkey
         finally:
             await host.close()
 
-    monkeypatch.setattr("mcpme.supervisor.serve", serve)
+    monkeypatch.setattr("meecp.supervisor.serve", serve)
     backend = str(Path(__file__).resolve().parents[1] / "backend")
     monkeypatch.setattr(sys, "argv", ["acceptance", backend, backend,
         str(tmp_path / "state"), str(tmp_path / "unused-reaper"), "0"])

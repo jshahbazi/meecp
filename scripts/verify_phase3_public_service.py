@@ -166,10 +166,10 @@ class PublicServiceHarness(common.Harness):
         return receipt
 
     async def case(self):
-        from mcpme.contracts import Tool, validate_package
-        from mcpme.preparation_service import references
-        from mcpme.preparation_service_receipts import parse_receipt
-        from mcpme.recipes import validate_bundle
+        from meecp.contracts import Tool, validate_package
+        from meecp.preparation_service import references
+        from meecp.preparation_service_receipts import parse_receipt
+        from meecp.recipes import validate_bundle
         require(tuple(ref.key for ref in references()) == REFERENCES, "public_service_component_mismatch")
         base, state, home, environment = self.new_case("service")
         child = await self.start(state, environment, home, enabled=False)

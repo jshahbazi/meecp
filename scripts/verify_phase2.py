@@ -18,13 +18,13 @@ from mcp.client.streamable_http import streamable_http_client
 
 
 async def verify(host_path: Path) -> dict:
-    with tempfile.TemporaryDirectory(prefix="mcpme-phase2-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="meecp-phase2-") as temporary:
         root = Path(temporary).resolve()
         host = root / "relocated-host"
         shutil.copytree(host_path, host, symlinks=True)
         state = root / "state"
-        launcher = host / "bin/mcpme"
-        reaper = host / "bin/mcpme-reap"
+        launcher = host / "bin/meecp"
+        reaper = host / "bin/meecp-reap"
         process = None
         runtime_environment = {"PATH": "/usr/bin:/bin", "HOME": str(root), "LANG": "en_US.UTF-8"}
 

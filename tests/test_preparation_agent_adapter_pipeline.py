@@ -15,20 +15,20 @@ import uuid
 
 import pytest
 
-from mcpme.imports import ImportStore
-from mcpme.recipes import RecipeStore
-from mcpme.preparations import PreparationStore
-from mcpme.preparation_agent_adapter import AgentPythonAdapterFamily, component_catalog
-from mcpme.preparation_agent_adapter_store import AgentAdapterDerivationStore, CODE_PATH
-from mcpme.preparation_agent_host import AgentPreparationHost
-from mcpme.preparation_contracts import canonical_bytes
-from mcpme.preparation_forms import PreparationForms
-from mcpme.preparation_inspection import inspect_source
-from mcpme.preparation_inputs import parse_preparation_receipt
-from mcpme.preparation_runner import PreparationRunner
-from mcpme.preparation_verifier import verify_prepared_package
-from mcpme.processes import ProcessOwner
-from mcpme.contracts import validate_package
+from meecp.imports import ImportStore
+from meecp.recipes import RecipeStore
+from meecp.preparations import PreparationStore
+from meecp.preparation_agent_adapter import AgentPythonAdapterFamily, component_catalog
+from meecp.preparation_agent_adapter_store import AgentAdapterDerivationStore, CODE_PATH
+from meecp.preparation_agent_host import AgentPreparationHost
+from meecp.preparation_contracts import canonical_bytes
+from meecp.preparation_forms import PreparationForms
+from meecp.preparation_inspection import inspect_source
+from meecp.preparation_inputs import parse_preparation_receipt
+from meecp.preparation_runner import PreparationRunner
+from meecp.preparation_verifier import verify_prepared_package
+from meecp.processes import ProcessOwner
+from meecp.contracts import validate_package
 from test_preparation_agent_request_readiness import request_only_handler
 from test_preparation_agent_host import provider, completed
 
@@ -36,7 +36,7 @@ from test_preparation_agent_host import provider, completed
 @pytest.mark.skipif(not os.environ.get("MCPME_AGENT_ADAPTER_HOST"), reason="requires exact private host and common confinement source")
 async def test_required_generated_adapter_real_confined_build_probe_attach_and_relocation(tmp_path, monkeypatch):
     assert "confine_private_python" in inspect.signature(verify_prepared_package).parameters
-    from mcpme import recipes as recipe_module
+    from meecp import recipes as recipe_module
     original_catalog = recipe_module.builtin_components
     monkeypatch.setattr(recipe_module, "builtin_components", lambda: {**original_catalog(), **component_catalog()})
     host_root = Path(os.environ["MCPME_AGENT_ADAPTER_HOST"]).resolve()
@@ -51,14 +51,14 @@ async def test_required_generated_adapter_real_confined_build_probe_attach_and_r
     before = helper.verify_host_payload(host_root)
     composition_path = os.environ.get("MCPME_AGENT_ADAPTER_COMPOSITION")
     assert composition_path
-    from mcpme.private import read_private_json
+    from meecp.private import read_private_json
     composition = read_private_json(Path(composition_path))
     source_root = Path(__file__).resolve().parents[1]
     assert Path(composition["overlay"]) == source_root
     source_hashes = {name: hashlib.sha256((source_root / name).read_bytes()).hexdigest() for name in composition["files"]}
     assert source_hashes == composition["files"]
     composition_digest = hashlib.sha256(Path(composition_path).read_bytes()).hexdigest()
-    retained = Path(tempfile.mkdtemp(prefix="mcpme-agent-adapter-pipeline-")).resolve()
+    retained = Path(tempfile.mkdtemp(prefix="meecp-agent-adapter-pipeline-")).resolve()
     retained.chmod(0o700)
     source = retained / "unfamiliar-source"; source.mkdir(mode=0o700)
     (source / "worker.py").write_text("def double(n):\n return n*2\n")
@@ -92,7 +92,7 @@ async def test_required_generated_adapter_real_confined_build_probe_attach_and_r
     try:
         async with settled_imports(retained / "state") as imports:
             recipes = RecipeStore(imports)
-            record = recipes.add(Path(__file__).resolve().parents[1] / "templates/builtin-recipes/agent-python-adapter-v1-0-0")
+            record = recipes.add(Path(__file__).resolve().parents[1] / "templates/builtin-recipes/agent-python-adapter-v1-0-1")
             record = recipes.enable(record["recipe_id"], record["version"])
             draft = imports.create(source, name="Unknown scalar app", intent="Wrap the selected scalar callable as a structured result")
             original_source = json.loads(json.dumps(draft["source"]))
@@ -100,7 +100,7 @@ async def test_required_generated_adapter_real_confined_build_probe_attach_and_r
             derivations = AgentAdapterDerivationStore(imports, recipes)
             family = AgentPythonAdapterFamily(derivations)
             preparations = PreparationStore(imports, recipes, families=(family,))
-            builder = PreparationRunner(preparations, host_root, host_root / "bin/mcpme-reap", enabled=True,
+            builder = PreparationRunner(preparations, host_root, host_root / "bin/meecp-reap", enabled=True,
                 enabled_families=frozenset({family.component.reference.key}))
             agent = AgentPreparationHost(preparations, retained / "agent", providers=(provider(request_only_handler),), simulated_enabled=True)
             phase = "agent"
@@ -141,7 +141,7 @@ async def test_required_generated_adapter_real_confined_build_probe_attach_and_r
             attachment = imports.inspect(draft["draft_id"])["attachment"]
             package_root = Path(attachment["path"])
             package = validate_package(package_root)
-            receipt = parse_preparation_receipt((package_root / "mcpme.preparation.json").read_bytes())
+            receipt = parse_preparation_receipt((package_root / "meecp.preparation.json").read_bytes())
             assert receipt.binding.revision == 2 and receipt.binding.descriptor_digest == descriptor.digest
             assert receipt.inputs.source.revision == original_source["revision"] and len(receipt.inputs.derived_inputs) == 3
             generated = next(item for item in package.lock.artifacts if item.path == "source/" + CODE_PATH)
@@ -165,8 +165,8 @@ async def test_required_generated_adapter_real_confined_build_probe_attach_and_r
         shutil.rmtree(retained / "agent")
         phase = "relocation"
         probe = retained / "probe"; probe.mkdir(mode=0o700)
-        owner = ProcessOwner(host_root / "bin/mcpme-reap")
-        report = await verify_prepared_package(moved, descriptor, host_root / "bin/mcpme-reap", probe,
+        owner = ProcessOwner(host_root / "bin/meecp-reap")
+        report = await verify_prepared_package(moved, descriptor, host_root / "bin/meecp-reap", probe,
             timeout_seconds=30, owner=owner, confine_private_python=True)
         assert report.tools_checked == report.fixtures_checked == 1 and report.package_digest == package.digest
         assert not owner.instances and not owner._launches and not owner._pending_ids

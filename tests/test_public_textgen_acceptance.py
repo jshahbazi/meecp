@@ -28,7 +28,7 @@ async def test_public_textgen_start_and_restart_use_ordinary_launcher(monkeypatc
 
 @pytest.mark.parametrize("previous_version", [None, "1.0.9", "1.0.10", "1.0.11", "1.0.12", "1.0.13"])
 async def test_public_defaults_bind_actual_current_producer_before_start(monkeypatch, previous_version):
-    from mcpme import preparation_textgen
+    from meecp import preparation_textgen
     version = preparation_textgen.VERSION
     refs = {item.id: item.key for item in preparation_textgen.references()}
     assert version == "1.0.21" and preparation_textgen.ENGINE_ID == "llamacpp-cpu-v1"

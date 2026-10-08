@@ -3,7 +3,7 @@ import asyncio
 
 import pytest
 
-from mcpme.command_execution_v2 import CommandExecutionError
+from meecp.command_execution_v2 import CommandExecutionError
 from test_command_execution_v2 import binaries, executor, spec, pytestmark
 
 

@@ -7,16 +7,16 @@ import uuid
 import httpx
 import pytest
 
-from mcpme.preparation_admission import PublicPreparationAdmission, public_preparation_admission
-from mcpme.preparation_components import ComponentReference
-from mcpme.preparation_contracts import PreparationError, canonical_bytes
-from mcpme.preparation_inputs import parse_preparation_descriptor
-from mcpme.preparation_resolution import ResolutionStore, result_from_files
-from mcpme.preparation_resolution_runner import OwnedResolutionRunner
-from mcpme.preparation_runner import PreparationRunner, _Attempt
-from mcpme.preparation_resolved_python import ResolvedPythonFamily
-from mcpme.supervisor import Supervisor, capabilities, management_app
-from test_mcpme_preparations import foundation
+from meecp.preparation_admission import PublicPreparationAdmission, public_preparation_admission
+from meecp.preparation_components import ComponentReference
+from meecp.preparation_contracts import PreparationError, canonical_bytes
+from meecp.preparation_inputs import parse_preparation_descriptor
+from meecp.preparation_resolution import ResolutionStore, result_from_files
+from meecp.preparation_resolution_runner import OwnedResolutionRunner
+from meecp.preparation_runner import PreparationRunner, _Attempt
+from meecp.preparation_resolved_python import ResolvedPythonFamily
+from meecp.supervisor import Supervisor, capabilities, management_app
+from test_meecp_preparations import foundation
 from test_preparation_resolution import source, request, policy, dependency_project
 
 
@@ -290,7 +290,7 @@ async def test_public_ordinary_coordinator_publishes_checked_metadata_result(pub
     runner = OwnedResolutionRunner(store, tmp_path, tmp_path / "unused-reaper", enabled=True,
         public_admission=store.public_admission)
     monkeypatch.setattr(runner, "_producer_sync", lambda: producer[0])
-    monkeypatch.setattr("mcpme.preparation_resolution_runner.load_private_toolchain", lambda *args:
+    monkeypatch.setattr("meecp.preparation_resolution_runner.load_private_toolchain", lambda *args:
         SimpleNamespace(identity=req.runtime.digest))
     async def resolve(attempt, toolchain, current_draft, current_candidate, executor):
         assert current_candidate == candidate

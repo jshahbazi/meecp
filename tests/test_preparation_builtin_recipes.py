@@ -10,10 +10,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from mcpme import preparation_builtin_recipes as seeds
-from mcpme.imports import ImportStore
-from mcpme.preparation_contracts import PreparationError, schema_accepts
-from mcpme.recipes import RecipeStore, builtin_components, validate_bundle
+from meecp import preparation_builtin_recipes as seeds
+from meecp.imports import ImportStore
+from meecp.preparation_contracts import PreparationError, schema_accepts
+from meecp.recipes import RecipeStore, builtin_components, validate_bundle
 
 
 @pytest.fixture(autouse=True)
@@ -57,21 +57,21 @@ def update_bundle(root, *, version=None, readme=None, component_digest=None):
     catalog = json.loads((root / "catalog.json").read_bytes())
     entry = catalog["recipes"][0]
     bundle = root / entry["directory"]
-    manifest = json.loads((bundle / "mcpme.recipe.json").read_bytes())
+    manifest = json.loads((bundle / "meecp.recipe.json").read_bytes())
     if version is not None:
         manifest["version"] = entry["version"] = version
     if component_digest is not None:
         manifest["steps"][0]["digest"] = component_digest
     manifest_data = json.dumps(manifest, sort_keys=True, indent=2).encode() + b"\n"
-    (bundle / "mcpme.recipe.json").write_bytes(manifest_data)
+    (bundle / "meecp.recipe.json").write_bytes(manifest_data)
     if readme is not None:
         (bundle / "README.md").write_text(readme)
-    lock = json.loads((bundle / "mcpme.recipe.lock.json").read_bytes())
+    lock = json.loads((bundle / "meecp.recipe.lock.json").read_bytes())
     lock["manifest_sha256"] = hashlib.sha256(manifest_data).hexdigest()
     for item in lock["artifacts"]:
         data = (bundle / item["path"]).read_bytes()
         item.update(sha256=hashlib.sha256(data).hexdigest(), size=len(data))
-    (bundle / "mcpme.recipe.lock.json").write_text(json.dumps(lock, sort_keys=True, indent=2) + "\n")
+    (bundle / "meecp.recipe.lock.json").write_text(json.dumps(lock, sort_keys=True, indent=2) + "\n")
     entry["digest"] = validate_bundle(bundle)["digest"]
     (root / "catalog.json").write_text(json.dumps(catalog, sort_keys=True, indent=2) + "\n")
     return entry, bundle
@@ -201,7 +201,7 @@ def test_new_immutable_catalog_version_can_seed_when_older_version_stays_enabled
 
 
 def test_unlocked_recipe_upgrade_migrates_historical_seed_without_collision(store, tmp_path, monkeypatch):
-    """The shipped 1.0.1 bundle can coexist with a seeded historical 1.0.0."""
+    """The shipped bundle can coexist with a seeded historical 1.0.0."""
     historical = Path(__file__).parents[1] / "templates/builtin-recipes/agent-unlocked-python-adapter-v1-0-0"
     old_root = tmp_path / "historical-catalog"
     old_bundle = old_root / historical.name
@@ -218,7 +218,7 @@ def test_unlocked_recipe_upgrade_migrates_historical_seed_without_collision(stor
 
     shipped = Path(__file__).parents[1] / "templates/builtin-recipes"
     active_root = tmp_path / "active-catalog"
-    active_bundle = active_root / "agent-unlocked-python-adapter-v1-0-1"
+    active_bundle = active_root / "agent-unlocked-python-adapter-v1-0-2"
     active_bundle.parent.mkdir()
     shutil.copytree(shipped / active_bundle.name, active_bundle)
     active_entry = next(item for item in json.loads((shipped / "catalog.json").read_bytes())["recipes"]
@@ -226,7 +226,7 @@ def test_unlocked_recipe_upgrade_migrates_historical_seed_without_collision(stor
     (active_root / "catalog.json").write_text(json.dumps({"schema_version": 1, "recipes": [active_entry]}))
     monkeypatch.setattr(seeds, "CATALOG_ROOT", active_root)
     new = only(store)
-    assert new["ready"] is True and new["recipe"]["version"] == "1.0.1"
+    assert new["ready"] is True and new["recipe"]["version"] == active_entry["version"]
     assert len(store.list()) == 2
     assert store.inspect(old["recipe_id"], old["version"]) == before
 
@@ -246,7 +246,7 @@ def test_unlocked_recipe_upgrade_preserves_historical_opt_out(store, tmp_path, m
 
     shipped = Path(__file__).parents[1] / "templates/builtin-recipes"
     active_root = tmp_path / "active-catalog"
-    active_bundle = active_root / "agent-unlocked-python-adapter-v1-0-1"
+    active_bundle = active_root / "agent-unlocked-python-adapter-v1-0-2"
     active_bundle.parent.mkdir()
     shutil.copytree(shipped / active_bundle.name, active_bundle)
     active_entry = next(item for item in json.loads((shipped / "catalog.json").read_bytes())["recipes"]
@@ -360,8 +360,8 @@ def test_catalog_is_closed_bounded_versioned_and_path_safe(store, tmp_path, monk
 
 
 def test_default_is_usable_by_generated_questions_when_forms_are_integrated(store, tmp_path):
-    forms = pytest.importorskip("mcpme.preparation_forms", reason="form integration is owned by the root checkout")
-    from mcpme.preparations import PreparationStore
+    forms = pytest.importorskip("meecp.preparation_forms", reason="form integration is owned by the root checkout")
+    from meecp.preparations import PreparationStore
     only(store)
     source = tmp_path / "source"
     source.mkdir()

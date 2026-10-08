@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import anyio
 import pytest
 
-from mcpme_textgen.adapter import BoundedTextGenerator, LoopbackTransport, TextGenerationError, request_fields
+from meecp_textgen.adapter import BoundedTextGenerator, LoopbackTransport, TextGenerationError, request_fields
 
 
 REQUEST = {"text": "A synthetic request", "max_output_tokens": 8}

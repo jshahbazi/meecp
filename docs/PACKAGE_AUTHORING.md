@@ -1,6 +1,6 @@
 # Preparing an app package with an external agent
 
-Phase 2 onboarding uses a versioned setup export, a selected private source snapshot, and an explicitly invoked agent preparation recipe. The host never imports source modules, runs a build script, or starts an agent during intake, attachment, or planning. A prepared package runs only during the authorized installation/runtime checks. Package contracts and lifecycle behavior remain defined in [MCPME_DESIGN.md](MCPME_DESIGN.md).
+Phase 2 onboarding uses a versioned setup export, a selected private source snapshot, and an explicitly invoked agent preparation recipe. The host never imports source modules, runs a build script, or starts an agent during intake, attachment, or planning. A prepared package runs only during the authorized installation/runtime checks. Package contracts and lifecycle behavior remain defined in [MEECP_DESIGN.md](MEECP_DESIGN.md).
 
 ## Preparation templates
 
@@ -18,7 +18,7 @@ Create or resume a draft through Add App or the `imports` CLI. Record the intend
 
 ```sh
 umask 077
-scripts/mcpme imports export DRAFT_UUID --revision REVISION --json > /absolute/path/to/agent-workspace/setup-export.json
+scripts/meecp imports export DRAFT_UUID --revision REVISION --json > /absolute/path/to/agent-workspace/setup-export.json
 ```
 
 The export contains `draft_id`, integer `revision`, and `source` with the exact `revision`, an absolute `snapshot_path`, and selected `files` containing package-relative `path`, SHA-256, and byte `size`. Folder, document and model snapshots use a directory root. Model artifact collections additionally carry their versioned roles and executable flags. Source identity includes selected uncommitted files; generated caches, local environments, and credentials are excluded by intake. Structured requirements and host/template compatibility accompany the source references. No credential values appear in the export.
@@ -29,7 +29,7 @@ For the Python callable generator, a selected `arithmetic.py` exporting `add_num
 
 Preparation requires `uv`, managed CPython 3.12.13, and the committed root `pyproject.toml`/`uv.lock` dependency baseline. Build-time tools remain in the agent workspace. The generated package receives its own materialized interpreter, hash-checked wheel dependencies, `uv.lock`, requirements export, runtime receipt, license files, and complete per-artifact package lock. Runtime launch requires no uv, global Python, Homebrew, editable checkout, or runtime downloads. When adding dependencies, copy the baseline into an agent-owned project, resolve it with `uv`, retain MCP SDK 1.30.0, and supply `--dependency-project`. The generator installs wheels only and rejects another MCP SDK revision.
 
-When starting from a distributed host, copy its `templates/`, `backend/mcpme/`, `pyproject.toml`, and `uv.lock` into the external agent workspace, preserving that directory layout. Use the workspace copy as the `--project` path in the template commands. This gives the generator its static validator and locked dependencies without creating a build environment inside the signed app bundle.
+When starting from a distributed host, copy its `templates/`, `backend/meecp/`, `pyproject.toml`, and `uv.lock` into the external agent workspace, preserving that directory layout. Use the workspace copy as the `--project` path in the template commands. This gives the generator its static validator and locked dependencies without creating a build environment inside the signed app bundle.
 
 Declared filesystem/network access and side effects must match actual behavior. Access metadata and annotations do not enforce an operating-system sandbox. Programs run as the current user. Packages can declare [typed nonsecret configuration and logical secret names](CONFIGURATION_SECRETS.md); prepared adapters read their selected values from the private `MCPME_SETTINGS_FD` descriptor. Keep material out of source, fixtures, packages, and preparation exports. Detached child processes, adoption of existing services, unsupported callbacks, model artifacts without a supported verified engine and tool profile, and reference-document services remain blocked where their host support is missing. Preserve unresolved requirements and use content-free error codes; do not include source text, production inputs, response bodies, credentials, or exception dumps in preparation diagnostics.
 
@@ -62,9 +62,9 @@ an old external-agent return to attach to a newer revision.
 Attach the complete package to the same draft and integer revision from the export:
 
 ```sh
-scripts/mcpme imports attach DRAFT_UUID --revision REVISION \
+scripts/meecp imports attach DRAFT_UUID --revision REVISION \
   --package /absolute/path/to/agent-workspace/prepared-package --json
-scripts/mcpme install plan --import DRAFT_UUID --revision REVISION --json
+scripts/meecp install plan --import DRAFT_UUID --revision REVISION --json
 ```
 
 Attachment statically validates and snapshots the result. It requires the manifest's `source_revision` to match the selected source identity, rejects stale draft revisions, and does not install or run the service. Changes to tools, access, or requirements must be reflected in a revised draft and exact installation plan. Later edits to the agent's output or original checkout do not change the accepted snapshot.

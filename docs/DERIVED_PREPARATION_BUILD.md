@@ -78,7 +78,7 @@ Verification on this checkpoint:
 - `uv run pytest -q`: 1,959 passed, 12 opt-in skips, 160.50 seconds.
 - `uv run pytest -q tests/test_recipe_component_evidence.py`: 5 passed,
   including the additional unchanged legacy-default seed regression.
-- `MCPME_RESOLUTION_HOST=/Users/johnshahbazian/.codex/worktrees/phase2-onboarding/mcpme/dist/mcpme-phase3-native-artifacts-host-final uv run pytest -q tests/test_preparation_derived_build.py`:
+- `MEECP_RESOLUTION_HOST=/Users/johnshahbazian/.codex/worktrees/phase2-onboarding/mcpme/dist/mcpme-phase3-native-artifacts-host-final uv run pytest -q tests/test_preparation_derived_build.py`:
   7 passed, 51.75 seconds. This uses that built host's sealed private toolchain
   and native reaper with the current checkout's owned implementation. It does
   not claim the new implementation has passed installed-host/native acceptance.

@@ -10,22 +10,22 @@ from types import SimpleNamespace
 
 import pytest
 
-from mcpme import preparation_release_artifact as module
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_release_policy import POLICY_PATH
+from meecp import preparation_release_artifact as module
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_release_policy import POLICY_PATH
 
 
 @pytest.fixture
 def artifact(tmp_path, monkeypatch):
     app = tmp_path / "Synthetic.app"
     host = app / "Contents/Resources/host"
-    source = host / "backend/mcpme/preparation_release_artifact.py"
+    source = host / "backend/meecp/preparation_release_artifact.py"
     source.parent.mkdir(parents=True)
     source.write_bytes(b"synthetic module member")
     policy = host / POLICY_PATH; policy.parent.mkdir(parents=True); policy.write_bytes(b"{}")
-    native = app / "Contents/MacOS/mcpme"; native.parent.mkdir(); native.write_bytes(b"synthetic native member")
+    native = app / "Contents/MacOS/meecp"; native.parent.mkdir(); native.write_bytes(b"synthetic native member")
     seal_file = app / "Contents/_CodeSignature/CodeResources"; seal_file.parent.mkdir(); seal_file.write_bytes(b"synthetic seal")
-    info = {"CFBundleIdentifier": "com.jshahbazi.mcpme", "CFBundleExecutable": "mcpme", "CFBundleShortVersionString": "1.0.0"}
+    info = {"CFBundleIdentifier": "com.jshahbazi.mcpme", "CFBundleExecutable": "meecp", "CFBundleShortVersionString": "1.0.0"}
     (app / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
     build = {"host_version": "1.0.0", "source_commit": "a"*40, "source_tree_dirty": False,
         "signing": "developer_id", "distribution": "bundled_native_app_host", "python": "3.12", "toolchain": "private",
@@ -61,9 +61,9 @@ def test_held_proof_never_recaptures_replacement_artifact(artifact, damage):
     if damage == "policy": policy.write_bytes(b"[]")
     elif damage == "build": (host/"build.json").write_bytes(b"{}")
     elif damage == "seal": (app/"Contents/_CodeSignature/CodeResources").write_bytes(b"changed")
-    elif damage == "member": (host/"backend/mcpme/preparation_release_artifact.py").write_bytes(b"changed")
+    elif damage == "member": (host/"backend/meecp/preparation_release_artifact.py").write_bytes(b"changed")
     elif damage == "samebytes": policy.unlink(); policy.write_bytes(b"{}")
-    else: (host/"backend/mcpme/foreign").write_bytes(b"changed")
+    else: (host/"backend/meecp/foreign").write_bytes(b"changed")
     with pytest.raises(PreparationError): proof.check_current(full=True)
     if damage not in {"member", "membership"}:
         with pytest.raises(PreparationError): proof.check_current()

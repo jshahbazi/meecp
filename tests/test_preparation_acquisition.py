@@ -7,10 +7,10 @@ import time
 
 import pytest
 
-from mcpme.downloads import DownloadError
-from mcpme.preparation_acquisition import WheelAcquirer
-from mcpme.preparation_builder import WheelRequest
-from mcpme.preparation_contracts import PreparationError
+from meecp.downloads import DownloadError
+from meecp.preparation_acquisition import WheelAcquirer
+from meecp.preparation_builder import WheelRequest
+from meecp.preparation_contracts import PreparationError
 
 
 class Network:

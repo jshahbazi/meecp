@@ -4,11 +4,11 @@ import json
 
 import pytest
 
-from mcpme import preparation_release_artifact as artifact_module
-from mcpme import preparation_release_command_admission as command_module
-from mcpme import preparation_release_policy as policy_module
-from mcpme import recipes
-from mcpme.preparation_contracts import PreparationError, contract_digest
+from meecp import preparation_release_artifact as artifact_module
+from meecp import preparation_release_command_admission as command_module
+from meecp import preparation_release_policy as policy_module
+from meecp import recipes
+from meecp.preparation_contracts import PreparationError, contract_digest
 from test_preparation_release_policy import KEY, closed, write_policy
 
 

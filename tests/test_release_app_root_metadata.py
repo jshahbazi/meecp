@@ -7,10 +7,10 @@ import time
 
 import pytest
 
-from mcpme import preparation_release_artifact as artifact_module
-from mcpme import preparation_release_command_admission as command
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_release_policy import POLICY_PATH
+from meecp import preparation_release_artifact as artifact_module
+from meecp import preparation_release_command_admission as command
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_release_policy import POLICY_PATH
 from test_preparation_release_artifact import artifact
 from test_preparation_release_command_admission import packaged, policy
 
@@ -30,7 +30,7 @@ def ctime_only(path):
 
 
 def shared_proof(packaged, monkeypatch):
-    monkeypatch.setattr(artifact_module, "__file__", str(packaged.host / "backend/mcpme/preparation_release_artifact.py"))
+    monkeypatch.setattr(artifact_module, "__file__", str(packaged.host / "backend/meecp/preparation_release_artifact.py"))
     monkeypatch.setattr(artifact_module, "_signature", lambda _: None)
     return artifact_module.verify_release_artifact(packaged.host, POLICY_PATH, b"{}")
 
@@ -184,14 +184,14 @@ def test_cosmetic_root_xattr_preserves_held_acl_and_flags(artifact):
     metadata = proof._app_root_metadata
     before = artifact_module._identity(app)
     try:
-        result = NATIVE_RUN(["/usr/bin/xattr", "-w", "com.mcpme.synthetic-review", "synthetic", str(app)], capture_output=True, timeout=5)
+        result = NATIVE_RUN(["/usr/bin/xattr", "-w", "com.meecp.synthetic-review", "synthetic", str(app)], capture_output=True, timeout=5)
         assert result.returncode == 0
         assert artifact_module._identity(app)[:-1] == before[:-1]
         assert artifact_module._identity(app)[-1] != before[-1]
         for _ in range(10): proof.check_current(full=True)
         assert proof._app_root_metadata is metadata
     finally:
-        result = NATIVE_RUN(["/usr/bin/xattr", "-d", "com.mcpme.synthetic-review", str(app)], capture_output=True, timeout=5)
+        result = NATIVE_RUN(["/usr/bin/xattr", "-d", "com.meecp.synthetic-review", str(app)], capture_output=True, timeout=5)
         assert result.returncode == 0
         set_acl(app)
 

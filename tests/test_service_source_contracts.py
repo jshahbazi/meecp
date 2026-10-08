@@ -4,10 +4,10 @@ import uuid
 
 import pytest
 
-from mcpme.imports import ImportStore
-from mcpme.preparation_contracts import ExecutionPolicy
-from mcpme.preparation_service_contracts import ServiceConnectionV1, ServiceSourceV1
-from mcpme.preparation_service_source import create, revise
+from meecp.imports import ImportStore
+from meecp.preparation_contracts import ExecutionPolicy
+from meecp.preparation_service_contracts import ServiceConnectionV1, ServiceSourceV1
+from meecp.preparation_service_source import create, revise
 
 
 def connection():

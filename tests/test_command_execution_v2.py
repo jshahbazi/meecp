@@ -10,9 +10,9 @@ import subprocess
 import sys
 
 import pytest
-import mcpme.command_execution_v2 as command_module
+import meecp.command_execution_v2 as command_module
 
-from mcpme.command_execution_v2 import CommandExecutorV2, CommandExecutionError, CommandSpecV2, SEED_SIZE
+from meecp.command_execution_v2 import CommandExecutorV2, CommandExecutionError, CommandSpecV2, SEED_SIZE
 
 ROOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.skipif(platform.system() != "Darwin" or platform.machine() != "arm64" or
@@ -28,7 +28,7 @@ def compile_c(source, target):
 @pytest.fixture(scope="module")
 def binaries(tmp_path_factory):
     root = tmp_path_factory.mktemp("command-v2")
-    helper = compile_c(ROOT / "scripts/mcpme-command-reap.c", root / "reaper")
+    helper = compile_c(ROOT / "scripts/meecp-command-reap.c", root / "reaper")
     package = root / "package"
     package.mkdir(mode=0o700)
     target = compile_c(ROOT / "tests/fixtures/command_v2_target.c", package / "target")
@@ -186,7 +186,7 @@ async def test_revocation_fences_output_after_settlement(binaries, tmp_path):
 
 @pytest.mark.asyncio
 async def test_query_failures_and_deadline_keep_pending(binaries, tmp_path):
-    source = (ROOT / "scripts/mcpme-command-reap.c").read_text()
+    source = (ROOT / "scripts/meecp-command-reap.c").read_text()
     for name, expression in [("error", "-1"), ("zero", "0"), ("full", "2"), ("foreign", "1")]:
         # Compile-time test substitution only; no production fault switches.
         altered = source.replace("proc_listpgrppids(child, members, sizeof(members))", expression)
@@ -209,7 +209,7 @@ def test_actual_host_sigkill_native_cleanup_then_receipt_only_restart(binaries, 
     marker = tmp_path / "host-ready"
     program = "\n".join([
         "import asyncio, hashlib, os", "from pathlib import Path",
-        "from mcpme.command_execution_v2 import CommandExecutorV2, CommandSpecV2",
+        "from meecp.command_execution_v2 import CommandExecutorV2, CommandSpecV2",
         "async def main():",
         f" r = CommandExecutorV2(Path({str(helper)!r}), {hashlib.sha256(helper.read_bytes()).hexdigest()!r}, Path({str(state)!r}), admit=lambda s: True)",
         f" s = CommandSpecV2(Path({str(package)!r}), Path({str(target)!r}), Path({str(package)!r}), {'a' * 64!r}, ('fork-hang',), deadline_ms=3000)",
@@ -249,7 +249,7 @@ def test_exact_helper_binding_required(binaries, tmp_path):
 
 @pytest.mark.asyncio
 async def test_native_receipt_write_failure_retains_pending(binaries, tmp_path):
-    source = (ROOT / "scripts/mcpme-command-reap.c").read_text().replace(
+    source = (ROOT / "scripts/meecp-command-reap.c").read_text().replace(
         "if (result != child || completed(status)) return 74;",
         "close(receipt_fd); if (result != child || completed(status)) return 74;")
     fixture = tmp_path / "receipt-failure.c"
@@ -307,7 +307,7 @@ async def test_private_lock_prevents_concurrent_owner(binaries, tmp_path):
 
 @pytest.mark.asyncio
 async def test_readiness_marker_arriving_between_initial_read_and_exit_proof(binaries, tmp_path):
-    source = (ROOT / "scripts/mcpme-command-reap.c").read_text()
+    source = (ROOT / "scripts/meecp-command-reap.c").read_text()
     initial_read = "if (read(ready[0], &marker, 1) == 1 && marker == 'G') group_ready = 1;"
     assert source.count(initial_read) == 1
     # Force initial reads to miss G. The post-exit read must establish group
@@ -325,7 +325,7 @@ async def test_readiness_marker_arriving_between_initial_read_and_exit_proof(bin
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["sync", "publish"])
 async def test_completion_sync_error_never_releases_reservation(binaries, tmp_path, failure):
-    source = (ROOT / "scripts/mcpme-command-reap.c").read_text()
+    source = (ROOT / "scripts/meecp-command-reap.c").read_text()
     if failure == "publish":
         source = source.replace("return renameatx_np(directory_fd, staged_name, directory_fd, complete_name, RENAME_EXCL);", "return -1;")
     else:
@@ -348,7 +348,7 @@ async def test_completion_sync_error_never_releases_reservation(binaries, tmp_pa
 
 @pytest.mark.asyncio
 async def test_live_reconcile_ignores_unpublished_payload_before_native_sync(binaries, tmp_path):
-    source = (ROOT / "scripts/mcpme-command-reap.c").read_text().replace(
+    source = (ROOT / "scripts/meecp-command-reap.c").read_text().replace(
         "if (fsync(receipt_fd)) return -1;", "usleep(200000); if (fsync(receipt_fd)) return -1;")
     fixture = tmp_path / "slow-sync.c"
     fixture.write_text(source)
@@ -380,7 +380,7 @@ async def test_live_reconcile_ignores_unpublished_payload_before_native_sync(bin
 @pytest.mark.parametrize("sync_fails", [False, True])
 def test_host_sigkill_during_prepublication_sync_never_releases_early(binaries, tmp_path, sync_fails):
     import time
-    source = (ROOT / "scripts/mcpme-command-reap.c").read_text()
+    source = (ROOT / "scripts/meecp-command-reap.c").read_text()
     needle = "if (fsync(receipt_fd)) return -1;"
     assert source.count(needle) == 1
     replacement = "usleep(1200000); if (1) return -1;" if sync_fails else "usleep(1200000); " + needle
@@ -391,7 +391,7 @@ def test_host_sigkill_during_prepublication_sync_never_releases_early(binaries, 
     state = tmp_path / "state"
     program = "\n".join([
         "import asyncio", "from pathlib import Path",
-        "from mcpme.command_execution_v2 import CommandExecutorV2, CommandSpecV2",
+        "from meecp.command_execution_v2 import CommandExecutorV2, CommandSpecV2",
         "async def main():",
         f" r = CommandExecutorV2(Path({str(delayed)!r}), {hashlib.sha256(delayed.read_bytes()).hexdigest()!r}, Path({str(state)!r}), admit=lambda s: True)",
         f" s = CommandSpecV2(Path({str(package)!r}), Path({str(target)!r}), Path({str(package)!r}), {'a' * 64!r}, ('tree',), deadline_ms=5000)",
@@ -440,7 +440,7 @@ def test_host_sigkill_during_prepublication_sync_never_releases_early(binaries, 
 
 @pytest.mark.asyncio
 async def test_publication_never_replaces_existing_completion(binaries, tmp_path):
-    source = (ROOT / "scripts/mcpme-command-reap.c").read_text().replace(
+    source = (ROOT / "scripts/meecp-command-reap.c").read_text().replace(
         "if (fsync(receipt_fd)) return -1;", "usleep(250000); if (fsync(receipt_fd)) return -1;")
     fixture = tmp_path / "exclusive-publication.c"
     fixture.write_text(source)

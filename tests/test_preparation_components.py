@@ -7,13 +7,13 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from mcpme.imports import ImportStore
-from mcpme.preparation_components import (
+from meecp.imports import ImportStore
+from meecp.preparation_components import (
     ComponentReference, ComponentRegistry, PythonSourceComponent, SourceBinding,
     SourceFileBinding, parse_component_descriptor, read_snapshot,
 )
-from mcpme.preparation_contracts import PreparationError, canonical_bytes, contract_digest, parse_descriptor
-from test_mcpme_preparations import descriptor
+from meecp.preparation_contracts import PreparationError, canonical_bytes, contract_digest, parse_descriptor
+from test_meecp_preparations import descriptor
 
 
 @pytest.fixture

@@ -389,7 +389,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
     @objc private func quitApp() { NSApp.terminate(nil) }
 }
 
-// Fixed native login-item operations for a verified mcpme recovery bundle.
+// Fixed native login-item operations for a verified meecp recovery bundle.
 // These return before starting AppKit or the legacy backend.
 if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--mcpme-handoff" {
     let action = CommandLine.arguments[2]

@@ -4,7 +4,7 @@ Phase 3 prepares owner-selected trusted applications under the existing macOS
 same-user boundary. The host reviews exact inputs and operations, owns its
 supported process graph, reserves declared resources, measures the advertised
 workload and rejects stale or invalid results. This is the release target in
-[the application design](MCPME_DESIGN.md) and the original
+[the application design](MEECP_DESIGN.md) and the original
 [automatic preparation plan](AUTOMATIC_PREPARATION.md).
 
 The original plan at `1b881e9` already states this same-user boundary and

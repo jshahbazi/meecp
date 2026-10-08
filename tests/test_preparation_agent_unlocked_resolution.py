@@ -7,11 +7,11 @@ import uuid
 
 import pytest
 
-from mcpme.preparation_agent_unlocked_resolution import (AgentUnlockedResolutionStore,
+from meecp.preparation_agent_unlocked_resolution import (AgentUnlockedResolutionStore,
     OwnedAgentUnlockedResolutionRunner)
-from mcpme.preparation_agent_unlocked_store import read_resolution_inputs
-from mcpme.preparation_contracts import PreparationError, contract_digest
-from mcpme.preparation_resolution import ResolutionRequestV1
+from meecp.preparation_agent_unlocked_store import read_resolution_inputs
+from meecp.preparation_contracts import PreparationError, contract_digest
+from meecp.preparation_resolution import ResolutionRequestV1
 from test_preparation_agent_unlocked_store import foundation, staged, synthetic_resolution
 
 
@@ -34,7 +34,7 @@ def test_plan_start_metadata_checks_do_not_read_proposal_or_source_bytes(foundat
     store, request, candidate = request_for(foundation)
     def forbidden(*args, **kwargs):
         raise AssertionError("full_byte_validation_on_admission")
-    monkeypatch.setattr("mcpme.preparation_agent_unlocked_store.original_snapshot", forbidden)
+    monkeypatch.setattr("meecp.preparation_agent_unlocked_store.original_snapshot", forbidden)
     plan = store.plan(request, candidate, expires_in=300)
     job = store.authorize_start(plan["plan_id"], plan["plan_digest"], str(uuid.uuid4()))
     assert job["state"] == "queued" and job["ownership_settled"] and not job["reservation_retained"]

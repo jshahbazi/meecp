@@ -39,7 +39,7 @@ def test_registered_keychain_signs_and_cleanup_restores_search_list(monkeypatch,
     keychain = root / "signing.keychain-db"
     password = secrets.token_urlsafe(48)
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "mcpme synthetic signing test")])
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "meecp synthetic signing test")])
     now = datetime.datetime.now(datetime.timezone.utc)
     certificate = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
                    .public_key(key.public_key()).serial_number(x509.random_serial_number())

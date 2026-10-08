@@ -61,18 +61,18 @@ MCP_SOURCE = (
 async def verify(host: Path, base: Path) -> dict:
     _host_paths(host)
     _host_imports(host)
-    from mcpme.contracts import validate_package
-    from mcpme.imports import ImportStore
-    from mcpme.ownership_receipts import verify_receipt
-    from mcpme.preparation_contracts import ExecutionPolicy, PreparationError
-    from mcpme.preparation_processes import PreparationExecutor
-    from mcpme.preparation_runner import JournaledPreparationOwner, PreparationRunner
-    from mcpme.preparations import PreparationStore
-    from mcpme.processes import OwnershipLost, _await_ownership
-    from mcpme.recipe_sdk import scaffold_recipe
-    from mcpme.recipes import RecipeStore
+    from meecp.contracts import validate_package
+    from meecp.imports import ImportStore
+    from meecp.ownership_receipts import verify_receipt
+    from meecp.preparation_contracts import ExecutionPolicy, PreparationError
+    from meecp.preparation_processes import PreparationExecutor
+    from meecp.preparation_runner import JournaledPreparationOwner, PreparationRunner
+    from meecp.preparations import PreparationStore
+    from meecp.processes import OwnershipLost, _await_ownership
+    from meecp.recipe_sdk import scaffold_recipe
+    from meecp.recipes import RecipeStore
     _check_module_origins(host)
-    required = host / "backend/mcpme/preparation_runner.py"
+    required = host / "backend/meecp/preparation_runner.py"
     if not required.is_file():
         raise VerificationError("phase3_durable_built_runner_required")
     started = time.monotonic()
@@ -113,7 +113,7 @@ async def verify(host: Path, base: Path) -> dict:
         reserved.pop(identifier, None)
         released.add(identifier)
 
-    runner = PreparationRunner(store, host, host / "bin/mcpme-reap", enabled=True,
+    runner = PreparationRunner(store, host, host / "bin/meecp-reap", enabled=True,
                                reserve_resources=reserve, release_resources=release)
     runners.append(runner)
     policy = ExecutionPolicy(schema_version=1, operations=["build", "probe"], network=["files.pythonhosted.org"],
@@ -178,7 +178,7 @@ async def verify(host: Path, base: Path) -> dict:
         async with asyncio.timeout(WALL_SECONDS):
             # PATH deliberately has no developer tools. Product command envs
             # are closed and every executable is an absolute private path.
-            os.environ["PATH"] = "/mcpme-verification-no-global-tools"
+            os.environ["PATH"] = "/meecp-verification-no-global-tools"
             for label, kind, text in (("callable", "python-callable", CALLABLE_SOURCE),
                                       ("existing", "python-mcp", MCP_SOURCE)):
                 draft, descriptor = await files(fixture, label, kind, text)
@@ -243,8 +243,8 @@ async def verify(host: Path, base: Path) -> dict:
             store.set_workspace(job["job_id"], workspace)
             store.transition(job["job_id"], "preparing")
             await reserve(job["job_id"], policy)
-            extra_owner = JournaledPreparationOwner(host / "bin/mcpme-reap", store, job["job_id"], workspace)
-            executor = PreparationExecutor(host / "bin/mcpme-reap", owner=extra_owner)
+            extra_owner = JournaledPreparationOwner(host / "bin/meecp-reap", store, job["job_id"], workspace)
+            executor = PreparationExecutor(host / "bin/meecp-reap", owner=extra_owner)
             result = await executor.execute(host / "python/bin/python3.12", ["-I", "-S", "-c", "pass"],
                                            workspace, {}, timeout_seconds=10, stdout_limit=1024)
             await executor.close()
@@ -252,7 +252,7 @@ async def verify(host: Path, base: Path) -> dict:
             if (len(metadata) != 1 or not verify_receipt(workspace, metadata[0]) or extra_owner.instances
                     or result.peak_memory_bytes <= 0):
                 raise PreparationError("phase3_durable_native_restart_proof_missing")
-            restarted = PreparationRunner(store, host, host / "bin/mcpme-reap", enabled=True,
+            restarted = PreparationRunner(store, host, host / "bin/meecp-reap", enabled=True,
                                           reserve_resources=reserve, release_resources=release)
             runners.append(restarted)
             _stage("restart_recovery")
@@ -331,7 +331,7 @@ def main() -> int:
     base = result = failure = exception_type = None
     try:
         _host_paths(arguments.host)
-        base = Path(tempfile.mkdtemp(prefix="mcpme-phase3-durable-", dir="/private/tmp")).resolve()
+        base = Path(tempfile.mkdtemp(prefix="meecp-phase3-durable-", dir="/private/tmp")).resolve()
         result = asyncio.run(verify(arguments.host, base))
     except KeyboardInterrupt:
         failure = "phase3_durable_interrupted"

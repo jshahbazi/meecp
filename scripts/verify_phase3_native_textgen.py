@@ -34,8 +34,8 @@ COMPONENT_IDS = frozenset({"llamacpp-cpu-v1", "text-generate-v1"})
 ENABLED_HOST = (
     "import asyncio,logging,sys\nfrom pathlib import Path\n"
     "sys.path[:0]=[sys.argv[1],sys.argv[2]]\nlogging.disable(logging.CRITICAL)\n"
-    "from mcpme.supervisor import serve\nfrom mcpme.preparation_runner import PreparationRunner\n"
-    "from mcpme.preparation_textgen import references\n"
+    "from meecp.supervisor import serve\nfrom meecp.preparation_runner import PreparationRunner\n"
+    "from meecp.preparation_textgen import references\n"
     "def preparation(*args,**kwargs):\n kwargs['enabled']=True\n runner=PreparationRunner(*args,**kwargs)\n"
     " runner.enabled_families=frozenset({references()[1].key})\n return runner\n"
     "asyncio.run(serve(Path(sys.argv[3]),Path(sys.argv[4]),int(sys.argv[5]),preparation_runner_factory=preparation))\n"
@@ -44,7 +44,7 @@ ENABLED_HOST = (
 
 @contextmanager
 def isolated_workspace(report):
-    temporary = tempfile.TemporaryDirectory(prefix="mcpme-native-textgen-", delete=False)
+    temporary = tempfile.TemporaryDirectory(prefix="meecp-native-textgen-", delete=False)
     root, lease = Path(temporary.name).resolve(), {"safe_to_remove": True}
     try:
         yield root, lease
@@ -70,7 +70,7 @@ def check_origins(host):
     _check_module_origins(host)
     import sys
     for name, module in tuple(sys.modules.items()):
-        if name.startswith(("mcpme_textgen", "jevk5_app")):
+        if name.startswith(("meecp_textgen", "jevk5_app")):
             path = getattr(module, "__file__", None)
             common.require(path and Path(path).resolve().is_relative_to(host / "backend"),
                 "textgen_private_module_required")
@@ -96,7 +96,7 @@ def sealed_host_identity(host):
 
 async def join_tasks(tasks):
     """Cancellation never abandons SDK requests or private file-copy threads."""
-    from mcpme.processes import _await_ownership
+    from meecp.processes import _await_ownership
     return await _await_ownership(asyncio.gather(*tasks, return_exceptions=True))
 
 
@@ -171,8 +171,8 @@ def resident_graph(details, ledger, engine_id):
 
 
 async def relocation_probe(package_root, descriptor, reaper, workspace):
-    from mcpme.preparation_textgen_verifier import verify_textgen_package
-    from mcpme.processes import ProcessOwner, _await_ownership
+    from meecp.preparation_textgen_verifier import verify_textgen_package
+    from meecp.processes import ProcessOwner, _await_ownership
     owner = ProcessOwner(reaper)
     try:
         return await verify_textgen_package(package_root, descriptor, reaper, workspace,
@@ -188,7 +188,7 @@ async def relocation_probe(package_root, descriptor, reaper, workspace):
 
 class Harness(capture.Harness):
     async def recipe(self, state, environment, home, action="inspect"):
-        from mcpme.preparation_textgen import VERSION
+        from meecp.preparation_textgen import VERSION
         return await self.cli(state, environment, home, "recipes", action, "--id", RECIPE_ID,
             "--version", VERSION, "--json")
 
@@ -242,7 +242,7 @@ class Harness(capture.Harness):
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
         from mcp.client.streamable_http import streamable_http_client
-        from mcpme_local_transport import private_transport, socket_path
+        from meecp_local_transport import private_transport, socket_path
 
         @asynccontextmanager
         async def initialized(read, write):
@@ -431,10 +431,10 @@ class Harness(capture.Harness):
             "gpu": False, "second_slot_denied": True, "error_code": "resource_blocked"}
 
     async def textgen_case(self, label):
-        from mcpme.contracts import Tool, validate_package
-        from mcpme.preparation_inputs import parse_preparation_receipt, parse_preparation_descriptor
-        from mcpme.preparation_textgen import task_tools, task_fixtures, references, VERSION
-        from mcpme.preparation_contracts import canonical_bytes
+        from meecp.contracts import Tool, validate_package
+        from meecp.preparation_inputs import parse_preparation_receipt, parse_preparation_descriptor
+        from meecp.preparation_textgen import task_tools, task_fixtures, references, VERSION
+        from meecp.preparation_contracts import canonical_bytes
         common.stage("source_intake")
         common.DIAGNOSTIC["case"] = label
         started = time.monotonic()
@@ -616,7 +616,7 @@ async def verify(host_path, native_path, model, report):
         host, native = common.relocate_host_and_native(root, host_path, native_path, report)
         _host_paths(host); _host_imports(host)
         identity = await asyncio.to_thread(sealed_host_identity, host)
-        from mcpme_textgen import fixture
+        from meecp_textgen import fixture
         common.require((fixture.MODEL_BYTES, fixture.MODEL_SHA256, fixture.LICENSE_SHA256) == (MODEL_BYTES, MODEL_SHA256, LICENSE_SHA256),
             "textgen_host_fixture_identity_mismatch")
         report.update({"host_source_commit": identity["source_commit"], "host_source_tree_dirty": False,

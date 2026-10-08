@@ -16,21 +16,21 @@ import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from mcpme.authorization_client import AuthorizationError, SessionAuthorization, SessionCredential, verified_containing_app
-from mcpme.management import Management, serve_streams
-from mcpme.gateway import PROTOCOL_VERSION, encode
-from mcpme.private import ensure_private_directory, write_private_json
-from mcpme_local_transport import socket_path
-from mcpme import __main__ as cli
-from test_mcpme_management_cli import private_manager
-from test_mcpme_packages import make_package
+from meecp.authorization_client import AuthorizationError, SessionAuthorization, SessionCredential, verified_containing_app
+from meecp.management import Management, serve_streams
+from meecp.gateway import PROTOCOL_VERSION, encode
+from meecp.private import ensure_private_directory, write_private_json
+from meecp_local_transport import socket_path
+from meecp import __main__ as cli
+from test_meecp_management_cli import private_manager
+from test_meecp_packages import make_package
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 async def test_real_sdk_credential_free_initialization_and_catalog_without_host(tmp_path):
     state = tmp_path / "absent"
-    parameters = StdioServerParameters(command=sys.executable, args=["-P", "-m", "mcpme", "--state-dir",
+    parameters = StdioServerParameters(command=sys.executable, args=["-P", "-m", "meecp", "--state-dir",
         str(state), "management", "connect", "--profile", str(uuid.uuid4())],
         env={"PYTHONPATH": str(ROOT / "backend")})
     errors = tmp_path / "stderr"
@@ -43,13 +43,13 @@ async def test_real_sdk_credential_free_initialization_and_catalog_without_host(
                     tools = await client.list_tools()
                     await client.send_ping()
                 assert time.monotonic() - started < 2
-                assert initialized.serverInfo.name == "mcpme-management"
+                assert initialized.serverInfo.name == "meecp-management"
                 assert len(tools.tools) == 45
-                assert {"mcpme_request_access", "mcpme_get_authorization_status"} <= {tool.name for tool in tools.tools}
-                denied = await client.call_tool("mcpme_capabilities", {})
+                assert {"meecp_request_access", "meecp_get_authorization_status"} <= {tool.name for tool in tools.tools}
+                denied = await client.call_tool("meecp_capabilities", {})
                 assert denied.isError and denied.structuredContent["error"]["code"] in {
                     "authorization_required", "authorization_pending"}
-                status = await client.call_tool("mcpme_get_authorization_status", {})
+                status = await client.call_tool("meecp_get_authorization_status", {})
                 assert status.structuredContent["status"] in {"pending", "unavailable"}
     assert errors.read_text() == ""
     assert not state.exists()
@@ -64,7 +64,7 @@ async def test_invalid_explicit_file_exits_before_native_authorization(tmp_path,
         if invalid == "unsafe":
             credential.chmod(0o644)
     state = tmp_path / "absent"
-    process = await asyncio.create_subprocess_exec(sys.executable, "-P", "-m", "mcpme", "--state-dir", str(state),
+    process = await asyncio.create_subprocess_exec(sys.executable, "-P", "-m", "meecp", "--state-dir", str(state),
         "--credential-file", str(credential), "management", "connect", env={**os.environ,
             "PYTHONPATH": str(ROOT / "backend")}, stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -177,14 +177,14 @@ async def test_private_acknowledged_token_never_reads_owner_and_eof_ends_lease(t
         authorization = SessionAuthorization(state, str(uuid.uuid4()), poll_interval=0.01, caller=caller)
         management = Management(state, authorization=authorization)
         management.initialized({"name": "SDK", "version": "1"})
-        denied = await management.invoke("mcpme_capabilities", {})
+        denied = await management.invoke("meecp_capabilities", {})
         assert denied.isError and not calls
         approved.set()
         await wait_status(authorization, "approved")
         assert not (state / "manager-connection.json").exists()
         assert any(frame["type"] == "ack" for frame in frames)
         assert token not in json.dumps(authorization.status())
-        assert not (await management.invoke("mcpme_capabilities", {})).isError
+        assert not (await management.invoke("meecp_capabilities", {})).isError
         assert calls[0][1]["token"] == token
         await management.close()
         await asyncio.wait_for(disconnected.wait(), 2)
@@ -208,11 +208,11 @@ async def test_exact_action_requires_separate_request_and_explicit_invocation(tm
             action["idempotency_key"] = str(uuid.uuid4())
         arguments = ({key: value for key, value in action.items() if key != "kind"}
                      if kind == "preparation" else {"plan_id": action["plan_id"]})
-        tool = "mcpme_start_preparation" if kind == "preparation" else "mcpme_apply_" + kind
+        tool = "meecp_start_preparation" if kind == "preparation" else "meecp_apply_" + kind
         route = "/v1/preparations/start" if kind == "preparation" else "/v1/" + kind + "/apply"
         denied = await management.invoke(tool, arguments)
         assert denied.structuredContent["error"]["code"] == "authorization_required" and calls == []
-        requested = await management.invoke("mcpme_request_access", {"action": action})
+        requested = await management.invoke("meecp_request_access", {"action": action})
         assert requested.structuredContent["status"] == "pending"
         pending = await management.invoke(tool, arguments)
         assert pending.structuredContent["error"]["code"] == "authorization_pending" and calls == []
@@ -243,25 +243,25 @@ async def test_upgrade_does_not_reuse_install_authority_and_operation_reads_use_
     authorization.credentials["install"] = SessionCredential("install" * 8, str(uuid.uuid4()), time.time() + 60,
         {"action": actions["install"]})
     management = Management(tmp_path, authorization=authorization)
-    denied = await management.invoke("mcpme_apply_upgrade", {"plan_id": actions["upgrade"]["plan_id"]})
+    denied = await management.invoke("meecp_apply_upgrade", {"plan_id": actions["upgrade"]["plan_id"]})
     assert denied.structuredContent["error"]["code"] == "authorization_required" and calls == []
     authorization.credentials["upgrade"] = SessionCredential("upgrade" * 8, str(uuid.uuid4()), time.time() + 60,
         {"action": actions["upgrade"]})
     for kind in ("upgrade", "install"):
-        assert not (await management.invoke("mcpme_apply_" + kind, {"plan_id": actions[kind]["plan_id"]})).isError
+        assert not (await management.invoke("meecp_apply_" + kind, {"plan_id": actions[kind]["plan_id"]})).isError
     for kind in ("upgrade", "install"):
-        result = await management.invoke("mcpme_get_operation", {"operation_id": operation_ids[kind]})
+        result = await management.invoke("meecp_get_operation", {"operation_id": operation_ids[kind]})
         assert not result.isError and calls[-1][1] == kind * 8
     authorization.credentials.pop("upgrade")
-    result = await management.invoke("mcpme_get_operation", {"operation_id": operation_ids["upgrade"]})
+    result = await management.invoke("meecp_get_operation", {"operation_id": operation_ids["upgrade"]})
     assert not result.isError and calls[-1][1] == "base" * 8
     authorization.credentials["install"] = SessionCredential("replacement" * 8, str(uuid.uuid4()), time.time() + 60,
         {"action": {**actions["install"], "plan_id": str(uuid.uuid4())}})
-    result = await management.invoke("mcpme_get_operation", {"operation_id": operation_ids["install"]})
+    result = await management.invoke("meecp_get_operation", {"operation_id": operation_ids["install"]})
     assert not result.isError and calls[-1][1] == "base" * 8
     authorization.credentials.pop("base")
     before = len(calls)
-    result = await management.invoke("mcpme_get_operation", {"operation_id": operation_ids["install"]})
+    result = await management.invoke("meecp_get_operation", {"operation_id": operation_ids["install"]})
     assert result.structuredContent["error"]["code"] == "authorization_required" and len(calls) == before
     await management.close()
 
@@ -291,7 +291,7 @@ async def test_expired_session_and_missing_exact_credentials_never_use_owner(tmp
     authorization.credentials["base"] = SessionCredential("x" * 32, str(uuid.uuid4()), time.time() - 1,
                                                           {"scopes": ["inspect"]})
     management = Management(tmp_path, authorization=authorization, caller=forbidden)
-    result = await management.invoke("mcpme_capabilities", {})
+    result = await management.invoke("meecp_capabilities", {})
     assert result.structuredContent["error"]["code"] == "authorization_expired"
     assert not authorization.credentials
 
@@ -359,24 +359,24 @@ async def test_proposal_switch_drains_delayed_status_before_action_handoff(tmp_p
 
 
 async def test_app_launch_checks_containing_bundle_and_signature_before_open(tmp_path, monkeypatch):
-    app = (tmp_path / "mcpme.app").resolve()
-    module = app / "Contents/Resources/host/backend/mcpme/authorization_client.py"
+    app = (tmp_path / "meecp.app").resolve()
+    module = app / "Contents/Resources/host/backend/meecp/authorization_client.py"
     module.parent.mkdir(parents=True)
     module.write_text("# synthetic embedded bridge\n")
-    binary = app / "Contents/MacOS/mcpme"
+    binary = app / "Contents/MacOS/meecp"
     binary.parent.mkdir()
     binary.write_bytes(b"synthetic executable")
     binary.chmod(0o755)
     metadata = app / "Contents/Info.plist"
-    info = {"CFBundleIdentifier": "com.jshahbazi.mcpme", "CFBundleExecutable": "mcpme"}
+    info = {"CFBundleIdentifier": "com.jshahbazi.mcpme", "CFBundleExecutable": "meecp"}
     metadata.write_bytes(plistlib.dumps(info))
     (app / "Contents/Resources/host/native-app.json").write_text(json.dumps({"schema_version": 1,
-        "bundle_identifier": "com.jshahbazi.mcpme", "native_executable": "../../MacOS/mcpme"}))
+        "bundle_identifier": "com.jshahbazi.mcpme", "native_executable": "../../MacOS/meecp"}))
     calls = []
     async def verify(arguments, timeout):
         calls.append((arguments, timeout))
         return True
-    monkeypatch.setattr("mcpme.authorization_client._quiet_process", verify)
+    monkeypatch.setattr("meecp.authorization_client._quiet_process", verify)
     assert await verified_containing_app(app, module_path=module)
     assert calls == [(["/usr/bin/codesign", "--verify", "--strict", "--deep", str(app)], 15)]
     calls.clear()
@@ -397,7 +397,7 @@ async def test_real_sdk_pending_owner_approval_and_disconnect_revoke(tmp_path):
         endpoint = cli.read_private_json(host.root / "manager-connection.json")["endpoint"]
         await host.authorization.start(endpoint)
         profile = host.authorization.create_profile({})["profile"]["profile_id"]
-        parameters = StdioServerParameters(command=sys.executable, args=["-P", "-m", "mcpme", "--state-dir",
+        parameters = StdioServerParameters(command=sys.executable, args=["-P", "-m", "meecp", "--state-dir",
             str(host.root), "management", "connect", "--profile", profile],
             env={"PYTHONPATH": str(ROOT / "backend")})
         with (tmp_path / "stderr").open("w") as stderr:
@@ -413,14 +413,14 @@ async def test_real_sdk_pending_owner_approval_and_disconnect_revoke(tmp_path):
                         while not host.authorization.list_requests()["requests"]:
                             await asyncio.sleep(0.01)
                     request = host.authorization.list_requests()["requests"][0]
-                    assert (await client.call_tool("mcpme_capabilities", {})).isError
+                    assert (await client.call_tool("meecp_capabilities", {})).isError
                     host.authorization.approve(request["request_id"], {"remember": False,
                         "account_scoped_consent": False, "scopes": request["scopes"],
                         **{key: request[key] for key in ("scope_digest", "policy_revision", "generation")}})
                     async with asyncio.timeout(3):
-                        while (await client.call_tool("mcpme_get_authorization_status", {})).structuredContent["status"] != "approved":
+                        while (await client.call_tool("meecp_get_authorization_status", {})).structuredContent["status"] != "approved":
                             await asyncio.sleep(0.01)
-                    assert not (await client.call_tool("mcpme_capabilities", {})).isError
+                    assert not (await client.call_tool("meecp_capabilities", {})).isError
                     session = host.authorization.list_sessions()["sessions"][0]["session_id"]
                     assert host.authorization.credentials[session]["active"] == 1
         async with asyncio.timeout(2):
@@ -442,7 +442,7 @@ async def test_live_broker_approval_remember_reconnect_revoke_and_rotation(tmp_p
             while not host.authorization.list_requests()["requests"]:
                 await asyncio.sleep(0.01)
         request = host.authorization.list_requests()["requests"][0]
-        denied = await management.invoke("mcpme_capabilities", {})
+        denied = await management.invoke("meecp_capabilities", {})
         assert denied.isError
         await cli.call(host.root, "POST", "/v1/authorization/requests/" + request["request_id"] + "/approve", {
             "remember": True, "account_scoped_consent": True, "scopes": ["inspect", "plan"],
@@ -450,7 +450,7 @@ async def test_live_broker_approval_remember_reconnect_revoke_and_rotation(tmp_p
             "generation": request["generation"]})
         await wait_status(authorization, "approved")
         first = authorization.credentials["base"].token
-        assert not (await management.invoke("mcpme_capabilities", {})).isError
+        assert not (await management.invoke("meecp_capabilities", {})).isError
         # The client's renewal threshold rotates through the live broker ACK
         # protocol while retaining the exact remembered scope.
         old_grant = authorization.credentials["base"].grant_id
@@ -460,7 +460,7 @@ async def test_live_broker_approval_remember_reconnect_revoke_and_rotation(tmp_p
                 await asyncio.sleep(0.01)
         assert authorization.credentials["base"].token != first
         assert host.authorization.credentials[old_grant]["active"] == 0
-        assert not (await management.invoke("mcpme_capabilities", {})).isError
+        assert not (await management.invoke("meecp_capabilities", {})).isError
         await management.close()
         reconnect = SessionAuthorization(host.root, profile, poll_interval=0.01)
         reconnected = Management(host.root, authorization=reconnect)
@@ -468,9 +468,9 @@ async def test_live_broker_approval_remember_reconnect_revoke_and_rotation(tmp_p
         await wait_status(reconnect, "approved")
         assert reconnect.credentials["base"].token != first
         assert not host.authorization.list_requests()["requests"]
-        assert not (await reconnected.invoke("mcpme_capabilities", {})).isError
+        assert not (await reconnected.invoke("meecp_capabilities", {})).isError
         await cli.call(host.root, "POST", "/v1/authorization/profiles/" + profile + "/revoke", {})
-        assert (await reconnected.invoke("mcpme_capabilities", {})).isError
+        assert (await reconnected.invoke("meecp_capabilities", {})).isError
         await reconnected.close()
 
 
@@ -497,33 +497,33 @@ async def test_live_exact_denial_expiry_base_renewal_and_explicit_install(tmp_pa
         first_base = authorization.credentials["base"].grant_id
         plan = host.plan_install({"package": str(package)})
         action = {"kind": "install", "plan_id": plan["plan_id"], "plan_digest": plan["plan_digest"]}
-        assert (await management.invoke("mcpme_apply_install", {"plan_id": plan["plan_id"]})).isError
-        await management.invoke("mcpme_request_access", {"action": action})
+        assert (await management.invoke("meecp_apply_install", {"plan_id": plan["plan_id"]})).isError
+        await management.invoke("meecp_request_access", {"action": action})
         request = await pending()
         assert request["kind"] == "install"
         host.authorization.owner_route("POST", "/v1/authorization/requests/" + request["request_id"] + "/deny", {})
         await wait_status(authorization, "denied")
         assert authorization.credentials["base"].grant_id == first_base
-        assert not (await management.invoke("mcpme_capabilities", {})).isError
-        await management.invoke("mcpme_request_access", {"action": action})
+        assert not (await management.invoke("meecp_capabilities", {})).isError
+        await management.invoke("meecp_request_access", {"action": action})
         request = await pending()
         host.authorization.requests[request["request_id"]]["expires_at"] = time.time() - 1
         await wait_status(authorization, "expired")
         assert authorization.credentials["base"].grant_id == first_base
-        assert not (await management.invoke("mcpme_capabilities", {})).isError
+        assert not (await management.invoke("meecp_capabilities", {})).isError
         authorization.credentials["base"].expires_at = time.time() + 30
         async with asyncio.timeout(2):
             while authorization.credentials["base"].grant_id == first_base:
                 await asyncio.sleep(0.01)
         assert host.authorization.credentials[first_base]["active"] == 0
-        await management.invoke("mcpme_request_access", {"action": action})
+        await management.invoke("meecp_request_access", {"action": action})
         approve(await pending())
         await wait_status(authorization, "approved")
         assert len(host.registry.list_operations()) == 0
-        result = await management.invoke("mcpme_apply_install", {"plan_id": plan["plan_id"]})
+        result = await management.invoke("meecp_apply_install", {"plan_id": plan["plan_id"]})
         assert not result.isError and "operation_id" in result.structuredContent
         assert len(host.registry.list_operations()) == 1
-        changed = await management.invoke("mcpme_apply_install", {"plan_id": str(uuid.uuid4())})
+        changed = await management.invoke("meecp_apply_install", {"plan_id": str(uuid.uuid4())})
         assert changed.structuredContent["error"]["code"] == "authorization_required"
         assert len(host.registry.list_operations()) == 1
         grants = [credential.grant_id for credential in authorization.credentials.values()]
@@ -552,12 +552,12 @@ async def test_owner_reduced_scopes_require_new_consent_for_expansion(tmp_path):
         await wait_status(authorization, "approved")
         original = authorization.credentials["base"].grant_id
         assert authorization.credentials["base"].proposal == {"scopes": ["inspect"]}
-        result = await management.invoke("mcpme_request_access", {"scopes": ["plan", "inspect"]})
+        result = await management.invoke("meecp_request_access", {"scopes": ["plan", "inspect"]})
         assert result.structuredContent["status"] == "pending"
         pending = await request()
         assert pending["scopes"] == ["inspect", "plan"] and pending["policy_revision"] == 1
         assert authorization.credentials["base"].grant_id == original
-        assert not (await management.invoke("mcpme_capabilities", {})).isError
+        assert not (await management.invoke("meecp_capabilities", {})).isError
         approve(pending, ["inspect", "plan"])
         await wait_status(authorization, "approved")
         assert authorization.credentials["base"].grant_id != original
@@ -583,7 +583,7 @@ async def test_expired_base_scope_replacement_preserves_prior_live_ceiling(tmp_p
             "scopes": ["inspect"], **{key: initial[key] for key in ("scope_digest", "policy_revision", "generation")}})
         await wait_status(authorization, "approved")
         original = authorization.credentials["base"].grant_id
-        await management.invoke("mcpme_request_access", {"scopes": ["inspect", "plan"]})
+        await management.invoke("meecp_request_access", {"scopes": ["inspect", "plan"]})
         replacement = await request()
         host.authorization.requests[replacement["request_id"]]["expires_at"] = time.time() - 1
         await wait_status(authorization, "expired")
@@ -591,8 +591,8 @@ async def test_expired_base_scope_replacement_preserves_prior_live_ceiling(tmp_p
         assert authorization.credentials["base"].grant_id == original
         assert authorization.credentials["base"].proposal == {"scopes": ["inspect"]}
         assert host.authorization.credentials[original]["active"] == 1
-        assert not (await management.invoke("mcpme_capabilities", {})).isError
-        denied = await management.invoke("mcpme_plan_install", {"package": str(tmp_path / "unavailable")})
+        assert not (await management.invoke("meecp_capabilities", {})).isError
+        denied = await management.invoke("meecp_plan_install", {"package": str(tmp_path / "unavailable")})
         assert denied.structuredContent["error"]["code"] == "grant_scope"
         assert host.authorization.profiles[profile]["scopes"] == ["inspect"]
         await management.close()
@@ -602,5 +602,5 @@ async def test_expired_base_scope_replacement_preserves_prior_live_ceiling(tmp_p
     {"scopes": ["inspect"], "action": {"kind": "install", "plan_id": str(uuid.uuid4()), "plan_digest": "f" * 64}},
     {"action": {"kind": "preparation", "plan_id": str(uuid.uuid4()), "plan_digest": "f" * 64}}])
 async def test_authorization_tools_reject_unknown_authority_and_unbound_actions(tmp_path, arguments):
-    result = await Management(tmp_path).invoke("mcpme_request_access", arguments)
+    result = await Management(tmp_path).invoke("meecp_request_access", arguments)
     assert result.structuredContent == {"api_version": 1, "error": {"code": "invalid_tool_arguments"}}

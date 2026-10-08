@@ -11,7 +11,7 @@ from test_recipe_native_management_acceptance import file_identity, native_recip
 
 
 def context(tmp_path, public=False):
-    workspace = tmp_path.resolve() / ("mcpme-native-onboarding-" + str(uuid.uuid4()))
+    workspace = tmp_path.resolve() / ("meecp-native-onboarding-" + str(uuid.uuid4()))
     root = workspace / "directory_guard"
     state, source, home, temporary = (root / name for name in ("state", "source", "home", "tmp"))
     for path in (workspace, root, state, source, home, temporary):

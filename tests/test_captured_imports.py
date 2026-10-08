@@ -7,9 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from mcpme.imports import ImportError, ImportStore, _model_return
-from mcpme.preparation_artifacts import AcquisitionRequestV1, ArtifactStore
-from test_mcpme_imports import prepared_for, source_folder
+from meecp.imports import ImportError, ImportStore, _model_return
+from meecp.preparation_artifacts import AcquisitionRequestV1, ArtifactStore
+from test_meecp_imports import prepared_for, source_folder
 
 
 def captured(tmp_path):

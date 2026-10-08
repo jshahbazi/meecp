@@ -250,7 +250,7 @@ class PublicCommandHarness(command.CommandHarness):
         return result
 
     async def upgrade(self, original):
-        from mcpme.contracts import validate_package
+        from meecp.contracts import validate_package
         require(original["source_removed"] is True and original["original_state_removed"] is True,
             "public_command_upgrade_source_not_removed")
         state = self.root / "relocation/state"
@@ -275,7 +275,7 @@ class PublicCommandHarness(command.CommandHarness):
         upgrade_root = self.root / "second signed build"; upgrade_root.mkdir(mode=0o700)
         copied = {}
         host, native = common.relocate_host_and_native(upgrade_root, self.upgrade_app / "Contents/Resources/host",
-            self.upgrade_app / "Contents/MacOS/mcpme", copied)
+            self.upgrade_app / "Contents/MacOS/meecp", copied)
         require(copied["native_bundle_preserved"] is True, "public_command_upgrade_bundle_not_preserved")
         active_policy(host)
         successor = PublicCommandHarness(upgrade_root, host, native, self.lease,
@@ -315,7 +315,7 @@ async def verify(host, native, fixture, report, *, upgrade_app=None):
         report["active_release_policy_sha256"] = active_policy(host)
         common.verify_host_payload(host)
         signature(app, deep=True)
-        for name in ("mcpme-command-reap", "mcpme-command-resource-reap"):
+        for name in ("meecp-command-reap", "meecp-command-resource-reap"):
             signature(host / "bin" / name)
         if upgrade_app is not None:
             require(upgrade_app != app and upgrade_app.suffix == ".app"
@@ -325,13 +325,13 @@ async def verify(host, native, fixture, report, *, upgrade_app=None):
             report["upgrade_active_release_policy_sha256"] = active_policy(upgrade_host)
             common.verify_host_payload(upgrade_host)
             signature(upgrade_app, deep=True)
-            for name in ("mcpme-command-reap", "mcpme-command-resource-reap"):
+            for name in ("meecp-command-reap", "meecp-command-resource-reap"):
                 require(common.digest(upgrade_host / "bin" / name) == common.digest(host / "bin" / name),
                     "public_command_upgrade_helper_identity_changed")
                 signature(upgrade_host / "bin" / name)
             report["upgrade_signed_app_files"] = sum(record[1] is not None for record in upgrade_before.values())
             report["shared_command_helpers_sha256"] = {name: common.digest(host / "bin" / name)
-                for name in ("mcpme-command-reap", "mcpme-command-resource-reap")}
+                for name in ("meecp-command-reap", "meecp-command-resource-reap")}
         factory = partial(PublicCommandHarness, fixture=fixture, report=report, upgrade_app=upgrade_app)
         await common.verify(host, native, report, harness_factory=factory, cases=("public_native_command",))
     finally:

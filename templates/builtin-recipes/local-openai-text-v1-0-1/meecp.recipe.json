@@ -1,0 +1,49 @@
+{
+  "form": [],
+  "id": "mcpme.local-openai-text",
+  "input_schema": {
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "kind": "declarative",
+  "licenses": [
+    "LICENSE"
+  ],
+  "provenance": {
+    "origin": "meecp host-owned local service connector v1",
+    "publisher": "meecp contributors"
+  },
+  "requirements": {
+    "architecture": "arm64",
+    "capabilities": [
+      "declarative-composition"
+    ],
+    "host_api_version": 1,
+    "os": "macos",
+    "package_schema": 1,
+    "protocol": "2025-11-25"
+  },
+  "schema_version": 1,
+  "steps": [
+    {
+      "component": "openai-chat-completions-v1",
+      "config": {},
+      "digest": "532b386405bc2f780cab626ea10d355d3f5602a7ac9be1622cd7f2f85990f46e",
+      "version": "1.0.0"
+    },
+    {
+      "component": "loopback-http-bearer-v1",
+      "config": {},
+      "digest": "7c7cd180ec08f8401c23c338464ae60e65f7428ef5a3f3f9e026f2cca246f62b",
+      "version": "1.0.0"
+    },
+    {
+      "component": "service-text-generate-v1",
+      "config": {},
+      "digest": "7894f9c2e54b1d40bb62a6e2e7cee4aeff3b02d5920fb966284d655739638fb5",
+      "version": "1.0.0"
+    }
+  ],
+  "version": "1.0.1",
+  "worker_api_version": 1
+}

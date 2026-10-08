@@ -9,7 +9,7 @@ The pinned model is `JevK5-4B-v0.3-Q8_0`: 4,482,402,720 bytes, SHA-256 `aea43388
 Begin with the raw GGUF and an explicitly selected relocated engine build. A build directory contains `llama/`, `licenses/`, and `runtime-manifest.json`; a verified legacy `JevK5.app` can supply that build. Intake reads headers, streams binary hashes, and privately copies only the declared engine closure and licenses. It never executes either artifact.
 
 ```sh
-mcpme imports create --source /absolute/path/to/weights.gguf \
+meecp imports create --source /absolute/path/to/weights.gguf \
   --model-engine /absolute/path/to/verified-engine-build \
   --name "JevK5 Judge" --intent "Expose JevK5 decisions and status" --json
 ```
@@ -25,18 +25,18 @@ Select the explicit requirements through the native draft editor or `imports rev
 }
 ```
 
-A model-only draft retains actionable `engine_artifacts_required`, `model_profile_required`, `model_service_required`, and `model_tools_required` blockers. Add its missing build with `mcpme imports engine DRAFT --revision N --model-engine BUILD --json`, then update the requirements. Both actions advance the revision. An unsupported GGUF version, weight identity, engine closure, receipt, or missing license is rejected before activation.
+A model-only draft retains actionable `engine_artifacts_required`, `model_profile_required`, `model_service_required`, and `model_tools_required` blockers. Add its missing build with `meecp imports engine DRAFT --revision N --model-engine BUILD --json`, then update the requirements. Both actions advance the revision. An unsupported GGUF version, weight identity, engine closure, receipt, or missing license is rejected before activation.
 
 Export the current draft and run the generator in the external agent's workspace:
 
 ```sh
 umask 077
-mcpme imports export DRAFT_UUID --revision REVISION --json > setup.json
+meecp imports export DRAFT_UUID --revision REVISION --json > setup.json
 uv run --locked python templates/jevk5-llamacpp-v1/prepare.py \
   --setup-export /absolute/path/to/setup.json \
-  --host /absolute/path/to/private-mcpme-host \
+  --host /absolute/path/to/private-meecp-host \
   --output /absolute/path/to/agent-workspace/jevk5-package
-mcpme imports attach DRAFT_UUID --revision REVISION \
+meecp imports attach DRAFT_UUID --revision REVISION \
   --package /absolute/path/to/agent-workspace/jevk5-package --json
 ```
 
@@ -49,7 +49,7 @@ The original legacy workflow remains available:
 ```sh
 uv run --locked python scripts/prepare_jevk5_package.py \
   --legacy-app /absolute/path/to/verified/JevK5.app \
-  --host /absolute/path/to/mcpme-host \
+  --host /absolute/path/to/meecp-host \
   --output /absolute/path/to/agent-workspace/jevk5-package
 ```
 
@@ -59,4 +59,4 @@ A raw Homebrew `llama-server` is not the relocated `llama/llama-server.real` art
 
 The legacy workflow derives its source identity from the adapter/scorer build. The `--setup-export` workflow uses the exact import source identity instead, and supplies the receipt that proves the selected raw artifact mapping. Both produce the same host-owned process graph and adapter contract. Further GGUF models and arbitrary engine source builds require their own recipe and compatibility evidence.
 
-For candidate verification, use two real MCP clients, compare `jevk5_decide`/`jevk5_status` contracts, check the exact engine and model identities, confirm one engine instance, and verify synthetic fresh/repeated/changed inputs give cache-hit flags false/true/false. Model functional checks do not establish calibration or general accuracy. [Phase 1 verification](../../docs/MCPME_VERIFICATION.md) records the tested lifecycle and transport behavior.
+For candidate verification, use two real MCP clients, compare `jevk5_decide`/`jevk5_status` contracts, check the exact engine and model identities, confirm one engine instance, and verify synthetic fresh/repeated/changed inputs give cache-hit flags false/true/false. Model functional checks do not establish calibration or general accuracy. [Phase 1 verification](../../docs/MEECP_VERIFICATION.md) records the tested lifecycle and transport behavior.

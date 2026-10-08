@@ -9,9 +9,9 @@ import zipfile
 
 import pytest
 
-from mcpme.pi_environment import copy_regular_tree, extract_archive, extract_regular_archive, prepare_environment, stage_trust_bundle
-from mcpme.pi_tools import PiToolBroker
-from mcpme.preparation_contracts import PreparationError
+from meecp.pi_environment import copy_regular_tree, extract_archive, extract_regular_archive, prepare_environment, stage_trust_bundle
+from meecp.pi_tools import PiToolBroker
+from meecp.preparation_contracts import PreparationError
 from test_preparation_processes import group_reaper
 
 
@@ -112,7 +112,7 @@ async def test_extract_publishes_only_into_unoccupied_private_target(tmp_path, g
         assert result["success"] and (broker.workspace / "tools/tool").read_bytes() == b"tool"
         repeat = await extract_archive(broker, {"archive_path": "runtime.tgz", "target_path": "tools"})
         assert repeat == {"success": False, "output": "pi_environment_target_exists"}
-        assert not list(broker.workspace.glob(".mcpme-extract-*"))
+        assert not list(broker.workspace.glob(".meecp-extract-*"))
     finally:
         await broker.close()
 

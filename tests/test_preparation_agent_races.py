@@ -6,8 +6,8 @@ import time
 
 import pytest
 
-from mcpme.preparation_agent_coordinator import AgentCoordinator
-from mcpme.preparation_contracts import PreparationError
+from meecp.preparation_agent_coordinator import AgentCoordinator
+from meecp.preparation_contracts import PreparationError
 from test_preparation_agent import backend, request_for, response, role_of, store
 
 

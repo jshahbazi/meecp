@@ -8,10 +8,10 @@ import uuid
 
 import pytest
 
-from mcpme.preparation_agent_contracts import AnalysisGuideV1
-from mcpme.preparation_agent_guides import AnalysisGuideRegistry, builtin_analysis_guides
-from mcpme.preparation_agent_host import AgentPreparationHost
-from mcpme.preparation_contracts import PreparationError
+from meecp.preparation_agent_contracts import AnalysisGuideV1
+from meecp.preparation_agent_guides import AnalysisGuideRegistry, builtin_analysis_guides
+from meecp.preparation_agent_host import AgentPreparationHost
+from meecp.preparation_contracts import PreparationError
 from test_preparation_agent import output, response
 from test_preparation_agent_adapter import adapter_foundation
 from test_preparation_agent_host import provider, completed
@@ -60,7 +60,7 @@ def request_only_handler(request):
             unresolved = ["Original license identity was not reviewed for disclosure."]
         files = [
             {"path": "proposed/adapter/adapter.json", "content": json.dumps({"schema_version": 1,
-                "module": "mcpme_generated_agent_adapter", "function": "invoke", "source_license": "LICENSE"})},
+                "module": "meecp_generated_agent_adapter", "function": "invoke", "source_license": "LICENSE"})},
             {"path": "proposed/adapter/wrapper.py", "content": f"from {Path(path).stem} import {function.name}\ndef invoke({arg}: int) -> dict[str, int]:\n return {{'value': {function.name}({arg})}}\n"},
             {"path": "proposed/adapter/LICENSE", "content": "Permission to use, copy and modify this synthetic generated wrapper is granted.\n"}]
     assert all(item["path"] in contract["instructions"] for item in files)

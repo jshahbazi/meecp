@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from mcpme.imports import ImportStore
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_inspection import inspect_source
+from meecp.imports import ImportStore
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_inspection import inspect_source
 
 
 @pytest.fixture
@@ -132,7 +132,7 @@ def test_declared_mcp_script_requires_actual_discovery_and_launch_binding(inspec
 
 def test_module_metadata_is_observed_without_guessing_tools(inspect_fixture):
     _, run = inspect_fixture
-    _, result = run({"pyproject.toml": "[tool.mcpme]\nmcp_module='server'\n", "server.py": "raise RuntimeError('not executed')\n"})
+    _, result = run({"pyproject.toml": "[tool.meecp]\nmcp_module='server'\n", "server.py": "raise RuntimeError('not executed')\n"})
     assert result["candidates"][0]["kind"] == "python-mcp"
     assert result["candidates"][0]["tools"] == []
     assert "dynamic_mcp_discovery_required" in result["candidates"][0]["unresolved"]
@@ -147,7 +147,7 @@ def test_non_mcp_project_script_is_not_assumed_to_be_mcp(inspect_fixture):
 def test_snapshot_mutation_during_parse_invalidates_inspection(inspect_fixture, monkeypatch):
     _, run = inspect_fixture
     draft, _ = run({"worker.py": "def calculate(value: str) -> dict:\n    return {}\n"})
-    import mcpme.preparation_inspection as inspection
+    import meecp.preparation_inspection as inspection
     original = inspection.ast.parse
     def mutate(*args, **kwargs):
         tree = original(*args, **kwargs)
@@ -178,7 +178,7 @@ def test_symlink_snapshot_is_rejected(inspect_fixture):
 
 def test_ast_byte_and_node_limits_are_content_free(inspect_fixture, monkeypatch):
     _, run = inspect_fixture
-    import mcpme.preparation_inspection as inspection
+    import meecp.preparation_inspection as inspection
     monkeypatch.setattr(inspection, "MAX_AST_BYTES", 16)
     _, result = run({"worker.py": "def calculate(value: str) -> dict:\n    return {}\n"})
     assert result["candidates"] == [] and "preparation_inspection_limit" in result["blockers"]
@@ -190,7 +190,7 @@ def test_ast_byte_and_node_limits_are_content_free(inspect_fixture, monkeypatch)
 
 def test_project_limits_and_malformed_toml_do_not_leak_content(inspect_fixture, monkeypatch):
     _, run = inspect_fixture
-    import mcpme.preparation_inspection as inspection
+    import meecp.preparation_inspection as inspection
     monkeypatch.setattr(inspection, "MAX_PROJECT_BYTES", 8)
     _, result = run({"pyproject.toml": "SECRET CONTENT = [\n", "worker.py": "pass\n"})
     assert result["observations"][0]["blockers"] == ["preparation_inspection_limit"]

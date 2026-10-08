@@ -207,7 +207,7 @@ New recipe evidence binds exact selected and transitive components. Independentl
 
 ## Native TLS checkpoint
 
-Live native acceptance exposed a packaged TLS failure under a minimal environment: the private OpenSSL runtime could not establish the managed certificate chain without an inherited CA-file setting. The platform trust evaluator accepts the same chain through local macOS trust. The repair uses a private, exact-wheel truststore 0.10.4 fork, with the complete MIT license and original source hashes retained in `backend/mcpme/_native_tls`.
+Live native acceptance exposed a packaged TLS failure under a minimal environment: the private OpenSSL runtime could not establish the managed certificate chain without an inherited CA-file setting. The platform trust evaluator accepts the same chain through local macOS trust. The repair uses a private, exact-wheel truststore 0.10.4 fork, with the complete MIT license and original source hashes retained in `backend/meecp/_native_tls`.
 
 The independent review reproduced an additional network-scope defect in upstream native trust: an untrusted peer with a missing intermediate caused a loopback HTTP issuer fetch before certificate rejection. The fork disables native network fetching with a checked OSStatus before trust evaluation. It removes the upstream global SSL injection helpers and creates a fresh context per transfer. Resolution producer identities bind the complete Python implementation; host receipts bind the source, license and provenance.
 

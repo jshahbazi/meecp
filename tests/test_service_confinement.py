@@ -7,9 +7,9 @@ import subprocess
 
 import pytest
 
-from mcpme.preparation_probe_confinement import restricted_profile
-from mcpme.preparation_service_contracts import ServiceConnectionV1
-from mcpme.preparation_service_verifier import confined_profile
+from meecp.preparation_probe_confinement import restricted_profile
+from meecp.preparation_service_contracts import ServiceConnectionV1
+from meecp.preparation_service_verifier import confined_profile
 from test_service_source_contracts import connection
 
 

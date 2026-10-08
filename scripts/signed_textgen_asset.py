@@ -12,8 +12,8 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
-from mcpme.preparation_builder import _opened
-from mcpme.preparation_textgen_signed_runtime import manifest, verify_runtime
+from meecp.preparation_builder import _opened
+from meecp.preparation_textgen_signed_runtime import manifest, verify_runtime
 
 MACHO_MAGIC = {b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xce",
                b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca", b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca"}

@@ -6,32 +6,32 @@
       {
         "id": "resolved-python-v1",
         "version": "1.0.1",
-        "digest": "3c24410b46415cb83b9d945ebf0049f552e9f7493943164f311939a79b49000e"
+        "digest": "e5b174b7626e3bb89cd4a8727099662d111608e1465b01218342bb68f10a6b90"
       },
       {
         "id": "yolo11-coco-detect-v1",
         "version": "1.0.0",
-        "digest": "b48bde76ca30787de2e41a6b984c0c80a79b3a4b6ec75637f3147ccfadec3e99"
+        "digest": "869a91491f8772054988d4df367ba53706dbb88a6e3c8dbfcc7f8d0bc39b5888"
       },
       {
         "id": "host-command-json-v1",
         "version": "1.0.1",
-        "digest": "a216f2ed58294410850afc4bd63f9b9b63c945464a1f10d1b735bd8de26cd607"
+        "digest": "339cbe6ebad51b2a0e4e73228e3f7d119d81ac784908fffd93363340bc91684b"
       },
       {
         "id": "text-generate-v1",
         "version": "1.0.21",
-        "digest": "ad814ce4186bd3474fe9759991208d80eca0f491d449a00c38aee44b23c5b1d2"
+        "digest": "248d72f37779f22d57ab3d64b5fc1e706db9092df79da27a762693ce3df81e07"
       },
       {
         "id": "service-text-generate-v1",
         "version": "1.0.0",
-        "digest": "bc540561a87cba329d1d62d837596d6318a2d740fc4f6cf49b3eab95a9145d75"
+        "digest": "7894f9c2e54b1d40bb62a6e2e7cee4aeff3b02d5920fb966284d655739638fb5"
       },
       {
         "id": "agent-unlocked-python-adapter-v1",
         "version": "1.0.0",
-        "digest": "30a6e459f76f4feabff58ff5481b5cc95f9589e03436a8aac109583a4cbfa26c"
+        "digest": "3850d78dc24ab286cd4bb40825e0d52a83869c91c4278c525cfd6462ee822b49"
       }
     ],
     "recipe_component_sets": [
@@ -39,69 +39,69 @@
         {
           "id": "python-function-v1",
           "version": "1.0.0",
-          "digest": "b28f98582aeff09e344b4a7049af7fdadbaf19436dc6724638ab64b6a9139d4e"
+          "digest": "a633c70b645b143d89d25584f4b61a69d490eda01fc986b7e46b54f0bce71561"
         }
       ],
       [
         {
           "id": "resolved-python-v1",
           "version": "1.0.1",
-          "digest": "3c24410b46415cb83b9d945ebf0049f552e9f7493943164f311939a79b49000e"
+          "digest": "e5b174b7626e3bb89cd4a8727099662d111608e1465b01218342bb68f10a6b90"
         }
       ],
       [
         {
           "id": "onnxruntime-cpu-v1",
           "version": "1.0.0",
-          "digest": "ec982f8489de85afd79d6aa715431082e1bba29be48ca06eef457dbcc362d8dc"
+          "digest": "08f524978bf50f0ff1c9aa1f2db57393868076282c3aa879686a22cdff2afd30"
         },
         {
           "id": "yolo11-coco-detect-v1",
           "version": "1.0.0",
-          "digest": "b48bde76ca30787de2e41a6b984c0c80a79b3a4b6ec75637f3147ccfadec3e99"
+          "digest": "869a91491f8772054988d4df367ba53706dbb88a6e3c8dbfcc7f8d0bc39b5888"
         }
       ],
       [
         {
           "id": "host-command-json-v1",
           "version": "1.0.1",
-          "digest": "a216f2ed58294410850afc4bd63f9b9b63c945464a1f10d1b735bd8de26cd607"
+          "digest": "339cbe6ebad51b2a0e4e73228e3f7d119d81ac784908fffd93363340bc91684b"
         }
       ],
       [
         {
           "id": "llamacpp-cpu-v1",
           "version": "1.0.21",
-          "digest": "438e6822bfc22187f91b51f496a6575db5a1bfeb55e7ddf3216d60a98883554d"
+          "digest": "b60b073b403824ab742cdb0a5df7b2008ff5d8b19323b976d510e097f2abbc04"
         },
         {
           "id": "text-generate-v1",
           "version": "1.0.21",
-          "digest": "ad814ce4186bd3474fe9759991208d80eca0f491d449a00c38aee44b23c5b1d2"
+          "digest": "248d72f37779f22d57ab3d64b5fc1e706db9092df79da27a762693ce3df81e07"
         }
       ],
       [
         {
           "id": "openai-chat-completions-v1",
           "version": "1.0.0",
-          "digest": "01d9379a0ed5fdd9fc86e1b6aeb47465f153162af57157cfbd42f6644f338587"
+          "digest": "532b386405bc2f780cab626ea10d355d3f5602a7ac9be1622cd7f2f85990f46e"
         },
         {
           "id": "loopback-http-bearer-v1",
           "version": "1.0.0",
-          "digest": "2f93a9f9258fa5d2b6b9c854f9e828d2f43ceeb7f0108183759e9f428fbaa4dc"
+          "digest": "7c7cd180ec08f8401c23c338464ae60e65f7428ef5a3f3f9e026f2cca246f62b"
         },
         {
           "id": "service-text-generate-v1",
           "version": "1.0.0",
-          "digest": "bc540561a87cba329d1d62d837596d6318a2d740fc4f6cf49b3eab95a9145d75"
+          "digest": "7894f9c2e54b1d40bb62a6e2e7cee4aeff3b02d5920fb966284d655739638fb5"
         }
       ],
       [
         {
           "id": "agent-unlocked-python-adapter-v1",
           "version": "1.0.0",
-          "digest": "30a6e459f76f4feabff58ff5481b5cc95f9589e03436a8aac109583a4cbfa26c"
+          "digest": "3850d78dc24ab286cd4bb40825e0d52a83869c91c4278c525cfd6462ee822b49"
         }
       ]
     ],
@@ -115,13 +115,13 @@
       {
         "id": "agent-unlocked-python-adapter-v1",
         "version": "1.0.0",
-        "digest": "30a6e459f76f4feabff58ff5481b5cc95f9589e03436a8aac109583a4cbfa26c"
+        "digest": "3850d78dc24ab286cd4bb40825e0d52a83869c91c4278c525cfd6462ee822b49"
       }
     ],
     "providers": [
       {
         "adapter_id": "openai-responses-v1",
-        "adapter_digest": "f651b36ab4b3d4fe6479457e5a31f129b1339c41536e02bfb53cbbf4025cebc1",
+        "adapter_digest": "ac66e8bb563139d93577da365b9d3a9b29166244babc9aa215ec90024eda88f1",
         "models": [
           "gpt-6.1-sol"
         ]
@@ -133,7 +133,7 @@
     "component": [
       "host-command-json-v1",
       "1.0.1",
-      "a216f2ed58294410850afc4bd63f9b9b63c945464a1f10d1b735bd8de26cd607"
+      "339cbe6ebad51b2a0e4e73228e3f7d119d81ac784908fffd93363340bc91684b"
     ],
     "installed_platform_policy": "3898759c85d08268db02963c0e822e2bd3c9657d337e1e5c5708e0bb0738c83b",
     "resource_platform_policy": "03a5e27b4931b1eaa705f0a4be373bc202ac7dd3bb4d71a438c2eb6ffeae1b8a"

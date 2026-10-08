@@ -18,14 +18,14 @@ uv run --locked pytest -q --disable-warnings \
   tests/test_management_authorization.py \
   tests/test_management_authorization_facade.py \
   tests/test_native_authorization_ui.py \
-  tests/test_mcpme_management_cli.py \
-  tests/test_mcpme_management_mcp.py \
-  tests/test_mcpme_grants.py \
+  tests/test_meecp_management_cli.py \
+  tests/test_meecp_management_mcp.py \
+  tests/test_meecp_grants.py \
   tests/test_management_workflow_grants.py \
   tests/test_local_transport.py \
   tests/test_native_private_transport.py \
   tests/test_pi_setup.py \
-  tests/test_mcpme_registry.py
+  tests/test_meecp_registry.py
 swift test
 ```
 
@@ -37,7 +37,7 @@ Native presentation tests cover scope reduction, duplicate clicks, a second queu
 
 ## Claude Code startup
 
-Installed Claude Code **2.1.293** initialized the credential-free management connection in **1.658 seconds**, using a temporary strict MCP configuration and an absent temporary installation. Its initialization event identified `mcpme-management` as connected. Session persistence and ambient customization were disabled; no raw stream output was retained.
+Installed Claude Code **2.1.293** initialized the credential-free management connection in **1.658 seconds**, using a temporary strict MCP configuration and an absent temporary installation. Its initialization event identified `meecp-management` as connected. Session persistence and ambient customization were disabled; no raw stream output was retained.
 
 The process later returned a provider error. This establishes MCP connection startup; model-driven tool selection and invocation remain unverified. Claude credentials and client settings were not changed.
 
@@ -46,8 +46,8 @@ The process later returned a provider error. This establishes MCP connection sta
 Build a new development app and run the isolated interactive verifier:
 
 ```sh
-uv run --locked python scripts/build_mcpme_app.py --output /absolute/new/mcpme.app
-uv run --locked python scripts/verify_native_authorization.py --app /absolute/new/mcpme.app
+uv run --locked python scripts/build_meecp_app.py --output /absolute/new/meecp.app
+uv run --locked python scripts/verify_native_authorization.py --app /absolute/new/meecp.app
 ```
 
 Allow the three synthetic requests in the native popup: base access, installation, and upgrade. The current verifier uses a private temporary installation and the bundled JSON Utilities package. It checks credential-free export, actual native decisions, separate installation/upgrade review, absence of automatic replay, explicit apply, remembered reconnect with a fresh credential, revocation, and owned cleanup. It prints fixed stage receipts. The two recorded original runs below predate the upgrade extension.
@@ -60,8 +60,8 @@ The initial failed harness runs used an unresolved `/var/folders` temporary path
 
 ## Management upgrade follow-up
 
-The catalog now exposes **45 tools**, including `mcpme_plan_upgrade`,
-`mcpme_inspect_upgrade_plan`, and `mcpme_apply_upgrade`. Native inspection/planning
+The catalog now exposes **45 tools**, including `meecp_plan_upgrade`,
+`meecp_inspect_upgrade_plan`, and `meecp_apply_upgrade`. Native inspection/planning
 consent permits planning against an installed slot. Applying requires a separate
 exact upgrade approval bound to the saved plan digest, old installed snapshot,
 candidate package/settings, and one durable operation. Approval never replays apply.
@@ -72,8 +72,8 @@ owner operations.
 The final focused regression run passed **381 Python tests in 155.48 seconds**
 with the same 42 fixture cleanup warnings. It includes the original authorization
 suites plus `test_native_upgrade_authorization.py`,
-`test_management_upgrade_grants.py`, `test_mcpme_upgrade_host.py`, and
-`test_mcpme_upgrade_cli.py`. New checks cover source/plan/slot changes, native ACK,
+`test_management_upgrade_grants.py`, `test_meecp_upgrade_host.py`, and
+`test_meecp_upgrade_cli.py`. New checks cover source/plan/slot changes, native ACK,
 revocation/expiry across lock and package-work yields, duplicate approval before
 ACK, atomic operation binding, terminal retries, wrong grant families, and continued
 responsiveness of other leases during request/detail/approval package verification.
@@ -85,7 +85,7 @@ Swift tests passed: **18 passed, 3 opt-in application lifecycle tests skipped**.
 The packaged native contract self-test passed. AppKit authorization and Pi UI
 self-tests passed in the Python suite.
 
-The development artifact is `dist/mcpme-management-upgrades-20261007.app`, produced
+The development artifact is `dist/meecp-management-upgrades-20261007.app`, produced
 by the standard app builder. Its authorization module was then refreshed with the
 final revocation fix; host/app receipts and the sidecar were updated and the ad hoc
 outer signature regenerated. Deep strict signature verification passed and all
@@ -129,7 +129,7 @@ packaged native self-tests passed. A broader repository run was stopped after
 not evidence of a complete full-suite pass. Full repository CI remains separate.
 
 The refreshed development artifact is
-`dist/mcpme-management-upgrades-20261007-reviewed.app`, rebuilt with the standard
+`dist/meecp-management-upgrades-20261007-reviewed.app`, rebuilt with the standard
 app builder. The real stdio/native verifier passed again with
 `native_upgrade_passed` and `native_authorization_passed`. Its three approvals
 were driven through the actual native UI in the isolated synthetic installation;

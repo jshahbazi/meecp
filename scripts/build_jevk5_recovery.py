@@ -9,7 +9,7 @@ import plistlib
 import shutil
 import subprocess
 
-from build_mcpme_host import ROOT, run
+from build_meecp_host import ROOT, run
 
 
 def clone_file(source: str, destination: str) -> str:
@@ -52,7 +52,7 @@ def build(source: Path, destination: Path) -> Path:
     for path in source.rglob("*"):
         if path.is_symlink() and not path.resolve().is_relative_to(source):
             raise SystemExit("Legacy bundle contains an external symlink")
-    scratch = ROOT / ".build/mcpme-native"
+    scratch = ROOT / ".build/meecp-native"
     run("/usr/bin/swift", "build", "-c", "release", "--product", "JevK5MenuBar", "--package-path", str(ROOT), "--scratch-path", str(scratch))
     binary_dir = Path(run("/usr/bin/swift", "build", "-c", "release", "--show-bin-path", "--package-path", str(ROOT), "--scratch-path", str(scratch)))
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -60,8 +60,8 @@ def build(source: Path, destination: Path) -> Path:
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     resources = destination / "Contents/Resources"
     replace_tree(resources / "backend/jevk5_app", ROOT / "backend/jevk5_app", destination)
-    helper = resources / "backend/mcpme_local_transport.py"
-    replace_file(helper, ROOT / "backend/mcpme_local_transport.py", destination)
+    helper = resources / "backend/meecp_local_transport.py"
+    replace_file(helper, ROOT / "backend/meecp_local_transport.py", destination)
     launcher = destination / "Contents/MacOS/jevk5-mcp"
     replace_file(launcher, ROOT / "scripts/jevk5-mcp", destination)
     launcher.chmod(0o755)

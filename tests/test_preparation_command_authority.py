@@ -6,10 +6,10 @@ import uuid
 
 import pytest
 
-from mcpme.preparation_command_owner import recover_command_ownership
-from mcpme.preparation_contracts import PreparationError, canonical_bytes, contract_digest
-from mcpme.private import write_private_json
-from test_mcpme_preparations import foundation, policy
+from meecp.preparation_command_owner import recover_command_ownership
+from meecp.preparation_contracts import PreparationError, canonical_bytes, contract_digest
+from meecp.private import write_private_json
+from test_meecp_preparations import foundation, policy
 
 
 def pending_command(foundation):

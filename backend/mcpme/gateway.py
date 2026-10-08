@@ -29,6 +29,11 @@ from .activity import Activity, RequestActivity
 from .limits import DEFAULT_REQUEST_BYTES, MAX_REQUEST_BYTES
 
 PROTOCOL_VERSION = "2025-11-25"
+SESSION_INSTRUCTIONS = (
+    "This server supports repeated tool calls over one initialized connection. "
+    "Keep the connection open and reuse the initialized session for subsequent requests. "
+    "When using stdio, keep the server process running for the duration of the client session."
+)
 MAX_MESSAGE_BYTES = 1024 * 1024
 MAX_OPERATION_BYTES = 8 * MAX_MESSAGE_BYTES
 MAX_EVENTS = 256
@@ -170,6 +175,11 @@ class Session:
                 await self.publish(pending.stream, encode(error_message(pending.request_id,
                                    message="The package requires unsupported MCP capabilities or version.")), True)
                 raise ValueError("unsupported_profile")
+            instructions = result.instructions or ""
+            if SESSION_INSTRUCTIONS not in instructions:
+                message = {**message, "result": {**message["result"], "instructions":
+                    instructions + "\n\n" + SESSION_INSTRUCTIONS if instructions else SESSION_INSTRUCTIONS}}
+                message_bytes = len(encode(message))
             self.initialized = True
         if pending.method == "tools/list" and "result" in message:
             from mcp.types import ListToolsResult

@@ -42,7 +42,7 @@ Release notes include every merged PR whose merge, squash, or rebase commit is i
 
 The publisher reads every page of release, commit, and PR results before creating a tag or draft. PRs are listed in creation order regardless of their current open/closed state, so closing or reopening an older PR does not shift the page boundaries. API failures, incomplete commit results, or a previous release outside the built commit's ancestry stop publication. Unmerged PRs and PRs merged after the built commit are excluded even when they merge while signing is running. The publication job has `pull-requests: read` alongside its release write permission. Draft recovery preserves the notes captured during initial publication.
 
-Each release offers these direct downloads under [Releases](https://github.com/jshahbazi/mcpme/releases):
+Each release offers these direct downloads under [Releases](https://github.com/jshahbazi/meecp/releases):
 
 | Asset | Purpose |
 | --- | --- |
@@ -54,7 +54,7 @@ The DMG contains the signed app with a stapled Apple ticket and carries its own 
 
 The `macos-release` environment permits only `main` and requires approval by the repository owner. Self-approval is enabled for the current solo-maintainer setup. Signing requires an Apple Developer Program membership, a valid Developer ID Application certificate with its private key, and an App Store Connect API key that can submit notarization requests.
 
-Add these environment secrets under [Settings > Environments > macos-release](https://github.com/jshahbazi/mcpme/settings/environments):
+Add these environment secrets under [Settings > Environments > macos-release](https://github.com/jshahbazi/meecp/settings/environments):
 
 | Secret | Content |
 | --- | --- |

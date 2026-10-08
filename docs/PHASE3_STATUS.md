@@ -187,7 +187,7 @@ artifact, remote CI or notarized/public distribution.
 
 The first source/delivery commit 77e2828e077403291c605544efac73aa6041b573
 was pushed to codex/phase3-public-acceptance at
-[the selected origin repository](https://github.com/jshahbazi/mcpme).
+[the selected origin repository](https://github.com/jshahbazi/meecp).
 The exact remote SHA was verified 2026-10-05 01:16:15 UTC, closing D09.
 [Publication proof](/private/tmp/mcpme-phase3-first-publication-1791162975548487000.json)
 SHA-256 64ffc91a77d2ab9c403ffb1e163a05154160fbdb66ed9920edc266a7088766f2.

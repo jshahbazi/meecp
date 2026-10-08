@@ -23,7 +23,7 @@ concurrency:
 jobs:
   sign:
     name: Sign and notarize installers
-    if: github.repository == 'jshahbazi/mcpme' && github.ref == 'refs/heads/main'
+    if: github.repository == 'jshahbazi/meecp' && github.ref == 'refs/heads/main'
     runs-on: macos-26
     timeout-minutes: 60
     environment: macos-release
@@ -99,7 +99,7 @@ jobs:
   publish:
     name: Publish GitHub Release
     needs: sign
-    if: github.repository == 'jshahbazi/mcpme' && github.ref == 'refs/heads/main'
+    if: github.repository == 'jshahbazi/meecp' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

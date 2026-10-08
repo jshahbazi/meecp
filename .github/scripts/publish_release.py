@@ -15,7 +15,7 @@ import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[2]
-REPOSITORY = "jshahbazi/mcpme"
+REPOSITORY = "jshahbazi/meecp"
 GH_REPOSITORY = "github.com/" + REPOSITORY
 VERSION_PATTERN = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 SUBMISSION_PATTERN = r"[A-Fa-f0-9]{8}(?:-[A-Fa-f0-9]{4}){3}-[A-Fa-f0-9]{12}"

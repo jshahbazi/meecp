@@ -191,7 +191,7 @@ def test_new_commands_require_closed_canonical_identity_arguments(arguments):
 
 @pytest.mark.parametrize("route,timeout", [
     ("/v1/upgrade/plan", 300), ("/v1/imports", 300), ("/v1/imports/ID/engine", 300),
-    ("/v1/imports/ID/attach", 300), ("/v1/upgrade/apply", 30), ("/v1/operations/ID/recover", 30),
+    ("/v1/imports/ID/attach", 300), ("/v1/upgrade/apply", 300), ("/v1/operations/ID/recover", 30),
 ])
 async def test_model_copy_and_upgrade_plans_keep_bounded_long_timeout(monkeypatch, tmp_path, route, timeout):
     class Response:

@@ -80,7 +80,7 @@ def capabilities(host=None) -> dict:
             "limits": {"slots": 16, "request_bytes": DEFAULT_REQUEST_BYTES,
                        "max_request_bytes": MAX_REQUEST_BYTES, "idle_seconds": 300},
             "installation": "prepared_local_packages_and_imports", "management_credentials": "owner_and_scoped_grants",
-            "management_grant_modes": ["read", "prepare", "lifecycle", "install",
+            "management_grant_modes": ["read", "prepare", "lifecycle", "install", "upgrade",
                                        "recipe-management", "preparation-execution", "resolution-execution"],
             "management_mcp": "scoped_stdio", "preparation_job_schema_versions": [1, 2], "resolution_job_schema_versions": [1, 2],
             "import_schema_versions": [1], "import_sources": ["local_folder", "markdown", "text", "prepared_package", "artifact_collection", "captured_artifact_collection", "service_connection"],
@@ -105,7 +105,7 @@ def capabilities(host=None) -> dict:
                         "value_export": False, "rotation": "new_reference"},
             "downloads": {"format": "zip", "transport": "https", "credentials": "owner_only",
                           "pins": ["sha256", "size"], "redirects": False, "resume_partial": False},
-            "upgrades": {"credentials": "owner_only", "data_policy": "clone_before_probe",
+            "upgrades": {"credentials": "owner_and_exact_upgrade_grants", "data_policy": "clone_before_probe",
                          "rollback_policy": "before_exposure_only", "recovery": "selected_generation"},
             "model_intake": {"contract_versions": [1], "kind": "artifact_collection", "weights": ["gguf"],
                              "profiles": ["jevk5-llamacpp-v1"], "max_artifact_bytes": 64 * 1024**3},
@@ -2316,10 +2316,10 @@ def management_app(host: Supervisor, token: str, port: int):
                 principal = request.scope["mcpme.principal"]
                 if principal.get("owner") is not True or grant_id is not None:
                     raise GrantError("grant_scope", 403)
-                result = host.authorization.owner_route(request.method, route, payload)
+                result = await host.authorization.owner_request(request.method, route, payload)
                 return JSONResponse({"api_version": 1, **result})
             if grant_id is not None:
-                if (route.startswith(("/v1/downloads", "/v1/secrets", "/v1/upgrade", "/v1/artifact-captures", "/v1/artifacts"))
+                if (route.startswith(("/v1/downloads", "/v1/secrets", "/v1/artifact-captures", "/v1/artifacts"))
                         or route.startswith("/v1/operations/") and request.method != "GET"):
                     # Workflow execution grants do not confer owner-only
                     # acquisition, secret-store or installation administration.
@@ -2430,7 +2430,7 @@ def management_app(host: Supervisor, token: str, port: int):
                 if route == "/v1/upgrade/plan":
                     result = await host.plan_upgrade(payload)
                 elif route == "/v1/upgrade/apply" and set(payload) == {"plan_id"}:
-                    result = await host.apply_upgrade(payload["plan_id"])
+                    result = await host.apply_upgrade(payload["plan_id"], grant_id=grant_id)
                 elif route.startswith("/v1/operations/"):
                     if payload or request.path_params["action"] not in {"cancel", "recover"}:
                         raise HostError("invalid_operation_request")
@@ -2565,6 +2565,13 @@ def management_app(host: Supervisor, token: str, port: int):
                         if "import_id" in plan:
                             host.reconcile_imports()
                             host.imports.validate_binding(plan["import_id"], plan["import_revision"], plan["import_digest"])
+                    elif payload.get("mode") == "upgrade":
+                        plan_id = payload.get("plan_id")
+                        inspected = await host.static_work(host.inspect_upgrade_plan, plan_id)
+                        host.validate_upgrade_review(plan_id, inspected=inspected)
+                        plan = host.read_upgrade_plan(plan_id)
+                        if inspected["plan_digest"] != plan_digest(plan):
+                            raise GrantError("grant_plan_changed", 409)
                     result = host.grants.issue(payload, plan=plan)
                 elif route.endswith("/revoke") and "grant_id" in request.path_params and not payload:
                     identifier = request.path_params["grant_id"]

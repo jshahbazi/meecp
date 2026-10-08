@@ -28,6 +28,8 @@ from .grants import GrantError, plan_digest
 from .private import read_private_json, write_private_json
 
 SCOPES = ("inspect", "plan")
+PACKAGE_ACTIONS = frozenset({"install", "upgrade"})
+LEDGER_ACTIONS = PACKAGE_ACTIONS | {"base"}
 REQUEST_TTL = 120
 HANDOFF_TTL = 10
 SESSION_TTL = 3600
@@ -230,6 +232,18 @@ class AuthorizationBroker:
             raise GrantError("grant_revoked", 401)
         if record["expires_at"] <= time.time():
             raise GrantError("grant_expired", 401)
+        # Consent associations cannot revive capabilities revoked through the
+        # owner's grant API while package review work was yielding. Read the
+        # durable row directly to avoid recursively invoking the session guard.
+        ledger = self.host.grants if record["kind"] in LEDGER_ACTIONS else self.host.workflow_grants
+        try:
+            row = ledger._row(grant_id)
+        except GrantError:
+            raise GrantError("grant_revoked", 401) from None
+        if row["revoked"]:
+            raise GrantError("grant_revoked", 401)
+        if row["expires_at"] <= time.time():
+            raise GrantError("grant_expired", 401)
         if record["profile_id"] is not None:
             profile = self.profiles.get(record["profile_id"])
             if profile is None or profile["revoked_at"] is not None or profile["revision"] != record["revision"]:
@@ -289,15 +303,19 @@ class AuthorizationBroker:
                             result[key] = value
                         return result
                     frame = json.loads(data, object_pairs_hook=unique)
-                    install_effects = None
+                    install_effects = upgrade_effects = None
                     if (type(frame) is dict and type(frame.get("version")) is int and frame["version"] == 1
-                            and frame.get("type") == "request_action" and frame.get("kind") == "install"):
+                            and frame.get("type") == "request_action" and frame.get("kind") in PACKAGE_ACTIONS):
                         # Package verification can read large sealed artifacts.
                         # Keep it off the host event loop and join its owned work
                         # during host shutdown before closing persistent state.
                         _, _, plan, _ = self._validate_action(lease, frame)
-                        install_effects = await self.host.static_work(self._install_effects, plan)
-                    response = self.frame(lease, frame, install_effects=install_effects)
+                        if frame["kind"] == "upgrade":
+                            verified = await self.host.static_work(self._upgrade_review_data, plan)
+                            upgrade_effects = self._upgrade_effects(plan, verified=verified)
+                        else:
+                            install_effects = await self.host.static_work(self._install_effects, plan)
+                    response = self.frame(lease, frame, install_effects=install_effects, upgrade_effects=upgrade_effects)
                 except (ValueError, TypeError, KeyError, GrantError) as error:
                     code = error.code if isinstance(error, GrantError) else "authorization_invalid_request"
                     response = {"version": 1, "status": "unavailable", "error": {"code": code}}
@@ -322,7 +340,7 @@ class AuthorizationBroker:
                 pass
             self.tasks.discard(task)
 
-    def frame(self, lease, frame, *, install_effects=None):
+    def frame(self, lease, frame, *, install_effects=None, upgrade_effects=None):
         if (not lease.live() or type(frame) is not dict or type(frame.get("version")) is not int or frame["version"] != 1):
             raise GrantError("authorization_invalid_request", 400)
         self._settle_deadlines(lease)
@@ -330,7 +348,7 @@ class AuthorizationBroker:
         if kind == "request_access":
             self.request_access(lease, frame)
         elif kind == "request_action":
-            self.request_action(lease, frame, install_effects=install_effects)
+            self.request_action(lease, frame, install_effects=install_effects, upgrade_effects=upgrade_effects)
         elif kind == "ack":
             self.ack(lease, frame)
         elif kind == "renew":
@@ -405,7 +423,7 @@ class AuthorizationBroker:
             raise GrantError("authorization_policy_changed", 409)
         return value, lease
 
-    def approve(self, request_id, payload):
+    def approve(self, request_id, payload, *, upgrade_review=None):
         expected = {"remember", "account_scoped_consent", "scopes", "scope_digest", "policy_revision", "generation"}
         if (type(payload) is not dict or set(payload) != expected or type(payload["remember"]) is not bool
                 or type(payload["account_scoped_consent"]) is not bool
@@ -447,11 +465,11 @@ class AuthorizationBroker:
             value["label"] = profile["label"]
         if not lease.live():
             raise GrantError("authorization_request_stale", 409)
-        self._prepare(value, selected)
+        self._prepare(value, selected, upgrade_review=upgrade_review)
         value["decision_digest"] = decision_digest
         return {"request": self.summary(value)}
 
-    def _prepare(self, value, selected):
+    def _prepare(self, value, selected, *, upgrade_review=None):
         lease = self.leases[value["lease_id"]]
         if not lease.live() or value["status"] != "pending":
             raise GrantError("authorization_request_stale", 409)
@@ -463,8 +481,10 @@ class AuthorizationBroker:
             plan = self._action_plan(value["kind"], value["review"]["plan_id"])
             if self._action_digest(value["kind"], plan) != value["review"]["plan_digest"]:
                 raise GrantError("grant_plan_changed", 409)
-            if value["kind"] == "install":
-                credential = self.host.grants.issue({"mode": "install", "plan_id": plan["plan_id"]}, plan=plan, export_credential=False)
+            if value["kind"] in PACKAGE_ACTIONS:
+                if value["kind"] == "upgrade" and self._upgrade_effects(plan, verified=upgrade_review) != value["review"]["upgrade_effects"]:
+                    raise GrantError("grant_plan_changed", 409)
+                credential = self.host.grants.issue({"mode": value["kind"], "plan_id": plan["plan_id"]}, plan=plan, export_credential=False)
             else:
                 credential = self.host.workflow_grants.issue({"mode": value["kind"] + "-execution", "plan_id": plan["plan_id"],
                     "plan_digest": value["review"]["plan_digest"], "idempotency_key": value["review"]["idempotency_key"]}, export_credential=False)
@@ -475,7 +495,7 @@ class AuthorizationBroker:
             with self.host.registry.transaction():
                 self.db.execute("INSERT INTO authorization_credentials VALUES (?,?,?,?,?,?,?,?)", tuple(record.values()))
         except BaseException:
-            (self.host.grants if value["kind"] in {"base", "install"} else self.host.workflow_grants).revoke(record["grant_id"])
+            (self.host.grants if value["kind"] in LEDGER_ACTIONS else self.host.workflow_grants).revoke(record["grant_id"])
             raise
         self.credentials[record["grant_id"]] = record
         lease.grant_ids.add(record["grant_id"])
@@ -503,7 +523,7 @@ class AuthorizationBroker:
         with self.host.registry.transaction():
             self.db.execute("UPDATE authorization_credentials SET active=1 WHERE grant_id=?", (record["grant_id"],))
         record["active"] = 1
-        ledger = self.host.grants if value["kind"] in {"base", "install"} else self.host.workflow_grants
+        ledger = self.host.grants if value["kind"] in LEDGER_ACTIONS else self.host.workflow_grants
         try:
             # Owner revocation or ledger expiry may race the one-time delivery.
             ledger._active(record["grant_id"])
@@ -519,6 +539,13 @@ class AuthorizationBroker:
 
     def _action_plan(self, kind, plan_id):
         identity(plan_id)
+        if kind == "upgrade":
+            plan = self.host.read_upgrade_plan(plan_id)
+            current = self.host.registry.get_slot(plan["slot_id"])
+            self.host.check_mutation(current)
+            if current.to_dict() != plan["old"]:
+                raise GrantError("grant_plan_changed", 409)
+            return plan
         if kind == "install":
             plan = read_private_json(self.host.root / "plans" / (plan_id + ".json"))
             if "import_id" in plan:
@@ -542,7 +569,7 @@ class AuthorizationBroker:
 
     @staticmethod
     def _action_digest(kind, plan):
-        if kind == "install":
+        if kind in PACKAGE_ACTIONS:
             return plan_digest(plan)
         from .preparation_contracts import contract_digest
         domain = "preparation-execution-plan-v1" if kind == "preparation" else "preparation-resolution-plan-v1"
@@ -570,17 +597,67 @@ class AuthorizationBroker:
             "secret_reference_names": sorted(plan["settings"]["secret_references"]),
             "installed_bytes": sum(artifact.size for artifact in package.lock.artifacts)}
 
+    def _upgrade_review_data(self, plan):
+        # Only file/package work runs on the worker. Registry state and consent
+        # deadlines are rechecked on their owning event-loop thread afterwards.
+        from .registry import Slot
+        try:
+            inspected = self.host.inspect_upgrade_plan(plan["plan_id"])
+            if inspected["plan_digest"] != plan_digest(plan):
+                raise ValueError()
+            old = Slot(**plan["old"])
+            package = self.host.package(old)
+            settings = self.host.package_settings(old, package)
+
+            def metadata(manifest, saved_settings, digest, start, policy, installed_bytes):
+                declarations = dict(manifest["access"])
+                for key in ("filesystem", "network", "secrets"):
+                    declarations[key] = [label(item, maximum=256) for item in declarations[key]]
+                return {"name": label(plan["name"], maximum=256),
+                    "package_id": label(manifest["package_id"], maximum=128),
+                    "version": label(manifest["version"], maximum=128), "package_digest": digest,
+                    "profile": manifest["profile"], "start": start, "start_policy": policy,
+                    "resources": manifest["resources"], "declared_access": declarations,
+                    "tools": sorted(label(tool["name"], maximum=256) for tool in manifest["tools"]),
+                    "configuration_fields": sorted(saved_settings["configuration"]),
+                    "secret_reference_names": sorted(saved_settings["secret_references"]),
+                    "installed_bytes": installed_bytes, "public_port": plan["public_port"]}
+
+            current = metadata(package.manifest.model_dump(), settings, old.package_digest,
+                old.desired_state == "running", old.start_policy, sum(item.size for item in package.lock.artifacts))
+            current["generation"] = old.generation
+            candidate = metadata(inspected["package"], plan["settings"], plan["package_digest"],
+                plan["start"], plan["start_policy"], inspected["installed_bytes"])
+            candidate["expected_generation"] = plan["expected_generation"]
+            effects = {"slot_id": plan["slot_id"], "current": current, "candidate": candidate,
+                "data_policy": plan["data_policy"], "rollback_policy": plan["rollback_policy"],
+                "validation": "Initialize and validate the replacement using a private clone of the app data. "
+                    "Automatic rollback is allowed before exposure; preserve the selected data after exposure."}
+            return inspected, effects
+        except (ValueError, TypeError, KeyError):
+            raise GrantError("grant_plan_changed", 409) from None
+
+    def _upgrade_effects(self, plan, *, verified=None):
+        inspected, effects = self._upgrade_review_data(plan) if verified is None else verified
+        try:
+            self.host.validate_upgrade_review(plan["plan_id"], inspected=inspected)
+            if inspected["plan_digest"] != plan_digest(plan):
+                raise ValueError()
+        except (ValueError, TypeError, KeyError):
+            raise GrantError("grant_plan_changed", 409) from None
+        return effects
+
     def _validate_action(self, lease, frame):
         allowed = {"version", "type", "kind", "plan_id", "plan_digest", "idempotency_key"}
         if (set(frame) - allowed or not allowed - {"idempotency_key"} <= set(frame)
-                or frame["kind"] not in {"preparation", "resolution", "install"} or lease.base is None):
+                or frame["kind"] not in {"preparation", "resolution", *PACKAGE_ACTIONS} or lease.base is None):
             raise GrantError("authorization_invalid_request", 400)
         base = self.requests[lease.base]
         self.guard(base["grant_id"])
         if "plan" not in base.get("selected_scopes", []):
             raise GrantError("grant_scope", 403)
         kind = frame["kind"]
-        if kind != "install":
+        if kind not in PACKAGE_ACTIONS:
             identity(frame.get("idempotency_key"))
         elif "idempotency_key" in frame:
             raise GrantError("authorization_invalid_request", 400)
@@ -618,17 +695,22 @@ class AuthorizationBroker:
                     container[key] = [label(item, maximum=256) for item in container[key]]
         return effects
 
-    def request_action(self, lease, frame, *, install_effects=None):
+    def request_action(self, lease, frame, *, install_effects=None, upgrade_effects=None):
         base, kind, plan, digest = self._validate_action(lease, frame)
         current = self.requests.get(lease.current)
         review = {"family": kind, "plan_id": plan["plan_id"], "plan_digest": digest}
-        if kind != "install":
+        if kind not in PACKAGE_ACTIONS:
             review["idempotency_key"] = frame["idempotency_key"]
         if kind == "install":
             review.update(package_digest=plan["package_digest"], slot_id=plan["slot_id"])
             review["install_effects"] = install_effects if install_effects is not None else self._install_effects(plan)
             review["access_disclosure"] = "Declared filesystem and network access is not enforced as a sandbox."
             review["summary"] = "Install the reviewed local package as an app."
+        elif kind == "upgrade":
+            review.update(package_digest=plan["package_digest"], slot_id=plan["slot_id"], expected_generation=plan["expected_generation"])
+            review["upgrade_effects"] = upgrade_effects if upgrade_effects is not None else self._upgrade_effects(plan)
+            review["access_disclosure"] = "Declared filesystem and network access is not enforced as a sandbox."
+            review["summary"] = "Upgrade the existing app using the reviewed local package and saved settings."
         else:
             review["execution"] = {"operations": ["build", "probe"] if kind == "preparation" else ["resolve"]}
             review["effects"] = self._workflow_effects(kind, plan)
@@ -685,7 +767,7 @@ class AuthorizationBroker:
         record["active"] = 0
         with self.host.registry.transaction():
             self.db.execute("UPDATE authorization_credentials SET active=0 WHERE grant_id=?", (grant_id,))
-        ledger = self.host.grants if record["kind"] in {"base", "install"} else self.host.workflow_grants
+        ledger = self.host.grants if record["kind"] in LEDGER_ACTIONS else self.host.workflow_grants
         try:
             ledger.revoke(grant_id)
         except GrantError as error:
@@ -724,7 +806,7 @@ class AuthorizationBroker:
                   "generation", "created_at", "expires_at", "kind", "status", "review", "selected_scopes", "grant_id")
         result = {key: value[key] for key in fields if key in value}
         if not details and "review" in result:
-            result["review"] = {key: item for key, item in result["review"].items() if key not in {"install_effects", "effects"}}
+            result["review"] = {key: item for key, item in result["review"].items() if key not in {"install_effects", "upgrade_effects", "effects"}}
         return result
 
     def list_requests(self):
@@ -779,7 +861,20 @@ class AuthorizationBroker:
                            "identity_mode": "account_scoped_integration", "generation": self.generation})
         return {"sessions": result}
 
-    def owner_route(self, method, path, payload):
+    async def owner_request(self, method, path, payload):
+        upgrade_review = None
+        parts = path.removeprefix("/v1/authorization/").split("/")
+        if (len(parts) == 2 and parts[0] == "requests" and method == "GET"
+                or len(parts) == 3 and parts[0] == "requests" and parts[2] == "approve" and method == "POST"):
+            value = self.requests.get(parts[1])
+            if (value is not None and value["kind"] == "upgrade" and value["status"] == "pending"
+                    and value.get("grant_id") is None):
+                value, _ = self._bound_request(parts[1])
+                plan = self._action_plan("upgrade", value["review"]["plan_id"])
+                upgrade_review = await self.host.static_work(self._upgrade_review_data, plan)
+        return self.owner_route(method, path, payload, upgrade_review=upgrade_review)
+
+    def owner_route(self, method, path, payload, *, upgrade_review=None):
         suffix = path.removeprefix("/v1/authorization/").split("/")
         if suffix == ["profiles"]:
             if method == "GET":
@@ -800,12 +895,14 @@ class AuthorizationBroker:
                 current = self._action_plan(value["kind"], value["review"]["plan_id"])
                 if self._action_digest(value["kind"], current) != value["review"]["plan_digest"]:
                     raise GrantError("grant_plan_changed", 409)
+                if value["kind"] == "upgrade" and self._upgrade_effects(current, verified=upgrade_review) != value["review"]["upgrade_effects"]:
+                    raise GrantError("grant_plan_changed", 409)
             return {"request": self.summary(value)}
         if len(suffix) == 3 and method == "POST":
             family, object_id, action = suffix
             identity(object_id)
             if family == "requests" and action == "approve":
-                return self.approve(object_id, payload)
+                return self.approve(object_id, payload, upgrade_review=upgrade_review)
             if payload != {}:
                 raise GrantError("authorization_invalid_request", 400)
             if family == "requests" and action == "deny":

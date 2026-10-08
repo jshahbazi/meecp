@@ -115,18 +115,23 @@ class GrantStore:
             pass
 
     def issue(self, payload: dict, *, plan: dict | None = None, export_credential: bool = True) -> dict:
-        if not isinstance(payload, dict) or payload.get("mode") not in {"read", "prepare", "lifecycle", "install"}:
+        if not isinstance(payload, dict) or payload.get("mode") not in {"read", "prepare", "lifecycle", "install", "upgrade"}:
             raise GrantError("invalid_grant", 400)
         mode = payload["mode"]
         allowed = {"mode", "ttl_seconds"}
         scope = {}
-        if mode == "install":
+        if mode in {"install", "upgrade"}:
             allowed.add("plan_id")
             if (plan is None or payload.get("plan_id") != plan["plan_id"]
                     or type(payload.get("ttl_seconds", 900)) is not int or payload.get("ttl_seconds", 900) != 900):
                 raise GrantError("invalid_grant", 400)
             scope = {"plan_id": plan["plan_id"], "plan_digest": plan_digest(plan),
                      "package_digest": plan["package_digest"], "slot_ids": [plan["slot_id"]], "actions": ["apply"]}
+            if mode == "upgrade":
+                if (plan.get("kind") != "upgrade" or self.registry.get_slot(plan["slot_id"]).to_dict() != plan.get("old")):
+                    raise GrantError("grant_plan_changed", 409)
+                scope.update(expected_generation=plan["expected_generation"],
+                             old_package_digest=plan["old"]["package_digest"])
             ttl = 900
         else:
             ttl = payload.get("ttl_seconds", 3600)
@@ -200,11 +205,14 @@ class GrantStore:
         scope = json.loads(row["scope"])
         if slot_id not in scope.get("slot_ids", []):
             return False
-        if row["mode"] == "install":
+        if row["mode"] in {"install", "upgrade"}:
             if row["operation_id"] is None:
                 return False
             try:
-                return self.registry.get_slot(slot_id).package_digest == scope["package_digest"]
+                allowed = {scope["package_digest"]}
+                if row["mode"] == "upgrade":
+                    allowed.add(scope["old_package_digest"])
+                return self.registry.get_slot(slot_id).package_digest in allowed
             except RegistryError:
                 return False
         try:
@@ -228,12 +236,15 @@ class GrantStore:
                 return
         if method == "GET" and re.fullmatch(r"/v1/operations/" + IDENTITY, path):
             operation = self.registry.get_operation(path.split("/")[3])
-            if mode in {"read", "prepare"} or (mode == "install" and operation.id == row["operation_id"]):
+            if mode in {"read", "prepare"} or (mode in {"install", "upgrade"} and operation.id == row["operation_id"]):
                 return
             if mode == "lifecycle" and self._slot_allowed(row, operation.slot_id):
                 return
         if method == "GET" and re.fullmatch(r"/v1/plans/" + IDENTITY, path):
-            if mode in {"read", "prepare"} or path.split("/")[3] == scope.get("plan_id"):
+            if mode in {"read", "prepare"} or mode == "install" and path.split("/")[3] == scope.get("plan_id"):
+                return
+        if method == "GET" and re.fullmatch(r"/v1/upgrade/plans/" + IDENTITY, path):
+            if mode in {"read", "prepare"} or mode == "upgrade" and path.split("/")[4] == scope.get("plan_id"):
                 return
         if mode in {"read", "prepare"}:
             if method == "GET" and (path in {"/v1/recipes", "/v1/recipes/schema", "/v1/preparations", "/v1/resolutions"}
@@ -248,10 +259,13 @@ class GrantStore:
         if mode == "prepare" and method == "POST":
             if path in {"/v1/preparations/plan", "/v1/preparations/plan-form", "/v1/resolutions/plan"}:
                 return
-            if path in {"/v1/imports", "/v1/install/plan"} or re.fullmatch(
+            if path in {"/v1/imports", "/v1/install/plan", "/v1/upgrade/plan"} or re.fullmatch(
                     r"/v1/imports/" + IDENTITY + r"/(?:revise|attach|cancel|expire)", path):
                 return
         if method == "POST" and path == "/v1/install/apply" and mode == "install":
+            if isinstance(payload, dict) and set(payload) == {"plan_id"} and payload["plan_id"] == scope["plan_id"]:
+                return
+        if method == "POST" and path == "/v1/upgrade/apply" and mode == "upgrade":
             if isinstance(payload, dict) and set(payload) == {"plan_id"} and payload["plan_id"] == scope["plan_id"]:
                 return
         if mode == "lifecycle" and method == "POST" and re.fullmatch(
@@ -278,6 +292,30 @@ class GrantStore:
                 or operation.details.get("plan_id") != plan["plan_id"]
                 or operation.details.get("package_digest") != plan["package_digest"]
                 or operation.details.get("package_path") != plan["package_path"]
+                or row["operation_id"] not in {None, operation.id}):
+            raise GrantError("grant_scope", 403)
+        self.db.execute("UPDATE management_grants SET operation_id=? WHERE grant_id=?", (operation.id, grant_id))
+
+    def validate_upgrade_apply(self, grant_id: str, plan: dict) -> None:
+        row = self._active(grant_id)
+        scope = json.loads(row["scope"])
+        if row["mode"] != "upgrade" or scope.get("plan_id") != plan["plan_id"]:
+            raise GrantError("grant_scope", 403)
+        if scope["plan_digest"] != plan_digest(plan):
+            raise GrantError("grant_plan_changed", 409)
+
+    def bind_upgrade_operation(self, grant_id: str, plan: dict, operation) -> None:
+        """Commit exactly one upgrade operation with its scoped admission."""
+        if not self.db.in_transaction:
+            raise GrantError("grants_unavailable", 503)
+        self.validate_upgrade_apply(grant_id, plan)
+        row = self._row(grant_id)
+        if (operation.action != "upgrade" or operation.slot_id != plan["slot_id"]
+                or operation.generation != plan["expected_generation"]
+                or operation.details.get("plan_id") != plan["plan_id"]
+                or operation.details.get("package_digest") != plan["package_digest"]
+                or operation.details.get("package_path") != plan["package_path"]
+                or operation.details.get("settings_digest") != plan["settings_digest"]
                 or row["operation_id"] not in {None, operation.id}):
             raise GrantError("grant_scope", 403)
         self.db.execute("UPDATE management_grants SET operation_id=? WHERE grant_id=?", (operation.id, grant_id))

@@ -158,7 +158,7 @@ async def call(state_dir: Path, method: str, path: str, body: dict | None = None
         from .grants import read_credential
         # Reopen for every call; a removed or unsafe file never selects owner authority.
         token = read_credential(credential_file)["token"]
-    timeout = 300 if path in {"/v1/install/plan", "/v1/upgrade/plan", "/v1/migrations/jevk5/plan", "/v1/imports",
+    timeout = 300 if path in {"/v1/install/plan", "/v1/upgrade/plan", "/v1/upgrade/apply", "/v1/migrations/jevk5/plan", "/v1/imports",
                              "/v1/preparations/plan", "/v1/preparations/inspect-source", "/v1/resolutions/plan"} or path.endswith(("/attach", "/engine")) else 30
     async with httpx.AsyncClient(base_url=endpoint(connection), timeout=timeout, follow_redirects=False, trust_env=False,
                                  transport=private_transport(socket_path(state_dir, "manager")),
@@ -266,6 +266,7 @@ def parser() -> argparse.ArgumentParser:
     authorize = commands.add_parser("authorize")
     scope = authorize.add_mutually_exclusive_group(required=True)
     scope.add_argument("--plan", type=uuid_argument)
+    scope.add_argument("--upgrade-plan", type=uuid_argument, help="Authorize one exact saved generation upgrade plan.")
     scope.add_argument("--read-only", action="store_true")
     scope.add_argument("--prepare", action="store_true")
     scope.add_argument("--slot", type=uuid_argument, action="append", dest="slot_ids")
@@ -505,10 +506,11 @@ async def execute(args) -> dict | None:
             return await api("POST", "/v1/grants", body)
         if args.plan_digest is not None or args.idempotency_key is not None or any(value is not None for value in recipe_options):
             return {"error": {"code": "invalid_grant_request"}}
-        if args.plan is not None:
+        if args.plan is not None or args.upgrade_plan is not None:
             if args.actions or args.ttl_seconds not in {None, 900}:
                 return {"error": {"code": "invalid_grant_request"}}
-            body = {"mode": "install", "plan_id": args.plan, "ttl_seconds": 900}
+            body = {"mode": "upgrade" if args.upgrade_plan is not None else "install",
+                    "plan_id": args.upgrade_plan or args.plan, "ttl_seconds": 900}
         elif args.slot_ids is not None:
             if not args.actions:
                 return {"error": {"code": "invalid_grant_request"}}

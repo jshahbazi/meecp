@@ -44,7 +44,7 @@ async def test_real_sdk_credential_free_initialization_and_catalog_without_host(
                     await client.send_ping()
                 assert time.monotonic() - started < 2
                 assert initialized.serverInfo.name == "mcpme-management"
-                assert len(tools.tools) == 42
+                assert len(tools.tools) == 45
                 assert {"mcpme_request_access", "mcpme_get_authorization_status"} <= {tool.name for tool in tools.tools}
                 denied = await client.call_tool("mcpme_capabilities", {})
                 assert denied.isError and denied.structuredContent["error"]["code"] in {
@@ -191,7 +191,8 @@ async def test_private_acknowledged_token_never_reads_owner_and_eof_ends_lease(t
         assert not authorization.credentials
 
 
-async def test_exact_action_requires_separate_request_and_explicit_invocation(tmp_path):
+@pytest.mark.parametrize("kind", ["preparation", "install", "upgrade"])
+async def test_exact_action_requires_separate_request_and_explicit_invocation(tmp_path, kind):
     async with bootstrap(tmp_path) as (state, token, approved, disconnected, frames):
         calls = []
         async def caller(*args, **kwargs):
@@ -202,21 +203,67 @@ async def test_exact_action_requires_separate_request_and_explicit_invocation(tm
         management.initialized({"name": "SDK", "version": "1"})
         approved.set()
         await wait_status(authorization, "approved")
-        action = {"kind": "preparation", "plan_id": str(uuid.uuid4()), "plan_digest": "f" * 64,
-                  "idempotency_key": str(uuid.uuid4())}
-        arguments = {key: value for key, value in action.items() if key != "kind"}
-        denied = await management.invoke("mcpme_start_preparation", arguments)
+        action = {"kind": kind, "plan_id": str(uuid.uuid4()), "plan_digest": "f" * 64}
+        if kind == "preparation":
+            action["idempotency_key"] = str(uuid.uuid4())
+        arguments = ({key: value for key, value in action.items() if key != "kind"}
+                     if kind == "preparation" else {"plan_id": action["plan_id"]})
+        tool = "mcpme_start_preparation" if kind == "preparation" else "mcpme_apply_" + kind
+        route = "/v1/preparations/start" if kind == "preparation" else "/v1/" + kind + "/apply"
+        denied = await management.invoke(tool, arguments)
         assert denied.structuredContent["error"]["code"] == "authorization_required" and calls == []
         requested = await management.invoke("mcpme_request_access", {"action": action})
         assert requested.structuredContent["status"] == "pending"
+        pending = await management.invoke(tool, arguments)
+        assert pending.structuredContent["error"]["code"] == "authorization_pending" and calls == []
         await wait_status(authorization, "approved")
         assert calls == []
-        assert not (await management.invoke("mcpme_start_preparation", arguments)).isError
-        assert calls == ["/v1/preparations/start"]
-        changed = {**arguments, "idempotency_key": str(uuid.uuid4())}
-        assert (await management.invoke("mcpme_start_preparation", changed)).structuredContent["error"]["code"] == "authorization_required"
+        assert not (await management.invoke(tool, arguments)).isError
+        assert calls == [route]
+        changed = {**arguments, ("idempotency_key" if kind == "preparation" else "plan_id"): str(uuid.uuid4())}
+        assert (await management.invoke(tool, changed)).structuredContent["error"]["code"] == "authorization_required"
         assert len(calls) == 1
         await management.close()
+
+
+async def test_upgrade_does_not_reuse_install_authority_and_operation_reads_use_the_matching_grant(tmp_path):
+    calls = []
+    operation_ids = {kind: str(uuid.uuid4()) for kind in ("install", "upgrade")}
+    async def caller(state, method, route, body, *, token, endpoint):
+        calls.append((route, token))
+        if route.endswith("/apply"):
+            return {"operation_id": operation_ids[route.split("/")[2]]}
+        return {"status": "completed"}
+    authorization = SessionAuthorization(tmp_path, caller=caller)
+    authorization.public = {"status": "approved"}
+    authorization.credentials["base"] = SessionCredential("base" * 8, str(uuid.uuid4()), time.time() + 60,
+        {"scopes": ["inspect", "plan"]})
+    actions = {kind: {"kind": kind, "plan_id": str(uuid.uuid4()), "plan_digest": "a" * 64}
+               for kind in ("install", "upgrade")}
+    authorization.credentials["install"] = SessionCredential("install" * 8, str(uuid.uuid4()), time.time() + 60,
+        {"action": actions["install"]})
+    management = Management(tmp_path, authorization=authorization)
+    denied = await management.invoke("mcpme_apply_upgrade", {"plan_id": actions["upgrade"]["plan_id"]})
+    assert denied.structuredContent["error"]["code"] == "authorization_required" and calls == []
+    authorization.credentials["upgrade"] = SessionCredential("upgrade" * 8, str(uuid.uuid4()), time.time() + 60,
+        {"action": actions["upgrade"]})
+    for kind in ("upgrade", "install"):
+        assert not (await management.invoke("mcpme_apply_" + kind, {"plan_id": actions[kind]["plan_id"]})).isError
+    for kind in ("upgrade", "install"):
+        result = await management.invoke("mcpme_get_operation", {"operation_id": operation_ids[kind]})
+        assert not result.isError and calls[-1][1] == kind * 8
+    authorization.credentials.pop("upgrade")
+    result = await management.invoke("mcpme_get_operation", {"operation_id": operation_ids["upgrade"]})
+    assert not result.isError and calls[-1][1] == "base" * 8
+    authorization.credentials["install"] = SessionCredential("replacement" * 8, str(uuid.uuid4()), time.time() + 60,
+        {"action": {**actions["install"], "plan_id": str(uuid.uuid4())}})
+    result = await management.invoke("mcpme_get_operation", {"operation_id": operation_ids["install"]})
+    assert not result.isError and calls[-1][1] == "base" * 8
+    authorization.credentials.pop("base")
+    before = len(calls)
+    result = await management.invoke("mcpme_get_operation", {"operation_id": operation_ids["install"]})
+    assert result.structuredContent["error"]["code"] == "authorization_required" and len(calls) == before
+    await management.close()
 
 
 async def test_single_launch_attempt_is_bounded_despite_polling(tmp_path):
@@ -359,7 +406,7 @@ async def test_real_sdk_pending_owner_approval_and_disconnect_revoke(tmp_path):
                     started = time.monotonic()
                     async with asyncio.timeout(2):
                         await client.initialize()
-                        assert len((await client.list_tools()).tools) == 42
+                        assert len((await client.list_tools()).tools) == 45
                         await client.send_ping()
                     assert time.monotonic() - started < 2
                     async with asyncio.timeout(2):

@@ -45,6 +45,15 @@ REQUIREMENTS_SCHEMA = {"type": "object", "additionalProperties": False, "propert
     "tools": LABELS_SCHEMA, "secret_references": LABELS_SCHEMA,
     "profile": {"type": "string", "enum": ["mcp-stdio", "model-service"]},
     "memory_mb": {"type": "integer", "minimum": 1, "maximum": 262144}}}
+SETTING_NAME_SCHEMA = {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"}
+SETTINGS_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["configuration", "secret_references"],
+    "properties": {"schema_version": {"type": "integer", "const": 1},
+        "configuration": {"type": "object", "maxProperties": 32, "propertyNames": SETTING_NAME_SCHEMA,
+            "additionalProperties": {"anyOf": [{"type": "boolean"},
+                {"type": "integer", "minimum": -(2 ** 53), "maximum": 2 ** 53},
+                {"type": "string", "maxLength": 4096}]}},
+        "secret_references": {"type": "object", "maxProperties": 16, "propertyNames": SETTING_NAME_SCHEMA,
+            "additionalProperties": UUID_SCHEMA}}}
 
 # Dependencies and validators can include request content in their exceptions.
 # Only these documented metadata codes can cross the error boundary.
@@ -105,6 +114,13 @@ SAFE_ERROR_CODES = frozenset({
     "preparation_form_mismatch", "preparation_answer_invalid", "preparation_candidate_unavailable",
     "authorization_required", "authorization_pending", "authorization_expired", "authorization_revoked",
     "authorization_denied", "authorization_unavailable",
+    "invalid_upgrade_request", "incompatible_upgrade", "invalid_upgrade_identity", "invalid_upgrade_update",
+    "invalid_upgrade_transition", "invalid_generation_reference", "generation_data_missing", "upgrade_not_found",
+    "upgrade_limit", "upgrade_canceled", "upgrade_already_exposed", "upgrade_data_unsafe", "upgrade_data_changed",
+    "upgrade_data_limit", "upgrade_snapshot_unavailable", "upgrade_snapshot_exists", "upgrade_disk_unavailable",
+    "upgrade_identity_conflict", "upgrade_generation_mismatch", "upgrade_recovery_required", "upgrades_unavailable",
+    "operation_cancel_unavailable", "operation_recovery_unavailable",
+    "invalid_settings", "configuration_required", "invalid_secret_reference", "secrets_unavailable",
 })
 
 
@@ -202,6 +218,13 @@ def operations() -> dict[str, Operation]:
         "GET", "/v1/plans/{plan_id}", schema({"plan_id": UUID_SCHEMA}, ("plan_id",)))
     add("mcpme_apply_install", "Apply the exact granted plan; retries return its one bound operation.",
         "POST", "/v1/install/apply", schema({"plan_id": UUID_SCHEMA}, ("plan_id",)), lambda args: args)
+    add("mcpme_plan_upgrade", "Create an immutable upgrade plan for an existing app entry without executing package code. Omit settings to preserve current settings; supplied settings contain configuration values and existing opaque secret references. Applying preserves the entry identity and validates a private app-data clone.",
+        "POST", "/v1/upgrade/plan", schema({"slot_id": UUID_SCHEMA, "package": PATH_SCHEMA,
+            "settings": SETTINGS_SCHEMA}, ("slot_id", "package")), lambda args: args)
+    add("mcpme_inspect_upgrade_plan", "Read the saved review summary of an exact upgrade plan for an existing app entry.",
+        "GET", "/v1/upgrade/plans/{plan_id}", schema({"plan_id": UUID_SCHEMA}, ("plan_id",)))
+    add("mcpme_apply_upgrade", "Apply only the exact separately approved upgrade plan; retries return its one bound operation. Upgrade validation runs against a private data clone before the new generation becomes available.",
+        "POST", "/v1/upgrade/apply", schema({"plan_id": UUID_SCHEMA}, ("plan_id",)), lambda args: args)
     add("mcpme_get_operation", "Read a visible operation's bounded progress and result.", "GET", "/v1/operations/{operation_id}",
         schema({"operation_id": UUID_SCHEMA}, ("operation_id",)))
     for action in ("start", "stop", "restart"):
@@ -211,11 +234,11 @@ def operations() -> dict[str, Operation]:
 
 
 def authorization_tools():
-    action = schema({"kind": {"type": "string", "enum": ["preparation", "resolution", "install"]},
+    action = schema({"kind": {"type": "string", "enum": ["preparation", "resolution", "install", "upgrade"]},
         "plan_id": UUID_SCHEMA, "plan_digest": DIGEST_SCHEMA, "idempotency_key": UUID_SCHEMA},
         ("kind", "plan_id", "plan_digest"), allOf=[{"if": {"properties": {"kind": {
             "enum": ["preparation", "resolution"]}}}, "then": {"required": ["idempotency_key"]}},
-            {"if": {"properties": {"kind": {"const": "install"}}},
+            {"if": {"properties": {"kind": {"enum": ["install", "upgrade"]}}},
              "then": {"not": {"required": ["idempotency_key"]}}}])
     return {
         "mcpme_request_access": Tool(name="mcpme_request_access",

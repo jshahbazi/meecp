@@ -114,7 +114,7 @@ async def verified_containing_app(app: Path, *, module_path=None):
 async def session_call(state: Path, method: str, route: str, body: dict | None, *, token: str, endpoint: str):
     if not isinstance(token, str) or not token:
         raise AuthorizationError("authorization_required")
-    timeout = 300 if route in {"/v1/install/plan", "/v1/imports", "/v1/preparations/plan",
+    timeout = 300 if route in {"/v1/install/plan", "/v1/upgrade/plan", "/v1/upgrade/apply", "/v1/imports", "/v1/preparations/plan",
         "/v1/preparations/inspect-source", "/v1/resolutions/plan"} or route.endswith(("/attach", "/engine")) else 30
     async with httpx.AsyncClient(base_url=manager_endpoint(endpoint), timeout=timeout, follow_redirects=False,
             trust_env=False, transport=private_transport(socket_path(state, "manager")),
@@ -151,6 +151,7 @@ class SessionAuthorization:
         self.initialized = False
         self.public = {"status": "not_requested"}
         self.credentials: dict[str, SessionCredential] = {}
+        self.operation_credentials: dict[str, tuple[str, str]] = {}
         self.reader = self.writer = None
         self.endpoint = None
         self.generation = None
@@ -277,7 +278,7 @@ class SessionAuthorization:
         handoff = response.get("handoff")
         if handoff is not None:
             kind = handoff.get("kind") if isinstance(handoff, dict) else None
-            if (kind not in {"base", "preparation", "resolution", "install"}
+            if (kind not in {"base", "preparation", "resolution", "install", "upgrade"}
                     or not _uuid(handoff.get("request_id")) or not _uuid(handoff.get("grant_id"))
                     or not isinstance(handoff.get("token"), str) or not 32 <= len(handoff["token"]) <= 256
                     or type(handoff.get("expires_at")) not in {int, float}
@@ -370,21 +371,27 @@ class SessionAuthorization:
     async def invoke(self, name, arguments, method, route, body):
         kind = "base"
         required = {"mcpme_start_preparation": "preparation", "mcpme_start_resolution": "resolution",
-                    "mcpme_apply_install": "install"}.get(name)
+                    "mcpme_apply_install": "install", "mcpme_apply_upgrade": "upgrade"}.get(name)
         if required:
             credential = self.credentials.get(required)
             action = credential.proposal.get("action", {}) if credential else {}
-            keys = ("plan_id",) if required == "install" else ("plan_id", "plan_digest", "idempotency_key")
+            keys = ("plan_id",) if required in {"install", "upgrade"} else ("plan_id", "plan_digest", "idempotency_key")
             if not credential or any(action.get(key) != arguments.get(key) for key in keys):
-                raise AuthorizationError("authorization_required", self.status())
+                code = "authorization_pending" if self.public["status"] == "pending" else "authorization_required"
+                raise AuthorizationError(code, self.status())
             kind = required
         else:
             for action_kind in ("preparation", "resolution"):
                 if name in {"mcpme_get_" + action_kind, "mcpme_cancel_" + action_kind,
                             "mcpme_list_" + action_kind + "s"} and action_kind in self.credentials:
                     kind = action_kind
-            if name == "mcpme_get_operation" and "install" in self.credentials:
-                kind = "install"
+            if name == "mcpme_get_operation":
+                binding = self.operation_credentials.get(arguments.get("operation_id"))
+                if binding is not None:
+                    action_kind, grant_id = binding
+                    active = self.credentials.get(action_kind)
+                    if active is not None and active.grant_id == grant_id:
+                        kind = action_kind
         credential = self.credentials.get(kind)
         if not credential:
             code = "authorization_pending" if self.public["status"] == "pending" else "authorization_required"
@@ -392,7 +399,12 @@ class SessionAuthorization:
         if credential.expires_at <= time.time():
             self.credentials.pop(kind, None)
             raise AuthorizationError("authorization_expired", {"status": "expired"})
-        return await self.caller(self.state, method, route, body, token=credential.token, endpoint=self.endpoint)
+        value = await self.caller(self.state, method, route, body, token=credential.token, endpoint=self.endpoint)
+        if required in {"install", "upgrade"} and isinstance(value, dict) and "error" not in value:
+            operation_id = value.get("operation_id")
+            if _uuid(operation_id):
+                self.operation_credentials[operation_id] = (required, credential.grant_id)
+        return value
 
     async def _close_socket(self):
         writer, self.writer, self.reader = self.writer, None, None
@@ -406,4 +418,5 @@ class SessionAuthorization:
             self.task.cancel()
             await asyncio.gather(self.task, return_exceptions=True)
         self.credentials.clear()
+        self.operation_credentials.clear()
         await self._close_socket()

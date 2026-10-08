@@ -14,6 +14,65 @@ private func authorizationLabel(_ value: Any?, maximum: Int = 128) -> String? {
     return value
 }
 
+private func authorizationBoolean(_ value: Any?) -> Bool? {
+    guard let value = value as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else { return nil }
+    return value.boolValue
+}
+
+private func authorizationDigest(_ value: Any?) -> String? {
+    guard let value = value as? String, value.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else { return nil }
+    return value
+}
+
+private func authorizationNames(_ value: Any?) -> Bool {
+    guard let values = value as? [String], values.count <= 2048 else { return false }
+    return values.allSatisfy { authorizationLabel($0, maximum: 4096) != nil }
+}
+
+private func authorizationUpgradePackage(_ value: [String: Any], generationKey: String) -> Bool {
+    let fields: Set<String> = ["name", "package_id", "version", "package_digest", "profile", "start", "start_policy", "resources",
+        "declared_access", "tools", "configuration_fields", "secret_reference_names", "installed_bytes", "public_port", generationKey]
+    guard Set(value.keys) == fields,
+          authorizationLabel(value["name"], maximum: 1024) != nil,
+          authorizationLabel(value["package_id"], maximum: 128) != nil,
+          let version = authorizationLabel(value["version"], maximum: 128),
+          version.range(of: "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[A-Za-z0-9.-]+)?$", options: .regularExpression) != nil,
+          authorizationDigest(value["package_digest"]) != nil,
+          ["mcp-stdio", "model-service"].contains(value["profile"] as? String ?? ""),
+          ["manual", "host"].contains(value["start_policy"] as? String ?? ""),
+          authorizationBoolean(value["start"]) != nil,
+          authorizationInteger(value[generationKey]) != nil,
+          let port = authorizationInteger(value["public_port"]), (1...65535).contains(port),
+          authorizationInteger(value["installed_bytes"]) != nil,
+          authorizationNames(value["tools"]), authorizationNames(value["configuration_fields"]),
+          authorizationNames(value["secret_reference_names"]),
+          let resources = value["resources"] as? [String: Any], Set(resources.keys) == ["memory_mb", "cpu_only", "gpu"],
+          let memory = authorizationInteger(resources["memory_mb"]), memory > 0,
+          authorizationBoolean(resources["cpu_only"]) != nil, authorizationBoolean(resources["gpu"]) != nil,
+          let access = value["declared_access"] as? [String: Any], Set(access.keys) == ["filesystem", "network", "secrets", "writes"],
+          authorizationNames(access["filesystem"]), authorizationNames(access["network"]), authorizationNames(access["secrets"]),
+          authorizationBoolean(access["writes"]) != nil else { return false }
+    return true
+}
+
+private func authorizationUpgradeEffects(_ effects: [String: Any], action: [String: Any]) -> Bool {
+    guard Set(effects.keys) == ["slot_id", "current", "candidate", "data_policy", "rollback_policy", "validation"],
+          let slot = effects["slot_id"] as? String, UUID(uuidString: slot) != nil, action["slot_id"] as? String == slot,
+          effects["data_policy"] as? String == "clone_before_probe",
+          effects["rollback_policy"] as? String == "before_exposure_only",
+          authorizationLabel(effects["validation"], maximum: 2048) != nil,
+          let current = effects["current"] as? [String: Any], authorizationUpgradePackage(current, generationKey: "generation"),
+          let candidate = effects["candidate"] as? [String: Any], authorizationUpgradePackage(candidate, generationKey: "expected_generation"),
+          authorizationInteger(current["generation"]) == authorizationInteger(candidate["expected_generation"]),
+          authorizationInteger(current["generation"]) == authorizationInteger(action["expected_generation"]),
+          authorizationInteger(current["public_port"]) == authorizationInteger(candidate["public_port"]),
+          authorizationDigest(candidate["package_digest"]) == authorizationDigest(action["package_digest"]),
+          current["name"] as? String == candidate["name"] as? String,
+          current["profile"] as? String == candidate["profile"] as? String,
+          current["package_id"] as? String == candidate["package_id"] as? String else { return false }
+    return true
+}
+
 struct ExternalAuthorizationRequest: Equatable {
     let id: String
     let profileID: String?
@@ -32,7 +91,7 @@ struct ExternalAuthorizationRequest: Equatable {
               object["status"] as? String == "pending",
               object["identity_mode"] as? String == "account_scoped_integration",
               let label = authorizationLabel(object["label"] ?? object["client_name"]),
-              let kind = object["kind"] as? String, ["base", "preparation", "resolution", "install"].contains(kind),
+              let kind = object["kind"] as? String, ["base", "preparation", "resolution", "install", "upgrade"].contains(kind),
               let scopes = object["scopes"] as? [String], kind != "base" || !scopes.isEmpty,
               Set(scopes).isSubset(of: ["inspect", "plan"]), Set(scopes).count == scopes.count,
               !scopes.contains("plan") || scopes.contains("inspect"),
@@ -61,7 +120,7 @@ struct ExternalAuthorizationRequest: Equatable {
             lines.insert("Operation: " + kind, at: 0)
             lines.insert("Plan: " + plan + "\nPlan digest: " + planDigest, at: 1)
             if let attempt = authorizationLabel(action["idempotency_key"] ?? action["attempt_key"], maximum: 128) { lines.append("Attempt: " + attempt) }
-            if kind != "install" {
+            if ["preparation", "resolution"].contains(kind) {
                 guard let execution = action["execution"] as? [String: Any], let operations = execution["operations"] as? [String],
                       operations == (kind == "preparation" ? ["build", "probe"] : ["resolve"]) else { return nil }
                 lines.insert("Permitted execution: " + operations.joined(separator: ", "), at: 2)
@@ -70,13 +129,18 @@ struct ExternalAuthorizationRequest: Equatable {
                    data.count <= 32768, let text = String(data: data, encoding: .utf8) {
                     lines.insert("Execution effects\n" + text, at: 2); complete = true
                 }
-            } else if let effects = action["install_effects"] as? [String: Any],
+            } else if kind == "install", let effects = action["install_effects"] as? [String: Any],
                       Set(effects.keys) == ["name", "profile", "start", "start_policy", "resources", "declared_access", "configuration_fields", "secret_reference_names", "installed_bytes"],
                       authorizationLabel(effects["name"], maximum: 1024) != nil,
                       ["manual", "host"].contains(effects["start_policy"] as? String ?? ""), effects["start"] is Bool,
                       let data = try? JSONSerialization.data(withJSONObject: effects, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
                       data.count <= 32768, let text = String(data: data, encoding: .utf8) {
                 lines.insert("Installation effects\n" + text, at: 2); complete = true
+            } else if kind == "upgrade", let effects = action["upgrade_effects"] as? [String: Any],
+                      authorizationUpgradeEffects(effects, action: action),
+                      let data = try? JSONSerialization.data(withJSONObject: effects, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
+                      data.count <= 32768, let text = String(data: data, encoding: .utf8) {
+                lines.insert("Upgrade existing app\n" + text, at: 2); complete = true
             }
             // The broker supplies only independently validated review metadata.
             for key in ["summary", "provider_disclosure", "access_disclosure"] {
@@ -165,18 +229,21 @@ final class ExternalAuthorizationCoordinator: NSObject, NSWindowDelegate {
     private func present(_ item: ExternalAuthorizationRequest) {
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 600, height: item.kind == "base" ? 540 : 640),
                             styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        panel.title = "Authorize Connection"; panel.isReleasedWhenClosed = false; panel.delegate = self
+        panel.title = item.kind == "upgrade" ? "Authorize App Upgrade" : "Authorize Connection"
+        panel.isReleasedWhenClosed = false; panel.delegate = self
         let content = workspaceStack([], spacing: 14)
         let container = NSView(); panel.contentView = container; container.addSubview(content)
         NSLayoutConstraint.activate([content.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
             content.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
             content.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
             content.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -24)])
-        let heading = workspaceLabel(item.label + " requests access", size: 20, weight: .semibold)
+        let heading = workspaceLabel(item.label + (item.kind == "upgrade" ? " requests an app upgrade" : " requests access"), size: 20, weight: .semibold)
         heading.maximumNumberOfLines = 2; heading.lineBreakMode = .byTruncatingTail; content.addArrangedSubview(heading)
         let explanation = item.kind == "base"
             ? "Allow this local integration to inspect apps" + (item.scopes.contains("plan") ? " and create setup plans" : "") + ". Execution requires a separate review."
-            : "Review this exact operation before allowing it. The agent must call it again after approval."
+            : item.kind == "upgrade"
+                ? "Review the current app and replacement package. This upgrades the existing entry and validates a private data clone. The agent must call the upgrade again after approval."
+                : "Review this exact operation before allowing it. The agent must call it again after approval."
         let text = workspaceLabel(explanation, size: 13); text.maximumNumberOfLines = 3
         content.addArrangedSubview(text)
         let identity = workspaceLabel("Application identity is unverified. Access is scoped to this mcpme installation and macOS account.", size: 12, secondary: true)
@@ -344,6 +411,42 @@ final class ExternalAuthorizationCoordinator: NSObject, NSWindowDelegate {
         coordinator.receive([compact]); callbacks.last?(["request": install], nil)
         guard coordinator.state == .presenting, coordinator.selected?.completeReview == true else { return false }
         coordinator.receive([compact]); guard coordinator.state == .presenting else { return false }
+        coordinator.allowAccess()
+        guard submitted?["scopes"] as? [String] == [], submitted?["remember"] as? Bool == false else { return false }
+        coordinator.invalidate()
+        var upgrade = row; upgrade["kind"] = "upgrade"; upgrade["scopes"] = [String]()
+        let slot = UUID().uuidString.lowercased()
+        var upgradeReview: [String: Any] = ["family": "upgrade", "plan_id": UUID().uuidString.lowercased(),
+            "plan_digest": String(repeating: "c", count: 64), "slot_id": slot, "expected_generation": 7,
+            "package_digest": String(repeating: "d", count: 64)]
+        upgrade["review"] = upgradeReview
+        guard let compactUpgrade = ExternalAuthorizationRequest(upgrade), !compactUpgrade.completeReview else { return false }
+        var current = review["install_effects"] as! [String: Any]
+        current["package_id"] = "org.example.synthetic"; current["version"] = "1.0.0"; current["package_digest"] = String(repeating: "e", count: 64)
+        current["generation"] = 7; current["public_port"] = 19385; current["tools"] = ["validate_json"]
+        var candidate = current; candidate.removeValue(forKey: "generation"); candidate["expected_generation"] = 7
+        candidate["package_digest"] = String(repeating: "d", count: 64)
+        candidate["version"] = "2.0.0"
+        let upgradeEffects: [String: Any] = ["slot_id": slot, "current": current, "candidate": candidate,
+            "data_policy": "clone_before_probe", "rollback_policy": "before_exposure_only",
+            "validation": "Initialize and validate the candidate against a private app-data clone before exposure."]
+        upgradeReview["upgrade_effects"] = upgradeEffects; upgrade["review"] = upgradeReview
+        guard let detailedUpgrade = ExternalAuthorizationRequest(upgrade), detailedUpgrade.completeReview,
+              detailedUpgrade.sameBinding(as: compactUpgrade) else { return false }
+        var changedReview = upgradeReview; changedReview["expected_generation"] = 8
+        var changedUpgrade = upgrade; changedUpgrade["review"] = changedReview
+        guard ExternalAuthorizationRequest(changedUpgrade)?.completeReview == false else { return false }
+        var incompleteEffects = upgradeEffects; incompleteEffects.removeValue(forKey: "current")
+        changedReview = upgradeReview; changedReview["upgrade_effects"] = incompleteEffects; changedUpgrade["review"] = changedReview
+        guard ExternalAuthorizationRequest(changedUpgrade)?.completeReview == false else { return false }
+        var unknownFields = candidate; unknownFields["settings"] = ["configuration": ["private": "synthetic"]]
+        var injectedEffects = upgradeEffects; injectedEffects["candidate"] = unknownFields
+        changedReview = upgradeReview; changedReview["upgrade_effects"] = injectedEffects; changedUpgrade["review"] = changedReview
+        guard ExternalAuthorizationRequest(changedUpgrade)?.completeReview == false else { return false }
+        coordinator.receive([compactUpgrade]); callbacks.last?(["request": changedUpgrade], nil)
+        guard coordinator.state == .queued, coordinator.panel == nil else { return false }
+        coordinator.receive([compactUpgrade]); callbacks.last?(["request": upgrade], nil)
+        guard coordinator.state == .presenting, coordinator.selected?.completeReview == true else { return false }
         coordinator.allowAccess()
         guard submitted?["scopes"] as? [String] == [], submitted?["remember"] as? Bool == false else { return false }
         coordinator.invalidate(); return true

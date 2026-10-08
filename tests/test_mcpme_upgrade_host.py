@@ -761,15 +761,16 @@ async def test_upgrade_api_owner_routes_grant_denial_and_transport_checks(tmp_pa
     fixture = UpgradeFixture(tmp_path)
     host = fixture.host
     try:
-        # Existing install grants stay scoped to installs; upgrade authority is
-        # an owner operation even for the same slot or prepared package.
+        # Planning/read grants can inspect reviewed upgrades. Execution still
+        # needs the exact upgrade grant; install and lifecycle grants cannot apply.
         install = host.plan_install({"package": str(fixture.candidate_source)})
+        reviewed = await fixture.plan()
         grants = [host.grants.issue({"mode": mode}) for mode in ("read", "prepare")]
         grants += [host.grants.issue({"mode": "lifecycle", "slot_ids": [fixture.slot.id], "actions": ["stop"]}),
                    host.grants.issue({"mode": "install", "plan_id": install["plan_id"]}, plan=install)]
         identity = str(uuid.uuid4())
         requests = [("POST", "/v1/upgrade/plan", {}), ("POST", "/v1/upgrade/apply", {}),
-                    ("GET", "/v1/upgrade/plans/" + identity, None),
+                    ("GET", "/v1/upgrade/plans/" + reviewed["plan_id"], None),
                     ("POST", "/v1/operations/" + identity + "/cancel", {}),
                     ("POST", "/v1/operations/" + identity + "/recover", {})]
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=management_app(host, "owner", 19384)),
@@ -777,7 +778,15 @@ async def test_upgrade_api_owner_routes_grant_denial_and_transport_checks(tmp_pa
             for grant in grants:
                 token = read_credential(Path(grant["credential_file"]))["token"]
                 for method, route, body in requests:
+                    if grant["mode"] == "prepare" and route == "/v1/upgrade/plan":
+                        response = await api.post(route, json={"slot_id": fixture.slot.id,
+                            "package": str(fixture.candidate_source)}, headers={"Authorization": "Bearer " + token})
+                        assert response.status_code == 200
+                        continue
                     response = await api.request(method, route, json=body, headers={"Authorization": "Bearer " + token})
+                    if grant["mode"] in {"read", "prepare"} and method == "GET":
+                        assert response.status_code == 200
+                        continue
                     assert response.status_code == 403 and response.json()["error"]["code"] == "grant_scope"
             for method, route, body in requests:
                 assert (await api.request(method, route, json=body)).status_code == 401

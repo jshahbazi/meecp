@@ -1,6 +1,6 @@
 """Drive the packaged native consent flow in a temporary installation.
 
-Allow the two synthetic requests in the app. No default installation, client
+Allow the three synthetic requests in the app. No default installation, client
 configuration, provider, or model is used. Output contains fixed receipts only.
 """
 from __future__ import annotations
@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from contextlib import asynccontextmanager
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -23,8 +24,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 from mcpme.__main__ import call
 from mcpme.authorization import process_start
+from mcpme.contracts import validate_package
 from mcpme.grants import GrantError
-from mcpme.private import read_private_json
+from mcpme.private import ensure_private_directory, read_private_json
 from mcpme_local_transport import checked_socket, socket_path
 
 
@@ -48,7 +50,7 @@ async def client(configuration):
                 started = time.monotonic()
                 async with asyncio.timeout(2):
                     await session.initialize()
-                    assert len((await session.list_tools()).tools) == 42
+                    assert len((await session.list_tools()).tools) == 45
                 assert time.monotonic() - started < 2
                 yield session
 
@@ -67,6 +69,24 @@ async def approved(session):
             if value["status"] == "approved":
                 return
             await asyncio.sleep(0.2)
+
+
+def upgrade_candidate(starter, destination):
+    """Give the copied synthetic starter a distinct, fully locked version."""
+    shutil.copytree(starter, destination)
+    destination.chmod(0o700)
+    manifest_path, lock_path = destination / "mcpme.package.json", destination / "mcpme.lock.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    lock = json.loads(lock_path.read_bytes())
+    manifest["version"] = lock["version"] = "1.0.1"
+    manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
+    lock["manifest_sha256"] = hashlib.sha256(manifest_bytes).hexdigest()
+    for path in (manifest_path, lock_path):
+        path.chmod(0o600)
+    manifest_path.write_bytes(manifest_bytes)
+    lock_path.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n")
+    assert validate_package(destination).manifest.version == "1.0.1", "native_upgrade_candidate_invalid"
+    return destination
 
 
 async def verify(app):
@@ -117,11 +137,55 @@ async def verify(app):
                         break
                     assert status["status"] in {"pending", "running"}, "native_install_failed"
                     await asyncio.sleep(0.2)
+            installed = await tool(session, "mcpme_inspect_slot", {"slot_id": plan["slot_id"]})
+            connection_path = state / "slots" / installed["slot_id"] / "connection.json"
+            connection_before = read_private_json(connection_path)
+            data = ensure_private_directory(Path(installed.get("data_path") or connection_path.parent / "data"))
+            marker = data / "native-upgrade-fixture.bin"
+            marker.write_bytes(b"synthetic native upgrade persistence")
+            marker.chmod(0o600)
+            candidate = upgrade_candidate(starter, scope / "upgrade-candidate")
+            upgrade = await tool(session, "mcpme_plan_upgrade", {"slot_id": installed["slot_id"], "package": str(candidate)})
+            inspected = await tool(session, "mcpme_inspect_upgrade_plan", {"plan_id": upgrade["plan_id"]})
+            assert inspected["plan_digest"] == upgrade["plan_digest"], "native_upgrade_review_changed"
+            assert inspected["slot_id"] == installed["slot_id"] and inspected["package"]["version"] == "1.0.1"
+            assert inspected["package_digest"] != installed["package_digest"], "native_upgrade_candidate_unchanged"
+            denied = await session.call_tool("mcpme_apply_upgrade", {"plan_id": upgrade["plan_id"]})
+            assert denied.isError and denied.structuredContent["error"]["code"] == "authorization_required"
+            before = (await call(state, "GET", "/v1/status"))["operations"]
+            assert len(before) == 1 and before[0]["operation_id"] == operation["operation_id"]
+            await tool(session, "mcpme_request_access", {"action": {"kind": "upgrade", "plan_id": upgrade["plan_id"],
+                "plan_digest": upgrade["plan_digest"]}})
+            receipt("native_upgrade_plan_pending")
+            await approved(session)
+            after = (await call(state, "GET", "/v1/status"))["operations"]
+            assert [item["operation_id"] for item in after] == [item["operation_id"] for item in before], "native_upgrade_replayed"
+            upgraded = await tool(session, "mcpme_apply_upgrade", {"plan_id": upgrade["plan_id"]})
+            async with asyncio.timeout(45):
+                while True:
+                    status = await tool(session, "mcpme_get_operation", {"operation_id": upgraded["operation_id"]})
+                    if status["status"] == "completed":
+                        break
+                    assert status["status"] in {"pending", "running"}, "native_upgrade_failed"
+                    await asyncio.sleep(0.2)
+            retried = await tool(session, "mcpme_apply_upgrade", {"plan_id": upgrade["plan_id"]})
+            assert retried["operation_id"] == upgraded["operation_id"], "native_upgrade_duplicate_operation"
+            listed = (await tool(session, "mcpme_list_slots", {}))["slots"]
+            assert len(listed) == 1, "native_upgrade_duplicate_entry"
+            current = listed[0]
+            assert current["slot_id"] == installed["slot_id"] and current["public_port"] == installed["public_port"]
+            assert current["credential_ref"] == installed["credential_ref"]
+            assert current["generation"] == installed["generation"] + 1 and current["package_digest"] == upgrade["package_digest"]
+            assert read_private_json(connection_path) == connection_before, "native_upgrade_connection_changed"
+            assert marker.read_bytes() == b"synthetic native upgrade persistence", "native_upgrade_old_data_changed"
+            assert (Path(current["data_path"]) / marker.name).read_bytes() == marker.read_bytes(), "native_upgrade_data_lost"
+            assert len((await call(state, "GET", "/v1/status"))["operations"]) == 2, "native_upgrade_duplicate_operation"
+            receipt("native_upgrade_passed")
         async with asyncio.timeout(5):
             while (await call(state, "GET", "/v1/authorization/sessions"))["sessions"]:
                 await asyncio.sleep(0.1)
         async with client(configuration) as session:
-            await approved(session)  # Remembered account policy; no third popup.
+            await approved(session)  # Remembered account policy; no fourth popup.
             renewed = (await call(state, "GET", "/v1/authorization/sessions"))["sessions"]
             assert len(renewed) == 1 and renewed[0]["session_id"] != initial[0]["session_id"]
             await call(state, "POST", "/v1/authorization/profiles/" + registration["profile_id"] + "/revoke", {})

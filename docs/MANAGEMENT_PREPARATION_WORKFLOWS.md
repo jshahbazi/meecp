@@ -4,7 +4,7 @@ Phase 3 adds recipe and preparation lifecycle tools to the scoped management MCP
 
 ## Tools and grants
 
-The facade exposes 42 typed tools: 40 management tools plus native authorization request/status tools. The existing 18 draft, installation and app tools retain their scopes. The additional workflow tools are:
+The facade exposes 45 typed tools: 40 management tools plus native authorization request/status tools and the three upgrade tools. The existing draft, installation and app tools retain their scopes. The additional workflow tools are:
 
 | Tools | Operation |
 | --- | --- |
@@ -16,8 +16,16 @@ The facade exposes 42 typed tools: 40 management tools plus native authorization
 | `mcpme_plan_resolution` | Review dependency/interface resolution for an exact source candidate |
 | `mcpme_start_preparation`, `mcpme_list_preparations`, `mcpme_get_preparation`, `mcpme_cancel_preparation` | Start, inspect and cancel preparation jobs within the connection's scope |
 | `mcpme_start_resolution`, `mcpme_list_resolutions`, `mcpme_get_resolution`, `mcpme_cancel_resolution` | Start, inspect and cancel resolution jobs within the connection's scope |
+| `mcpme_inspect_upgrade_plan`, `mcpme_plan_upgrade`, `mcpme_apply_upgrade` | Inspect a saved upgrade plan, prepare an exact candidate plan, and apply one owner-reviewed plan through an exact upgrade grant |
 
 Read and prepare grants can inspect recipes, sources, forms and job metadata. Prepare grants can request code-free plans. All four earlier grant modes still deny preparation/resolution start and cancel, recipe mutation, and grant issuance/revocation.
+
+Upgrade permissions use the same narrow separation: read authority can inspect a saved
+upgrade plan, prepare authority can create one, and an owner-issued upgrade grant can
+apply only its exact saved plan digest, slot UUID and expected generation. Applying the
+grant binds one durable upgrade operation; it cannot select another candidate, alter
+settings, reuse a changed slot snapshot, cancel, or recover an operation. Cancellation
+and recovery remain owner-only routes.
 
 Three separately owner-issued modes permit the new mutations:
 

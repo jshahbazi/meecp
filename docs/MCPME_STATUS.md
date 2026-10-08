@@ -12,7 +12,7 @@ Native builds now include a validated JSON Utilities starter. **Try JSON Utiliti
 
 Automatic Start at Login registration and next-login launch remain unverified for the development bundle. The tested legacy transfer preserved an explicitly owner-confirmed disabled preference; it did not validate enabled login-item transfer.
 
-External management agents now use **Copy Management Connection** and native approval without a credential-file path. Remembered consent is scoped to a public profile, state installation, and macOS account; reported client names are unverified. Fresh leased session credentials reuse the existing grant scope engine. Exact preparation, resolution, and installation plans require separate review, and internal Pi remains owner-only. **Approved Connections** exposes disconnect and revocation. Explicit file grants remain available. See [native authorization verification](EXTERNAL_AGENT_AUTHORIZATION_VERIFICATION.md) for tests and client acceptance limits.
+External management agents now use **Copy Management Connection** and native approval without a credential-file path. Remembered consent is scoped to a public profile, state installation, and macOS account; reported client names are unverified. Fresh leased session credentials reuse the existing grant scope engine. Exact preparation, resolution, installation, and upgrade plans require separate review; upgrade application is bound to one saved plan and slot snapshot, and internal Pi remains owner-only. **Approved Connections** exposes disconnect and revocation. Explicit file grants remain available. See [native authorization verification](EXTERNAL_AGENT_AUTHORIZATION_VERIFICATION.md) for tests and client acceptance limits.
 
 ## Supported scope
 
@@ -158,7 +158,7 @@ Startup reconciles an ownership entry only when the native reaper's private inst
 
 Interrupted installations become `recovery_required`; owner-authorized `operations recover` verifies their recorded selected candidate before reopening admission. Cancel is available before durable exposure permission. Upgrades use a private old-data clone and permit old-generation rollback only before exposure; afterward they retain selected data and offer candidate recovery. See [upgrade and recovery](UPGRADES_RECOVERY.md). Retained-data deletion and automatic retention cleanup remain unsupported.
 
-Management accepts the local owner's credential or an owner-issued scoped grant. The separate stdio management MCP facade requires a grant file and checks authority through the manager for each call. Changing startup policy, removing an app, and [pinned package downloads](PINNED_DOWNLOADS.md) require owner authority. Reviewed upgrades and operation cancellation/recovery also require owner authority. Authenticated descriptor-configured `mcp-http` factories are supported; first-call wake loading remains unsupported.
+Management accepts the local owner's credential or an owner-issued scoped grant. The separate stdio management MCP facade requires a grant file and checks authority through the manager for each call. Changing startup policy, removing an app, and [pinned package downloads](PINNED_DOWNLOADS.md) require owner authority. Upgrade inspection and planning can use scoped read/prepare grants; applying an upgrade requires an exact upgrade grant for one saved plan and slot snapshot. Operation cancellation/recovery remains owner-only. Authenticated descriptor-configured `mcp-http` factories are supported; first-call wake loading remains unsupported.
 
 ## Import the existing JevK5 installation
 

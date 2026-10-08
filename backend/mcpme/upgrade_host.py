@@ -1,4 +1,4 @@
-"""Owner-authorized generation upgrades with a durable admission boundary."""
+"""Reviewed generation upgrades with a durable admission boundary."""
 from __future__ import annotations
 
 import asyncio
@@ -125,24 +125,58 @@ class UpgradeHost:
                 "installed_bytes": sum(artifact.size for artifact in package.lock.artifacts),
                 "publisher_trust": "local_owner", "access_enforcement": "declarations_only"}
 
-    async def apply_upgrade(self, plan_id: str) -> dict:
+    def validate_upgrade_review(self, plan_id: str, *, inspected: dict | None = None) -> dict:
+        """Revalidate exact review effects against the current installed entry."""
+        # Callers can hash the package through static_work first. Registry and
+        # admission checks belong on the supervisor's owning event-loop thread.
+        inspected = self.inspect_upgrade_plan(plan_id) if inspected is None else inspected
+        if (inspected.get("plan_id") != plan_id
+                or inspected.get("plan_digest") != plan_digest(self.read_upgrade_plan(plan_id))):
+            raise UpgradeError("invalid_plan")
+        current = self.registry.get_slot(inspected["slot_id"])
+        self.check_mutation(current)
+        if current.to_dict() != inspected["old"]:
+            raise UpgradeError("stale_generation")
+        self.secrets.resolve(inspected["settings"]["secret_references"])
+        return inspected
+
+    async def apply_upgrade(self, plan_id: str, *, grant_id: str | None = None) -> dict:
         async with self.install_lock:
             plan = self.read_upgrade_plan(plan_id)
+            if grant_id is not None:
+                self.grants.validate_upgrade_apply(grant_id, plan)
             existing = self.registry.get_operation_by_key(plan_id)
             if existing is not None:
                 if existing.action != "upgrade" or existing.details.get("plan_id") != plan_id:
                     raise UpgradeError("operation_conflict")
+                if grant_id is not None:
+                    with self.registry.transaction():
+                        self.grants.bind_upgrade_operation(grant_id, plan, existing)
                 if existing.status == "pending":
+                    if grant_id is not None and self.registry.get_slot(plan["slot_id"]).to_dict() != plan["old"]:
+                        raise UpgradeError("stale_generation")
                     self.schedule_upgrade(existing, plan)
                 return existing.to_dict()
+            if grant_id is not None:
+                # An external capability authorizes the reviewed, sealed package.
+                # Verify before publishing any durable intent; static work yields,
+                # so recheck both the grant and saved plan before the transaction.
+                inspected = await self.static_work(self.inspect_upgrade_plan, plan_id)
+                self.validate_upgrade_review(plan_id, inspected=inspected)
+                if inspected["plan_digest"] != plan_digest(plan) or self.read_upgrade_plan(plan_id) != plan:
+                    raise UpgradeError("invalid_plan")
+                self.grants.validate_upgrade_apply(grant_id, plan)
             slot = self.registry.get_slot(plan["slot_id"])
             self.check_mutation(slot)
             if slot.to_dict() != plan["old"]:
                 raise UpgradeError("stale_generation")
-            operation = self.registry.create_operation("upgrade", slot.id, generation=slot.generation,
-                idempotency_key=plan_id, details={"plan_id": plan_id, "package_digest": plan["package_digest"],
-                    "package_path": plan["package_path"], "settings_digest": plan["settings_digest"],
-                    "selected": False, "exposed": False, "cancel_requested": False})
+            with self.registry.transaction():
+                operation = self.registry.create_operation("upgrade", slot.id, generation=slot.generation,
+                    idempotency_key=plan_id, details={"plan_id": plan_id, "package_digest": plan["package_digest"],
+                        "package_path": plan["package_path"], "settings_digest": plan["settings_digest"],
+                        "selected": False, "exposed": False, "cancel_requested": False})
+                if grant_id is not None:
+                    self.grants.bind_upgrade_operation(grant_id, plan, operation)
             self.schedule_upgrade(operation, plan)
             return operation.to_dict()
 

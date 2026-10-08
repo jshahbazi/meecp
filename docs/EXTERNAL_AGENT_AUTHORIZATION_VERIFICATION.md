@@ -2,7 +2,7 @@
 
 Date: 2026-10-07. Baseline: `main` at `38a109d`; implementation branch: `codex/external-agent-authorization-plan`.
 
-## Implemented behavior
+## Original authorization implementation
 
 The management export uses the installed launcher, an optional state selector, and a public profile UUID. It exports no credential file, bearer, or secret environment variable. The stdio facade initializes locally and exposes 42 static tools. After initialization, the separate private Unix bootstrap listener accepts bounded consent requests. Owner-authenticated native decisions publish a fresh credential only to its bound live connection. The reused grant ledger rejects prepared credentials until acknowledgment, and checks lease, generation, policy revision, expiry, and revocation on calls.
 
@@ -50,13 +50,54 @@ uv run --locked python scripts/build_mcpme_app.py --output /absolute/new/mcpme.a
 uv run --locked python scripts/verify_native_authorization.py --app /absolute/new/mcpme.app
 ```
 
-Allow the two synthetic requests in the native popup. The verifier uses a private temporary installation and the bundled JSON Utilities package. It checks credential-free export, actual native base approval, exact installation review, absence of automatic replay, explicit apply, remembered reconnect with a fresh credential, revocation, and owned cleanup. It prints fixed stage receipts and keeps the default installation untouched.
+Allow the three synthetic requests in the native popup: base access, installation, and upgrade. The current verifier uses a private temporary installation and the bundled JSON Utilities package. It checks credential-free export, actual native decisions, separate installation/upgrade review, absence of automatic replay, explicit apply, remembered reconnect with a fresh credential, revocation, and owned cleanup. It prints fixed stage receipts. The two recorded original runs below predate the upgrade extension.
 
 On 2026-10-07 the packaged verifier completed twice, including the final client fix. Both runs reported native host readiness, base approval, exact-plan approval, and `native_authorization_passed`. The verifier contains no approval API calls: fresh base and exact-install credentials require native owner decisions. It completed the explicit fixture installation, remembered reconnection, live revocation, and owned process/socket/state cleanup. The final run left no development app process running.
 
 The final artifact is `dist/mcpme-authorization-20261007-final.app`. It derives from the complete development build, with the final client module copied into the bundle after its expiry regression fix. Existing host artifact hashes were verified before the refresh, the client and host/app receipt hashes were updated, the outer ad hoc signature was regenerated, and deep strict signature verification passed. Every recorded host artifact hash matched afterward; the packaged client matches the working source with SHA-256 `fdcac788f4664142c252ea9b856bbdfc589a08a6b6daced276fbdf7b1211a549`. The unchanged Swift source hash matched the build receipt. All three packaged native self-tests passed again. This is an incrementally refreshed development artifact, not a release build.
 
 The initial failed harness runs used an unresolved `/var/folders` temporary path; the host correctly rejected its symlink ancestor. The verifier now resolves its private temporary scope before launching. The final client regression also confirms that expiry of a request for more access retains the existing inspection session and its original scope ceiling.
+
+## Management upgrade follow-up
+
+The catalog now exposes **45 tools**, including `mcpme_plan_upgrade`,
+`mcpme_inspect_upgrade_plan`, and `mcpme_apply_upgrade`. Native inspection/planning
+consent permits planning against an installed slot. Applying requires a separate
+exact upgrade approval bound to the saved plan digest, old installed snapshot,
+candidate package/settings, and one durable operation. Approval never replays apply.
+The popup shows current and candidate versions, resources, declared access, tools,
+and configuration/secret-reference field names. Cancellation and recovery remain
+owner operations.
+
+The final focused regression run passed **381 Python tests in 155.48 seconds**
+with the same 42 fixture cleanup warnings. It includes the original authorization
+suites plus `test_native_upgrade_authorization.py`,
+`test_management_upgrade_grants.py`, `test_mcpme_upgrade_host.py`, and
+`test_mcpme_upgrade_cli.py`. New checks cover source/plan/slot changes, native ACK,
+revocation/expiry across lock and package-work yields, duplicate approval before
+ACK, atomic operation binding, terminal retries, wrong grant families, and continued
+responsiveness of other leases during request/detail/approval package verification.
+An initial race test exposed durable base revocation being ignored by the native
+association guard; the corrected guard checks its underlying ledger without
+recursion. The final run includes that regression.
+
+Swift tests passed: **18 passed, 3 opt-in application lifecycle tests skipped**.
+The packaged native contract self-test passed. AppKit authorization and Pi UI
+self-tests passed in the Python suite.
+
+The development artifact is `dist/mcpme-management-upgrades-20261007.app`, produced
+by the standard app builder. Its authorization module was then refreshed with the
+final revocation fix; host/app receipts and the sidecar were updated and the ad hoc
+outer signature regenerated. Deep strict signature verification passed and all
+**13,078 recorded host artifacts** matched their hashes after the refresh.
+
+The isolated packaged verifier completed with `native_upgrade_passed` and
+`native_authorization_passed`. Through real stdio SDK calls and three native owner
+decisions, it installed JSON Utilities 1.0.0, reviewed/applied 1.0.1, preserved one
+slot UUID, port, invocation connection, and synthetic data marker, advanced the
+generation, and returned the same operation on retry. It also checked no automatic
+work on approval, remembered reconnect, live revocation, and owned cleanup. The
+verifier contains no approval API calls.
 
 ## Limits
 

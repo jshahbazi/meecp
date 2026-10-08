@@ -119,7 +119,12 @@ private struct Project: Equatable {
 }
 
 private func managementRequestTimeout(_ path: String, method: String) -> TimeInterval {
+    let authorizationPath = path.split(separator: "/")
+    if authorizationPath.prefix(3) == ["v1", "authorization", "requests"] &&
+        (method == "GET" && authorizationPath.count == 4 ||
+         method == "POST" && authorizationPath.count == 5 && authorizationPath.last == "approve") { return 300 }
     let preparesFiles = path == "v1/imports" || path == "v1/preparations/plan-form" || path == "v1/agent-preparations/plans" || path == "v1/agent-preparations/start" ||
+        path == "v1/upgrade/apply" ||
         ["/plan", "/attach", "/engine"].contains { path.hasSuffix($0) }
     return method == "POST" && preparesFiles ? 300 : 30
 }
@@ -2541,6 +2546,11 @@ private func nativeSelfTest() -> Bool {
           managementRequestTimeout("v1/imports/" + id + "/attach", method: "POST") == 300,
           managementRequestTimeout("v1/install/plan", method: "POST") == 300,
           managementRequestTimeout("v1/upgrade/plan", method: "POST") == 300,
+          managementRequestTimeout("v1/upgrade/apply", method: "POST") == 300,
+          managementRequestTimeout("v1/authorization/requests/" + id, method: "GET") == 300,
+          managementRequestTimeout("v1/authorization/requests/" + id + "/approve", method: "POST") == 300,
+          managementRequestTimeout("v1/authorization/requests", method: "GET") == 30,
+          managementRequestTimeout("v1/authorization/requests/" + id + "/deny", method: "POST") == 30,
           managementRequestTimeout("v1/imports", method: "GET") == 30,
           managementRequestTimeout("v1/operations/" + id + "/recover", method: "POST") == 30 else { return false }
     let recoveryID = "99999999-2222-4333-8444-555555555555"

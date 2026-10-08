@@ -134,7 +134,16 @@ Services listen on `127.0.0.1`, require authentication, and check Host/Origin he
 Run the repository tests with:
 
 ```sh
+./test.sh
+```
+
+The script runs the locked Python suites for the host and hotdog demo, Swift tests, and the four native app self-tests below. It works from any working directory and stops at the first failure. Swift compiles the test targets and debug executable as needed; the script does not package an app or DMG.
+
+Individual checks can also be run directly:
+
+```sh
 uv run --locked python -m pytest -q
+(cd examples/hotdog-or-not-hotdog && uv run --locked --group build python -m pytest -q)
 swift test
 .build/debug/McpmeMenuBar --native-self-test
 .build/debug/McpmeMenuBar --dashboard-ui-self-test

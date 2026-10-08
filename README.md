@@ -129,6 +129,41 @@ The current host supports `mcp-stdio` packages for CPU tools, authenticated `mcp
 
 Services listen on `127.0.0.1`, require authentication, and check Host/Origin headers. The host does not log tool inputs, outputs, or raw exception payloads. Packages run with your account's permissions, so install code you trust. The [implementation guide](docs/MEECP_STATUS.md) covers supported package types, resource limits, and recovery.
 
+## Open plans
+
+Reviewed against the current source on **2026-10-08**. This inventory covers feature plans with unfinished implementation and explicitly deferred roadmap items. **Planned** means the feature is not implemented in the current source; **Partial** means a working foundation exists with the listed scope still missing; **Deferred** means the scope is documented without a delivery commitment. Later implementation and scoped acceptance records determine status where older checkpoint documents describe an earlier baseline.
+
+| Plan | Status | Remaining implementation |
+| --- | --- | --- |
+| [Automatic host updates](docs/AUTO_UPDATE_PLAN.md) | Planned | Integrate the updater, signed release feed, update trust keys, shutdown/restart preflight, and replacement recovery. Manual DMG installation and restart already work. |
+| [Custom app panels and Pi-generated workspaces](docs/MEECP_CUSTOM_PANELS_PLAN.md) | Planned | Add package UI declarations, panel lifecycle/renderers, a scoped tool bridge, bundled web assets, previews, and independent UI verification. Remote/background panels and further panel capabilities are deferred within the plan. |
+| [Whistle voice input](docs/WHISTLE_VOICE_PLAN.md) | Planned | Add configurable activation starting with Fn, microphone capture, local transcription, focused-app dictation, and opt-in tool commands. Native permission handling, the inference helper, and release/privacy checks are also outstanding. |
+| [Verified external-agent application identity](docs/EXTERNAL_AGENT_AUTHORIZATION_PLAN.md) | Partial | Native approval, remembered account-scoped consent, leased sessions, and revocation work. A versioned resolver for verified application/launcher identity remains to be implemented. |
+| [Start on first call](docs/MEECP_DESIGN.md#ports-and-connections) | Planned | Wake a stopped eligible runtime on authenticated MCP initialization, coalesce concurrent starts, and preserve explicit Stop suppression. Current startup policies are Manual and Automatic when meecp opens. |
+| [Automatic recovery after runtime crashes](docs/MEECP_DESIGN.md#lifecycle-concurrency-and-resource-policy) | Planned | Add bounded per-app retries/backoff and failure classification while preserving explicit Stop suppression. Current crash monitors mark failures and clean up; automatic restarts are not scheduled. |
+| [Multiple model engines and broader GPU scheduling](docs/MEECP_DESIGN.md#phase-4-multiple-model-engines) | Partial | Extend the existing resource admission beyond one resident GPU package, add the Phase 4 engine integration, and establish contention, queue, cancellation, and memory behavior. CPU services and current single-engine controls already work. |
+| [Additional MCP capabilities](docs/MEECP_DESIGN.md#mcp-boundary) | Planned | Implement resources, prompts, and supported client callbacks such as sampling and elicitation across declarations, negotiation, gateways, and verification. Current package support is tools-only. |
+| [Aggregate all-apps MCP endpoint](docs/MEECP_DESIGN.md#deferred-scope-and-choices) | Deferred | Add a shared endpoint with tool-name collision handling, dynamic discovery, and scoped cross-slot routing. Current connections are per app. |
+| [Expanded monitoring](docs/MEECP_DESIGN.md#monitoring-and-local-trust) | Partial | Add uptime, restart totals, latency histograms, and measured resource-pressure reporting. Current request counters, rates, in-flight calls, and last-call latency are implemented. |
+| [Keychain-backed secrets](docs/MEECP_DESIGN.md#transaction-and-recovery-rules) | Planned | Add a Keychain storage backend. Current immutable secret references use owner-only private files. |
+| [Automatic secret rotation](docs/MEECP_DESIGN.md#transaction-and-recovery-rules) | Planned | Add managed rotation and its runtime/configuration transition. Current rotation creates a new reference and requires a reviewed configuration upgrade. |
+| [Remove app and delete data](docs/MEECP_DESIGN.md#transaction-and-recovery-rules) | Planned | Add explicit deletion of retained app data/configuration. Existing removal stops the app and revokes its connection while preserving recovery material. |
+| [Installed-package artifact retention cleanup](docs/MEECP_DESIGN.md#transaction-and-recovery-rules) | Planned | Add retention policy and cleanup for old installed packages, shared artifacts, and recovery material without deleting live or required recovery state. Temporary-workspace cleanup already exists. |
+| [Post-exposure repair and restore plans](docs/MEECP_DESIGN.md#transaction-and-recovery-rules) | Planned | Add separately reviewed repair/data-restore plans with compatibility and write-loss review. Existing cancellation and recovery preserve the selected generation after exposure; they do not restore an older data snapshot. |
+| [Installed-package OS isolation](docs/MEECP_DESIGN.md#monitoring-and-local-trust) | Deferred | Add enforceable filesystem/network isolation for installed packages. Current package processes run with the user's permissions; restricted preparation probes have their own narrower confinement. |
+| [Executable preparation-worker extensions](docs/PHASE3_STATUS.md#continuing-boundaries) | Deferred | Admit additional executable recipe workers with explicit capabilities, confinement, cancellation, and descendant ownership. Declarative recipe authoring and its supported lifecycle are implemented. |
+| [Further recipe-backed provider and model families](docs/PHASE3_STATUS.md#continuing-boundaries) | Partial | Extend the accepted fixed recipe/provider scope, including further runtime/model families, GPU/Metal preparation, resident vision, and GUI automation. Pi already supports multiple providers and custom builds; each additional recipe admission retains its own acceptance gate. |
+| [Reference-document service onboarding](docs/PROJECT_ONBOARDING.md#delivery-order) | Planned | Add a supported document-service template with search/read tools, source references, parsing limits, and update behavior. Reference-role drafts remain blocked; Markdown/text setup briefs already work. Broader PDF extraction and OCR are deferred within this plan. |
+| [Automatic installed-package updates](docs/MEECP_DESIGN.md#deferred-scope-and-choices) | Deferred | Add package update discovery and scheduling through the existing reviewed upgrade path. This is separate from automatic host updates. |
+| [Shared inference engines across apps](docs/MEECP_DESIGN.md#deferred-scope-and-choices) | Deferred | Share an engine across slot boundaries with explicit ownership, admission, and lifecycle rules. Clients of one model app already share that app's engine. |
+| [Package marketplace and publisher trust policy](docs/MEECP_DESIGN.md#deferred-scope-and-choices) | Deferred | Add a public catalog, publisher onboarding/verification, and package distribution trust policy. Prepared local packages and pinned download links already work. |
+| [Remote/cloud workers](docs/MEECP_DESIGN.md#deferred-scope-and-choices) | Deferred | Add remote worker transport, authority, supervision, and recovery. Current execution is local. |
+| [Container/VM execution](docs/MEECP_DESIGN.md#deferred-scope-and-choices) | Deferred | Add isolated container or virtual-machine execution profiles and their lifecycle/resource contracts. |
+| [Intel Mac support](docs/MEECP_DESIGN.md#deferred-scope-and-choices) | Deferred | Add x86_64 runtime/package support and compatible distribution builds. Current bundles target Apple silicon. |
+| [Remote network exposure](docs/MEECP_DESIGN.md#deferred-scope-and-choices) | Deferred | Add an authenticated remote serving model and its network trust policy. Current services bind only to local interfaces. |
+
+The supported [Phase 3 preparation scope](docs/PHASE3_STATUS.md#goal-summary), [Pi setup](docs/PI_SETUP.md), [external-agent consent](docs/EXTERNAL_AGENT_AUTHORIZATION_VERIFICATION.md), [reviewed upgrades and recovery](docs/UPGRADES_RECOVERY.md), and [signed release workflow](docs/GITHUB_RELEASES.md) are implemented within their documented limits. Verification gaps for existing features are recorded in those documents and the status section above.
+
 ## Development and docs
 
 Run the repository tests with:
@@ -157,6 +192,7 @@ For the opt-in installer lifecycle checks, run `MEECP_RUN_INSTALL_LIFECYCLE_TEST
 - [Implementation guide](docs/MEECP_STATUS.md): CLI usage, builds, package contracts, and migration.
 - [Host design](docs/MEECP_DESIGN.md): architecture and planned features.
 - [meecp custom panel plan](docs/MEECP_CUSTOM_PANELS_PLAN.md): optional app workspaces, Pi generation, and planned panel boundaries.
+- [Whistle voice plan](docs/WHISTLE_VOICE_PLAN.md): proposed Fn-activated dictation, opt-in voice commands, and commercial licensing assessment.
 - [Source onboarding](docs/PHASE2_ONBOARDING.md), [package authoring](docs/PACKAGE_AUTHORING.md), and [management MCP](docs/MANAGEMENT_MCP.md): preparation, review, and assistant access.
 - [Pi setup](docs/PI_SETUP.md): internal coding agent, model settings, dependency support, and execution/verification contracts.
 - [macOS distribution](docs/MACOS_DISTRIBUTION.md), [GitHub releases](docs/GITHUB_RELEASES.md), and [automatic update plan](docs/AUTO_UPDATE_PLAN.md): installation, release verification, and planned updates.

@@ -36,6 +36,14 @@ Build mcpme and give it a first app: JSON Utilities, a small tool that checks wh
 You'll need Xcode Command Line Tools and `uv`. From the repository root:
 
 ```sh
+./build.sh
+```
+
+The script installs the pinned Python runtime, syncs locked dependencies, and builds the current checkout without running tests. Each run creates a fresh app bundle under `dist/` and prints its path and launch command. To choose a destination, run `./build.sh dist/mcpme-dev.app`; relative destinations use the repository root. Existing app bundles are preserved.
+
+For the direct builder and a separate JSON Utilities package:
+
+```sh
 uv python install 3.12.13
 uv sync --locked
 uv run --locked python scripts/build_mcpme_app.py
@@ -126,7 +134,16 @@ Services listen on `127.0.0.1`, require authentication, and check Host/Origin he
 Run the repository tests with:
 
 ```sh
+./test.sh
+```
+
+The script runs the locked Python suites for the host and hotdog demo, Swift tests, and the four native app self-tests below. It works from any working directory and stops at the first failure. Swift compiles the test targets and debug executable as needed; the script does not package an app or DMG.
+
+Individual checks can also be run directly:
+
+```sh
 uv run --locked python -m pytest -q
+(cd examples/hotdog-or-not-hotdog && uv run --locked --group build python -m pytest -q)
 swift test
 .build/debug/McpmeMenuBar --native-self-test
 .build/debug/McpmeMenuBar --dashboard-ui-self-test

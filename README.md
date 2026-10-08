@@ -21,7 +21,7 @@ meecp requires **Apple silicon and macOS 26 or later**. The supported features a
 
 ## Install
 
-Download the Apple silicon `.dmg` from the [latest release](https://github.com/jshahbazi/mcpme/releases/latest). Public installers are signed with Developer ID and notarized. Each release includes checksums and a `.dmg.build.json` verification receipt; see [GitHub releases](docs/GITHUB_RELEASES.md).
+Download the Apple silicon `.dmg` from the [latest release](https://github.com/jshahbazi/meecp/releases/latest). Public installers are signed with Developer ID and notarized. Each release includes checksums and a `.dmg.build.json` verification receipt; see [GitHub releases](docs/GITHUB_RELEASES.md).
 
 Open the disk image, open `meecp.app` on the image, and choose **Install and Restart**. The prompt shows the destination in `/Applications` or `~/Applications`. The installer verifies the new bundle, gracefully quits the current copy, replaces it, and opens the installed app. Installed apps and settings remain in `~/Library/Application Support/mcpme`; services follow their saved startup policies after restart.
 

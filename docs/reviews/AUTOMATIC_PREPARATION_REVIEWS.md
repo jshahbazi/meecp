@@ -1,6 +1,6 @@
 # Automatic preparation: three independent reviews
 
-Reviewed 2026-10-02 against [plan revision `3bae17b`](https://github.com/jshahbazi/mcpme/blob/3bae17b0259ab404bd39bace1a747fbca87042a7/docs/AUTOMATIC_PREPARATION.md) and its [hotdog baseline](https://github.com/jshahbazi/mcpme/blob/3bae17b0259ab404bd39bace1a747fbca87042a7/docs/HOTDOG_PREPARATION_BASELINE.md). Three agents reviewed the same immutable revision concurrently, using supportive, neutral and adversarial perspectives. The coordinator reconciled duplicate findings; a separate read-only source check verified the cited implementation constraints.
+Reviewed 2026-10-02 against [plan revision `3bae17b`](https://github.com/jshahbazi/meecp/blob/3bae17b0259ab404bd39bace1a747fbca87042a7/docs/AUTOMATIC_PREPARATION.md) and its [hotdog baseline](https://github.com/jshahbazi/meecp/blob/3bae17b0259ab404bd39bace1a747fbca87042a7/docs/HOTDOG_PREPARATION_BASELINE.md). Three agents reviewed the same immutable revision concurrently, using supportive, neutral and adversarial perspectives. The coordinator reconciled duplicate findings; a separate read-only source check verified the cited implementation constraints.
 
 The design is a credible basis for contract work and bounded capability spikes. The reviews found no reason to abandon deterministic preparation or additive recipes. Five high-priority items need explicit first-release work or corrected contracts. The original plan and runtime code remain unchanged by this review.
 

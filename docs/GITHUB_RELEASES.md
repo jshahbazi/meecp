@@ -42,7 +42,7 @@ Release notes include every merged PR whose merge, squash, or rebase commit is i
 
 The publisher reads every page of release, commit, and PR results before creating a tag or draft. PRs are listed in creation order regardless of their current open/closed state, so closing or reopening an older PR does not shift the page boundaries. API failures, incomplete commit results, or a previous release outside the built commit's ancestry stop publication. Unmerged PRs and PRs merged after the built commit are excluded even when they merge while signing is running. The publication job has `pull-requests: read` alongside its release write permission. Draft recovery preserves the notes captured during initial publication.
 
-Each release offers these direct downloads under [Releases](https://github.com/jshahbazi/mcpme/releases):
+Each release offers these direct downloads under [Releases](https://github.com/jshahbazi/meecp/releases):
 
 | Asset | Purpose |
 | --- | --- |
@@ -54,7 +54,7 @@ The DMG contains the signed app with a stapled Apple ticket and carries its own 
 
 The `macos-release` environment permits only `main` and requires approval by the repository owner. Self-approval is enabled for the current solo-maintainer setup. Signing requires an Apple Developer Program membership, a valid Developer ID Application certificate with its private key, and an App Store Connect API key that can submit notarization requests.
 
-Add these environment secrets under [Settings > Environments > macos-release](https://github.com/jshahbazi/mcpme/settings/environments):
+Add these environment secrets under [Settings > Environments > macos-release](https://github.com/jshahbazi/meecp/settings/environments):
 
 | Secret | Content |
 | --- | --- |
@@ -80,7 +80,7 @@ tool errors are never logged. Existing output is never overwritten. See
 
 To cut a release, open **Actions > Signed installer > Run workflow**, choose `main`, select **Version bump** (default `minor`), and approve the `macos-release` deployment. After both jobs succeed, download the DMG from the GitHub Release. Releases persist independently of the backup Actions artifact `meecp-release-COMMIT`, which expires after thirty days. Rejection or timeout from Apple fails the run without publishing installer artifacts or a release.
 
-If publication fails after creating a draft, inspect that draft and the failed job. A complete draft can be recovered without signing again: download the original run's artifact into a fresh directory and use `publish_release.py resume --assets-dir DIRECTORY --release-id ID --version VERSION` with `GITHUB_REPOSITORY=jshahbazi/mcpme` and `GITHUB_SHA` set to the original built commit. Use the exact release version from the original filenames and receipts, the original checked-out source, and an authenticated GitHub CLI account with release write access. Recovery verifies the draft by its numeric release ID, its tag and source commit, and all three uploaded assets before publishing; it does not create tags, upload files, or replace assets. GitHub uses a temporary `untagged-...` URL for drafts, so verification reads the release by ID and requires its canonical version URL only after publication.
+If publication fails after creating a draft, inspect that draft and the failed job. A complete draft can be recovered without signing again: download the original run's artifact into a fresh directory and use `publish_release.py resume --assets-dir DIRECTORY --release-id ID --version VERSION` with `GITHUB_REPOSITORY=jshahbazi/meecp` and `GITHUB_SHA` set to the original built commit. Use the exact release version from the original filenames and receipts, the original checked-out source, and an authenticated GitHub CLI account with release write access. Recovery verifies the draft by its numeric release ID, its tag and source commit, and all three uploaded assets before publishing; it does not create tags, upload files, or replace assets. GitHub uses a temporary `untagged-...` URL for drafts, so verification reads the release by ID and requires its canonical version URL only after publication.
 
 For an incomplete draft, delete that draft and any corresponding unpublished tag before rerunning the complete workflow. To release newer code after publication, start a new dispatch and select the next version bump. Retrying publication of an already published version does not replace its downloads.
 

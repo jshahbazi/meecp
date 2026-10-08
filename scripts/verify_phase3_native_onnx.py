@@ -273,7 +273,7 @@ class Harness(common.Harness):
                     "--start", "--start-policy", "host", "--json")
                 original = draft["source"]
             recipe = await self.cli(state, environment, home, "recipes", "inspect", "--id", "mcpme.onnx-hotdog",
-                "--version", "1.0.0", "--json")
+                "--version", "1.0.1", "--json")
             common.require(recipe["state"] == "enabled", "onnx_default_recipe_missing")
             code, receipt, output = await self.native_capture(base, state, home, environment, model, license, draft)
             if code or receipt.get("passed") is not True:
@@ -321,7 +321,7 @@ class Harness(common.Harness):
             package = validate_package(Path(attached["attachment"]["path"]))
             common.require(package.digest == attached["attachment"]["digest"] == prepared["expected_package_digest"]
                 == receipt["attached_package_digest"], "native_onnx_package_identity_mismatch")
-            proof = parse_preparation_receipt((package.root / "mcpme.preparation.json").read_bytes())
+            proof = parse_preparation_receipt((common.receipt_path(package)).read_bytes())
             component_ids = {item.id for item in proof.inputs.components}
             common.require(proof.schema_version == 2 and proof.inputs.descriptor_version == 2
                 and component_ids == {"onnxruntime-cpu-v1", "yolo11-coco-detect-v1"}
@@ -357,16 +357,16 @@ class Harness(common.Harness):
             await self.shutdown(child, state)
             common.stage("restart")
             child = await self.start(state, environment, home, enabled=False)
-            retained = await self.cli(state, environment, home, "recipes", "inspect", "--id", recipe["recipe_id"], "--version", "1.0.0", "--json")
+            retained = await self.cli(state, environment, home, "recipes", "inspect", "--id", recipe["recipe_id"], "--version", recipe["version"], "--json")
             common.require(retained["state"] == "enabled" and retained["digest"] == recipe["digest"]
                 and retained["epoch"] == recipe["epoch"], "onnx_enabled_recipe_restart_failed")
             http_calls += await self.sdk(state, environment, home, slot_id, expected_tools, calls, "http")
             stdio_calls += await self.sdk(state, environment, home, slot_id, expected_tools, calls, "stdio")
             common.stage("recipe_lifecycle")
-            disabled = await self.cli(state, environment, home, "recipes", "disable", "--id", recipe["recipe_id"], "--version", "1.0.0", "--json")
+            disabled = await self.cli(state, environment, home, "recipes", "disable", "--id", recipe["recipe_id"], "--version", recipe["version"], "--json")
             await self.shutdown(child, state)
             child = await self.start(state, environment, home, enabled=False)
-            retained = await self.cli(state, environment, home, "recipes", "inspect", "--id", recipe["recipe_id"], "--version", "1.0.0", "--json")
+            retained = await self.cli(state, environment, home, "recipes", "inspect", "--id", recipe["recipe_id"], "--version", recipe["version"], "--json")
             common.require(retained["state"] == "disabled" and retained["digest"] == disabled["digest"]
                 and retained["epoch"] == disabled["epoch"], "onnx_disabled_recipe_restart_failed")
             http_calls += await self.sdk(state, environment, home, slot_id, expected_tools, calls, "http")

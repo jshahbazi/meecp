@@ -248,7 +248,7 @@ class Harness(common.Harness):
             package_root = Path(attached["attachment"]["path"]); package = validate_package(package_root)
             common.require(package.digest == attached["attachment"]["digest"] == prepared["expected_package_digest"]
                 == native["attached_package_digest"], "native_agent_attachment_digest")
-            proof = parse_preparation_receipt((package_root / "mcpme.preparation.json").read_bytes())
+            proof = parse_preparation_receipt((common.receipt_path(package)).read_bytes())
             common.require(proof.binding.revision == attached["revision"] and proof.binding.source_revision == draft["source"]["revision"]
                 and not proof.inputs.original_dependency_locks and len(proof.inputs.derived_inputs) == 5,
                 "native_agent_derived_binding")

@@ -125,7 +125,7 @@ def synthetic_package(host: Path, base: Path, output: Path) -> None:
             "enabled": {"type": "boolean", "default": True}}},
         "resources": {"memory_mb": 256, "cpu_only": True},
         "licenses": ["licenses/fixture-LICENSE.txt", "licenses/python-LICENSE.txt", "licenses/runtime-NOTICE.md"]}
-    manifest_path = output / "mcpme.package.json"
+    manifest_path = output / "meecp.package.json"
     manifest_path.write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n")
     artifacts = []
     for directory, names, files in os.walk(output):
@@ -133,7 +133,7 @@ def synthetic_package(host: Path, base: Path, output: Path) -> None:
         for name in sorted(files):
             path = Path(directory) / name
             relative = path.relative_to(output).as_posix()
-            if relative == "mcpme.package.json":
+            if relative == "meecp.package.json":
                 continue
             with path.open("rb") as source:
                 checksum = hashlib.file_digest(source, "sha256").hexdigest()
@@ -147,7 +147,7 @@ def synthetic_package(host: Path, base: Path, output: Path) -> None:
         "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(), "artifacts": artifacts,
         "build": {"recipe": "synthetic-settings-verifier-v1", "builder": "verify_settings.py",
                   "toolchain": "copied bundled CPython; standard-library stdio fixture"}}
-    (output / "mcpme.lock.json").write_text(json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n")
+    (output / "meecp.lock.json").write_text(json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n")
     validate_package(output)
 
 

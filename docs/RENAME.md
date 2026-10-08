@@ -22,7 +22,7 @@ Some existing installation and package identities retain their original spelling
 | Dependency-index credentials | Existing `UV_INDEX_MCPME_PI_DEPENDENCIES_*` and `UV_INDEX_MCPME_RESOLUTION_*` variables remain valid package-building contracts. |
 | Repository address | `github.com/jshahbazi/mcpme`; the repository destination has not changed. |
 
-New packages use `meecp.package.json` and `meecp.lock.json`; preparation and recipe descriptors use `meecp.prepare.json`, `meecp.recipe.json`, and `meecp.recipe.lock.json`. Readers also accept a complete corresponding legacy `mcpme` filename pair. Mixed or duplicate descriptor pairs are rejected. Package process launchers accept `--meecp-config-fd` and the existing `--mcpme-config-fd` alias.
+New packages use `meecp.package.json` and `meecp.lock.json`; preparation and recipe descriptors use `meecp.prepare.json`, `meecp.recipe.json`, and `meecp.recipe.lock.json`. New preparation receipts use `meecp.preparation.json`; existing receipts retain the filename bound by their artifact lock. Readers also accept a complete corresponding legacy `mcpme` filename pair. Mixed or duplicate descriptor pairs are rejected. Package process launchers accept `--meecp-config-fd` and the existing `--mcpme-config-fd` alias.
 
 New management exports use the `meecp-management` connection key and `meecp_*` tool names. Existing `mcpme_*` management tool calls remain accepted aliases; both management connection names are reserved when naming ordinary app connections.
 

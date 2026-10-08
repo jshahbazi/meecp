@@ -88,7 +88,8 @@ def test_probe_graph_flag_is_trusted_exact_boolean(tmp_path, value):
 
 
 def test_metadata_guard_enforces_file_membership_cap_before_stat(tmp_path, monkeypatch):
-    package = SimpleNamespace(root=tmp_path / "package", lock=SimpleNamespace(
+    package = SimpleNamespace(root=tmp_path / "package", metadata_paths=(
+        tmp_path / "package/meecp.package.json", tmp_path / "package/meecp.lock.json"), lock=SimpleNamespace(
         artifacts=[SimpleNamespace(path="file-" + str(index)) for index in range(MAX_ARTIFACTS + 1)]))
     plan = SimpleNamespace(reaper=tmp_path / "reaper", workspace=tmp_path / "probe",
                            home=tmp_path / "probe/home", temporary=tmp_path / "probe/tmp")

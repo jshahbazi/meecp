@@ -88,7 +88,7 @@ async def verify(host_path: Path) -> dict:
             if built.returncode or not json.loads(built.stdout).get("prepared"):
                 raise ValueError("phase2_preparation_failed")
             direct = command("imports", "create", "--source", str(package), "--name", "Prepared Python", "--json")
-            assert direct["state"] == "ready_to_plan" and direct["source"]["file_inventory"] == "mcpme.lock.json"
+            assert direct["state"] == "ready_to_plan" and direct["source"]["file_inventory"] == "meecp.lock.json"
             attached = command("imports", "attach", draft["draft_id"], "--revision", str(draft["revision"]), "--package", str(package), "--json")
             assert attached["state"] == "ready_to_plan"
             first_plan = command("install", "plan", "--import", draft["draft_id"], "--revision", str(draft["revision"]), "--json")

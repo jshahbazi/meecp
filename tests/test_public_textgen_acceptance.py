@@ -30,6 +30,7 @@ async def test_public_textgen_start_and_restart_use_ordinary_launcher(monkeypatc
 async def test_public_defaults_bind_actual_current_producer_before_start(monkeypatch, previous_version):
     from meecp import preparation_textgen
     version = preparation_textgen.VERSION
+    recipe_version = preparation_textgen.RECIPE_VERSION
     refs = {item.id: item.key for item in preparation_textgen.references()}
     assert version == "1.0.21" and preparation_textgen.ENGINE_ID == "llamacpp-cpu-v1"
     started = []
@@ -53,7 +54,7 @@ async def test_public_defaults_bind_actual_current_producer_before_start(monkeyp
                     [list(refs[preparation_textgen.ENGINE_ID]), list(refs[preparation_textgen.TASK_ID])]]}}
 
     async def recipe(*args):
-        return {"state": "enabled", "version": version}
+        return {"state": "enabled", "version": recipe_version}
 
     async def shutdown(*args):
         return None
@@ -66,7 +67,7 @@ async def test_public_defaults_bind_actual_current_producer_before_start(monkeyp
         assert not started
     else:
         result = await harness.public_defaults()
-        assert result["passed"] and result["recipe_version"] == version and started == [False]
+        assert result["passed"] and result["recipe_version"] == recipe_version and started == [False]
 
 
 @pytest.mark.parametrize("damage", [None, "engine", "task", "closure", "disabled"])

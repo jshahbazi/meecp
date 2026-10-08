@@ -188,9 +188,9 @@ async def relocation_probe(package_root, descriptor, reaper, workspace):
 
 class Harness(capture.Harness):
     async def recipe(self, state, environment, home, action="inspect"):
-        from meecp.preparation_textgen import VERSION
+        from meecp.preparation_textgen import RECIPE_VERSION
         return await self.cli(state, environment, home, "recipes", action, "--id", RECIPE_ID,
-            "--version", VERSION, "--json")
+            "--version", RECIPE_VERSION, "--json")
 
     async def start(self, state, environment, home, *, enabled):
         if not enabled:
@@ -490,7 +490,7 @@ class Harness(capture.Harness):
             package = validate_package(Path(attached["attachment"]["path"]))
             common.require(package.digest == attached["attachment"]["digest"] == prepared["expected_package_digest"]
                 == receipt["attached_package_digest"], "native_textgen_package_identity_mismatch")
-            proof = parse_preparation_receipt((package.root / "mcpme.preparation.json").read_bytes())
+            proof = parse_preparation_receipt((common.receipt_path(package)).read_bytes())
             descriptor = parse_preparation_descriptor(capture.selected_descriptor(state, import_id))
             common.require(proof.schema_version == 2 and proof.inputs.descriptor_version == 2
                 and len(proof.inputs.components) == 2 and {item.key for item in proof.inputs.components} == {ref.key for ref in references()}

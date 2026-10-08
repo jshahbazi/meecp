@@ -31,12 +31,20 @@ from verify_phase3_primitives import _check_module_origins, _host_imports, _host
 
 CASES = ("disabled_queued", "revoked_verification", "revoked_attachment", "updated_active",
          "canceled_native_owner", "crashed_native_owner", "stale_revision", "stale_source", "capability_blocker", "native_management")
+
+
+def recipe_manifest_path(root):
+    from meecp.recipes import recipe_metadata_names
+    names = {path.name: None for path in root.iterdir()}
+    manifest_name, _ = recipe_metadata_names(names)
+    return root / manifest_name
 LIFECYCLE_POLICY_SHA256 = frozenset({
     "c8fa615def941e66e85a68ac0e7cc46dd7caf1797918fc03fdd5277ac2326522",
     "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375",
     "8a9a8fd69217352b49e0e338d4d652df8cebcac86609edae1190a88cd2d9a592",
     "5bb20b7a8cde39368a5cc3d03a92a4ed3f69d92ac56c317b6f696432863925ea",
     "29d0359e9846afff79061c0fd0d0bf265f88fd78deb6c62193af1ba614ca9dcc",
+    "ca7d40f1dd0075e757597caea0b5437c87fc63437818e54f815666471bf242b2",
 })
 BARRIERS = {"disabled_queued": "scheduler_before_snapshot", "stale_source": "scheduler_before_snapshot",
     "revoked_verification": "actual_verifier_return_before_publication",
@@ -541,7 +549,7 @@ class LifecycleHarness(onboarding.Harness):
                 require(job["state"] == "verifying", "recipe_barrier_wrong_state")
                 update = base / "recipe-update"
                 shutil.copytree(bundle, update)
-                manifest_path = update / "mcpme.recipe.json"
+                manifest_path = recipe_manifest_path(update)
                 manifest = json.loads(manifest_path.read_bytes())
                 manifest["version"] = "1.0.1"
                 manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n")
@@ -751,7 +759,7 @@ class LifecycleHarness(onboarding.Harness):
             bundle = base / "unavailable-recipe"
             await self.cli(state, environment, home, "recipes", "scaffold", "--output", bundle,
                 "--id", "local.unavailable-acceptance", "--component", "resolved-python-v1", "--json")
-            manifest_path = bundle / "mcpme.recipe.json"
+            manifest_path = recipe_manifest_path(bundle)
             manifest = json.loads(manifest_path.read_bytes())
             manifest["requirements"]["capabilities"].append("unavailable-acceptance-capability")
             manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n")

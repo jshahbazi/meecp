@@ -286,10 +286,10 @@ class CommandHarness(onboarding.Harness):
             package = validate_package(package_root)
             require(package.digest == attached["attachment"]["digest"] == prepared["expected_package_digest"]
                 == receipt["attached_package_digest"] and package.manifest.profile == "host-command", "command_attachment_identity_changed")
-            proof = parse_preparation_receipt((package_root / "mcpme.preparation.json").read_bytes())
+            proof = parse_preparation_receipt((common.receipt_path(package)).read_bytes())
             require(proof.schema_version == 2 and proof.binding.revision == attached["revision"]
                 and proof.binding.source_revision == attached["source"]["revision"]
-                and proof.inputs.recipe.id == "mcpme.native-command" and proof.inputs.recipe.version == "1.0.1",
+                and proof.inputs.recipe.id == "mcpme.native-command" and proof.inputs.recipe.version == "1.0.2",
                 "command_sealed_identity_changed")
             verification = prepared["verification"]
             require(verification["tools_checked"] == verification["fixtures_checked"] == 1
@@ -374,7 +374,7 @@ async def verify(host, native, fixture, report):
     build = onboarding.verify_host_payload(host)
     _, inventory = command_host.verify_payload(host)
     resource = json.loads((host / "command-resource-execution.json").read_bytes())
-    require(resource["helper"] == "bin/meecp-command-resource-reap"
+    require(resource["helper"] == "bin/mcpme-command-resource-reap"
         and digest(host / resource["helper"]) == resource["helper_sha256"]
         and resource["production_admission"] == "disabled" and resource["configuration_authority"] == "inventory-only"
         and resource["hard_aggregate_enforced"] is False and resource["lifetime_coverage_complete"] is False,

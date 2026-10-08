@@ -39,6 +39,11 @@ JOB_STATES = frozenset({"queued", "snapshotting", "preparing", "verifying", "rea
     "succeeded", "cancel_requested", "canceled", "failed", "interrupted"})
 DIAGNOSTIC = {"stage": "bootstrap", "case": "none"}
 
+
+def receipt_path(package):
+    from meecp.preparations import receipt_name
+    return package.root / receipt_name(package)
+
 CALLABLE_SOURCE = "def double(n: int) -> dict[str, int]:\n    return {'value': n * 2}\n"
 MCP_PROJECT = ('[project]\nname="native-dynamic-fixture"\nversion="1.0.0"\n'
     'dependencies=["mcp==1.30.0"]\n[tool.meecp]\nmcp_module="worker:main"\n')
@@ -566,7 +571,7 @@ class Harness:
             package = validate_package(package_root)
             require(package.digest == attached["attachment"]["digest"] == prepared["expected_package_digest"]
                 == receipt["attached_package_digest"], "native_attachment_identity_mismatch")
-            proof = parse_preparation_receipt((package_root / "mcpme.preparation.json").read_bytes())
+            proof = parse_preparation_receipt((receipt_path(package)).read_bytes())
             require(proof.schema_version == 2 and proof.binding.revision == receipt["reviewed_revision"]
                 and proof.binding.source_revision == draft["source"]["revision"]
                 and not proof.inputs.original_dependency_locks and proof.inputs.derived_inputs
@@ -625,7 +630,7 @@ class Harness:
                 http_calls += await self.sdk(state, environment, home, slot_id, expected_tools, calls, "http")
                 stdio_calls += await self.sdk(state, environment, home, slot_id, expected_tools, calls, "stdio")
                 stage("recipe_lifecycle")
-                accepted_receipt_sha256 = digest(package_root / "mcpme.preparation.json")
+                accepted_receipt_sha256 = digest(receipt_path(package))
                 retained_recipe = {key: retained[key] for key in ("digest", "path", "manifest", "evidence")}
                 removed = await self.cli(state, environment, home, "recipes", "remove", "--id", selected_recipe["recipe_id"],
                     "--version", "1.0.0", "--json")
@@ -646,7 +651,7 @@ class Harness:
                 resumed = await self.cli(state, environment, home, "imports", "inspect", draft["draft_id"], "--json")
                 require(resumed["state"] == "installed" and resumed["result_slot_id"] == slot_id
                     and resumed["attachment"]["digest"] == package.digest
-                    and digest(package_root / "mcpme.preparation.json") == accepted_receipt_sha256
+                    and digest(receipt_path(package)) == accepted_receipt_sha256
                     and validate_package(package_root).digest == package.digest,
                     "recipe_remove_changed_accepted_package")
                 http_calls += await self.sdk(state, environment, home, slot_id, expected_tools, calls, "http")

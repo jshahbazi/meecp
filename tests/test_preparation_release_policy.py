@@ -15,7 +15,7 @@ from meecp.preparation_agent_providers import AgentProviderRegistry, OpenAIRespo
 from test_preparation_agent_providers import choices, update, SYNTHETIC
 
 
-KEY = ("agent-unlocked-python-adapter-v1", "1.0.0", "30a6e459f76f4feabff58ff5481b5cc95f9589e03436a8aac109583a4cbfa26c")
+KEY = ("agent-unlocked-python-adapter-v1", "1.0.0", "3850d78dc24ab286cd4bb40825e0d52a83869c91c4278c525cfd6462ee822b49")
 
 
 def closed():

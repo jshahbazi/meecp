@@ -386,7 +386,7 @@ class ManagementHarness(common.Harness):
         await self.invoke(session, "meecp_inspect_preparation_source", args)
         form = await self.invoke(session, "meecp_get_preparation_form", args)
         require(form["execution_available"] is True and form["resolution_required"] is False
-            and form["recipe"]["id"] == "mcpme.python-callable" and form["recipe"]["version"] == "1.0.0",
+            and form["recipe"]["id"] == "mcpme.python-callable" and form["recipe"]["version"] == "1.0.1",
             "management_form_not_admitted")
         recipe = await self.invoke(session, "meecp_get_recipe", {"recipe_id": form["recipe"]["id"], "version": form["recipe"]["version"]})
         require(recipe["state"] == "enabled" and recipe["revoked"] is False and recipe["digest"] == form["recipe"]["digest"]

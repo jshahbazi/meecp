@@ -41,11 +41,11 @@ def verify_payload(host):
     for name, expected in receipt["artifact_sha256"].items():
         path = host / name
         require(path.resolve() == path and path.is_relative_to(host) and sha(path) == expected)
-    require({"command-execution.json", "bin/meecp-command-reap"} <= receipt["artifact_sha256"].keys())
+    require({"command-execution.json", "bin/mcpme-command-reap"} <= receipt["artifact_sha256"].keys())
     inventory = json.loads((host / "command-execution.json").read_bytes())
     require(inventory["production_admission"] == "disabled" and inventory["configuration_authority"] == "inventory-only")
     require(inventory["receipt_format"] == 3 and inventory["package_schema"] == 2)
-    require(inventory["helper"] == "bin/meecp-command-reap" and sha(host / inventory["helper"]) == inventory["helper_sha256"])
+    require(inventory["helper"] == "bin/mcpme-command-reap" and sha(host / inventory["helper"]) == inventory["helper_sha256"])
     return receipt, inventory
 
 
@@ -95,13 +95,13 @@ def package(base, fixture, inventory, mode):
         "lifecycle": {"startup_timeout_seconds": 5, "operation_timeout_seconds": 5},
         "tools": [{"name": "probe", "description": "Synthetic bounded command", "input_schema": schema, "output_schema": schema}],
         "resources": {"memory_mb": 32, "cpu_only": True}, "licenses": ["LICENSE"]}
-    (root / "mcpme.package.json").write_text(json.dumps(manifest))
+    (root / "meecp.package.json").write_text(json.dumps(manifest))
     lock = {"schema_version": 1, "package_id": manifest["package_id"], "version": manifest["version"],
-        "manifest_sha256": sha(root / "mcpme.package.json"), "artifacts": [{"path": name, "sha256": sha(root / name),
+        "manifest_sha256": sha(root / "meecp.package.json"), "artifacts": [{"path": name, "sha256": sha(root / name),
             "size": (root / name).stat().st_size, "executable": name == "target", "source": manifest["source_revision"],
             "provenance": "Explicit synthetic native fixture", "license": "LICENSE"} for name in ("target", "LICENSE")],
         "build": {"recipe": "synthetic-bundled-command-v1", "builder": "acceptance", "toolchain": "explicit clang fixture"}}
-    (root / "mcpme.lock.json").write_text(json.dumps(lock))
+    (root / "meecp.lock.json").write_text(json.dumps(lock))
     return root
 
 

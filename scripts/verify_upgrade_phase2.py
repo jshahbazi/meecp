@@ -105,7 +105,13 @@ def package_revision(source: Path, destination: Path | None, version: str, *, co
     if destination is not None:
         shutil.copytree(source, destination, symlinks=True)
         package = destination
-    manifest_path, lock_path = package / "mcpme.package.json", package / "mcpme.lock.json"
+    metadata_pairs = (("meecp.package.json", "meecp.lock.json"),
+                      ("mcpme.package.json", "mcpme.lock.json"))
+    present = [pair for pair in metadata_pairs if any(os.path.lexists(package / name) for name in pair)]
+    require(len(present) == 1 and all(os.path.lexists(package / name) for name in present[0]),
+            "upgrade_package_metadata_invalid")
+    manifest_name, lock_name = present[0]
+    manifest_path, lock_path = package / manifest_name, package / lock_name
     manifest = json.loads(manifest_path.read_bytes())
     manifest["version"] = version
     manifest["configuration"] = {"schema_version": 1, "fields": {
@@ -252,7 +258,7 @@ async def verify(host_path: Path) -> dict:
                             observed = True
                             completion = entry.get("completion", {})
                             path = directory / "ownership-receipts" / (identity + ".receipt")
-                            expected = b"MEECPOR1" + identity.encode("ascii") + completion.get("nonce", "").encode("ascii") + b"C"
+                            expected = b"MCPMEOR1" + identity.encode("ascii") + completion.get("nonce", "").encode("ascii") + b"C"
                             if not path.exists() or path.read_bytes() != expected:
                                 all_completed = False
                     if all_completed:

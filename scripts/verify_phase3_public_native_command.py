@@ -24,7 +24,7 @@ import verify_phase3_native_command as command
 
 common = command.onboarding
 require = common.require
-COMPONENT = ("host-command-json-v1", "1.0.1", "a216f2ed58294410850afc4bd63f9b9b63c945464a1f10d1b735bd8de26cd607")
+COMPONENT = ("host-command-json-v1", "1.0.1", "339cbe6ebad51b2a0e4e73228e3f7d119d81ac784908fffd93363340bc91684b")
 INSTALLED_PLATFORM = "3898759c85d08268db02963c0e822e2bd3c9657d337e1e5c5708e0bb0738c83b"
 RESOURCE_PLATFORM = "03a5e27b4931b1eaa705f0a4be373bc202ac7dd3bb4d71a438c2eb6ffeae1b8a"
 CERTIFICATE = "EFE6CD2666B9106E68724C38ADD1C405267A2F94"
@@ -212,7 +212,7 @@ class PublicCommandHarness(command.CommandHarness):
             require(draft["source"]["kind"] == "application_directory", "public_command_intake_changed")
             form = await self.manager(state, "/v1/preparations/form", {"import_id": draft["draft_id"], "revision": draft["revision"]})
             require(form["execution_available"] is True and form["resolution_required"] is False
-                and form["recipe"]["id"] == "mcpme.native-command" and form["recipe"]["version"] == "1.0.1",
+                and form["recipe"]["id"] == "mcpme.native-command" and form["recipe"]["version"] == "1.0.2",
                 "public_command_form_inactive")
             recipe = await self.cli(state, environment, home, "recipes", "inspect", "--id", form["recipe"]["id"],
                 "--version", form["recipe"]["version"], "--json")
@@ -315,7 +315,7 @@ async def verify(host, native, fixture, report, *, upgrade_app=None):
         report["active_release_policy_sha256"] = active_policy(host)
         common.verify_host_payload(host)
         signature(app, deep=True)
-        for name in ("meecp-command-reap", "meecp-command-resource-reap"):
+        for name in ("mcpme-command-reap", "mcpme-command-resource-reap"):
             signature(host / "bin" / name)
         if upgrade_app is not None:
             require(upgrade_app != app and upgrade_app.suffix == ".app"
@@ -325,13 +325,13 @@ async def verify(host, native, fixture, report, *, upgrade_app=None):
             report["upgrade_active_release_policy_sha256"] = active_policy(upgrade_host)
             common.verify_host_payload(upgrade_host)
             signature(upgrade_app, deep=True)
-            for name in ("meecp-command-reap", "meecp-command-resource-reap"):
+            for name in ("mcpme-command-reap", "mcpme-command-resource-reap"):
                 require(common.digest(upgrade_host / "bin" / name) == common.digest(host / "bin" / name),
                     "public_command_upgrade_helper_identity_changed")
                 signature(upgrade_host / "bin" / name)
             report["upgrade_signed_app_files"] = sum(record[1] is not None for record in upgrade_before.values())
             report["shared_command_helpers_sha256"] = {name: common.digest(host / "bin" / name)
-                for name in ("meecp-command-reap", "meecp-command-resource-reap")}
+                for name in ("mcpme-command-reap", "mcpme-command-resource-reap")}
         factory = partial(PublicCommandHarness, fixture=fixture, report=report, upgrade_app=upgrade_app)
         await common.verify(host, native, report, harness_factory=factory, cases=("public_native_command",))
     finally:

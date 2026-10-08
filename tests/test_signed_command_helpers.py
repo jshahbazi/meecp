@@ -69,7 +69,7 @@ def test_reviewed_manifest_pins_original_pair_sources_and_license():
     value = asset.manifest()
     assert value["component"] == asset.COMPONENT
     for path, digest in value["sources"].items():
-        assert hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == digest
+        assert hashlib.sha256((ROOT / path.replace("mcpme", "meecp")).read_bytes()).hexdigest() == digest
     assert value["archive"]["sha256"] == "30539c050891beec398a8ecb69b959092f6897c2b495dc66b73e9cfb3de9b2cd"
     assert value["archive"]["bytes"] == 24938
 

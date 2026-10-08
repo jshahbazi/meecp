@@ -49,11 +49,11 @@ def native_failure_diagnostic(receipt, returncode):
     return result
 
 RESOLVED = ("resolved-python-v1", "1.0.1",
-    "3c24410b46415cb83b9d945ebf0049f552e9f7493943164f311939a79b49000e")
+    "e5b174b7626e3bb89cd4a8727099662d111608e1465b01218342bb68f10a6b90")
 ONNX = ("onnxruntime-cpu-v1", "1.0.0",
-    "ec982f8489de85afd79d6aa715431082e1bba29be48ca06eef457dbcc362d8dc")
+    "08f524978bf50f0ff1c9aa1f2db57393868076282c3aa879686a22cdff2afd30")
 HOTDOG = ("yolo11-coco-detect-v1", "1.0.0",
-    "b48bde76ca30787de2e41a6b984c0c80a79b3a4b6ec75637f3147ccfadec3e99")
+    "869a91491f8772054988d4df367ba53706dbb88a6e3c8dbfcc7f8d0bc39b5888")
 
 
 def public_capabilities(value):

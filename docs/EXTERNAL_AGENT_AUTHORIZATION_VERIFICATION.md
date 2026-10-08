@@ -138,6 +138,14 @@ version 1.0.0, candidate version 1.0.1, and clone/rollback policy. The verifier
 confirmed completion, one installed entry, preserved data/connection, one-operation
 retry, remembered reconnect, live revocation, and owned cleanup.
 
+During PR creation, `main` advanced to `0937ace` with initialization connection-reuse
+guidance. The branch incorporated that update without conflicts. The combined
+management facade, MCP catalog, CLI, gateway, and service-protocol suites passed
+**103 tests in 43.23 seconds**. This checks the advisory `instructions` addition
+alongside immediate startup and the native authorization flow. The development
+bundle's two affected Python modules and documentation were refreshed, with receipt
+hashes and its ad hoc signature updated.
+
 ## Limits
 
 This is a local development implementation. Public signing/notarization and a release workflow were not run. The installed default application was not replaced. Strong signed-launcher attribution, other Claude distribution variants, real model-driven invocation, and exhaustive manual interactions across all macOS activation/settings/modal variants are not established by these checks. The implementation uses explicit account-scoped consent and conservative presentation deferral for those identity/focus boundaries.

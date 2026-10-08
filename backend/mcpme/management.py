@@ -24,7 +24,7 @@ from mcp.shared.message import SessionMessage
 from mcp.types import CallToolResult, JSONRPCMessage, ServerCapabilities, TextContent, Tool, ToolsCapability
 from mcp.types import InitializeRequestParams
 
-from .gateway import MAX_MESSAGE_BYTES, MAX_PENDING, encode
+from .gateway import MAX_MESSAGE_BYTES, MAX_PENDING, SESSION_INSTRUCTIONS, encode
 from .grants import GrantError
 from .policy import load_json
 from .authorization_client import AuthorizationError, SessionAuthorization
@@ -410,7 +410,7 @@ async def serve_streams(management: Management, reader, writer):
 
     server = management.server()
     options = InitializationOptions(server_name="mcpme-management", server_version="1",
-        capabilities=ServerCapabilities(tools=ToolsCapability(listChanged=False)))
+        capabilities=ServerCapabilities(tools=ToolsCapability(listChanged=False)), instructions=SESSION_INSTRUCTIONS)
 
     async def run_server():
         try:

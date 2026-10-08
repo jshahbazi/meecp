@@ -12,12 +12,12 @@ import uuid
 
 import pytest
 
-from mcpme.command_resource_execution_v1 import _platform_policy
-from mcpme.command_resource_policy_v1 import ResourcePolicyV1
-from mcpme.preparation_command_owner import CommandPreparationResourceAdmission, recover_command_ownership
-from mcpme.preparation_command_verifier import verify_command_package
-from mcpme.preparation_contracts import PreparationError
-from mcpme.private import read_private_json, write_private_json
+from meecp.command_resource_execution_v1 import _platform_policy
+from meecp.command_resource_policy_v1 import ResourcePolicyV1
+from meecp.preparation_command_owner import CommandPreparationResourceAdmission, recover_command_ownership
+from meecp.preparation_command_verifier import verify_command_package
+from meecp.preparation_contracts import PreparationError
+from meecp.private import read_private_json, write_private_json
 from test_host_command import ROOT, native, digest, pytestmark
 from test_preparation_command_managed import intake
 
@@ -26,7 +26,7 @@ from test_preparation_command_managed import intake
 def measured_admission(tmp_path_factory):
     helper = tmp_path_factory.mktemp("measured-command") / "helper"
     completed = subprocess.run(["clang", "-Wall", "-Wextra", "-Werror", "-O2",
-        str(ROOT / "scripts/mcpme-command-resource-reap.c"), "-o", str(helper)], capture_output=True, timeout=30)
+        str(ROOT / "scripts/meecp-command-resource-reap.c"), "-o", str(helper)], capture_output=True, timeout=30)
     assert completed.returncode == 0
     return CommandPreparationResourceAdmission(helper, digest(helper), _platform_policy())
 
@@ -43,7 +43,7 @@ async def test_real_sdk_forked_workload_has_positive_same_invocation_evidence(tm
         try:
             report = await verify_command_package(owner.package.root, owner.descriptor, None, owner.workspace, owner=owner)
         except Exception as failure:
-            from mcpme.command_resource_execution_v1 import read_resource_completion
+            from meecp.command_resource_execution_v1 import read_resource_completion
             diagnostics = []
             for entry in owner.executor.journal["entries"]:
                 valid, code, measurement = read_resource_completion(owner.executor.state, entry)
@@ -96,11 +96,11 @@ async def test_actual_overload_fails_and_settles_before_reservation_release(tmp_
 @pytest.mark.asyncio
 async def test_measured_runner_attaches_installs_and_relocates_actual_directory(tmp_path, native, measured_admission, monkeypatch):
     from types import SimpleNamespace
-    from mcpme.host_command import HostCommandAdmission
-    from mcpme.preparation_runner import PreparationRunner
+    from meecp.host_command import HostCommandAdmission
+    from meecp.preparation_runner import PreparationRunner
     imports, store, draft, descriptor = intake(tmp_path, native, "measured-tree", prepare_job=False)
-    monkeypatch.setattr("mcpme.preparation_runner.load_private_toolchain", lambda *args: SimpleNamespace(identity="d" * 64))
-    monkeypatch.setattr("mcpme.preparation_runner.dependency_identity", lambda *args: "e" * 64)
+    monkeypatch.setattr("meecp.preparation_runner.load_private_toolchain", lambda *args: SimpleNamespace(identity="d" * 64))
+    monkeypatch.setattr("meecp.preparation_runner.dependency_identity", lambda *args: "e" * 64)
     runner = PreparationRunner(store, tmp_path / "host", native[0], enabled=True, enabled_families=tuple(store.families),
         command_admission=HostCommandAdmission(native[1], digest(native[1])), command_resource_admission=measured_admission)
     try:
@@ -117,8 +117,8 @@ async def test_measured_runner_attaches_installs_and_relocates_actual_directory(
         await runner.close()
         imports.close()
         shutil.rmtree(imports.root)
-        from mcpme.supervisor import Supervisor
-        from test_mcpme_host import install
+        from meecp.supervisor import Supervisor
+        from test_meecp_host import install
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
         from mcp.client.streamable_http import streamable_http_client
@@ -136,7 +136,7 @@ async def test_measured_runner_attaches_installs_and_relocates_actual_directory(
                         await client.initialize()
                         result = await client.call_tool("run", {"ok": True})
                         assert not result.isError and result.structuredContent == {"ok": True}
-            params = StdioServerParameters(command=str(ROOT / "scripts/mcpme"),
+            params = StdioServerParameters(command=str(ROOT / "scripts/meecp"),
                 args=["--state-dir", str(host.root), "connect", "--slot", slot.id])
             async with stdio_client(params) as (read, write):
                 async with ClientSession(read, write) as client:
@@ -222,11 +222,11 @@ async def test_measured_cancellation_holds_reservation_until_native_settlement(t
 @pytest.mark.parametrize("changed", ["helper", "platform", "policy"])
 async def test_changed_measured_admission_invalidates_plan_before_native_launch(tmp_path, native, measured_admission, monkeypatch, changed):
     from types import SimpleNamespace
-    from mcpme.host_command import HostCommandAdmission
-    from mcpme.preparation_runner import PreparationRunner
+    from meecp.host_command import HostCommandAdmission
+    from meecp.preparation_runner import PreparationRunner
     imports, store, draft, descriptor = intake(tmp_path, native, "echo", prepare_job=False)
-    monkeypatch.setattr("mcpme.preparation_runner.load_private_toolchain", lambda *args: SimpleNamespace(identity="d" * 64))
-    monkeypatch.setattr("mcpme.preparation_runner.dependency_identity", lambda *args: "e" * 64)
+    monkeypatch.setattr("meecp.preparation_runner.load_private_toolchain", lambda *args: SimpleNamespace(identity="d" * 64))
+    monkeypatch.setattr("meecp.preparation_runner.dependency_identity", lambda *args: "e" * 64)
     runner = PreparationRunner(store, tmp_path / "host", native[0], enabled=True, enabled_families=tuple(store.families),
         command_admission=HostCommandAdmission(native[1], digest(native[1])), command_resource_admission=measured_admission)
     launched = []
@@ -238,7 +238,7 @@ async def test_changed_measured_admission_invalidates_plan_before_native_launch(
         def forbidden(*args, **kwargs):
             launched.append(True)
             raise AssertionError("unexpected_native_launch")
-        monkeypatch.setattr("mcpme.command_resource_execution_v1.subprocess.Popen", forbidden)
+        monkeypatch.setattr("meecp.command_resource_execution_v1.subprocess.Popen", forbidden)
         job = await runner.start(plan["plan_id"], plan["plan_digest"], str(uuid.uuid4()))
         await asyncio.wait_for(asyncio.shield(runner.tasks[job["job_id"]]), 10)
         final = store.get(job["job_id"])

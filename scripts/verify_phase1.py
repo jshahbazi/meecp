@@ -52,8 +52,8 @@ def private_json(path):
 
 def host_directory(path):
     path = path.resolve(strict=True)
-    for candidate in (path, path / "Contents/Resources/host", path / "Contents/Resources/mcpme-host"):
-        if (candidate / "bin/mcpme").is_file():
+    for candidate in (path, path / "Contents/Resources/host", path / "Contents/Resources/meecp-host"):
+        if (candidate / "bin/meecp").is_file():
             return candidate
     raise ValueError("host_unavailable")
 
@@ -125,7 +125,7 @@ async def tool(client, name, arguments=None):
 
 async def owned_failure_probe(state, reaper, model, deterministic):
     """The local Supervisor retains process identities; fault injection uses its reaper command."""
-    from mcpme.supervisor import Supervisor
+    from meecp.supervisor import Supervisor
     host = Supervisor(state.resolve(), reaper.resolve())
     result = {"owned_engine_forced_exit": False, "engine_failure_other_slot_usable": False}
     async def install(package, name):
@@ -164,12 +164,12 @@ async def owned_failure_probe(state, reaper, model, deterministic):
 
 async def verify(args, report):
     checks = report["checks"]
-    with tempfile.TemporaryDirectory(prefix="mcpme-phase1-") as directory:
+    with tempfile.TemporaryDirectory(prefix="meecp-phase1-") as directory:
         root = Path(directory).resolve()
         relocated = root / "relocated host"
         await asyncio.to_thread(shutil.copytree, host_directory(args.host), relocated, symlinks=True)
-        launcher = relocated / "bin/mcpme"
-        reaper = relocated / "bin/mcpme-reap"
+        launcher = relocated / "bin/meecp"
+        reaper = relocated / "bin/meecp-reap"
         home = root / "private home"
         home.mkdir(mode=0o700)
         env = {"HOME": str(home), "TMPDIR": str(root), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",

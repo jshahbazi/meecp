@@ -6,7 +6,7 @@ from pathlib import PurePosixPath
 
 import pytest
 
-from mcpme.preparation_agent_guides import python_adapter_guide
+from meecp.preparation_agent_guides import python_adapter_guide
 from test_preparation_agent import backend, output, request_for, response
 
 
@@ -59,7 +59,7 @@ def request_only_unlocked_handler(request):
             unresolved = ["An exact original license identity must be selected for review."]
         files = [
             {"path": "proposed/adapter/adapter.json", "content": json.dumps({"schema_version": 1,
-                "module": "mcpme_generated_agent_adapter", "function": "invoke", "source_license": licenses[0] if len(licenses) == 1 else "LICENSE"})},
+                "module": "meecp_generated_agent_adapter", "function": "invoke", "source_license": licenses[0] if len(licenses) == 1 else "LICENSE"})},
             {"path": "proposed/adapter/wrapper.py", "content": f"from {PurePosixPath(path).stem} import {function.name}\ndef invoke({argument}: int) -> dict[str, int]:\n return {{'value': {function.name}({argument})}}\n"},
             {"path": "proposed/adapter/LICENSE", "content": "Permission to use, copy and modify this synthetic generated wrapper is granted.\n"}]
     assert all(item["path"] in contract["instructions"] for item in files)

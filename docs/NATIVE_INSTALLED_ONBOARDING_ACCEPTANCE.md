@@ -44,10 +44,10 @@ the CLI host with its complete preparation toolchain. Supply the resulting paths
 and a new report path:
 
 ```sh
-swift build --product McpmeMenuBar
+swift build --product MeecpMenuBar
 uv run --locked python scripts/verify_phase3_native_onboarding.py \
   --host /absolute/path/to/built-host \
-  --native /absolute/path/to/.build/debug/McpmeMenuBar \
+  --native /absolute/path/to/.build/debug/MeecpMenuBar \
   --output /absolute/path/to/new-report.json
 ```
 

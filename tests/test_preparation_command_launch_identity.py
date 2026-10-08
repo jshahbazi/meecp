@@ -8,7 +8,7 @@ import threading
 
 import pytest
 
-from mcpme.preparation_contracts import PreparationError
+from meecp.preparation_contracts import PreparationError
 from test_host_command import native, pytestmark
 from test_preparation_command_managed import intake
 from test_preparation_command_measured import measured_admission, measured_owner
@@ -92,7 +92,7 @@ async def test_final_native_fence_composes_original_bytes_and_current_authority(
         native_checks.append(True)
         # All full-byte reads have already returned. The native callback must
         # use its original baseline, never recapture or hash selected bytes.
-        monkeypatch.setattr("mcpme.preparation_command_owner.validate_package",
+        monkeypatch.setattr("meecp.preparation_command_owner.validate_package",
             lambda *args: pytest.fail("full_byte_hash_at_native_fence"))
         if mutation == "candidate":
             target = executable(owner)

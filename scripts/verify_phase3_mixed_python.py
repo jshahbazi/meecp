@@ -66,9 +66,9 @@ class MixedPythonHarness(native.Harness):
                     "headroom_mb": policy["headroom_mb"], "disk_free_bytes": shutil.disk_usage(state).free,
                     "owned_children_joined": not self.children}
             raise
-        from mcpme.imports import ImportStore
-        from mcpme.contracts import validate_package
-        from mcpme.preparation_resolved_python import ResolvedPythonComponent
+        from meecp.imports import ImportStore
+        from meecp.contracts import validate_package
+        from meecp.preparation_resolved_python import ResolvedPythonComponent
         with ImportStore(self.states[-1]) as store:
             draft = store.inspect(self.mixed_draft["draft_id"])
             package = validate_package(Path(draft["attachment"]["path"]))

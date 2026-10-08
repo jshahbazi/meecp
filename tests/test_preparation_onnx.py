@@ -8,11 +8,11 @@ from dataclasses import dataclass
 
 import pytest
 
-from mcpme import preparation_onnx as onnx
-from mcpme.contracts import Access
-from mcpme.preparation_artifacts import CapturedArtifactCollectionV1
-from mcpme.preparation_components import parse_component_descriptor
-from mcpme.preparation_contracts import PreparationError
+from meecp import preparation_onnx as onnx
+from meecp.contracts import Access
+from meecp.preparation_artifacts import CapturedArtifactCollectionV1
+from meecp.preparation_components import parse_component_descriptor
+from meecp.preparation_contracts import PreparationError
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,7 +82,7 @@ def test_source_collection_binding_rejects_tampered_reference(mutation):
 
 
 def test_folder_supplement_preserves_original_folder_revision_and_file_namespace(tmp_path):
-    from mcpme.imports import ImportStore
+    from meecp.imports import ImportStore
     folder = tmp_path / "folder"
     folder.mkdir()
     (folder / "README.md").write_text("Synthetic detector directory.\n")
@@ -160,8 +160,8 @@ def test_wheel_notices_are_indexed_without_importing_runtime(tmp_path):
     assets = {"LICENSE-FLATBUFFERS":b"Pinned FlatBuffers\n", "LICENSE-HTTPX":b"Pinned HTTPX\n"}
     onnx._supplement_dependency_notices(site, assets, lambda: None)
     metadata = site / "onnxruntime-1.30.0.dist-info"
-    assert (metadata / "LICENSE-mcpme-wheel.txt").read_bytes() == (wheel / "LICENSE").read_bytes()
-    assert (metadata / "NOTICE-mcpme-wheel.txt").read_bytes() == (wheel / "ThirdPartyNotices.txt").read_bytes()
+    assert (metadata / "LICENSE-meecp-wheel.txt").read_bytes() == (wheel / "LICENSE").read_bytes()
+    assert (metadata / "NOTICE-meecp-wheel.txt").read_bytes() == (wheel / "ThirdPartyNotices.txt").read_bytes()
     (wheel / "LICENSE").unlink()
     (wheel / "LICENSE").symlink_to(wheel / "ThirdPartyNotices.txt")
     with pytest.raises(PreparationError):
@@ -191,9 +191,9 @@ def test_job_reference_release_is_explicit_separate_from_builder():
 
 @pytest.mark.asyncio
 async def test_actual_captured_fd_copy_build_and_job_pin_survive_original_removal(tmp_path, monkeypatch):
-    from mcpme.imports import ImportStore
-    from mcpme.preparation_artifacts import AcquisitionRequestV1, ArtifactStore
-    from mcpme.preparation_capture import (ArtifactCaptureCoordinator, ArtifactCaptureStore,
+    from meecp.imports import ImportStore
+    from meecp.preparation_artifacts import AcquisitionRequestV1, ArtifactStore
+    from meecp.preparation_capture import (ArtifactCaptureCoordinator, ArtifactCaptureStore,
         CapturePolicyV1, CreateImportTargetV1)
     directory = tmp_path.resolve()
     original = directory / "selected"; original.mkdir()
@@ -257,9 +257,9 @@ async def test_actual_captured_fd_copy_build_and_job_pin_survive_original_remova
     assert {entry.sha256 for entry in onnx.captured_collection(draft).entries} <= {item.sha256 for item in package.lock.artifacts}
     family = onnx.OnnxPreparationFamily(ledger)
     assert family.validate_inputs(descriptor(draft), draft).digest == completed["collection_digest"]
-    from mcpme.recipes import RecipeStore, builtin_components
-    from mcpme.preparations import PreparationStore
-    from mcpme.preparation_forms import PreparationForms
+    from meecp.recipes import RecipeStore, builtin_components
+    from meecp.preparations import PreparationStore
+    from meecp.preparation_forms import PreparationForms
     recipes = RecipeStore(imports, component_catalog={**builtin_components(), **onnx.builtin_onnx_components()})
     onnx.write_onnx_recipe(directory / "recipe")
     recipe = recipes.add(directory / "recipe")

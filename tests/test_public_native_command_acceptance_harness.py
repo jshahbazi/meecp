@@ -59,7 +59,7 @@ def release_input(module, tmp_path):
     host = app / "Contents/Resources/host"
     policy = host / module.POLICY_PATH
     policy.parent.mkdir(parents=True)
-    native = app / "Contents/MacOS/mcpme"
+    native = app / "Contents/MacOS/meecp"
     native.parent.mkdir(parents=True)
     native.write_bytes(b"Synthetic metadata; never executed.")
     native.chmod(0o700)
@@ -170,7 +170,7 @@ async def test_public_defaults_require_admitted_form_review_and_no_job(module, r
     async def shutdown(*args): pass
     monkeypatch.setattr(module.common.Harness, "start", ordinary)
     monkeypatch.setattr(harness, "shutdown", shutdown)
-    recipe = {"id": "mcpme.native-command", "version": "1.0.1", "digest": "a" * 64}
+    recipe = {"id": "mcpme.native-command", "version": "1.0.2", "digest": "a" * 64}
     async def cli(state, environment, home, *args):
         calls.append(args)
         if args[0] == "capabilities":

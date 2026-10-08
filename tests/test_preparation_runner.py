@@ -16,20 +16,20 @@ import uuid
 
 import pytest
 
-from mcpme.contracts import validate_package
-from mcpme.imports import ImportStore
-from mcpme.ownership_receipts import prepare_receipt, verify_receipt
-from mcpme.preparation_contracts import ExecutionPolicy, PreparationError, parse_descriptor
-from mcpme.preparation_components import parse_component_descriptor
-from mcpme.preparation_processes import PreparationExecutor
-from mcpme.preparation_runner import JournaledPreparationOwner, PreparationRunner, _workspace_size, implementation_digest
-from mcpme.preparation_verifier import VerificationReport, verify_prepared_package
-from mcpme.preparations import PreparationStore, RECEIPT_NAME
-from mcpme.processes import OwnershipLost, ProcessOwner
-from mcpme.recipe_sdk import scaffold_recipe
-from mcpme.recipes import RecipeStore
-from test_mcpme_packages import edit_manifest, make_package
-from test_mcpme_preparations import foundation
+from meecp.contracts import validate_package
+from meecp.imports import ImportStore
+from meecp.ownership_receipts import prepare_receipt, verify_receipt
+from meecp.preparation_contracts import ExecutionPolicy, PreparationError, parse_descriptor
+from meecp.preparation_components import parse_component_descriptor
+from meecp.preparation_processes import PreparationExecutor
+from meecp.preparation_runner import JournaledPreparationOwner, PreparationRunner, _workspace_size, implementation_digest
+from meecp.preparation_verifier import VerificationReport, verify_prepared_package
+from meecp.preparations import PreparationStore, RECEIPT_NAME
+from meecp.processes import OwnershipLost, ProcessOwner
+from meecp.recipe_sdk import scaffold_recipe
+from meecp.recipes import RecipeStore
+from test_meecp_packages import edit_manifest, make_package
+from test_meecp_preparations import foundation
 from test_preparation_processes import group_reaper
 from test_preparation_components import v2_descriptor
 from test_preparation_verifier import probe_fixture
@@ -54,19 +54,19 @@ def controlled(foundation, monkeypatch, tmp_path, group_reaper):
         resources.pop(identifier, None)
         released.append(identifier)
     toolchain = SimpleNamespace(identity="d" * 64, uv=tmp_path / "uv")
-    monkeypatch.setattr("mcpme.preparation_runner.load_private_toolchain", lambda *args: toolchain)
+    monkeypatch.setattr("meecp.preparation_runner.load_private_toolchain", lambda *args: toolchain)
     def build(descriptor, draft, toolchain, output, run, check, *, acquire_wheels):
         check()
         package = make_package(output)
         edit_manifest(package, **store._candidate_contract(descriptor, draft["source"]["revision"]))
         return validate_package(package)
-    monkeypatch.setattr("mcpme.preparation_runner.prepare_bound", build)
+    monkeypatch.setattr("meecp.preparation_runner.prepare_bound", build)
     async def verify(root, descriptor, reaper, workspace, **kwargs):
         package = validate_package(root)
         # Verification must see the locked receipt, never a later injected one.
         assert any(artifact.path == RECEIPT_NAME for artifact in package.lock.artifacts)
         return VerificationReport(package.digest, len(descriptor.interface.tools), len(descriptor.validation), "2025-11-25", 4096)
-    monkeypatch.setattr("mcpme.preparation_runner.verify_prepared_package", verify)
+    monkeypatch.setattr("meecp.preparation_runner.verify_prepared_package", verify)
     runner = PreparationRunner(store, tmp_path / "host", group_reaper, enabled=True,
                                reserve_resources=reserve, release_resources=release)
     return runner, imports, recipes, draft, raw, resources, released
@@ -117,7 +117,7 @@ async def test_independent_report_mismatch_never_attaches(controlled, monkeypatc
     runner, imports, _, draft, _, resources, _ = controlled
     async def wrong(*args, **kwargs):
         return VerificationReport("e" * 64, 1, 1, "2025-11-25", 4096)
-    monkeypatch.setattr("mcpme.preparation_runner.verify_prepared_package", wrong)
+    monkeypatch.setattr("meecp.preparation_runner.verify_prepared_package", wrong)
     job = await started(controlled)
     final = await finished(runner, job["job_id"])
     assert final["state"] == "failed" and final["error_code"] == "preparation_result_mismatch"
@@ -189,7 +189,7 @@ async def test_cancel_builder_thread_checks_and_settles(controlled, monkeypatch)
         while True:
             check()
             time.sleep(0.005)
-    monkeypatch.setattr("mcpme.preparation_runner.prepare_bound", waiting)
+    monkeypatch.setattr("meecp.preparation_runner.prepare_bound", waiting)
     job = await started(controlled)
     async with asyncio.timeout(5):
         while not entered.is_set():
@@ -203,12 +203,12 @@ async def test_cancel_builder_thread_checks_and_settles(controlled, monkeypatch)
 async def test_recovery_does_not_interrupt_current_worker(controlled, monkeypatch):
     runner, *_ = controlled
     entered, resume = threading.Event(), threading.Event()
-    original = __import__("mcpme.preparation_runner", fromlist=["prepare_bound"]).prepare_bound
+    original = __import__("meecp.preparation_runner", fromlist=["prepare_bound"]).prepare_bound
     def paused(*args, **kwargs):
         entered.set()
         resume.wait(5)
         return original(*args, **kwargs)
-    monkeypatch.setattr("mcpme.preparation_runner.prepare_bound", paused)
+    monkeypatch.setattr("meecp.preparation_runner.prepare_bound", paused)
     job = await started(controlled)
     async with asyncio.timeout(5):
         while not entered.is_set():
@@ -253,7 +253,7 @@ async def test_fast_builder_disk_usage_is_checked_before_probe(controlled, monke
         nonlocal verified
         verified = True
         pytest.fail("over-budget build was probed")
-    monkeypatch.setattr("mcpme.preparation_runner.verify_prepared_package", forbidden)
+    monkeypatch.setattr("meecp.preparation_runner.verify_prepared_package", forbidden)
     policy = ExecutionPolicy(schema_version=1, operations=["build", "probe"], wall_seconds=120,
                              disk_bytes=100, memory_mb=128)
     job = await started(controlled, policy=policy)
@@ -270,7 +270,7 @@ async def test_monitor_cancels_running_probe_on_input_invalidation(controlled, m
     async def waiting(*args, **kwargs):
         entered.set()
         await asyncio.Future()
-    monkeypatch.setattr("mcpme.preparation_runner.verify_prepared_package", waiting)
+    monkeypatch.setattr("meecp.preparation_runner.verify_prepared_package", waiting)
     job = await started(controlled)
     await entered.wait()
     if invalidation == "revoke":
@@ -290,7 +290,7 @@ async def test_whole_job_deadline_stops_copy_worker(controlled, monkeypatch):
         while True:
             args[5]()
             time.sleep(0.005)
-    monkeypatch.setattr("mcpme.preparation_runner.prepare_bound", waiting)
+    monkeypatch.setattr("meecp.preparation_runner.prepare_bound", waiting)
     policy = ExecutionPolicy(schema_version=1, operations=["build", "probe"], wall_seconds=1,
                              disk_bytes=1024**3, memory_mb=128)
     job = await started(controlled, policy=policy)
@@ -311,7 +311,7 @@ async def test_expiry_after_resource_wait_releases_reservation(controlled, monke
     runner.reserve_resources = waiting
     job = await started(controlled, expires_in=1)
     await entered.wait()
-    monkeypatch.setattr("mcpme.preparation_authority.time.time", lambda: job["authority_expires_at"] + 1)
+    monkeypatch.setattr("meecp.preparation_authority.time.time", lambda: job["authority_expires_at"] + 1)
     resume.set()
     result = await finished(runner, job["job_id"])
     assert result["state"] == "failed" and result["error_code"] == "preparation_authority_expired"
@@ -322,7 +322,7 @@ async def test_expiry_after_resource_wait_releases_reservation(controlled, monke
 async def test_actual_implementation_changed_after_review(controlled, monkeypatch):
     runner, *_ = controlled
     plan = await planned(controlled)
-    monkeypatch.setattr("mcpme.preparation_runner.implementation_digest", lambda *args, **kwargs: "b" * 64)
+    monkeypatch.setattr("meecp.preparation_runner.implementation_digest", lambda *args, **kwargs: "b" * 64)
     job = await runner.start(plan["plan_id"], plan["plan_digest"], str(uuid.uuid4()))
     result = await finished(runner, job["job_id"])
     assert result["state"] == "failed" and result["error_code"] == "preparation_implementation_changed"
@@ -576,7 +576,7 @@ async def test_verifier_cancellation_joins_hash_thread_before_return(group_reape
             entered.set()
             resume.wait(5)
         return validate_package(root)
-    monkeypatch.setattr("mcpme.preparation_verifier.validate_package", paused)
+    monkeypatch.setattr("meecp.preparation_verifier.validate_package", paused)
     task = asyncio.create_task(verify_prepared_package(package, descriptor, group_reaper, tmp_path, owner=owner))
     async with asyncio.timeout(5):
         while not entered.is_set():
@@ -664,7 +664,7 @@ async def test_actual_private_host_durable_attachment(tmp_path, kind, monkeypatc
             "validation": [{"id": "synthetic", "tool": "double", "arguments": {"n": 3}, "expected": {"value": 6}, "synthetic": True}]}
         store = PreparationStore(imports, recipes)
         assert store.plan(draft["draft_id"], 1, raw)["execution_available"] is False
-        runner = PreparationRunner(store, host, host / "bin/mcpme-reap", enabled=True)
+        runner = PreparationRunner(store, host, host / "bin/meecp-reap", enabled=True)
         plan = await runner.plan(draft["draft_id"], 1, raw)
         job = await runner.start(plan["plan_id"], plan["plan_digest"], str(uuid.uuid4()))
         if cancel_probe or revoke_probe:

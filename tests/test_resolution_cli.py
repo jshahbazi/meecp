@@ -4,9 +4,9 @@ import uuid
 
 import pytest
 
-from mcpme import __main__ as cli
-from mcpme.preparation_contracts import PreparationError
-from test_mcpme_management_cli import execute, private_manager
+from meecp import __main__ as cli
+from meecp.preparation_contracts import PreparationError
+from test_meecp_management_cli import execute, private_manager
 from test_preparation_resolution import policy
 
 

@@ -7,12 +7,12 @@ import shutil
 
 import pytest
 
-from mcpme.imports import ImportStore
-from mcpme import preparation_builtin_recipes as seeds
-from mcpme.preparation_forms import ResolvedPythonFormProvider
-from mcpme.preparation_resolved_python import PUBLISHED_COMPONENTS, ResolvedPythonComponent, component_catalog
-from mcpme.recipes import RecipeStore, validate_bundle
-from test_mcpme_management_cli import execute, private_manager
+from meecp.imports import ImportStore
+from meecp import preparation_builtin_recipes as seeds
+from meecp.preparation_forms import ResolvedPythonFormProvider
+from meecp.preparation_resolved_python import PUBLISHED_COMPONENTS, ResolvedPythonComponent, component_catalog
+from meecp.recipes import RecipeStore, validate_bundle
+from test_meecp_management_cli import execute, private_manager
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -38,7 +38,7 @@ async def test_actual_cli_scaffold_check_add_enable_binds_current_exact_resolved
 @pytest.mark.parametrize("kind", ["python-callable", "python-mcp"])
 def test_old_component_metadata_and_bundle_remain_exact_but_forms_offer_only_current(kind):
     old = validate_bundle(ROOT / "templates/builtin-recipes/resolved-python-v1")
-    current = validate_bundle(ROOT / "templates/builtin-recipes/resolved-python-v1-0-1")
+    current = validate_bundle(ROOT / "templates/builtin-recipes/resolved-python-v1-0-2")
     old_step, = old["manifest"]["steps"]
     new_step, = current["manifest"]["steps"]
     reference = ResolvedPythonComponent().reference
@@ -61,7 +61,7 @@ def test_resolved_default_upgrade_preserves_explicit_old_lifecycle(tmp_path, mon
     catalog_root = tmp_path / "catalog"
     shutil.copytree(ROOT / "templates/builtin-recipes", catalog_root)
     old = validate_bundle(catalog_root / "resolved-python-v1")
-    current = validate_bundle(catalog_root / "resolved-python-v1-0-1")
+    current = validate_bundle(catalog_root / "resolved-python-v1-0-2")
     def catalog(bundle, directory):
         return {"schema_version": 1, "recipes": [{"recipe_id": bundle["manifest"]["id"],
             "version": bundle["manifest"]["version"], "digest": bundle["digest"], "directory": directory}]}
@@ -75,13 +75,13 @@ def test_resolved_default_upgrade_preserves_explicit_old_lifecycle(tmp_path, mon
         assert initial["ready"]
         getattr(recipes, action)(initial["recipe_id"], initial["version"])
         previous = recipes.list()
-    path.write_text(json.dumps(catalog(current, "resolved-python-v1-0-1")))
+    path.write_text(json.dumps(catalog(current, "resolved-python-v1-0-2")))
     with ImportStore(state) as imports:
         recipes = RecipeStore(imports)
         result, = seeds.seed_builtin_recipes(recipes)["recipes"]
         assert not result["ready"] and result["blockers"] == ["builtin_recipe_lifecycle_preserved"]
         assert recipes.list() == previous
-        assert not any(item["version"] == "1.0.1" for item in recipes.list())
+        assert not any(item["version"] == current["manifest"]["version"] for item in recipes.list())
 
 
 def test_new_resolved_seed_keeps_enabled_old_record_byte_equal(tmp_path, monkeypatch):
@@ -100,5 +100,5 @@ def test_new_resolved_seed_keeps_enabled_old_record_byte_equal(tmp_path, monkeyp
         path.write_text(json.dumps(original_catalog))
         results = seeds.seed_builtin_recipes(recipes)["recipes"]
         current, = [item for item in results if item["recipe_id"] == "mcpme.resolved-python"]
-        assert current["version"] == "1.0.1" and current["ready"]
+        assert current["version"] == "1.0.2" and current["ready"]
         assert recipes.inspect(initial["recipe_id"], initial["version"]) == previous

@@ -6,7 +6,7 @@ with engine `llamacpp-cpu-v1`. Its agent record must contain exactly empty
 `components` and `providers` lists and `unlocked_resolution: false`. It adds no
 public gate or runtime setting.
 
-The initial host starts through the shipped `bin/mcpme serve` command. Its actual
+The initial host starts through the shipped `bin/meecp serve` command. Its actual
 capabilities must identify the exact ordinary family and recipe closures,
 ordinary resolution producer `1.0.1`, package schemas `[1, 2]`, and the four
 supported execution profiles. After relocating the signed app, the packaged

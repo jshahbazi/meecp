@@ -28,9 +28,9 @@ sys.path[:0] = [str(ROOT / "backend"), str(ROOT / "vendor")]
 sys.dont_write_bytecode = True
 logging.disable(logging.CRITICAL)
 
-from mcpme.model_intake import copy_artifact
-from mcpme_textgen.adapter import BoundedTextGenerator, LoopbackTransport, TextGenerationError, render_prompt
-from mcpme_textgen.fixture import (EMBEDDED_TEMPLATE_SHA256, ENGINE_BUILD, LICENSE_SHA256,
+from meecp.model_intake import copy_artifact
+from meecp_textgen.adapter import BoundedTextGenerator, LoopbackTransport, TextGenerationError, render_prompt
+from meecp_textgen.fixture import (EMBEDDED_TEMPLATE_SHA256, ENGINE_BUILD, LICENSE_SHA256,
     MODEL_BYTES, MODEL_FILENAME, MODEL_SHA256, TEMPLATE_SHA256, TOKENIZER_SHA256,
     digest, file_hash, tokenizer_metadata)
 
@@ -280,14 +280,14 @@ def jevk5_parity(engine, report):
 async def verify(args, report):
     report["implementation_sha256"] = {
         relative: file_hash(ROOT / relative) for relative in (
-            "backend/mcpme_textgen/adapter.py", "backend/mcpme_textgen/fixture.py",
+            "backend/meecp_textgen/adapter.py", "backend/meecp_textgen/fixture.py",
             "scripts/verify_phase3_llm.py")}
     source = args.engine_build.resolve()
     if (source / "Contents/Resources").is_dir():
         source = source / "Contents/Resources"
     expected = json.loads((ROOT / "tests/fixtures/text_generation/engine-closure.json").read_text())
     require(file_hash(ROOT / "vendor/qwen2.5-0.5b/LICENSE") == LICENSE_SHA256)
-    temporary = Path(tempfile.mkdtemp(prefix="mcpme-llm-compatibility-")).resolve()
+    temporary = Path(tempfile.mkdtemp(prefix="meecp-llm-compatibility-")).resolve()
     temporary.chmod(0o700)
     engine = None
     settled = True

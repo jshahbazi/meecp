@@ -62,7 +62,7 @@ def bootstrap(host):
 
 def origins(host):
     for name, module in tuple(sys.modules.items()):
-        if name == "mcpme" or name.startswith("mcpme."):
+        if name == "meecp" or name.startswith("meecp."):
             base = host / "backend"
         elif name in {"mcp", "httpx", "pydantic", "jsonschema"} or name.startswith(("mcp.", "httpx.", "pydantic.", "jsonschema.")):
             base = host / "python/site-packages"
@@ -73,10 +73,10 @@ def origins(host):
 
 
 def make_host(host, state, inventory, *, enabled=True):
-    from mcpme.host_command import HostCommandAdmission
-    from mcpme.supervisor import Supervisor
+    from meecp.host_command import HostCommandAdmission
+    from meecp.supervisor import Supervisor
     admission = HostCommandAdmission(host / inventory["helper"], inventory["helper_sha256"]) if enabled else None
-    return Supervisor(state, host / "bin/mcpme-reap", command_admission=admission)
+    return Supervisor(state, host / "bin/meecp-reap", command_admission=admission)
 
 
 def package(base, fixture, inventory, mode):
@@ -95,13 +95,13 @@ def package(base, fixture, inventory, mode):
         "lifecycle": {"startup_timeout_seconds": 5, "operation_timeout_seconds": 5},
         "tools": [{"name": "probe", "description": "Synthetic bounded command", "input_schema": schema, "output_schema": schema}],
         "resources": {"memory_mb": 32, "cpu_only": True}, "licenses": ["LICENSE"]}
-    (root / "mcpme.package.json").write_text(json.dumps(manifest))
+    (root / "meecp.package.json").write_text(json.dumps(manifest))
     lock = {"schema_version": 1, "package_id": manifest["package_id"], "version": manifest["version"],
-        "manifest_sha256": sha(root / "mcpme.package.json"), "artifacts": [{"path": name, "sha256": sha(root / name),
+        "manifest_sha256": sha(root / "meecp.package.json"), "artifacts": [{"path": name, "sha256": sha(root / name),
             "size": (root / name).stat().st_size, "executable": name == "target", "source": manifest["source_revision"],
             "provenance": "Explicit synthetic native fixture", "license": "LICENSE"} for name in ("target", "LICENSE")],
         "build": {"recipe": "synthetic-bundled-command-v1", "builder": "acceptance", "toolchain": "explicit clang fixture"}}
-    (root / "mcpme.lock.json").write_text(json.dumps(lock))
+    (root / "meecp.lock.json").write_text(json.dumps(lock))
     return root
 
 
@@ -137,9 +137,9 @@ async def http_call(host, slot):
 async def fixture_owner_manager(host):
     """Expose the real owner API required by the bundled stdio launcher."""
     import uvicorn
-    from mcpme.private import write_private_json
-    from mcpme.supervisor import HostServer, bind_listener, management_app
-    from mcpme_local_transport import bind_private_listener, socket_path
+    from meecp.private import write_private_json
+    from meecp.supervisor import HostServer, bind_listener, management_app
+    from meecp_local_transport import bind_private_listener, socket_path
 
     connection = host.root / "manager-connection.json"
     require(not connection.exists() and not connection.is_symlink())
@@ -179,7 +179,7 @@ async def fixture_owner_manager(host):
 async def stdio_call(host_path, host, slot):
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
-    params = StdioServerParameters(command=str(host_path / "bin/mcpme"), args=["--state-dir", str(host.root), "connect", "--slot", slot.id])
+    params = StdioServerParameters(command=str(host_path / "bin/meecp"), args=["--state-dir", str(host.root), "connect", "--slot", slot.id])
     async with fixture_owner_manager(host):
         with open(os.devnull, "w") as errors:
             async with stdio_client(params, errlog=errors) as (read, write):
@@ -217,7 +217,7 @@ async def worker(args, inventory):
 
 
 async def verify(args, receipt, inventory):
-    from mcpme.supervisor import HostError
+    from meecp.supervisor import HostError
     for mode in ("echo", "tree", "fds", "escape"):
         base = args.workspace / mode
         source = package(base, args.fixture, inventory, mode)

@@ -32,7 +32,7 @@ def _digest(path: Path) -> str:
 
 
 def _fetch(url: str, expected: str, limit: int) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "mcpme-distribution-builder"})
+    request = urllib.request.Request(url, headers={"User-Agent": "meecp-distribution-builder"})
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
             data = response.read(limit + 1)

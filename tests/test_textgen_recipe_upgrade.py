@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from mcpme import preparation_builtin_recipes as seeds
-from mcpme.imports import ImportStore
-from mcpme.preparation_textgen import VERSION
-from mcpme.recipes import RecipeStore, builtin_components, validate_bundle
+from meecp import preparation_builtin_recipes as seeds
+from meecp.imports import ImportStore
+from meecp.preparation_textgen import RECIPE_VERSION, VERSION
+from meecp.recipes import RecipeStore, builtin_components, validate_bundle
 
 
 def versions(monkeypatch, old_version):
@@ -29,7 +29,7 @@ def versions(monkeypatch, old_version):
     monkeypatch.setattr(seeds, "builtin_components", lambda: components)
     entries = []
     for version, directory, bundle in [(old_version, old_directory, old_bundle),
-                                       (VERSION, current.directory, new_bundle)]:
+                                       (current.version, current.directory, new_bundle)]:
         entries.append(seeds.BuiltinRecipeEntry(recipe_id="mcpme.text-generation", version=version,
             directory=directory, digest=bundle["digest"]))
     return components, entries
@@ -60,7 +60,7 @@ def test_exact_textgen_upgrade_preserves_owner_opt_out_across_restart(tmp_path, 
         again = seeds.seed_builtin_recipes(restarted)["recipes"][0]
         assert not again["ready"] and restarted.list() == before
         assert restarted.inspect(old.recipe_id, old.version)["state"] == before[0]["state"]
-        assert not any(item["version"] == VERSION for item in restarted.list())
+        assert not any(item["version"] == new.version for item in restarted.list())
 
 
 @pytest.mark.parametrize("old_version", ["1.0.5", "1.0.6", "1.0.7", "1.0.8", "1.0.9", "1.0.10", "1.0.11", "1.0.12", "1.0.13", "1.0.14"])
@@ -99,7 +99,7 @@ def test_public_provenance_and_new_component_bindings_are_exact():
     entry = next(item for item in seeds._catalog().recipes if item.recipe_id == "mcpme.text-generation")
     assert (root / "text-generation-v1-0-5/model-provenance.json").read_bytes() == (root / entry.directory / "model-provenance.json").read_bytes()
     bundle = validate_bundle(root / entry.directory)
-    assert entry.version == VERSION and entry.digest == bundle["digest"]
+    assert entry.version == RECIPE_VERSION and entry.digest == bundle["digest"]
     components = builtin_components()
     assert len(bundle["files"]) == 9
     for step in bundle["manifest"]["steps"]:

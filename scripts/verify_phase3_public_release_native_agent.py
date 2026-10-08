@@ -22,7 +22,7 @@ import verify_phase3_public_native_command as command
 import verify_phase3_public_textgen as textgen
 
 common = agent.common
-TEXTGEN_VERSION = "1.0.12"
+TEXTGEN_VERSION = "1.0.21"
 
 
 def closed_agent_record(value):
@@ -35,7 +35,7 @@ def closed_agent_record(value):
 
 def closed_release_policy(value):
     # Called only after common.verify imports the relocated packaged backend.
-    from mcpme.preparation_release_policy import ReleasePolicy
+    from meecp.preparation_release_policy import ReleasePolicy
     closed_agent_record(value)
     try:
         policy = ReleasePolicy.model_validate(value)
@@ -48,7 +48,7 @@ def closed_release_policy(value):
 
 
 def combined_capabilities(value, engine, task, policy):
-    from mcpme.preparation_textgen import ENGINE_ID, TASK_ID
+    from meecp.preparation_textgen import ENGINE_ID, TASK_ID
     common.require(engine[:2] == (ENGINE_ID, TEXTGEN_VERSION)
         and task[:2] == (TASK_ID, TEXTGEN_VERSION), "combined_textgen_version_changed")
     identity = textgen.public_textgen_capabilities(value, engine, task)
@@ -71,7 +71,7 @@ def combined_capabilities(value, engine, task, policy):
 
 
 def textgen_keys():
-    from mcpme.preparation_textgen import ENGINE_ID, TASK_ID, VERSION, references
+    from meecp.preparation_textgen import ENGINE_ID, TASK_ID, VERSION, references
     common.require(VERSION == TEXTGEN_VERSION, "combined_textgen_version_changed")
     keys = {item.id: item.key for item in references()}
     return keys[ENGINE_ID], keys[TASK_ID]

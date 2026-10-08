@@ -1,0 +1,774 @@
+"""Versioned local-owner CLI. stdout never contains credential values."""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import logging
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+import uuid
+from urllib.parse import urlsplit
+
+import httpx
+from meecp_local_transport import private_transport, socket_path
+
+from .contracts import PackageError, validate_package
+from .connections import connection_names
+from .grants import GrantError
+from .private import PrivateStateError, check_private_file, read_private_json
+
+DEFAULT_STATE = Path.home() / "Library/Application Support/mcpme"
+
+
+class OwnerArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        if "secrets" in self.prog.split()[1:]:
+            message = "invalid_secret_arguments"
+        super().error(message)
+
+    def parse_args(self, args=None, namespace=None):
+        parsed, remaining = self.parse_known_args(args, namespace)
+        if remaining:
+            message = ("invalid_secret_arguments" if getattr(parsed, "command", None) == "secrets"
+                       else "unrecognized arguments: " + " ".join(remaining))
+            self.error(message)
+        return parsed
+
+
+def emit(value: dict):
+    print(json.dumps({"api_version": 1, **value}, allow_nan=False))
+
+
+def uuid_argument(value: str) -> str:
+    try:
+        if str(uuid.UUID(value)) != value:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise argparse.ArgumentTypeError("expected_slot_or_operation_uuid") from None
+    return value
+
+
+def digest_argument(value: str) -> str:
+    if re.fullmatch(r"[a-f0-9]{64}", value) is None:
+        raise argparse.ArgumentTypeError("expected_lowercase_sha256")
+    return value
+
+
+def positive_size_argument(value: str) -> int:
+    try:
+        size = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("expected_positive_size") from None
+    if size < 1:
+        raise argparse.ArgumentTypeError("expected_positive_size")
+    return size
+
+
+def read_secret_file(path: Path) -> str:
+    """Read an owner-only input without following links or displaying its bytes."""
+    path = path.absolute()
+    try:
+        check_private_file(path)
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as source:
+            before = os.fstat(source.fileno())
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
+                    or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1
+                    or not 1 <= before.st_size <= 4096):
+                raise PrivateStateError()
+            data = source.read(4097)
+            after = os.fstat(source.fileno())
+            current = path.lstat()
+            attributes = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_mode", "st_uid", "st_nlink")
+            if (not 1 <= len(data) <= 4096 or any(getattr(before, key) != getattr(after, key)
+                    or getattr(after, key) != getattr(current, key) for key in attributes)):
+                raise PrivateStateError()
+        return data.decode("utf-8")
+    except (OSError, ValueError, UnicodeError):
+        raise PrivateStateError("invalid_secret_file") from None
+
+
+def read_settings_file(path: Path) -> dict:
+    try:
+        return read_private_json(path.absolute(), max_bytes=65536)
+    except PrivateStateError:
+        raise PrivateStateError("invalid_settings_file") from None
+
+
+def read_requirements_file(path: Path) -> dict:
+    """Keep legacy nonsecret requirements readable; require private references."""
+    path = path.absolute()
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as source:
+            details = os.fstat(source.fileno())
+            if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
+                raise PrivateStateError()
+            data = source.read(65537)
+        if len(data) > 65536:
+            raise PrivateStateError("requirements_limit")
+        from .policy import load_json
+        value = load_json(data)
+        if not isinstance(value, dict):
+            raise PrivateStateError()
+        if isinstance(value.get("secret_references"), dict) and value["secret_references"]:
+            # Reopen under the private-file contract and use that read as authority.
+            value = read_private_json(path, max_bytes=65536)
+        return value
+    except PrivateStateError as error:
+        raise PrivateStateError(error.code if error.code == "requirements_limit" else "invalid_requirements_file") from None
+    except (OSError, ValueError, UnicodeError):
+        raise PrivateStateError("invalid_requirements_file") from None
+
+
+def secret_metadata(value: dict) -> dict:
+    """Keep secret bytes and derived details out of owner CLI output."""
+    if "error" in value:
+        error = value["error"]
+        code = error.get("code") if isinstance(error, dict) else None
+        return {"error": {"code": code if isinstance(code, str) else "invalid_secret_response"}}
+    allowed = {"secret_id", "name", "status", "created_at", "updated_at", "revoked_at"}
+    if "secrets" in value:
+        records = value["secrets"]
+        if not isinstance(records, list) or any(not isinstance(item, dict) for item in records):
+            return {"error": {"code": "invalid_secret_response"}}
+        return {"secrets": [{key: item[key] for key in allowed if key in item} for item in records],
+                **({"count": value["count"]} if "count" in value else {})}
+    return {key: value[key] for key in allowed if key in value}
+
+
+def endpoint(connection: dict) -> str:
+    address = connection["endpoint"]
+    parsed = urlsplit(address)
+    if parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or parsed.port is None or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("invalid_connection")
+    return address
+
+
+async def call(state_dir: Path, method: str, path: str, body: dict | None = None, *,
+               credential_file: Path | None = None) -> dict:
+    connection = read_private_json(state_dir / "manager-connection.json")
+    if credential_file is None:
+        token = connection["token"]
+    else:
+        from .grants import read_credential
+        # Reopen for every call; a removed or unsafe file never selects owner authority.
+        token = read_credential(credential_file)["token"]
+    timeout = 300 if path in {"/v1/install/plan", "/v1/upgrade/plan", "/v1/upgrade/apply", "/v1/migrations/jevk5/plan", "/v1/imports",
+                             "/v1/preparations/plan", "/v1/preparations/inspect-source", "/v1/resolutions/plan"} or path.endswith(("/attach", "/engine")) else 30
+    async with httpx.AsyncClient(base_url=endpoint(connection), timeout=timeout, follow_redirects=False, trust_env=False,
+                                 transport=private_transport(socket_path(state_dir, "manager")),
+                                 headers={"Authorization": "Bearer " + token}) as client:
+        async with client.stream(method, path, json=body) as response:
+            data = bytearray()
+            async for chunk in response.aiter_bytes(chunk_size=16384):
+                data.extend(chunk)
+                if len(data) > 1024 * 1024:
+                    raise ValueError("response_limit")
+            from .policy import load_json
+            value = load_json(bytes(data))
+        if not isinstance(value, dict):
+            raise ValueError()
+        return value
+
+
+def bundled_app() -> Path | None:
+    root = Path(__file__).resolve().parents[2]
+    for parent in root.parents:
+        if parent.suffix == ".app" and (parent / "Contents/MacOS/meecp").is_file():
+            return parent
+    return None
+
+
+def cli_launcher() -> Path:
+    if app := bundled_app():
+        return app / "Contents/MacOS/meecp"
+    root = Path(__file__).resolve().parents[2]
+    source = root / "scripts/meecp"
+    return source if source.is_file() else root / "bin/meecp"
+
+async def ensure_host(state: Path):
+    async def available():
+        try:
+            async with asyncio.timeout(2):
+                return "error" not in await call(state, "GET", "/v1/capabilities")
+        except Exception:
+            return False
+    if await available():
+        return
+    app = bundled_app()
+    if app is None or state != DEFAULT_STATE:
+        raise ValueError("host_unavailable")
+    process = await asyncio.create_subprocess_exec("/usr/bin/open", "-g", str(app),
+        stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+    async with asyncio.timeout(35):
+        if await process.wait():
+            raise ValueError("host_unavailable")
+        while not await available():
+            await asyncio.sleep(0.2)
+
+
+def parser() -> argparse.ArgumentParser:
+    cli = OwnerArgumentParser(prog="meecp")
+    cli.add_argument("--state-dir", type=Path, default=DEFAULT_STATE)
+    cli.add_argument("--credential-file", type=Path,
+                     help="Use this scoped management credential, without owner fallback.")
+    commands = cli.add_subparsers(dest="command", required=True)
+    service = commands.add_parser("serve")
+    service.add_argument("--reaper", type=Path, required=True)
+    service.add_argument("--parent-pid", type=int)
+    caps = commands.add_parser("capabilities")
+    caps.add_argument("--json", action="store_true")
+    validate = commands.add_parser("validate")
+    validate.add_argument("--package", type=Path, required=True)
+    validate.add_argument("--json", action="store_true")
+    slots = commands.add_parser("slots").add_subparsers(dest="action", required=True)
+    slots.add_parser("list").add_argument("--json", action="store_true")
+    for name in ["inspect", "start", "stop", "restart", "remove"]:
+        item = slots.add_parser(name)
+        item.add_argument("slot_id", type=uuid_argument)
+        item.add_argument("--json", action="store_true")
+    configure = slots.add_parser("configure")
+    configure.add_argument("slot_id", type=uuid_argument)
+    configure.add_argument("--start-policy", choices=["manual", "host"], required=True)
+    configure.add_argument("--json", action="store_true")
+    install = commands.add_parser("install").add_subparsers(dest="action", required=True)
+    plan = install.add_parser("plan")
+    source = plan.add_mutually_exclusive_group(required=True)
+    source.add_argument("--package", type=Path)
+    source.add_argument("--import", dest="import_id", type=uuid_argument)
+    plan.add_argument("--revision", type=int)
+    plan.add_argument("--name")
+    plan.add_argument("--start-policy", choices=["manual", "host"], default="manual")
+    plan.add_argument("--start", action="store_true", help="Bind install-and-start authority into this plan.")
+    plan.add_argument("--settings", type=Path, help="Owner-only JSON configuration and opaque secret references.")
+    plan.add_argument("--json", action="store_true")
+    apply = install.add_parser("apply")
+    apply.add_argument("--plan", type=uuid_argument, required=True)
+    apply.add_argument("--json", action="store_true")
+    inspect = install.add_parser("inspect")
+    inspect.add_argument("--plan", type=uuid_argument, required=True)
+    inspect.add_argument("--json", action="store_true")
+    upgrade = commands.add_parser("upgrade").add_subparsers(dest="action", required=True)
+    upgrade_plan = upgrade.add_parser("plan")
+    upgrade_plan.add_argument("--slot", type=uuid_argument, required=True)
+    upgrade_plan.add_argument("--package", type=Path, required=True)
+    upgrade_plan.add_argument("--settings", type=Path, help="Owner-only JSON configuration and opaque secret references.")
+    upgrade_plan.add_argument("--json", action="store_true")
+    for action in ("inspect", "apply"):
+        item = upgrade.add_parser(action)
+        item.add_argument("--plan", type=uuid_argument, required=True)
+        item.add_argument("--json", action="store_true")
+    authorize = commands.add_parser("authorize")
+    scope = authorize.add_mutually_exclusive_group(required=True)
+    scope.add_argument("--plan", type=uuid_argument)
+    scope.add_argument("--upgrade-plan", type=uuid_argument, help="Authorize one exact saved generation upgrade plan.")
+    scope.add_argument("--read-only", action="store_true")
+    scope.add_argument("--prepare", action="store_true")
+    scope.add_argument("--slot", type=uuid_argument, action="append", dest="slot_ids")
+    scope.add_argument("--preparation-plan", type=uuid_argument)
+    scope.add_argument("--resolution-plan", type=uuid_argument)
+    scope.add_argument("--recipe", dest="recipe_id")
+    authorize.add_argument("--plan-digest")
+    authorize.add_argument("--idempotency-key", type=uuid_argument)
+    authorize.add_argument("--recipe-version")
+    authorize.add_argument("--recipe-digest")
+    authorize.add_argument("--recipe-action", choices=["register", "enable", "disable", "deprecate", "revoke", "remove"],
+                           action="append", dest="recipe_actions")
+    authorize.add_argument("--recipe-path", type=Path)
+    authorize.add_argument("--action", choices=["start", "stop", "restart"], action="append", dest="actions")
+    authorize.add_argument("--ttl-seconds", type=int)
+    authorize.add_argument("--json", action="store_true")
+    grants = commands.add_parser("grants").add_subparsers(dest="action", required=True)
+    grants.add_parser("list").add_argument("--json", action="store_true")
+    for name in ("inspect", "revoke"):
+        item = grants.add_parser(name)
+        item.add_argument("grant_id", type=uuid_argument)
+        item.add_argument("--json", action="store_true")
+    secrets = commands.add_parser("secrets").add_subparsers(dest="action", required=True)
+    secret_create = secrets.add_parser("create")
+    secret_create.add_argument("--name", required=True)
+    secret_create.add_argument("--file", type=Path, required=True,
+                               help="Owner-only UTF-8 file; secret values are never command arguments.")
+    secret_create.add_argument("--json", action="store_true")
+    secrets.add_parser("list").add_argument("--json", action="store_true")
+    for name in ("inspect", "revoke"):
+        item = secrets.add_parser(name)
+        item.add_argument("secret_id", type=uuid_argument)
+        item.add_argument("--json", action="store_true")
+    management = commands.add_parser("management").add_subparsers(dest="action", required=True)
+    for action in ("connect", "export"):
+        item = management.add_parser(action)
+        item.add_argument("--profile", type=uuid_argument, help="Public remembered connection profile; contains no credential.")
+        if action == "export":
+            item.add_argument("--json", action="store_true")
+    imports = commands.add_parser("imports").add_subparsers(dest="action", required=True)
+    imports.add_parser("list").add_argument("--json", action="store_true")
+    service = imports.add_parser("create-service")
+    service.add_argument("--name", required=True)
+    service.add_argument("--intent", required=True)
+    service.add_argument("--port", type=int, required=True)
+    service.add_argument("--model", required=True)
+    service.add_argument("--secret-reference", type=uuid_argument, required=True)
+    service.add_argument("--timeout-seconds", type=int, default=30)
+    service.add_argument("--max-input-bytes", type=int, default=16384)
+    service.add_argument("--max-output-tokens", type=int, default=512)
+    service.add_argument("--max-response-bytes", type=int, default=1048576)
+    service.add_argument("--start", action="store_true")
+    service.add_argument("--start-policy", choices=["manual", "host"], default="manual")
+    service.add_argument("--json", action="store_true")
+    create = imports.add_parser("create")
+    create.add_argument("--source", type=Path, required=True)
+    create.add_argument("--source-mode", choices=["legacy", "automatic"], default="legacy",
+                        help="Automatic directory intake includes bounded binary application files.")
+    create.add_argument("--model-engine", type=Path, help="Explicit verified engine build for a selected GGUF model.")
+    create.add_argument("--name", required=True)
+    create.add_argument("--intent", default="")
+    create.add_argument("--document-role", choices=["instructions", "reference"])
+    create.add_argument("--file", dest="files", action="append")
+    create.add_argument("--start", action="store_true")
+    create.add_argument("--start-policy", choices=["manual", "host"], default="manual")
+    create.add_argument("--json", action="store_true")
+    for action in ("inspect", "revise", "export", "attach", "engine", "cancel", "expire"):
+        item = imports.add_parser(action)
+        item.add_argument("draft_id", type=uuid_argument)
+        if action != "inspect":
+            item.add_argument("--revision", type=int, required=True)
+        if action == "attach":
+            item.add_argument("--package", type=Path, required=True)
+        if action == "engine":
+            item.add_argument("--model-engine", type=Path, required=True)
+        if action == "revise":
+            item.add_argument("--name")
+            item.add_argument("--intent")
+            item.add_argument("--document-role", choices=["instructions", "reference"])
+            item.add_argument("--start", action=argparse.BooleanOptionalAction, default=None)
+            item.add_argument("--start-policy", choices=["manual", "host"])
+            item.add_argument("--requirements", type=Path, help="JSON file of tool/profile/resource requirements and settings references.")
+            item.add_argument("--carry-attachment", action="store_true",
+                              help="Retain the sealed attachment for compatible configuration or startup edits.")
+        item.add_argument("--json", action="store_true")
+    recipes = commands.add_parser("recipes").add_subparsers(dest="action", required=True)
+    scaffold = recipes.add_parser("scaffold")
+    scaffold.add_argument("--output", type=Path, required=True)
+    scaffold.add_argument("--id", dest="recipe_id", required=True)
+    scaffold.add_argument("--version", default="1.0.0")
+    scaffold.add_argument("--component", choices=["python-function-v1", "existing-mcp-v1", "resolved-python-v1"], default="python-function-v1")
+    scaffold.add_argument("--json", action="store_true")
+    for action in ("check", "lock", "add"):
+        item = recipes.add_parser(action)
+        item.add_argument("--path", type=Path, required=True)
+        item.add_argument("--json", action="store_true")
+    recipes.add_parser("list").add_argument("--json", action="store_true")
+    recipes.add_parser("schema").add_argument("--json", action="store_true")
+    for action in ("inspect", "enable", "disable", "revoke", "remove", "deprecate"):
+        item = recipes.add_parser(action)
+        item.add_argument("--id", dest="recipe_id", required=True)
+        item.add_argument("--version", required=True)
+        item.add_argument("--json", action="store_true")
+    preparations = commands.add_parser("preparations").add_subparsers(dest="action", required=True)
+    preparation_plan = preparations.add_parser("plan")
+    preparation_plan.add_argument("--import", dest="import_id", type=uuid_argument, required=True)
+    preparation_plan.add_argument("--revision", type=int, required=True)
+    preparation_plan.add_argument("--descriptor", type=Path, required=True)
+    preparation_plan.add_argument("--policy", type=Path, help="Review an execution plan under the policy in this JSON file.")
+    preparation_plan.add_argument("--json", action="store_true")
+    preparation_inspect = preparations.add_parser("inspect-source")
+    preparation_inspect.add_argument("--import", dest="import_id", type=uuid_argument, required=True)
+    preparation_inspect.add_argument("--revision", type=int, required=True)
+    preparation_inspect.add_argument("--json", action="store_true")
+    preparation_start = preparations.add_parser("start")
+    preparation_start.add_argument("--plan", dest="plan_id", type=uuid_argument, required=True)
+    preparation_start.add_argument("--plan-digest", type=digest_argument, required=True)
+    preparation_start.add_argument("--idempotency-key", type=uuid_argument, required=True)
+    preparation_start.add_argument("--json", action="store_true")
+    preparations.add_parser("list").add_argument("--json", action="store_true")
+    for action in ("get", "cancel"):
+        item = preparations.add_parser(action)
+        item.add_argument("job_id", type=uuid_argument)
+        item.add_argument("--json", action="store_true")
+    preparation_recover = preparations.add_parser("recover")
+    preparation_recover.add_argument("--job-id", type=uuid_argument, required=True)
+    preparation_recover.add_argument("--json", action="store_true")
+    resolutions = commands.add_parser("resolutions").add_subparsers(dest="action", required=True)
+    resolution_plan = resolutions.add_parser("plan")
+    resolution_plan.add_argument("--import", dest="import_id", type=uuid_argument, required=True)
+    resolution_plan.add_argument("--revision", type=int, required=True)
+    resolution_plan.add_argument("--candidate", dest="candidate_id", type=digest_argument, required=True)
+    resolution_plan.add_argument("--policy", type=Path, required=True)
+    resolution_plan.add_argument("--json", action="store_true")
+    resolution_start = resolutions.add_parser("start")
+    resolution_start.add_argument("--plan", dest="plan_id", type=uuid_argument, required=True)
+    resolution_start.add_argument("--plan-digest", type=digest_argument, required=True)
+    resolution_start.add_argument("--idempotency-key", type=uuid_argument, required=True)
+    resolution_start.add_argument("--json", action="store_true")
+    resolutions.add_parser("list").add_argument("--json", action="store_true")
+    for action in ("get", "cancel", "recover"):
+        item = resolutions.add_parser(action)
+        item.add_argument("job_id", type=uuid_argument)
+        item.add_argument("--json", action="store_true")
+    downloads = commands.add_parser("downloads").add_subparsers(dest="action", required=True)
+    fetch = downloads.add_parser("fetch")
+    fetch.add_argument("--url", required=True)
+    fetch.add_argument("--sha256", type=digest_argument, required=True)
+    fetch.add_argument("--size", type=positive_size_argument, required=True)
+    fetch.add_argument("--package-digest", type=digest_argument)
+    fetch.add_argument("--json", action="store_true")
+    downloads.add_parser("list").add_argument("--json", action="store_true")
+    for action in ("inspect", "cancel"):
+        item = downloads.add_parser(action)
+        item.add_argument("download_id", type=uuid_argument)
+        item.add_argument("--json", action="store_true")
+    operations = commands.add_parser("operations").add_subparsers(dest="action", required=True)
+    for action in ("get", "cancel", "recover"):
+        operation = operations.add_parser(action)
+        operation.add_argument("operation_id", type=uuid_argument)
+        operation.add_argument("--json", action="store_true")
+    export = commands.add_parser("connections").add_subparsers(dest="action", required=True).add_parser("export")
+    export.add_argument("--slot", type=uuid_argument, required=True)
+    export.add_argument("--json", action="store_true")
+    connect = commands.add_parser("connect")
+    connect.add_argument("--slot", type=uuid_argument, required=True)
+    migrations = commands.add_parser("migrate-jevk5").add_subparsers(dest="action", required=True)
+    migration_plan = migrations.add_parser("plan")
+    migration_plan.add_argument("--package", type=Path, required=True)
+    migration_plan.add_argument("--legacy-app", type=Path, required=True)
+    migration_plan.add_argument("--legacy-state", type=Path, default=Path.home() / "Library/Application Support/JevK5")
+    migration_plan.add_argument("--legacy-login-disabled", action="store_true",
+                                help="Confirm legacy Start at Login is disabled when macOS cannot identify its moved bundle.")
+    migration_plan.add_argument("--json", action="store_true")
+    for name in ("apply", "inspect", "rollback", "recover"):
+        command = migrations.add_parser(name)
+        command.add_argument("transfer_id", type=uuid_argument)
+        command.add_argument("--json", action="store_true")
+    return cli
+
+
+async def execute(args) -> dict | None:
+    state = args.state_dir.absolute()
+    credential = getattr(args, "credential_file", None)
+    if credential is not None:
+        credential = credential.absolute()
+    async def api(method, path, body=None):
+        if credential is None:
+            return await call(state, method, path, body)
+        return await call(state, method, path, body, credential_file=credential)
+
+    if credential is not None and args.command in {"serve", "connect", "connections"}:
+        return {"error": {"code": "management_credential_not_invocation"}}
+    if args.command == "management":
+        profile = getattr(args, "profile", None)
+        if credential is not None and profile is not None:
+            return {"error": {"code": "invalid_management_authorization"}}
+        if credential is not None:
+            from .grants import read_credential
+            grant = read_credential(credential)
+        if args.action == "connect":
+            from .management import run_management
+            await run_management(state, credential, profile=profile)
+            return None
+        if credential is not None:
+            return {"grant_id": grant["grant_id"], "configuration": {"mcpServers": {
+                "meecp-management": {"command": str(cli_launcher()), "args": ["--state-dir", str(state),
+                    "--credential-file", str(credential), "management", "connect"]}}}}
+        if profile is None:
+            await ensure_host(state)
+            result = await api("POST", "/v1/authorization/profiles", {})
+            if "error" in result:
+                return result
+            profile = uuid_argument(result["profile"]["profile_id"])
+        selectors = [] if state == DEFAULT_STATE.absolute() else ["--state-dir", str(state)]
+        return {"profile_id": profile, "configuration": {"mcpServers": {
+            "meecp-management": {"command": str(cli_launcher()), "args": selectors +
+                ["management", "connect", "--profile", profile]}}}}
+    if args.command == "authorize":
+        workflow_plan = args.preparation_plan or args.resolution_plan
+        recipe_options = (args.recipe_version, args.recipe_digest, args.recipe_actions, args.recipe_path)
+        if workflow_plan is not None:
+            if args.actions or any(value is not None for value in recipe_options) or args.plan_digest is None or args.idempotency_key is None:
+                return {"error": {"code": "invalid_grant_request"}}
+            return await api("POST", "/v1/grants", {"mode": "preparation-execution" if args.preparation_plan else "resolution-execution",
+                "plan_id": workflow_plan, "plan_digest": args.plan_digest, "idempotency_key": args.idempotency_key,
+                "ttl_seconds": args.ttl_seconds if args.ttl_seconds is not None else 300})
+        if args.recipe_id is not None:
+            if (args.actions or args.plan_digest is not None or args.idempotency_key is not None
+                    or args.recipe_version is None or args.recipe_digest is None or not args.recipe_actions):
+                return {"error": {"code": "invalid_grant_request"}}
+            body = {"mode": "recipe-management", "recipe_id": args.recipe_id, "version": args.recipe_version,
+                    "digest": args.recipe_digest, "actions": args.recipe_actions,
+                    "ttl_seconds": args.ttl_seconds if args.ttl_seconds is not None else 300}
+            if args.recipe_path is not None:
+                body["path"] = str(args.recipe_path.absolute())
+            return await api("POST", "/v1/grants", body)
+        if args.plan_digest is not None or args.idempotency_key is not None or any(value is not None for value in recipe_options):
+            return {"error": {"code": "invalid_grant_request"}}
+        if args.plan is not None or args.upgrade_plan is not None:
+            if args.actions or args.ttl_seconds not in {None, 900}:
+                return {"error": {"code": "invalid_grant_request"}}
+            body = {"mode": "upgrade" if args.upgrade_plan is not None else "install",
+                    "plan_id": args.upgrade_plan or args.plan, "ttl_seconds": 900}
+        elif args.slot_ids is not None:
+            if not args.actions:
+                return {"error": {"code": "invalid_grant_request"}}
+            body = {"mode": "lifecycle", "slot_ids": args.slot_ids, "actions": args.actions,
+                    "ttl_seconds": args.ttl_seconds if args.ttl_seconds is not None else 3600}
+        else:
+            if args.actions:
+                return {"error": {"code": "invalid_grant_request"}}
+            body = {"mode": "read" if args.read_only else "prepare",
+                    "ttl_seconds": args.ttl_seconds if args.ttl_seconds is not None else 3600}
+        return await api("POST", "/v1/grants", body)
+    if args.command == "grants":
+        if args.action == "list":
+            return await api("GET", "/v1/grants")
+        route = "/v1/grants/" + args.grant_id
+        return await api("GET", route) if args.action == "inspect" else await api("POST", route + "/revoke", {})
+    if args.command == "secrets":
+        if args.action == "create":
+            try:
+                value = read_secret_file(args.file)
+            except PrivateStateError as error:
+                return {"error": {"code": error.code}}
+            result = await api("POST", "/v1/secrets", {"name": args.name, "value": value})
+        elif args.action == "list":
+            result = await api("GET", "/v1/secrets")
+        else:
+            route = "/v1/secrets/" + args.secret_id
+            result = await api("GET", route) if args.action == "inspect" else await api("POST", route + "/revoke", {})
+        return secret_metadata(result)
+    if args.command == "serve":
+        from .supervisor import serve
+        await serve(state, args.reaper, args.parent_pid)
+        return None
+    if args.command == "validate":
+        package = validate_package(args.package.absolute())
+        return {"valid": True, "package_digest": package.digest, "package": package.manifest.model_dump()}
+    if args.command == "recipes":
+        if args.action in {"scaffold", "check", "lock"}:
+            from .recipe_sdk import check_recipe, relock_recipe, scaffold_recipe
+            if args.action == "scaffold":
+                return scaffold_recipe(args.output, args.recipe_id, args.version, args.component)
+            if args.action == "lock":
+                return relock_recipe(args.path.absolute())
+            return check_recipe(args.path.absolute())
+        if args.action == "list":
+            return await api("GET", "/v1/recipes")
+        if args.action == "schema":
+            return await api("GET", "/v1/recipes/schema")
+        if args.action == "add":
+            return await api("POST", "/v1/recipes", {"path": str(args.path.absolute())})
+        return await api("POST", "/v1/recipes/" + args.action,
+                         {"recipe_id": args.recipe_id, "version": args.version})
+    if args.command == "preparations":
+        if args.action in {"plan", "inspect-source"}:
+            from .recipe_sdk import read_contract_file
+            if args.revision < 1:
+                from .preparation_contracts import PreparationError
+                raise PreparationError("invalid_import_revision")
+            body = {"import_id": args.import_id, "revision": args.revision}
+            if args.action == "plan":
+                body["descriptor"] = read_contract_file(args.descriptor)
+                if args.policy is not None:
+                    body["execution_policy"] = read_contract_file(args.policy)
+            return await api("POST", "/v1/preparations/" + args.action, body)
+        if args.action == "start":
+            return await api("POST", "/v1/preparations/start", {"plan_id": args.plan_id,
+                             "plan_digest": args.plan_digest, "idempotency_key": args.idempotency_key})
+        if args.action == "list":
+            return await api("GET", "/v1/preparations")
+        route = "/v1/preparations/" + args.job_id
+        return await api("GET", route) if args.action == "get" else await api("POST", route + "/" + args.action, {})
+    if args.command == "resolutions":
+        if args.action == "plan":
+            from .recipe_sdk import read_contract_file
+            from .preparation_resolution import ResolutionPolicyV1
+            from .preparation_contracts import PreparationError
+            if args.revision < 1:
+                raise PreparationError("invalid_import_revision")
+            try:
+                policy = ResolutionPolicyV1.model_validate(read_contract_file(args.policy))
+            except ValueError:
+                raise PreparationError("invalid_resolution_policy") from None
+            return await api("POST", "/v1/resolutions/plan", {"import_id": args.import_id,
+                "revision": args.revision, "candidate_id": args.candidate_id, "policy": policy.model_dump(mode="json")})
+        if args.action == "start":
+            return await api("POST", "/v1/resolutions/start", {"plan_id": args.plan_id,
+                "plan_digest": args.plan_digest, "idempotency_key": args.idempotency_key})
+        if args.action == "list":
+            return await api("GET", "/v1/resolutions")
+        route = "/v1/resolutions/" + args.job_id
+        return await api("GET", route) if args.action == "get" else await api("POST", route + "/" + args.action, {})
+    if args.command == "downloads":
+        if args.action == "fetch":
+            body = {"url": args.url, "sha256": args.sha256, "size": args.size}
+            if args.package_digest is not None:
+                body["package_digest"] = args.package_digest
+            return await api("POST", "/v1/downloads", body)
+        if args.action == "list":
+            return await api("GET", "/v1/downloads")
+        route = "/v1/downloads/" + args.download_id
+        return await api("GET", route) if args.action == "inspect" else await api("POST", route + "/cancel", {})
+    if args.command == "capabilities":
+        return await api("GET", "/v1/capabilities")
+    if args.command == "slots":
+        if args.action == "list":
+            return await api("GET", "/v1/slots")
+        if args.action == "inspect":
+            return await api("GET", "/v1/slots/" + args.slot_id)
+        if args.action == "configure":
+            return await api("PATCH", "/v1/slots/" + args.slot_id, {"start_policy": args.start_policy})
+        return await api("POST", f"/v1/slots/{args.slot_id}/{args.action}", {})
+    if args.command == "install":
+        if args.action == "inspect":
+            return await api("GET", "/v1/plans/" + args.plan)
+        if args.action == "apply":
+            return await api("POST", "/v1/install/apply", {"plan_id": args.plan})
+        if args.import_id is not None:
+            if (args.revision is None or args.name is not None or args.start or args.start_policy != "manual"
+                    or args.settings is not None):
+                return {"error": {"code": "invalid_import_plan"}}
+            return await api("POST", "/v1/install/plan", {"import_id": args.import_id, "revision": args.revision})
+        if args.revision is not None:
+            return {"error": {"code": "invalid_install_plan"}}
+        body = {"package": str(args.package.absolute()), "start_policy": args.start_policy, "start": args.start}
+        if args.name is not None:
+            body["name"] = args.name
+        if args.settings is not None:
+            try:
+                body["settings"] = read_settings_file(args.settings)
+            except PrivateStateError as error:
+                return {"error": {"code": error.code}}
+        return await api("POST", "/v1/install/plan", body)
+    if args.command == "upgrade":
+        if args.action == "inspect":
+            return await api("GET", "/v1/upgrade/plans/" + args.plan)
+        if args.action == "apply":
+            return await api("POST", "/v1/upgrade/apply", {"plan_id": args.plan})
+        body = {"slot_id": args.slot, "package": str(args.package.absolute())}
+        if args.settings is not None:
+            try:
+                body["settings"] = read_settings_file(args.settings)
+            except PrivateStateError as error:
+                return {"error": {"code": error.code}}
+        return await api("POST", "/v1/upgrade/plan", body)
+    if args.command == "imports":
+        if args.action == "create-service":
+            catalog = await api("GET", "/v1/service-connectors")
+            records = catalog.get("connectors", [])
+            if len(records) != 1:
+                return {"error": {"code": "service_connector_unavailable"}}
+            selected = records[0]
+            connection = {"schema_version": 1, **{key: selected[key] for key in ("protocol", "transport_auth", "task")},
+                "endpoint": {"scheme": "http", "host": "127.0.0.1", "port": args.port, "base_path": "/v1"},
+                "model": args.model, "secret_references": {"api_key": args.secret_reference},
+                "limits": {"timeout_seconds": args.timeout_seconds, "max_input_bytes": args.max_input_bytes,
+                    "max_output_tokens": args.max_output_tokens, "max_response_bytes": args.max_response_bytes}}
+            return await api("POST", "/v1/imports/service", {"schema_version": 1, "name": args.name,
+                "intent": args.intent, "start": args.start, "start_policy": args.start_policy, "connection": connection})
+        if args.action == "list":
+            return await api("GET", "/v1/imports")
+        if args.action == "create":
+            body = {"source": str(args.source.absolute()), "name": args.name, "intent": args.intent,
+                    "start": args.start, "start_policy": args.start_policy}
+            if args.document_role is not None:
+                body["document_role"] = args.document_role
+            if args.files is not None:
+                body["files"] = args.files
+            if args.model_engine is not None:
+                body["model_engine"] = str(args.model_engine.absolute())
+            if args.source_mode != "legacy":
+                body["source_mode"] = args.source_mode
+            return await api("POST", "/v1/imports", body)
+        route = "/v1/imports/" + args.draft_id
+        if args.action == "inspect":
+            return await api("GET", route)
+        body = {"revision": args.revision}
+        if args.action == "attach":
+            body["package"] = str(args.package.absolute())
+        if args.action == "engine":
+            body["model_engine"] = str(args.model_engine.absolute())
+        if args.action == "revise":
+            for key in ("name", "intent", "document_role", "start", "start_policy"):
+                if getattr(args, key) is not None:
+                    body[key] = getattr(args, key)
+            if args.requirements is not None:
+                try:
+                    body["requirements"] = read_requirements_file(args.requirements)
+                except PrivateStateError as error:
+                    return {"error": {"code": error.code}}
+            if args.carry_attachment:
+                body["carry_attachment"] = True
+        return await api("POST", route + "/" + args.action, body)
+    if args.command == "operations":
+        route = "/v1/operations/" + args.operation_id
+        if args.action == "get":
+            return await api("GET", route)
+        return await api("POST", route + "/" + args.action, {})
+    if args.command == "connections":
+        slot = await api("GET", "/v1/slots/" + args.slot)
+        if "error" in slot:
+            return slot
+        launcher = cli_launcher()
+        name = slot.get("connection_name")
+        if name is None:
+            # Older running hosts omit the additive snapshot field. Resolve their
+            # full installed-app list so normalization collisions remain distinct.
+            listing = await api("GET", "/v1/slots")
+            if "error" in listing:
+                return listing
+            name = connection_names((item["slot_id"], item["name"]) for item in listing["slots"])[args.slot]
+        return {"slot_id": args.slot, "connection_name": name,
+                "endpoint": f"http://127.0.0.1:{slot['public_port']}/mcp",
+                "configuration": {"mcpServers": {name: {"command": str(launcher),
+                    "args": ["--state-dir", str(state), "connect", "--slot", args.slot]}}}}
+    if args.command == "connect":
+        from .bridge import run_bridge
+        if bundled_app() is not None:
+            await ensure_host(state)
+        connection = read_private_json(state / "slots" / args.slot / "connection.json")
+        if connection.get("slot_id") != args.slot:
+            raise ValueError()
+        from .limits import DEFAULT_REQUEST_BYTES
+        await run_bridge(endpoint(connection), connection["token"], socket_path=socket_path(state, args.slot),
+                         max_request_bytes=connection.get("max_request_bytes", DEFAULT_REQUEST_BYTES))
+        return None
+    if args.command == "migrate-jevk5":
+        if args.action == "plan":
+            payload = {
+                "package": str(args.package.absolute()), "legacy_app": str(args.legacy_app.absolute()),
+                "legacy_state": str(args.legacy_state.absolute())}
+            if args.legacy_login_disabled:
+                payload["legacy_login_disabled"] = True
+            return await api("POST", "/v1/migrations/jevk5/plan", payload)
+        if args.action == "apply":
+            return await api("POST", "/v1/migrations/jevk5/apply", {"transfer_id": args.transfer_id})
+        if args.action == "inspect":
+            return await api("GET", "/v1/migrations/" + args.transfer_id)
+        return await api("POST", "/v1/migrations/" + args.transfer_id + "/" + args.action, {})
+    raise ValueError()
+
+
+def main(argv=None) -> int:
+    logging.disable(logging.CRITICAL)
+    os.umask(0o077)
+    args = parser().parse_args(argv)
+    try:
+        result = asyncio.run(execute(args))
+        if result is not None:
+            emit(result)
+            return 1 if "error" in result else 0
+    except (Exception, KeyboardInterrupt) as error:
+        # No error text is exposed: dependencies may include caller data in it.
+        if args.command != "connect" and not (args.command == "management" and args.action == "connect"):
+            from .preparation_contracts import PreparationError
+            emit({"error": {"code": error.code if isinstance(error, (PackageError, GrantError, PreparationError)) else "host_unavailable"}})
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

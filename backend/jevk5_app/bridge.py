@@ -14,7 +14,7 @@ from mcp.types import ToolAnnotations
 from .contracts import Question, ServiceError, validate_decision
 from .server import DECIDE_DESCRIPTION, SafeMCP, preserve_literal_evidence
 from .state import ENDPOINT
-from mcpme_local_transport import private_transport, socket_path
+from meecp_local_transport import private_transport, socket_path
 
 
 class Bridge:

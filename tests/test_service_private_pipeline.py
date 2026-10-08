@@ -9,10 +9,10 @@ import shutil
 
 import pytest
 
-from mcpme.contracts import validate_package
-from mcpme.preparation_runner import PreparationRunner
-from mcpme.preparation_service import descriptor, validate_components
-from mcpme.preparation_service_source import source
+from meecp.contracts import validate_package
+from meecp.preparation_runner import PreparationRunner
+from meecp.preparation_service import descriptor, validate_components
+from meecp.preparation_service_source import source
 from test_service_preparation import service
 
 
@@ -32,7 +32,7 @@ async def installed_sdk(host, slot_id):
         async with httpx.AsyncClient(headers={"Authorization":"Bearer "+connection["token"]}, trust_env=False) as http:
             async with streamable_http_client(connection["endpoint"], http_client=http) as (read, write, _):
                 async with ClientSession(read, write) as client: await check(client)
-        params = StdioServerParameters(command=str(Path(__file__).resolve().parents[1] / "scripts/mcpme"),
+        params = StdioServerParameters(command=str(Path(__file__).resolve().parents[1] / "scripts/meecp"),
             args=["--state-dir",str(host.root),"connect","--slot",slot_id])
         with open(os.devnull, "w") as discarded:
             async with stdio_client(params, errlog=discarded) as (read, write):
@@ -72,7 +72,7 @@ async def test_actual_private_service_preparation(service, monkeypatch, mode):
         connection["endpoint"]["port"] = server.sockets[0].getsockname()[1]
         draft = imports.revise_service(draft["draft_id"], 1, source(connection, secrets, validate_components=validate_components))
         value = descriptor(draft, recipe, name=draft["name"], memory_mb=512)
-        runner = PreparationRunner(store, host, host / "bin/mcpme-reap", enabled=True, enabled_families=(family.component.reference.key,))
+        runner = PreparationRunner(store, host, host / "bin/meecp-reap", enabled=True, enabled_families=(family.component.reference.key,))
         plan = await runner.plan(draft["draft_id"], draft["revision"], value.model_dump(exclude_none=True))
         if mode == "resolve-revoked":
             resolve = secrets.resolve
@@ -86,7 +86,7 @@ async def test_actual_private_service_preparation(service, monkeypatch, mode):
             async with asyncio.timeout(180): await entered.wait()
             if mode == "revoke-probe":
                 from types import SimpleNamespace
-                from mcpme.preparation_service_routes import revoke
+                from meecp.preparation_service_routes import revoke
                 owned = SimpleNamespace(secrets=secrets, preparations=store, imports=imports,
                     preparation_runner=runner, registry=SimpleNamespace(list_slots=lambda: []))
                 await revoke(owned, connection["secret_references"]["api_key"])
@@ -115,22 +115,22 @@ async def test_actual_private_service_preparation(service, monkeypatch, mode):
         package = validate_package(Path(attached["attachment"]["path"]))
         assert package.digest == result["expected_package_digest"]
         assert attached["source"]["kind"] == "service_connection" and "locator" not in attached["source"]
-        receipt = json.loads((package.root / "mcpme.preparation.json").read_bytes())
+        receipt = json.loads((package.root / "meecp.preparation.json").read_bytes())
         assert receipt["schema_version"] == 3 and receipt["inputs"]["source"]["kind"] == "service_connection"
         assert "captured_collection" not in receipt["inputs"]
-        for name in ("service.json", "mcpme.preparation.json", "mcpme.package.json", "mcpme.lock.json"):
+        for name in ("service.json", "meecp.preparation.json", "meecp.package.json", "meecp.lock.json"):
             assert connection["secret_references"]["api_key"].encode() not in (package.root / name).read_bytes()
         assert attached["requirements"]["secret_references"] == connection["secret_references"]
         assert not Path(result["workspace"]).exists()
         assert all(not owner.instances and not owner._launches and not owner._pending_ids
                    for owner in runner.attempts[job["job_id"]].owners)
         await runner.close()
-        from mcpme.supervisor import Supervisor
-        from test_mcpme_host import finish
+        from meecp.supervisor import Supervisor
+        from test_meecp_host import finish
         def private_runner(store, root, reaper, **kwargs):
             kwargs["enabled"] = True
             return PreparationRunner(store, root, reaper, enabled_families=(family.component.reference.key,), **kwargs)
-        installed = Supervisor(imports.root, host / "bin/mcpme-reap", preparation_runner_factory=private_runner)
+        installed = Supervisor(imports.root, host / "bin/meecp-reap", preparation_runner_factory=private_runner)
         await installed.initialize()
         installation = await installed.plan_install_async({"import_id":draft["draft_id"],"revision":draft["revision"]})
         operation = await finish(installed, await installed.apply_install(installation["plan_id"]))
@@ -143,10 +143,10 @@ async def test_actual_private_service_preparation(service, monkeypatch, mode):
         shutil.rmtree(package.root)
         shutil.rmtree(imports.root.parent / "recipe")
         await installed.close()
-        installed = Supervisor(imports.root, host / "bin/mcpme-reap", preparation_runner_factory=private_runner)
+        installed = Supervisor(imports.root, host / "bin/meecp-reap", preparation_runner_factory=private_runner)
         await installed.initialize(); await installed.control(slot_id, "start")
         await installed_sdk(installed, slot_id)
-        from mcpme.preparation_service_routes import revoke
+        from meecp.preparation_service_routes import revoke
         unrelated = installed.secrets.create("Unrelated synthetic", "synthetic-unrelated-value")
         await revoke(installed, unrelated["secret_id"])
         assert not installed.registry.get_slot(slot_id).wake_suppressed

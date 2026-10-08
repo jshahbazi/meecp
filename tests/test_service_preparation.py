@@ -5,16 +5,16 @@ import uuid
 
 import pytest
 
-from mcpme.imports import ImportStore
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_forms import PreparationForms
-from mcpme.preparation_service import ServicePreparationFamily, references, descriptor, validate_components
-from mcpme.preparation_service_contracts import parse_policy
-from mcpme.preparation_service_source import source
-from mcpme.preparations import PreparationStore
-from mcpme.recipe_sdk import scaffold_recipe, relock_recipe
-from mcpme.recipes import RecipeStore
-from mcpme.settings import SecretStore
+from meecp.imports import ImportStore
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_forms import PreparationForms
+from meecp.preparation_service import ServicePreparationFamily, references, descriptor, validate_components
+from meecp.preparation_service_contracts import parse_policy
+from meecp.preparation_service_source import source
+from meecp.preparations import PreparationStore
+from meecp.recipe_sdk import scaffold_recipe, relock_recipe
+from meecp.recipes import RecipeStore
+from meecp.settings import SecretStore
 
 
 @pytest.fixture
@@ -30,7 +30,7 @@ def service(tmp_path):
     draft = imports.create_service(source(connection, secrets, validate_components=validate_components), name="Local service", intent="Generate locally")
     recipes = RecipeStore(imports)
     path = tmp_path / "recipe"; scaffold_recipe(path, "test.local-service")
-    manifest_path = path / "mcpme.recipe.json"; manifest = json.loads(manifest_path.read_bytes())
+    manifest_path = path / "meecp.recipe.json"; manifest = json.loads(manifest_path.read_bytes())
     manifest.update(form=[], input_schema={"type": "object", "properties": {}, "additionalProperties": False},
         steps=[{"component": ref.id, "version": ref.version, "digest": ref.digest, "config": {}} for ref in refs])
     manifest_path.write_text(json.dumps(manifest)); relock_recipe(path)
@@ -110,7 +110,7 @@ def managed_job(service):
 
 @pytest.mark.parametrize("fault", [None,"grant","source","derivation","configuration","runtime","recipe","kind","version","extra"])
 def test_actual_job_service_receipt_is_complete_and_not_downgradable(service, fault):
-    from mcpme.preparation_service_receipts import ServicePreparationReceiptV1, parse_receipt, validate_job_receipt
+    from meecp.preparation_service_receipts import ServicePreparationReceiptV1, parse_receipt, validate_job_receipt
     _, policy, _, job = managed_job(service)
     raw = {"schema_version":3,"binding":job["binding"],"inputs":copy.deepcopy(job["bound_inputs"]),
         "fixture_digest":job["fixture_digest"],"service_probe_grant_digest":policy.service_probe.digest}
@@ -157,6 +157,6 @@ def test_held_service_plan_rejects_changed_authority_without_job(service, fault,
     elif fault == "secret": secrets.revoke(draft["source"]["connection"]["secret_references"]["api_key"])
     elif fault == "recipe": store.recipes.revoke(recipe["recipe_id"], recipe["version"])
     elif fault == "cancel": imports.cancel(draft["draft_id"], 1)
-    else: monkeypatch.setattr("mcpme.preparation_authority.time.time", lambda: plan["expires_at"] + 1)
+    else: monkeypatch.setattr("meecp.preparation_authority.time.time", lambda: plan["expires_at"] + 1)
     with pytest.raises(ValueError): store.authorize_start(plan["plan_id"], plan["plan_digest"], str(uuid.uuid4()))
     assert store.list() == []

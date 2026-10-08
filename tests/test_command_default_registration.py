@@ -5,11 +5,11 @@ import hashlib
 
 import pytest
 
-from mcpme.command_execution_v2 import CommandExecutionError
-from mcpme.preparation_command import COMPONENT_ID, VERSION
-from mcpme import preparation_command_registration as registration
-from mcpme.preparation_contracts import canonical_bytes
-from mcpme.supervisor import Supervisor
+from meecp.command_execution_v2 import CommandExecutionError
+from meecp.preparation_command import COMPONENT_ID, RECIPE_VERSION
+from meecp import preparation_command_registration as registration
+from meecp.preparation_contracts import canonical_bytes
+from meecp.supervisor import Supervisor
 from test_preparation_command_source import image
 
 
@@ -25,7 +25,7 @@ def packaged(tmp_path, monkeypatch):
     helper = root / "bin/mcpme-command-reap"
     helper.write_bytes(b"Static inventory fixture; never executed.\n")
     helper.chmod(0o700)
-    reaper = root / "bin/mcpme-reap"
+    reaper = root / "bin/meecp-reap"
     reaper.write_bytes(b"Static owner fixture; never executed.\n")
     reaper.chmod(0o700)
     inventory = {"schema_version": 1, "package_schema": 2, "profile": "host-command",
@@ -76,7 +76,7 @@ def test_unbundled_unsafe_or_unsupported_helpers_are_omitted(packaged, mutation,
 
 async def test_cold_packaged_host_questions_resolve_without_source_execution(tmp_path, packaged, monkeypatch):
     root, reaper, inventory = packaged
-    from mcpme.processes import ProcessOwner
+    from meecp.processes import ProcessOwner
     async def no_launch(*args, **kwargs):
         pytest.fail("static registration or questions launched source")
     monkeypatch.setattr(ProcessOwner, "launch", no_launch)
@@ -122,12 +122,12 @@ async def test_default_command_recipe_lifecycle_survives_cold_restart(tmp_path, 
     state = tmp_path.resolve() / "state"
     host = Supervisor(state, reaper)
     try:
-        before = getattr(host.recipes, action)("mcpme.native-command", VERSION)
+        before = getattr(host.recipes, action)("mcpme.native-command", RECIPE_VERSION)
     finally:
         await host.close()
     restarted = Supervisor(state, reaper)
     try:
-        assert restarted.recipes.inspect("mcpme.native-command", VERSION) == before
+        assert restarted.recipes.inspect("mcpme.native-command", RECIPE_VERSION) == before
         metadata = next(item for item in restarted.builtin_recipe_metadata["recipes"]
                         if item["recipe_id"] == "mcpme.native-command")
         assert metadata["ready"] is False and metadata["execution_available"] is False
@@ -139,8 +139,8 @@ async def test_default_command_recipe_lifecycle_survives_cold_restart(tmp_path, 
 @pytest.mark.parametrize("action", ["disable", "revoke", "remove", "deprecate"])
 async def test_previous_command_recipe_opt_out_is_preserved_on_upgrade(tmp_path, packaged, action):
     from pathlib import Path
-    from mcpme.imports import ImportStore
-    from mcpme.recipes import RecipeStore
+    from meecp.imports import ImportStore
+    from meecp.recipes import RecipeStore
     _, reaper, _ = packaged
     state = tmp_path.resolve() / "state"
     legacy = Path(__file__).resolve().parents[1] / "templates/builtin-recipes/native-command-v1"
@@ -153,7 +153,7 @@ async def test_previous_command_recipe_opt_out_is_preserved_on_upgrade(tmp_path,
         assert host.recipes.inspect("mcpme.native-command", "1.0.0") == before
         metadata = next(item for item in host.builtin_recipe_metadata["recipes"]
             if item["recipe_id"] == "mcpme.native-command")
-        assert metadata["version"] == VERSION and not metadata["ready"]
+        assert metadata["version"] == RECIPE_VERSION and not metadata["ready"]
         assert "builtin_recipe_lifecycle_preserved" in metadata["blockers"]
         assert not metadata["execution_available"] and not host.preparation_runner.enabled
     finally:

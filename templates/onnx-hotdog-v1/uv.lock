@@ -258,7 +258,7 @@ wheels = [
 ]
 
 [[package]]
-name = "mcpme-onnx-hotdog-runtime"
+name = "meecp-onnx-hotdog-runtime"
 version = "1.0.0"
 source = { virtual = "." }
 dependencies = [

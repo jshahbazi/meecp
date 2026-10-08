@@ -41,7 +41,7 @@ def require(value):
 
 def host_directory(path):
     for candidate in (path, path / "Contents/Resources/host"):
-        if (candidate / "bin/mcpme").is_file():
+        if (candidate / "bin/meecp").is_file():
             return candidate.resolve()
     raise ValueError("host_unavailable")
 
@@ -89,11 +89,11 @@ def probability_difference(left, right):
 
 async def verify(args, report):
     checks = report["checks"]
-    with tempfile.TemporaryDirectory(prefix="mcpme-model-phase2-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="meecp-model-phase2-") as temporary:
         root = Path(temporary).resolve()
         host = root / "relocated private host"
         await asyncio.to_thread(shutil.copytree, host_directory(args.host), host, symlinks=True)
-        launcher, reaper = host / "bin/mcpme", host / "bin/mcpme-reap"
+        launcher, reaper = host / "bin/meecp", host / "bin/meecp-reap"
         state, home = root / "private state", root / "private home"
         state.mkdir(mode=0o700)
         home.mkdir(mode=0o700)

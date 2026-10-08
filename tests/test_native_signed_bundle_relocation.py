@@ -11,16 +11,16 @@ import verify_phase3_native_onboarding as native
 
 
 def app_fixture(tmp_path, signing="developer_id"):
-    app = tmp_path / "source mcpme.app"
+    app = tmp_path / "source meecp.app"
     host = app / "Contents/Resources/host"
     host.mkdir(parents=True)
     (host / "build.json").write_text("{}")
-    binary = app / "Contents/MacOS/mcpme"
+    binary = app / "Contents/MacOS/meecp"
     binary.parent.mkdir()
     binary.write_bytes(b"immutable compiled bytes")
     binary.chmod(0o755)
     (app / "Contents/Info.plist").write_bytes(plistlib.dumps({
-        "CFBundleIdentifier": "com.jshahbazi.mcpme", "CFBundleExecutable": "mcpme"}))
+        "CFBundleIdentifier": "com.jshahbazi.mcpme", "CFBundleExecutable": "meecp"}))
     (app / "Contents/Resources/app-build.json").write_text(json.dumps({"signing": signing}))
     seal = app / "Contents/_CodeSignature"
     seal.mkdir()
@@ -44,7 +44,7 @@ def test_relocation_preserves_main_executable_resource_signature_context(tmp_pat
     monkeypatch.setattr(native, "verify_native_app_signature", signature)
     report = {}
     copied_host, copied_binary = native.relocate_host_and_native(destination, host, binary, report)
-    assert checked == [app, destination / "relocated mcpme.app"]
+    assert checked == [app, destination / "relocated meecp.app"]
     assert copied_binary.read_bytes() == binary.read_bytes()
     assert copied_binary.stat().st_mode & 0o777 == 0o755
     assert copied_host == copied_binary.parent.parent / "Resources/host"
@@ -105,7 +105,7 @@ def test_standalone_development_native_retains_existing_relocation(tmp_path):
     host = tmp_path / "host"
     host.mkdir()
     (host / "build.json").write_text("{}")
-    binary = tmp_path / "McpmeMenuBar"
+    binary = tmp_path / "MeecpMenuBar"
     binary.write_bytes(b"standalone compiled bytes")
     binary.chmod(0o755)
     destination = tmp_path / "private workspace"

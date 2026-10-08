@@ -20,7 +20,7 @@ other approved families. Invalid artifact, source, helper, signatures or malform
 platform metadata remain admission failures and cannot become that downgrade.
 
 The trusted caller derives the packaged host root from its installed module.
-The gate requires that same module location inside the enclosing mcpme app. It
+The gate requires that same module location inside the enclosing meecp app. It
 checks the complete closed host inventory and current artifact hashes, the exact
 existing format-3 and format-4 inventory schemas, original C/header source
 hashes, all ten original command component modules, executable permissions, and

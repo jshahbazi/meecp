@@ -24,13 +24,13 @@ if ! command -v uv >/dev/null 2>&1; then
     exit 1
 fi
 
-output=${1:-"dist/mcpme-$(date +%Y%m%d-%H%M%S)-$$.app"}
+output=${1:-"dist/meecp-$(date +%Y%m%d-%H%M%S)-$$.app"}
 if [[ $output != /* ]]; then
     output="$repo_root/$output"
 fi
 
 uv python install 3.12.13
-uv run --locked --python 3.12.13 python scripts/build_mcpme_app.py --output "$output"
+uv run --locked --python 3.12.13 python scripts/build_meecp_app.py --output "$output"
 
 printf '\nBuilt app: %s\n' "$output"
 printf 'Launch: open %q\n' "$output"

@@ -33,7 +33,7 @@ signature = public_command.signature
 
 ROOT = Path(__file__).resolve().parents[1]
 UNLOCKED = {"id": "agent-unlocked-python-adapter-v1", "version": "1.0.0",
-            "digest": "30a6e459f76f4feabff58ff5481b5cc95f9589e03436a8aac109583a4cbfa26c"}
+            "digest": "3850d78dc24ab286cd4bb40825e0d52a83869c91c4278c525cfd6462ee822b49"}
 LIMITS = {"max_calls": 4, "max_parallel": 3, "max_transfer_bytes": 524288,
     "max_output_tokens": 4096, "wall_seconds": 180, "max_artifact_bytes": 131072}
 RECIPE = "mcpme.agent-unlocked-python-adapter"
@@ -122,7 +122,7 @@ def agent_call_metadata(job, draft, job_id):
 
 
 def active_candidate(policy, model, adapter_digest):
-    from mcpme.preparation_release_policy import ReleasePolicy
+    from meecp.preparation_release_policy import ReleasePolicy
     selected = ReleasePolicy.model_validate(policy)
     _, agent, _ = selected.admissions()
     common.require(agent is not None and agent.components == frozenset({tuple(UNLOCKED.values())})
@@ -233,12 +233,12 @@ class LiveHarness(native_common.Harness):
 
     async def case(self, label):
         common.require(label == "scalar", "live_agent_case_not_admitted")
-        from mcpme.contracts import Tool, validate_package
-        from mcpme.preparation_agent_adapter_store import CODE_PATH
-        from mcpme.preparation_agent_unlocked_contracts import DEPENDENCY_NAMESPACE
-        from mcpme.preparation_inputs import parse_preparation_descriptor, parse_preparation_receipt
-        from mcpme.preparation_verifier import verify_prepared_package
-        from mcpme.processes import ProcessOwner
+        from meecp.contracts import Tool, validate_package
+        from meecp.preparation_agent_adapter_store import CODE_PATH
+        from meecp.preparation_agent_unlocked_contracts import DEPENDENCY_NAMESPACE
+        from meecp.preparation_inputs import parse_preparation_descriptor, parse_preparation_receipt
+        from meecp.preparation_verifier import verify_prepared_package
+        from meecp.processes import ProcessOwner
 
         common.stage("source_intake")
         started = time.monotonic()
@@ -310,7 +310,7 @@ class LiveHarness(native_common.Harness):
             package_root = Path(attached["attachment"]["path"]); package = validate_package(package_root)
             common.require(package.digest == attached["attachment"]["digest"] == prepared["expected_package_digest"]
                 == native["attached_package_digest"], "native_agent_attachment_digest")
-            proof = parse_preparation_receipt((package_root / "mcpme.preparation.json").read_bytes())
+            proof = parse_preparation_receipt((common.receipt_path(package)).read_bytes())
             common.require(proof.binding.revision == attached["revision"] and proof.binding.source_revision == draft["source"]["revision"]
                 and not proof.inputs.original_dependency_locks and len(proof.inputs.derived_inputs) == 5,
                 "native_agent_derived_binding")
@@ -394,10 +394,10 @@ def prepare_review(policy, model):
     No credential argument exists: even an explicitly selected credential is not
     needed until the separately reviewed, signed live executor is available.
     """
-    from mcpme.preparation_agent_contracts import AgentLimitsV1
-    from mcpme.preparation_agent_guides import builtin_analysis_guides
-    from mcpme.preparation_agent_providers import OpenAIResponsesAdapter
-    from mcpme.preparation_release_policy import ReleasePolicy
+    from meecp.preparation_agent_contracts import AgentLimitsV1
+    from meecp.preparation_agent_guides import builtin_analysis_guides
+    from meecp.preparation_agent_providers import OpenAIResponsesAdapter
+    from meecp.preparation_release_policy import ReleasePolicy
 
     if not isinstance(model, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", model) is None:
         raise ValueError("live_agent_model_required")
@@ -459,9 +459,9 @@ async def verify_live(host_path, native_path, model, credential_file, report):
             common.verify_host_payload(host)
             common._host_imports(host)
             common._check_module_origins(host)
-            from mcpme.preparation_contracts import load_contract
-            from mcpme.preparation_agent_providers import OpenAIResponsesAdapter
-            from mcpme.preparation_agent_backend import MAX_RESPONSE_BYTES
+            from meecp.preparation_contracts import load_contract
+            from meecp.preparation_agent_providers import OpenAIResponsesAdapter
+            from meecp.preparation_agent_backend import MAX_RESPONSE_BYTES
             common.require(MAX_RESPONSE_BYTES == 524288, "live_agent_response_limit_changed")
             policy_data = (host / "templates/release-policies/phase3-v1.json").read_bytes()
             active_candidate(load_contract(policy_data), model, OpenAIResponsesAdapter().digest)
@@ -545,7 +545,7 @@ def main():
     previous_path = list(sys.path)
     sys.path.insert(0, str(ROOT / "backend"))
     try:
-        from mcpme.preparation_contracts import load_contract
+        from meecp.preparation_contracts import load_contract
         report = prepare_review(load_contract(data), args.model)
     except Exception:
         raise SystemExit("live_agent_review_rejected") from None

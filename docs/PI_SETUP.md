@@ -49,7 +49,7 @@ selected method's controls:
   specification directly after entering a description; either action saves the
   draft automatically. Importing an existing prepared package also works without
   first creating a draft. This method needs no setup model or provider
-  configuration in mcpme.
+  configuration in meecp.
 
 Existing prepared packages can still proceed directly to review.
 Reference-document services and model-engine packages have their own supported
@@ -71,7 +71,7 @@ or `::1`. Endpoints cannot contain credentials, query strings, or fragments.
 Local compatible servers may omit the API key; the worker supplies a fixed
 nonsecret placeholder required by its HTTP client.
 
-The provider key is saved through mcpme's private secret store. Settings reads
+The provider key is saved through meecp's private secret store. Settings reads
 return configuration metadata and readiness, never the key or its secret-store
 identity. Keys enter the worker through its private stdin protocol and remain
 outside model messages, generated packages, and subprocess environments. The
@@ -172,7 +172,7 @@ not established by giving a coding model general tools.
 
 ## Verification and installation
 
-Pi writes `package/mcpme.package.json`, `package/mcpme.lock.json`, the launcher and
+Pi writes `package/meecp.package.json`, `package/meecp.lock.json`, the launcher and
 runtime closure, and `package/verification.json`. Every declared tool must have
 a meaningful synthetic fixture. A fixture's `expected` field compares exact
 MCP `structuredContent`. Its optional `assertions` field checks the full MCP
@@ -323,7 +323,7 @@ later acceptance idea. Invoking the CLI makes paid OpenAI requests with the supp
 into a fresh output path, then run:
 
 ```sh
-uv run --locked python scripts/build_mcpme_host.py --output dist/pi-live-host
+uv run --locked python scripts/build_meecp_host.py --output dist/pi-live-host
 uv run --locked python scripts/verify_pi_setup_live.py \
   --host-root dist/pi-live-host --key-file /absolute/path/openai-key.txt \
   --model gpt-5.4 --case node

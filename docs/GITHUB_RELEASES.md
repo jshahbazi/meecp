@@ -46,8 +46,8 @@ Each release offers these direct downloads under [Releases](https://github.com/j
 
 | Asset | Purpose |
 | --- | --- |
-| `mcpme-VERSION-arm64.dmg` | Disk image: open `mcpme.app` and choose **Install and Restart**. |
-| `mcpme-VERSION-arm64.dmg.build.json` | Signing, notarization, source, and verification receipt. |
+| `meecp-VERSION-arm64.dmg` | Disk image: open `meecp.app` and choose **Install and Restart**. |
+| `meecp-VERSION-arm64.dmg.build.json` | Signing, notarization, source, and verification receipt. |
 | `SHA256SUMS.txt` | SHA-256 checksums for the DMG and its receipt. |
 
 The DMG contains the signed app with a stapled Apple ticket and carries its own signature and ticket. See [Apple's notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
@@ -78,7 +78,7 @@ stage. Missing or invalid input fails with a fixed diagnostic; archive bytes and
 tool errors are never logged. Existing output is never overwritten. See
 [the signed helper contract](SIGNED_COMMAND_HELPERS.md#distribution-integration).
 
-To cut a release, open **Actions > Signed installer > Run workflow**, choose `main`, select **Version bump** (default `minor`), and approve the `macos-release` deployment. After both jobs succeed, download the DMG from the GitHub Release. Releases persist independently of the backup Actions artifact `mcpme-release-COMMIT`, which expires after thirty days. Rejection or timeout from Apple fails the run without publishing installer artifacts or a release.
+To cut a release, open **Actions > Signed installer > Run workflow**, choose `main`, select **Version bump** (default `minor`), and approve the `macos-release` deployment. After both jobs succeed, download the DMG from the GitHub Release. Releases persist independently of the backup Actions artifact `meecp-release-COMMIT`, which expires after thirty days. Rejection or timeout from Apple fails the run without publishing installer artifacts or a release.
 
 If publication fails after creating a draft, inspect that draft and the failed job. A complete draft can be recovered without signing again: download the original run's artifact into a fresh directory and use `publish_release.py resume --assets-dir DIRECTORY --release-id ID --version VERSION` with `GITHUB_REPOSITORY=jshahbazi/mcpme` and `GITHUB_SHA` set to the original built commit. Use the exact release version from the original filenames and receipts, the original checked-out source, and an authenticated GitHub CLI account with release write access. Recovery verifies the draft by its numeric release ID, its tag and source commit, and all three uploaded assets before publishing; it does not create tags, upload files, or replace assets. GitHub uses a temporary `untagged-...` URL for drafts, so verification reads the release by ID and requires its canonical version URL only after publication.
 

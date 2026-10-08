@@ -31,10 +31,10 @@ ENABLED_HOST = (
     "import asyncio,logging,runpy,sys\nfrom pathlib import Path\n"
     "sys.path[:0]=[sys.argv[1],sys.argv[2]]\nlogging.disable(logging.CRITICAL)\n"
     "fixture=runpy.run_path(sys.argv[6])\nimport httpx\n"
-    "from mcpme.supervisor import serve\nfrom mcpme.preparation_runner import PreparationRunner\n"
-    "from mcpme.preparation_agent_unlocked_resolution import OwnedAgentUnlockedResolutionRunner\n"
-    "from mcpme.preparation_agent_host import AgentPreparationHost,AgentProviderConfiguration\n"
-    "from mcpme.preparation_agent_backend import OpenAIResponsesBackend\n"
+    "from meecp.supervisor import serve\nfrom meecp.preparation_runner import PreparationRunner\n"
+    "from meecp.preparation_agent_unlocked_resolution import OwnedAgentUnlockedResolutionRunner\n"
+    "from meecp.preparation_agent_host import AgentPreparationHost,AgentProviderConfiguration\n"
+    "from meecp.preparation_agent_backend import OpenAIResponsesBackend\n"
     "def preparation(*args,**kwargs):\n"
     " selected=next(f for f in args[0].families.values() if f.component.reference.id=='agent-unlocked-python-adapter-v1')\n"
     " kwargs.update(enabled=True,enabled_families=frozenset({selected.component.reference.key}))\n"
@@ -147,7 +147,7 @@ class Harness(common.Harness):
 
     async def get(self, state, route):
         import httpx
-        from mcpme_local_transport import private_transport, socket_path
+        from meecp_local_transport import private_transport, socket_path
         connection = common.private_json(state / "manager-connection.json")
         async with httpx.AsyncClient(base_url=connection["endpoint"], trust_env=False, timeout=30,
                 follow_redirects=False, transport=private_transport(socket_path(state, "manager")),
@@ -176,12 +176,12 @@ class Harness(common.Harness):
             raise
 
     async def case(self, label):
-        from mcpme.contracts import Tool, validate_package
-        from mcpme.preparation_agent_adapter_store import CODE_PATH
-        from mcpme.preparation_agent_unlocked_contracts import DEPENDENCY_NAMESPACE
-        from mcpme.preparation_inputs import parse_preparation_descriptor, parse_preparation_receipt
-        from mcpme.preparation_verifier import verify_prepared_package
-        from mcpme.processes import ProcessOwner
+        from meecp.contracts import Tool, validate_package
+        from meecp.preparation_agent_adapter_store import CODE_PATH
+        from meecp.preparation_agent_unlocked_contracts import DEPENDENCY_NAMESPACE
+        from meecp.preparation_inputs import parse_preparation_descriptor, parse_preparation_receipt
+        from meecp.preparation_verifier import verify_prepared_package
+        from meecp.processes import ProcessOwner
 
         common.stage("source_intake")
         started = time.monotonic()
@@ -248,7 +248,7 @@ class Harness(common.Harness):
             package_root = Path(attached["attachment"]["path"]); package = validate_package(package_root)
             common.require(package.digest == attached["attachment"]["digest"] == prepared["expected_package_digest"]
                 == native["attached_package_digest"], "native_agent_attachment_digest")
-            proof = parse_preparation_receipt((package_root / "mcpme.preparation.json").read_bytes())
+            proof = parse_preparation_receipt((common.receipt_path(package)).read_bytes())
             common.require(proof.binding.revision == attached["revision"] and proof.binding.source_revision == draft["source"]["revision"]
                 and not proof.inputs.original_dependency_locks and len(proof.inputs.derived_inputs) == 5,
                 "native_agent_derived_binding")

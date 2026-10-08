@@ -1,0 +1,44 @@
+{
+  "form": [],
+  "id": "mcpme.text-generation",
+  "input_schema": {
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "kind": "declarative",
+  "licenses": [
+    "LICENSE",
+    "LICENSE-MODEL"
+  ],
+  "provenance": {
+    "origin": "meecp exact CPU llama.cpp and bounded text generation components",
+    "publisher": "meecp contributors"
+  },
+  "requirements": {
+    "architecture": "arm64",
+    "capabilities": [
+      "declarative-composition"
+    ],
+    "host_api_version": 1,
+    "os": "macos",
+    "package_schema": 1,
+    "protocol": "2025-11-25"
+  },
+  "schema_version": 1,
+  "steps": [
+    {
+      "component": "llamacpp-cpu-v1",
+      "config": {},
+      "digest": "b60b073b403824ab742cdb0a5df7b2008ff5d8b19323b976d510e097f2abbc04",
+      "version": "1.0.21"
+    },
+    {
+      "component": "text-generate-v1",
+      "config": {},
+      "digest": "248d72f37779f22d57ab3d64b5fc1e706db9092df79da27a762693ce3df81e07",
+      "version": "1.0.21"
+    }
+  ],
+  "version": "1.0.22",
+  "worker_api_version": 1
+}

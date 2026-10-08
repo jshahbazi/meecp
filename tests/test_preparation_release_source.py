@@ -4,14 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from mcpme import preparation_release_policy as policy
-from mcpme.preparation_contracts import PreparationError
+from meecp import preparation_release_policy as policy
+from meecp.preparation_contracts import PreparationError
 from test_preparation_release_policy import closed, write_policy
-from test_mcpme_host import prepared, install, tool_call
+from test_meecp_host import prepared, install, tool_call
 
 
 def source_module(root, monkeypatch):
-    path = root / "backend/mcpme/preparation_release_policy.py"
+    path = root / "backend/meecp/preparation_release_policy.py"
     path.parent.mkdir(parents=True)
     path.write_bytes(b"# Synthetic module location only.\n")
     monkeypatch.setattr(policy, "__file__", str(path))
@@ -46,14 +46,14 @@ def test_enclosed_app_cannot_fall_back_to_source_context(tmp_path, monkeypatch, 
     inside = tmp_path / "Synthetic.app" / ("Contents/Resources/host" if layout != "malformed" else "wrong-layout")
     if layout == "linked-out":
         module = source_module(outside, monkeypatch)
-        alias = inside / "backend/mcpme/preparation_release_policy.py"
+        alias = inside / "backend/meecp/preparation_release_policy.py"
         alias.parent.mkdir(parents=True)
         alias.symlink_to(module)
         monkeypatch.setattr(policy, "__file__", str(alias))
         root = outside
     elif layout == "linked-in":
         module = source_module(inside, monkeypatch)
-        alias = outside / "backend/mcpme/preparation_release_policy.py"
+        alias = outside / "backend/meecp/preparation_release_policy.py"
         alias.parent.mkdir(parents=True)
         alias.symlink_to(module)
         monkeypatch.setattr(policy, "__file__", str(alias))
@@ -84,7 +84,7 @@ def test_private_policy_seam_remains_strict_outside_app(tmp_path):
 
 @pytest.mark.asyncio
 async def test_actual_source_serve_keeps_manual_package_sdk_with_active_tracked_policy(tmp_path, monkeypatch, prepared):
-    from mcpme import supervisor
+    from meecp import supervisor
     source = tmp_path / "source"
     source_module(source, monkeypatch)
     active(source)

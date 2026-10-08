@@ -31,12 +31,20 @@ from verify_phase3_primitives import _check_module_origins, _host_imports, _host
 
 CASES = ("disabled_queued", "revoked_verification", "revoked_attachment", "updated_active",
          "canceled_native_owner", "crashed_native_owner", "stale_revision", "stale_source", "capability_blocker", "native_management")
+
+
+def recipe_manifest_path(root):
+    from meecp.recipes import recipe_metadata_names
+    names = {path.name: None for path in root.iterdir()}
+    manifest_name, _ = recipe_metadata_names(names)
+    return root / manifest_name
 LIFECYCLE_POLICY_SHA256 = frozenset({
     "c8fa615def941e66e85a68ac0e7cc46dd7caf1797918fc03fdd5277ac2326522",
     "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375",
     "8a9a8fd69217352b49e0e338d4d652df8cebcac86609edae1190a88cd2d9a592",
     "5bb20b7a8cde39368a5cc3d03a92a4ed3f69d92ac56c317b6f696432863925ea",
     "29d0359e9846afff79061c0fd0d0bf265f88fd78deb6c62193af1ba614ca9dcc",
+    "ca7d40f1dd0075e757597caea0b5437c87fc63437818e54f815666471bf242b2",
 })
 BARRIERS = {"disabled_queued": "scheduler_before_snapshot", "stale_source": "scheduler_before_snapshot",
     "revoked_verification": "actual_verifier_return_before_publication",
@@ -113,10 +121,10 @@ import asyncio,logging,os,sys,threading
 from pathlib import Path
 sys.path[:0]=[sys.argv[1],sys.argv[2]]
 logging.disable(logging.CRITICAL)
-from mcpme.supervisor import serve
-from mcpme.preparation_runner import PreparationRunner,JournaledPreparationOwner
-from mcpme.preparation_resolution_runner import OwnedResolutionRunner
-from mcpme.preparation_resolved_python import ResolvedPythonComponent
+from meecp.supervisor import serve
+from meecp.preparation_runner import PreparationRunner,JournaledPreparationOwner
+from meecp.preparation_resolution_runner import OwnedResolutionRunner
+from meecp.preparation_resolved_python import ResolvedPythonComponent
 mode=sys.argv[6]; control=int(sys.argv[7]); status=int(sys.argv[8])
 released=threading.Event(); used=False
 def listener():
@@ -229,7 +237,7 @@ class Barrier:
 class ReceiptHold:
     """Withhold and restore the exact owned inode using private directory FDs."""
     def __init__(self, state, job):
-        from mcpme.ownership_receipts import verify_receipt
+        from meecp.ownership_receipts import verify_receipt
         self.verify_receipt = verify_receipt
         connection = sqlite3.connect((state / "imports.sqlite").as_uri() + "?mode=ro", uri=True, timeout=5)
         try:
@@ -353,7 +361,7 @@ class LifecycleHarness(onboarding.Harness):
 
     async def request(self, state, route, body=None, expected_error=None):
         import httpx
-        from mcpme_local_transport import private_transport, socket_path
+        from meecp_local_transport import private_transport, socket_path
         connection = private_json(state / "manager-connection.json")
         async with httpx.AsyncClient(base_url=connection["endpoint"], trust_env=False, timeout=30,
                 follow_redirects=False, transport=private_transport(socket_path(state, "manager")),
@@ -541,7 +549,7 @@ class LifecycleHarness(onboarding.Harness):
                 require(job["state"] == "verifying", "recipe_barrier_wrong_state")
                 update = base / "recipe-update"
                 shutil.copytree(bundle, update)
-                manifest_path = update / "mcpme.recipe.json"
+                manifest_path = recipe_manifest_path(update)
                 manifest = json.loads(manifest_path.read_bytes())
                 manifest["version"] = "1.0.1"
                 manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n")
@@ -751,7 +759,7 @@ class LifecycleHarness(onboarding.Harness):
             bundle = base / "unavailable-recipe"
             await self.cli(state, environment, home, "recipes", "scaffold", "--output", bundle,
                 "--id", "local.unavailable-acceptance", "--component", "resolved-python-v1", "--json")
-            manifest_path = bundle / "mcpme.recipe.json"
+            manifest_path = recipe_manifest_path(bundle)
             manifest = json.loads(manifest_path.read_bytes())
             manifest["requirements"]["capabilities"].append("unavailable-acceptance-capability")
             manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n")

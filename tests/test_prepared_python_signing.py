@@ -8,7 +8,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-spec = importlib.util.spec_from_file_location("prepared_python_signing_builder", ROOT / "scripts/build_mcpme_app.py")
+spec = importlib.util.spec_from_file_location("prepared_python_signing_builder", ROOT / "scripts/build_meecp_app.py")
 builder = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(builder)
 
@@ -16,12 +16,12 @@ spec.loader.exec_module(builder)
 @pytest.mark.parametrize("relative,release,expected", [
     ("Contents/Resources/host/preparation-toolchain/python/bin/python3.12", True, True),
     ("Contents/Resources/host/preparation-toolchain/python/bin/python3.12", False, False),
-    ("Contents/MacOS/mcpme", True, False),
+    ("Contents/MacOS/meecp", True, False),
     ("Contents/Resources/host/python/bin/python3.12", True, False),
     ("Contents/Resources/host/preparation-toolchain/python/bin/python3", True, False),
     ("Contents/Resources/host/preparation-toolchain/python/lib/libpython3.12.dylib", True, False),
     ("Contents/Resources/host/preparation-toolchain/textgen-runtime/python/bin/python3.12", True, False),
-    ("Contents/Resources/host/bin/mcpme-handoff", True, False),
+    ("Contents/Resources/host/bin/meecp-handoff", True, False),
 ])
 def test_library_loading_exception_is_scoped_to_preparation_interpreter(tmp_path, relative, release, expected):
     result = builder.prepared_python_entitlements(tmp_path, tmp_path / relative, release=release)
@@ -45,7 +45,7 @@ def test_interpreter_keeps_hardened_runtime_timestamp_and_explicit_entitlements(
 def test_runtime_signing_applies_exception_to_only_prepared_python(monkeypatch, tmp_path):
     prepared = tmp_path / "Contents/Resources/host/preparation-toolchain/python/bin/python3.12"
     host_sdk = tmp_path / "Contents/Resources/host/python/bin/python3.12"
-    app = tmp_path / "Contents/MacOS/mcpme"
+    app = tmp_path / "Contents/MacOS/meecp"
     for path in (prepared, host_sdk, app):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"\xcf\xfa\xed\xfe" + b"synthetic native file")

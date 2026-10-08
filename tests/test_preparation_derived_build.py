@@ -10,19 +10,19 @@ import uuid
 
 import pytest
 
-from mcpme.imports import ImportStore
-from mcpme.recipes import RecipeStore
-from mcpme.preparations import PreparationStore
-from mcpme.preparation_builtin_recipes import seed_builtin_recipes
-from mcpme.preparation_forms import PreparationForms
-from mcpme.preparation_resolution import ResolutionStore, result_from_files
-from mcpme.preparation_resolution_runner import OwnedResolutionRunner, dependency_project
-from mcpme.preparation_runner import PreparationRunner
-from mcpme.preparation_inputs import parse_preparation_receipt
-from mcpme.preparation_contracts import PreparationError, ExecutionPolicy
-from mcpme.preparation_inspection import inspect_source
-from mcpme.preparation_verifier import verify_prepared_package
-from mcpme.contracts import validate_package
+from meecp.imports import ImportStore
+from meecp.recipes import RecipeStore
+from meecp.preparations import PreparationStore
+from meecp.preparation_builtin_recipes import seed_builtin_recipes
+from meecp.preparation_forms import PreparationForms
+from meecp.preparation_resolution import ResolutionStore, result_from_files
+from meecp.preparation_resolution_runner import OwnedResolutionRunner, dependency_project
+from meecp.preparation_runner import PreparationRunner
+from meecp.preparation_inputs import parse_preparation_receipt
+from meecp.preparation_contracts import PreparationError, ExecutionPolicy
+from meecp.preparation_inspection import inspect_source
+from meecp.preparation_verifier import verify_prepared_package
+from meecp.contracts import validate_package
 from test_preparation_resolution import source, request, policy
 
 
@@ -158,7 +158,7 @@ def test_plan_and_receipt_bind_exact_derived_closure_and_runtime(source, tmp_pat
     plan = store.execution_plan(draft["draft_id"], 2, descriptor, build_policy,
         runner_digest="b"*64, verifier_digest="c"*64, runtime_digest="a"*64)
     job = store.authorize_start(plan["plan_id"], plan["plan_digest"], str(uuid.uuid4()))
-    from mcpme.preparation_inputs import PreparationReceiptV2
+    from meecp.preparation_inputs import PreparationReceiptV2
     receipt = PreparationReceiptV2(schema_version=2, binding=job["binding"],
         inputs=job["bound_inputs"], fixture_digest=job["fixture_digest"])
     assert receipt.inputs.derived_inputs == result.derived_inputs
@@ -198,7 +198,7 @@ async def test_real_resolution_form_build_attach_and_relocation(tmp_path, kind):
         (source / "worker.py").write_text("def double(n: int) -> dict[str, int]:\n return {'value': n*2}\n")
     else:
         (source / "pyproject.toml").write_text('[project]\nname="dynamic"\nversion="1.0.0"\ndependencies=["mcp==1.30.0"]\n'
-            '[tool.mcpme]\nmcp_module="worker:main"\n')
+            '[tool.meecp]\nmcp_module="worker:main"\n')
         (source / "worker.py").write_text('import asyncio\nfrom mcp.server import Server\nfrom mcp.server.models import InitializationOptions\n'
             'from mcp.server.stdio import stdio_server\nfrom mcp.types import Tool,ServerCapabilities,ToolsCapability,CallToolResult,TextContent\n'
             'server=Server("synthetic")\n@server.list_tools()\nasync def listing():\n'
@@ -212,9 +212,9 @@ async def test_real_resolution_form_build_attach_and_relocation(tmp_path, kind):
         candidate = next(item for item in inspect_source(draft)["candidates"]
             if item["kind"] == ("python-callable" if kind == "callable" else "python-mcp"))
         resolutions = ResolutionStore(imports)
-        resolver = OwnedResolutionRunner(resolutions, host, host / "bin/mcpme-reap", enabled=True)
+        resolver = OwnedResolutionRunner(resolutions, host, host / "bin/meecp-reap", enabled=True)
         store, forms = seeded(imports, resolutions)
-        builder = PreparationRunner(store, host, host / "bin/mcpme-reap", enabled=True,
+        builder = PreparationRunner(store, host, host / "bin/meecp-reap", enabled=True,
                                     enabled_families=tuple(store.families))
         try:
             plan = await resolver.plan(draft["draft_id"], 1, candidate["candidate_id"], policy(kind != "callable"))
@@ -231,7 +231,7 @@ async def test_real_resolution_form_build_attach_and_relocation(tmp_path, kind):
             final = store.get(job["job_id"])
             assert final["state"] == "succeeded", final["error_code"]
             attached = Path(imports.inspect(draft["draft_id"])["attachment"]["path"])
-            receipt = parse_preparation_receipt((attached / "mcpme.preparation.json").read_bytes())
+            receipt = parse_preparation_receipt((attached / "meecp.preparation.json").read_bytes())
             assert receipt.schema_version == 2 and receipt.binding.revision == selected["revision"]
             assert not receipt.inputs.original_dependency_locks and receipt.inputs.captured_collection is None
             assert receipt.inputs.derived_inputs[0].request_digest == plan_request_digest(resolved)
@@ -243,7 +243,7 @@ async def test_real_resolution_form_build_attach_and_relocation(tmp_path, kind):
             package = validate_package(moved)
             probe = tmp_path.resolve() / "relocation-probe"
             probe.mkdir()
-            report = await verify_prepared_package(moved, descriptor, host / "bin/mcpme-reap", probe, timeout_seconds=30)
+            report = await verify_prepared_package(moved, descriptor, host / "bin/meecp-reap", probe, timeout_seconds=30)
             assert report.package_digest == package.digest and report.tools_checked == (1 if kind == "callable" else 2)
             assert report.fixtures_checked == report.tools_checked
             assert all(not owner.instances and not owner._pending_ids for owner in builder.attempts[job["job_id"]].owners)
@@ -253,5 +253,5 @@ async def test_real_resolution_form_build_attach_and_relocation(tmp_path, kind):
 
 
 def plan_request_digest(job):
-    from mcpme.preparation_resolution import ResolutionRequestV1
+    from meecp.preparation_resolution import ResolutionRequestV1
     return ResolutionRequestV1.model_validate(job["request"]).digest

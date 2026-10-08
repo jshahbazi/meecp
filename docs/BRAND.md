@@ -1,14 +1,14 @@
-# mcpme visual identity
+# meecp visual identity
 
-The identity centers on the approved matte lowercase **m on an ivory cylindrical pedestal**, viewed at a slight three-quarter angle. Rounded arches connect the app name to local MCP services. Repository artwork pairs the sculptural scene with the stylized `mcpme` wordmark on the left.
+The identity centers on the approved matte lowercase **m on an ivory cylindrical pedestal**, viewed at a slight three-quarter angle. Rounded arches connect the app name to local MCP services. Repository artwork pairs the sculptural scene with the stylized `meecp` wordmark on the left.
 
-![mcpme repository banner](../assets/brand/mcpme-banner.png)
+![meecp repository banner](../assets/brand/meecp-banner.png)
 
 ## Assets
 
 | File | Use |
 | --- | --- |
-| `assets/brand/mcpme-banner.png` | Repository/README banner, including the wordmark. |
+| `assets/brand/meecp-banner.png` | Repository/README banner, including the wordmark. |
 | `assets/brand/local-relay-hero.png` | Approved illustration without text; composition reference. |
 | `assets/brand/pedestal-icon-master.png` | Transparent full-color standalone m and pedestal. |
 | `assets/brand/menu-bar-pedestal-master.png` | Transparent black template, preserving the angle and pedestal. |
@@ -33,20 +33,20 @@ The wordmark uses rounded geometric lettering. Native controls keep the system f
 
 ## Rendering and packaging
 
-`Sources/McpmeMenuBar/Brand.swift` renders the checked-in image masters into exact-size native bitmap representations. `scripts/mcpme-icon.swift` shares that rendering source to generate the standard macOS iconset. No additional dependencies are required.
+`Sources/MeecpMenuBar/Brand.swift` renders the checked-in image masters into exact-size native bitmap representations. `scripts/meecp-icon.swift` shares that rendering source to generate the standard macOS iconset. No additional dependencies are required.
 
 ```sh
 mkdir -p .build
-swiftc Sources/McpmeMenuBar/Brand.swift scripts/mcpme-icon.swift -o .build/mcpme-icon
-.build/mcpme-icon assets/brand runtime/McpmeAppIcon.iconset
-iconutil -c icns runtime/McpmeAppIcon.iconset -o runtime/McpmeAppIcon.icns
-uv run --locked scripts/build_mcpme_app.py --output dist/mcpme-brand.app
+swiftc Sources/MeecpMenuBar/Brand.swift scripts/meecp-icon.swift -o .build/meecp-icon
+.build/meecp-icon assets/brand runtime/MeecpAppIcon.iconset
+iconutil -c icns runtime/MeecpAppIcon.iconset -o runtime/MeecpAppIcon.icns
+uv run --locked scripts/build_meecp_app.py --output dist/meecp-brand.app
 ```
 
 Use a fresh output app path. The native builder declares `CFBundleIconFile`, bundles the brand assets, and records the icon/source hashes before signing. The menu bar and Apps header use the same checked-in masters. The host package includes these assets so bundled documentation retains its images.
 
-To refresh the checked-in menu preview PNGs, pass `assets/brand` as an optional third argument to `.build/mcpme-icon`. Normal app builds write generated icons into build scratch directories.
+To refresh the checked-in menu preview PNGs, pass `assets/brand` as an optional third argument to `.build/meecp-icon`. Normal app builds write generated icons into build scratch directories.
 
 ## Provenance
 
-Illustration, wordmark banner, transparent sculpture, and monochrome template were generated with the built-in ImageGen tool on 2026-10-01. Exact generation and edit briefs are in [BRAND_PROMPTS.md](BRAND_PROMPTS.md). Native exports are rendered by AppKit; image masters remain in Git and build outputs remain ignored.
+Illustration, wordmark banner, transparent sculpture, and monochrome template were generated with the built-in ImageGen tool on 2026-10-01. Exact generation and edit briefs are in [BRAND_PROMPTS.md](BRAND_PROMPTS.md). The banner wordmark was edited to the current meecp name on 2026-10-08; the resulting opaque landscape asset is 1902 × 827 pixels. Native exports are rendered by AppKit; image masters remain in Git and build outputs remain ignored.

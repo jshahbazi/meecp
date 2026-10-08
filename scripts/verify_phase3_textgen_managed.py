@@ -37,7 +37,7 @@ def stage(value):
 def check_origins(host):
     _check_module_origins(host)
     for name, module in tuple(sys.modules.items()):
-        if name in {"mcpme_textgen", "jevk5_app"} or name.startswith(("mcpme_textgen.", "jevk5_app.")):
+        if name in {"meecp_textgen", "jevk5_app"} or name.startswith(("meecp_textgen.", "jevk5_app.")):
             path = getattr(module, "__file__", None)
             if not path or not Path(path).resolve().is_relative_to(host / "backend"):
                 raise VerificationError("phase3_textgen_bundled_import_required")
@@ -61,8 +61,8 @@ def host_hashes(host):
 
 
 def copy_selected_model(source, target, size, digest):
-    from mcpme.preparation_builder import _opened
-    from mcpme.preparation_contracts import PreparationError
+    from meecp.preparation_builder import _opened
+    from meecp.preparation_contracts import PreparationError
     total, value = 0, hashlib.sha256()
     with _opened(source) as original, target.open("xb") as copied:
         while chunk := original.read(1024*1024):
@@ -78,17 +78,17 @@ async def verify(host, model, base, *, source_mode="captured", install_lifecycle
     _host_paths(host)
     receipt = await asyncio.to_thread(host_hashes,host)
     _host_imports(host)
-    from mcpme.contracts import validate_package
-    from mcpme.preparation_artifacts import AcquisitionRequestV1
-    from mcpme.preparation_capture import CapturePolicyV1, CreateImportTargetV1, AttachImportTargetV1
-    from mcpme.preparation_contracts import ExecutionPolicy, PreparationError
-    from mcpme.preparation_textgen import MODEL_BYTES, MODEL_SHA256, references
-    from mcpme.preparations import RECEIPT_NAME
-    from mcpme.preparation_inputs import parse_preparation_receipt
-    from mcpme.processes import _await_ownership
-    from mcpme.supervisor import Supervisor
+    from meecp.contracts import validate_package
+    from meecp.preparation_artifacts import AcquisitionRequestV1
+    from meecp.preparation_capture import CapturePolicyV1, CreateImportTargetV1, AttachImportTargetV1
+    from meecp.preparation_contracts import ExecutionPolicy, PreparationError
+    from meecp.preparation_textgen import MODEL_BYTES, MODEL_SHA256, references
+    from meecp.preparations import RECEIPT_NAME
+    from meecp.preparation_inputs import parse_preparation_receipt
+    from meecp.processes import _await_ownership
+    from meecp.supervisor import Supervisor
     check_origins(host)
-    product = Supervisor(base / "state", host / "bin/mcpme-reap")
+    product = Supervisor(base / "state", host / "bin/meecp-reap")
     imports, capture_store, store = product.imports, product.captures, product.preparations
     recipes, forms = product.recipes, product.preparation_forms
     coordinator, runner = product.capture_runner, product.preparation_runner
@@ -214,7 +214,7 @@ async def verify(host, model, base, *, source_mode="captured", install_lifecycle
                 raise PreparationError("phase3_textgen_relocation_identity_mismatch")
             probe = base / "probe"; probe.mkdir(mode=0o700)
             stage("relocation_probe")
-            report = await relocation_probe(relocated,descriptor,host / "bin/mcpme-reap",probe)
+            report = await relocation_probe(relocated,descriptor,host / "bin/meecp-reap",probe)
             after = await files(validate_package,relocated)
             if after.digest != digest:
                 raise PreparationError("phase3_textgen_probe_mutated_package")
@@ -244,9 +244,9 @@ async def verify(host, model, base, *, source_mode="captured", install_lifecycle
 
 
 async def relocation_probe(package_root, descriptor, reaper, workspace):
-    from mcpme.preparation_contracts import PreparationError
-    from mcpme.preparation_textgen_verifier import verify_textgen_package
-    from mcpme.processes import ProcessOwner, _await_ownership
+    from meecp.preparation_contracts import PreparationError
+    from meecp.preparation_textgen_verifier import verify_textgen_package
+    from meecp.processes import ProcessOwner, _await_ownership
     owner = ProcessOwner(reaper)
     try:
         return await verify_textgen_package(package_root, descriptor, reaper, workspace,
@@ -270,7 +270,7 @@ def main():
     parser.add_argument("--install-lifecycle", action="store_true")
     options = parser.parse_args()
     os.umask(0o077)
-    base = Path(tempfile.mkdtemp(prefix="mcpme-phase3-textgen-",dir="/private/tmp")).resolve()
+    base = Path(tempfile.mkdtemp(prefix="meecp-phase3-textgen-",dir="/private/tmp")).resolve()
     result,failed = None,False
     harness_hash = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     try:

@@ -5,7 +5,7 @@ import XCTest
 
 // Opt in on a logged-in macOS session. These launch only signed synthetic apps
 // under a temporary directory and pass their exact NSRunningApplication objects
-// to shutdown; the user's installed mcpme and its state are never touched.
+// to shutdown; the user's installed meecp and its state are never touched.
 final class NativeInstallLifecycleTests: XCTestCase {
     private var root: URL!
     private var launched: [NSRunningApplication] = []
@@ -14,7 +14,7 @@ final class NativeInstallLifecycleTests: XCTestCase {
         guard ProcessInfo.processInfo.environment["MCPME_RUN_INSTALL_LIFECYCLE_TESTS"] == "1" else {
             throw XCTSkip("Set MCPME_RUN_INSTALL_LIFECYCLE_TESTS=1 in a logged-in macOS session")
         }
-        root = FileManager.default.temporaryDirectory.appendingPathComponent("mcpme-native-install-" + UUID().uuidString, isDirectory: true)
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("meecp-native-install-" + UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
     }
 
@@ -61,9 +61,9 @@ final class NativeInstallLifecycleTests: XCTestCase {
         let delegate = Fixture(); app.delegate = delegate; app.run()
         """
         try code.write(to: swift, atomically: true, encoding: .utf8)
-        try tool("/usr/bin/swiftc", [swift.path, "-o", macos.appendingPathComponent("mcpme").path])
-        let info: [String: Any] = ["CFBundleIdentifier": AppInstaller.bundleIdentifier, "CFBundleExecutable": "mcpme",
-                                   "CFBundlePackageType": "APPL", "CFBundleName": "mcpme install test", "LSUIElement": true,
+        try tool("/usr/bin/swiftc", [swift.path, "-o", macos.appendingPathComponent("meecp").path])
+        let info: [String: Any] = ["CFBundleIdentifier": AppInstaller.bundleIdentifier, "CFBundleExecutable": "meecp",
+                                   "CFBundlePackageType": "APPL", "CFBundleName": "meecp install test", "LSUIElement": true,
                                    "CFBundleVersion": "1", "CFBundleShortVersionString": "0.1.0",
                                    "LSMinimumSystemVersion": "26.0",
                                    "TestMarker": root.appendingPathComponent(label).path, "RefusesQuit": refusesQuit]
@@ -95,18 +95,18 @@ final class NativeInstallLifecycleTests: XCTestCase {
     }
 
     func testReadOnlyImageReplacementQuitsAndLaunchesNewCopy() throws {
-        let destination = root.appendingPathComponent("test Applications/mcpme.app")
+        let destination = root.appendingPathComponent("test Applications/meecp.app")
         try fixture(destination, label: "old")
         let old = try launch(destination); waitForMarker("old", "ready")
         let contents = root.appendingPathComponent("image contents")
-        try fixture(contents.appendingPathComponent("mcpme.app"), label: "new")
+        try fixture(contents.appendingPathComponent("meecp.app"), label: "new")
         let image = root.appendingPathComponent("test.dmg")
         let mounted = root.appendingPathComponent("mounted")
         try FileManager.default.createDirectory(at: mounted, withIntermediateDirectories: false)
         try tool("/usr/bin/hdiutil", ["create", "-srcfolder", contents.path, "-format", "UDZO", image.path])
         try tool("/usr/bin/hdiutil", ["attach", image.path, "-readonly", "-nobrowse", "-noautoopen", "-mountpoint", mounted.path])
         defer { try? tool("/usr/bin/hdiutil", ["detach", mounted.path]) }
-        let source = mounted.appendingPathComponent("mcpme.app")
+        let source = mounted.appendingPathComponent("meecp.app")
         XCTAssertTrue(AppInstaller.isOnReadOnlyVolume(source))
         XCTAssertFalse(AppInstaller.isOnReadOnlyVolume(destination))
         let done = expectation(description: "Install and restart")
@@ -126,8 +126,8 @@ final class NativeInstallLifecycleTests: XCTestCase {
     }
 
     func testRefusedQuitTimesOutWithoutForceTerminationOrReplacement() throws {
-        let destination = root.appendingPathComponent("test Applications/mcpme.app")
-        let source = root.appendingPathComponent("source/mcpme.app")
+        let destination = root.appendingPathComponent("test Applications/meecp.app")
+        let source = root.appendingPathComponent("source/meecp.app")
         try fixture(destination, label: "old", refusesQuit: true)
         try fixture(source, label: "new")
         let old = try launch(destination); waitForMarker("old", "ready")
@@ -149,8 +149,8 @@ final class NativeInstallLifecycleTests: XCTestCase {
     }
 
     func testTamperedNativeBundleFailsBeforeShutdown() throws {
-        let source = root.appendingPathComponent("source/mcpme.app")
-        let destination = root.appendingPathComponent("test Applications/mcpme.app")
+        let source = root.appendingPathComponent("source/meecp.app")
+        let destination = root.appendingPathComponent("test Applications/meecp.app")
         try fixture(source, label: "new")
         let info = source.appendingPathComponent("Contents/Info.plist")
         var data = try Data(contentsOf: info); data.append(Data("<!-- altered after signing -->".utf8)); try data.write(to: info)

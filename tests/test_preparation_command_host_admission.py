@@ -2,11 +2,11 @@
 import hashlib
 import pytest
 
-from mcpme.host_command import HostCommandAdmission
-from mcpme.preparation_command_owner import CommandPreparationResourceAdmission
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_runner import PreparationRunner
-from mcpme.supervisor import Supervisor
+from meecp.host_command import HostCommandAdmission
+from meecp.preparation_command_owner import CommandPreparationResourceAdmission
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_runner import PreparationRunner
+from meecp.supervisor import Supervisor
 from test_command_default_registration import packaged
 
 

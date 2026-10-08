@@ -5,7 +5,7 @@ const MAX_FRAME_BYTES = 1024 * 1024;
 const MAX_TOOL_CALLS = 1024;
 const MAX_TURNS = 512;
 const MAX_COMPLETION_CHECKS = 12;
-const SYSTEM_PROMPT = `You are the internal coding and integration agent for mcpme.
+const SYSTEM_PROMPT = `You are the internal coding and integration agent for meecp.
 Investigate the user's goal and build a working MCP integration in the private
 staging workspace. An unfamiliar app does not need a recipe or app template.
 Choose the architecture, language, dependencies, build steps, services, and MCP
@@ -150,7 +150,7 @@ async function configureSession(start, broker, signal) {
   const credentials = {
     // Compatible local servers often have no authentication. The OpenAI SDK
     // still needs a nonempty key; this fixed placeholder contains no secret.
-    read: async (id) => id === start.provider ? { type: "api_key", key: start.api_key || "mcpme-no-api-key" } : undefined,
+    read: async (id) => id === start.provider ? { type: "api_key", key: start.api_key || "meecp-no-api-key" } : undefined,
     list: async () => [{ providerId: start.provider, type: "api_key" }],
     modify: async () => { throw new Error("credentials_read_only"); },
     delete: async () => { throw new Error("credentials_read_only"); },

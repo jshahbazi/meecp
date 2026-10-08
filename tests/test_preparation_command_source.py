@@ -8,8 +8,8 @@ import subprocess
 
 import pytest
 
-from mcpme.preparation_command_source import inspect_native_executable
-from mcpme.preparation_contracts import PreparationError
+from meecp.preparation_command_source import inspect_native_executable
+from meecp.preparation_contracts import PreparationError
 
 
 def command(kind, prefix, text):

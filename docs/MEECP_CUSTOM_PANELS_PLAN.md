@@ -6,7 +6,7 @@ Status: proposed implementation plan, 2026-10-08. Custom panels are not implemen
 
 Allow an installed app to supply its own interactive workspace inside **meecp**. Selecting the app discovers its available panels and opens its default panel. The existing native activity, details, connection, configuration, and lifecycle controls remain available. An integrated application's original UI continues to operate independently.
 
-The product is being renamed from **mcpme** to **meecp**. This plan uses meecp for the product name. Existing repository paths, Swift targets, Python modules, manifest filenames, environment variables, connection exports, and private-state locations still use `mcpme`. Changing those identifiers and migrating installed state requires a separate coordinated rename. The rename is recorded here as a product decision; runtime and storage migration remain future work.
+The product is now **meecp**. This plan uses meecp for the product name. Current source paths and Swift targets use the renamed meecp forms; installed compatibility identifiers such as published recipe IDs, legacy metadata names, environment variables, legacy management aliases, and private-state locations retain `mcpme` where required. Those compatibility contracts are recorded in [the rename guide](RENAME.md). Custom panels remain planned work in this document.
 
 The desired setup flow is: describe an app, let Pi prepare its tools and a useful interface, review the verified package, then select the installed app to use that interface. Installing another app should require another package, with no app-specific changes to the meecp host.
 
@@ -27,16 +27,16 @@ The modularization work is concentrated at selection, rendering, lifecycle, and 
 
 | Area | Current source | Required change |
 | --- | --- | --- |
-| App selection | `showDetails` / `loadDetails` in [main.swift](../Sources/McpmeMenuBar/main.swift) load one slot's metadata and guard against a different selection. | Coordinate standard panels and optional custom panels using stable slot and package identity. |
-| Native presentation | [Dashboard.swift](../Sources/McpmeMenuBar/Dashboard.swift) and [Management.swift](../Sources/McpmeMenuBar/Management.swift) display a shared `DashboardDetails` model. | Add a shared panel host without embedding executable UI in `DashboardSection` text. |
-| Package declarations | [contracts.py](../backend/mcpme/contracts.py) uses closed models. The MCP manifest has no UI declaration; schema 2 selects the separate `HostCommandManifest` profile. | Allocate an explicit compatible package/host API revision for panel declarations. Schema 2 is not a general MCP package revision. Keep old parsers strict. |
+| App selection | `showDetails` / `loadDetails` in [main.swift](../Sources/MeecpMenuBar/main.swift) load one slot's metadata and guard against a different selection. | Coordinate standard panels and optional custom panels using stable slot and package identity. |
+| Native presentation | [Dashboard.swift](../Sources/MeecpMenuBar/Dashboard.swift) and [Management.swift](../Sources/MeecpMenuBar/Management.swift) display a shared `DashboardDetails` model. | Add a shared panel host without embedding executable UI in `DashboardSection` text. |
+| Package declarations | [contracts.py](../backend/meecp/contracts.py) uses closed models. The MCP manifest has no UI declaration; schema 2 selects the separate `HostCommandManifest` profile. | Allocate an explicit compatible package/host API revision for panel declarations. Schema 2 is not a general MCP package revision. Keep old parsers strict. |
 | Package integrity | `PackageLock` binds the manifest and bounded artifacts by hash, size, executable mode, provenance, and license. | Validate panel entrypoints, complete asset closure, and panel metadata against that lock. |
-| Pi preparation | [pi_setup.py](../backend/mcpme/pi_setup.py) supplies package guidance; [pi_verification.py](../backend/mcpme/pi_verification.py) independently checks candidate tools and fixtures. | Advertise panel facilities, generate assets and UI fixtures, and add an independent panel check. |
-| MCP transport | [gateway.py](../backend/mcpme/gateway.py) and [http_gateway.py](../backend/mcpme/http_gateway.py) enforce the supported protocol and runtime lifecycle. | Reuse tool invocation and admission behind a scoped panel bridge. Broader MCP Apps support needs separate protocol changes. |
+| Pi preparation | [pi_setup.py](../backend/meecp/pi_setup.py) supplies package guidance; [pi_verification.py](../backend/meecp/pi_verification.py) independently checks candidate tools and fixtures. | Advertise panel facilities, generate assets and UI fixtures, and add an independent panel check. |
+| MCP transport | [gateway.py](../backend/meecp/gateway.py) and [http_gateway.py](../backend/meecp/http_gateway.py) enforce the supported protocol and runtime lifecycle. | Reuse tool invocation and admission behind a scoped panel bridge. Broader MCP Apps support needs separate protocol changes. |
 
 Current MCP package declarations permit the `tools` capability. Tool descriptors do not model structured UI `_meta`, and the verifiers require exact tool contracts. Supporting MCP Apps resources or metadata therefore requires changes to declarations, capability negotiation, gateways, and verification together. Adding a web view alone does not implement that protocol.
 
-The owning contracts remain [host design](MCPME_DESIGN.md), [Pi setup](PI_SETUP.md), [package authoring](PACKAGE_AUTHORING.md), [configuration and secrets](CONFIGURATION_SECRETS.md), and the original [component and transport design](DESIGN.md).
+The owning contracts remain [host design](MEECP_DESIGN.md), [Pi setup](PI_SETUP.md), [package authoring](PACKAGE_AUTHORING.md), [configuration and secrets](CONFIGURATION_SECRETS.md), and the original [component and transport design](DESIGN.md).
 
 ## User experience
 
@@ -147,7 +147,7 @@ For the first release, the bridge supports initialization, theme/size/runtime-st
 
 Every instance is bound to installation identity, host generation, slot UUID, installed package digest, runtime generation when connected, panel ID, and an activation epoch. Every accepted call must match the live instance and its verified allowlist. The broker enforces these checks; hiding controls in JavaScript is insufficient. Owner and slot bearer credentials remain outside HTML, JavaScript, storage, and bridge responses.
 
-Read slot UUID, `package_digest`, and registry `generation` from the authoritative [registry Slot](../backend/mcpme/registry.py), and validate package identity through `Supervisor.package(slot)`. Existing resident model runtimes have generation identity; generic stdio sessions need a new broker-owned session epoch tied to the admitted gateway/session lifetime. Add explicit supervisor lifecycle invalidation for stop, restart, upgrade, removal, and shutdown. UI polling and JavaScript-supplied identity cannot grant invocation authority.
+Read slot UUID, `package_digest`, and registry `generation` from the authoritative [registry Slot](../backend/meecp/registry.py), and validate package identity through `Supervisor.package(slot)`. Existing resident model runtimes have generation identity; generic stdio sessions need a new broker-owned session epoch tied to the admitted gateway/session lifetime. Add explicit supervisor lifecycle invalidation for stop, restart, upgrade, removal, and shutdown. UI polling and JavaScript-supplied identity cannot grant invocation authority.
 
 The broker initializes and reuses one ordinary slot invocation session per active instance when the user first calls a tool. It uses the current gateway validation, activity accounting, queue limits, timeouts, process ownership, and inference serialization. Panel-specific bounds can be tighter than the package limits. Exhausted or unavailable services return a usable panel error without weakening runtime admission.
 
@@ -222,7 +222,7 @@ Use scoped agents within available concurrency. After freezing shared contracts,
 | E: release acceptance | Test relocated installed bundles, the examples, concurrent clients/panels, upgrade/remove/restart, and existing packages. Update supported-scope documentation. | Stage D. | Recorded checks against the exact built artifact; no outstanding required first-release behavior. |
 | F: MCP Apps compatibility | Implement protocol resources/metadata/negotiation and conformance for the supported profiles. | Stable host/broker contracts; separately scheduled scope. | Protocol and UI conformance evidence; extension support advertised only for verified capabilities. |
 
-Likely implementation ownership is `Sources/McpmeMenuBar` for native composition, new focused panel modules under `backend/mcpme` for contracts/brokering, existing validators/installers for package integration, and `agents/pi` plus `pi_*` modules for generation and verification. Keep the new lifecycle out of the existing large controller where a dedicated component can own it.
+Likely implementation ownership is `Sources/MeecpMenuBar` for native composition, new focused panel modules under `backend/meecp` for contracts/brokering, existing validators/installers for package integration, and `agents/pi` plus `pi_*` modules for generation and verification. Keep the new lifecycle out of the existing large controller where a dedicated component can own it.
 
 ## Acceptance criteria
 

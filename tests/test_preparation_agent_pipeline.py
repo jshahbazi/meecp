@@ -11,17 +11,17 @@ import uuid
 import httpx
 import pytest
 
-from mcpme.imports import ImportStore
-from mcpme.preparation_agent_host import AgentPreparationHost
-from mcpme.preparation_contracts import canonical_bytes
-from mcpme.preparation_inspection import inspect_source
-from mcpme.preparation_inputs import parse_preparation_receipt
-from mcpme.preparation_resolution import ResolutionStore
-from mcpme.preparation_resolution_runner import OwnedResolutionRunner
-from mcpme.preparation_resolved_python import ResolvedPythonComponent
-from mcpme.preparation_runner import PreparationRunner
-from mcpme.preparation_verifier import verify_prepared_package
-from mcpme.contracts import validate_package
+from meecp.imports import ImportStore
+from meecp.preparation_agent_host import AgentPreparationHost
+from meecp.preparation_contracts import canonical_bytes
+from meecp.preparation_inspection import inspect_source
+from meecp.preparation_inputs import parse_preparation_receipt
+from meecp.preparation_resolution import ResolutionStore
+from meecp.preparation_resolution_runner import OwnedResolutionRunner
+from meecp.preparation_resolved_python import ResolvedPythonComponent
+from meecp.preparation_runner import PreparationRunner
+from meecp.preparation_verifier import verify_prepared_package
+from meecp.contracts import validate_package
 from test_preparation_resolution import policy
 from test_preparation_derived_build import resolve_form
 from test_preparation_agent_host import provider, handler_for, completed
@@ -55,11 +55,11 @@ async def test_real_questions_build_sdk_probe_attach_after_simulated_agent_adopt
         source_identity = json.loads(json.dumps(draft["source"]))
         candidate = next(item for item in inspect_source(draft)["candidates"] if item["kind"] == "python-callable")
         resolutions = ResolutionStore(imports)
-        resolver = OwnedResolutionRunner(resolutions, private_host, private_host / "bin/mcpme-reap", enabled=True)
-        from mcpme.recipes import RecipeStore
-        from mcpme.preparations import PreparationStore
-        from mcpme.preparation_forms import PreparationForms
-        from mcpme.preparation_builtin_recipes import _catalog, CATALOG_ROOT
+        resolver = OwnedResolutionRunner(resolutions, private_host, private_host / "bin/meecp-reap", enabled=True)
+        from meecp.recipes import RecipeStore
+        from meecp.preparations import PreparationStore
+        from meecp.preparation_forms import PreparationForms
+        from meecp.preparation_builtin_recipes import _catalog, CATALOG_ROOT
         recipes = RecipeStore(imports)
         entry = next(item for item in _catalog().recipes if item.recipe_id == "mcpme.resolved-python")
         registered = recipes.add(CATALOG_ROOT / entry.directory)
@@ -67,7 +67,7 @@ async def test_real_questions_build_sdk_probe_attach_after_simulated_agent_adopt
         registered = recipes.enable(registered["recipe_id"], registered["version"])
         store = PreparationStore(imports, recipes, resolutions=resolutions)
         forms = PreparationForms(store, preferred_recipes=[{"id": registered["recipe_id"], "version": registered["version"], "digest": registered["digest"]}])
-        builder = PreparationRunner(store, private_host, private_host / "bin/mcpme-reap", enabled=True,
+        builder = PreparationRunner(store, private_host, private_host / "bin/meecp-reap", enabled=True,
             enabled_families=frozenset({ResolvedPythonComponent().reference.key}))
         agent = None
         try:
@@ -109,16 +109,16 @@ async def test_real_questions_build_sdk_probe_attach_after_simulated_agent_adopt
             assert built["state"] == "succeeded" and built["ownership_settled"] and not built["reservation_retained"]
             attachment = imports.inspect(draft["draft_id"])["attachment"]
             package_root = Path(attachment["path"])
-            actual = parse_preparation_receipt((package_root / "mcpme.preparation.json").read_bytes())
+            actual = parse_preparation_receipt((package_root / "meecp.preparation.json").read_bytes())
             assert actual.binding.revision == 2 and actual.binding.descriptor_digest == descriptor.digest
             moved = root / "relocated-package"; shutil.copytree(package_root, moved)
             shutil.rmtree(package_root)
             package = validate_package(moved)
             probe = root / "probe"; probe.mkdir()
-            from mcpme.processes import ProcessOwner
-            probe_owner = ProcessOwner(private_host / "bin/mcpme-reap")
+            from meecp.processes import ProcessOwner
+            probe_owner = ProcessOwner(private_host / "bin/meecp-reap")
             report = await verify_prepared_package(moved, value,
-                private_host / "bin/mcpme-reap", probe, timeout_seconds=30, owner=probe_owner)
+                private_host / "bin/meecp-reap", probe, timeout_seconds=30, owner=probe_owner)
             assert report.package_digest == package.digest and report.fixtures_checked == report.tools_checked == 1
             # This legacy report has no owner-count fields. Its verifier returns
             # only after exact ProcessOwner cleanup; inspect the actual ledger.

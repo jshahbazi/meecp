@@ -37,9 +37,9 @@ printf '\nRunning Swift tests...\n'
 swift test
 
 printf '\nRunning native app self-tests...\n'
-.build/debug/McpmeMenuBar --native-self-test
-.build/debug/McpmeMenuBar --dashboard-ui-self-test
-.build/debug/McpmeMenuBar --management-ui-self-test
-.build/debug/McpmeMenuBar --pi-setup-ui-self-test
+.build/debug/MeecpMenuBar --native-self-test
+.build/debug/MeecpMenuBar --dashboard-ui-self-test
+.build/debug/MeecpMenuBar --management-ui-self-test
+.build/debug/MeecpMenuBar --pi-setup-ui-self-test
 
 printf '\nAll standard tests passed.\n'

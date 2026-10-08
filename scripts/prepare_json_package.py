@@ -46,16 +46,16 @@ def prepare(destination: Path, *, idle_seconds: int = 300) -> Path:
         "access": {"filesystem": [], "network": [], "secrets": [], "writes": False},
         "resources": {"memory_mb": 32, "cpu_only": True}, "licenses": ["LICENSE"],
     }
-    (destination / "mcpme.package.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    (destination / "meecp.package.json").write_text(json.dumps(manifest, indent=2) + "\n")
     artifacts = [{"path": name, "sha256": digest(destination / name), "size": (destination / name).stat().st_size,
                   "executable": name == "json-utilities", "source": source_revision,
                   "provenance": "Locally compiled from the included main.swift using the recorded Swift toolchain.",
                   "license": "LICENSE"} for name in ["main.swift", "LICENSE", "json-utilities"]]
     lock = {"schema_version": 1, "package_id": manifest["package_id"], "version": manifest["version"],
-            "manifest_sha256": digest(destination / "mcpme.package.json"), "artifacts": artifacts,
+            "manifest_sha256": digest(destination / "meecp.package.json"), "artifacts": artifacts,
             "build": {"recipe": "swiftc -O -target arm64-apple-macosx26.0 main.swift -o json-utilities; ad hoc codesign",
-                      "builder": "mcpme prepare_json_package.py v1", "toolchain": toolchain}}
-    (destination / "mcpme.lock.json").write_text(json.dumps(lock, indent=2) + "\n")
+                      "builder": "meecp prepare_json_package.py v1", "toolchain": toolchain}}
+    (destination / "meecp.lock.json").write_text(json.dumps(lock, indent=2) + "\n")
     return destination
 
 

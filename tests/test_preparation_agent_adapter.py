@@ -11,15 +11,15 @@ import uuid
 
 import pytest
 
-from mcpme.imports import ImportStore, ImportError as SourceError
-from mcpme.recipes import RecipeStore
-from mcpme.preparations import PreparationStore
-from mcpme.preparation_agent_adapter import (AgentPythonAdapterFamily, component_catalog, descriptor_for)
-from mcpme.preparation_agent_adapter_store import (AgentAdapterDerivationStore, CODE_PATH, MODULE)
-from mcpme.preparation_agent_host import AgentPreparationHost
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_forms import PreparationForms
-from mcpme.preparation_inspection import inspect_source
+from meecp.imports import ImportStore, ImportError as SourceError
+from meecp.recipes import RecipeStore
+from meecp.preparations import PreparationStore
+from meecp.preparation_agent_adapter import (AgentPythonAdapterFamily, component_catalog, descriptor_for)
+from meecp.preparation_agent_adapter_store import (AgentAdapterDerivationStore, CODE_PATH, MODULE)
+from meecp.preparation_agent_host import AgentPreparationHost
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_forms import PreparationForms
+from meecp.preparation_inspection import inspect_source
 from test_preparation_agent import output, response, role_of
 from test_preparation_agent_host import provider, completed
 
@@ -40,9 +40,9 @@ def bundle(path, catalog):
         "licenses": ["LICENSE"], "provenance": {"origin": "synthetic", "publisher": "test"},
         "requirements": {"host_api_version": 1, "package_schema": 1, "protocol": "2025-11-25", "os": "macos",
             "architecture": "arm64", "capabilities": ["declarative-composition"]}}
-    data = json.dumps(manifest).encode(); (path / "mcpme.recipe.json").write_bytes(data)
+    data = json.dumps(manifest).encode(); (path / "meecp.recipe.json").write_bytes(data)
     license_data = (path / "LICENSE").read_bytes()
-    (path / "mcpme.recipe.lock.json").write_text(json.dumps({"schema_version": 1,
+    (path / "meecp.recipe.lock.json").write_text(json.dumps({"schema_version": 1,
         "manifest_sha256": hashlib.sha256(data).hexdigest(), "artifacts": [{"path": "LICENSE",
             "sha256": hashlib.sha256(license_data).hexdigest(), "size": len(license_data), "license": "LICENSE", "origin": "synthetic"}]}))
     return path
@@ -69,7 +69,7 @@ def handler(lock_hash, *, changes=None):
 
 @pytest.fixture
 def adapter_foundation(tmp_path, monkeypatch):
-    from mcpme import recipes as recipe_module
+    from meecp import recipes as recipe_module
     original = recipe_module.builtin_components
     monkeypatch.setattr(recipe_module, "builtin_components", lambda: {**original(), **component_catalog()})
     source = tmp_path / "source"; source.mkdir()
@@ -152,7 +152,7 @@ async def test_changed_reviewed_questions_carry_same_derived_input_but_intent_ed
 
 
 async def test_canceled_held_derivation_worker_joins_before_recovery_and_delete(adapter_foundation, tmp_path, monkeypatch):
-    from mcpme import preparation_agent_adapter_store as module
+    from meecp import preparation_agent_adapter_store as module
     imports, recipes, preparations, draft, derivations, family, lock_hash = adapter_foundation
     entered, release = threading.Event(), threading.Event()
     original = module.original_snapshot
@@ -206,7 +206,7 @@ async def test_replaced_derived_file_cannot_be_deleted_as_owned(adapter_foundati
 
 
 async def test_current_metadata_check_reads_no_source_bytes_and_rejects_changed_file(adapter_foundation, tmp_path, monkeypatch):
-    from mcpme import preparation_agent_adapter_store as module
+    from meecp import preparation_agent_adapter_store as module
     imports, _, preparations, draft, _, family, _ = adapter_foundation
     host, _, job = await analyze(adapter_foundation, tmp_path)
     try:
@@ -228,7 +228,7 @@ async def test_current_metadata_check_reads_no_source_bytes_and_rejects_changed_
     reason="returned shared hook must be applied for this integration control")
 @pytest.mark.parametrize("result", [False, None, 1, "true", "awaitable"])
 async def test_shared_authority_hook_requires_synchronous_exact_true(adapter_foundation, tmp_path, monkeypatch, result):
-    from mcpme.preparation_contracts import ExecutionPolicy
+    from meecp.preparation_contracts import ExecutionPolicy
     imports, _, preparations, draft, _, family, _ = adapter_foundation
     host, _, job = await analyze(adapter_foundation, tmp_path)
     try:
@@ -273,7 +273,7 @@ def test_new_bundle_static_registration_preserves_nonexecution_boundary(adapter_
         recipes.add(root / "templates/builtin-recipes/agent-python-adapter-v1-0-0")
     with ImportStore(tmp_path / "new-state") as imports:
         actual = RecipeStore(imports)
-        registered = actual.add(root / "templates/builtin-recipes/agent-python-adapter-v1-0-0")
+        registered = actual.add(root / "templates/builtin-recipes/agent-python-adapter-v1-0-1")
         enabled = actual.enable(registered["recipe_id"], registered["version"])
         assert enabled["state"] == "enabled" and not enabled["runnable"]
         assert enabled["manifest"]["steps"] == [{"component": family.component.reference.id,

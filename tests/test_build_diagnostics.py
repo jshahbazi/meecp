@@ -11,7 +11,7 @@ import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
-import build_mcpme_host as host_builder  # noqa: E402
+import build_meecp_host as host_builder  # noqa: E402
 
 
 SECRET = "private-credential-and-path-value"
@@ -132,9 +132,9 @@ def test_host_cli_exits_with_safe_command_diagnostic(monkeypatch, tmp_path, caps
     fail_command(monkeypatch, stderr=f"{SECRET}: credential tool failure")
     monkeypatch.setattr(host_builder.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(host_builder.platform, "machine", lambda: "arm64")
-    monkeypatch.setattr(sys, "argv", ["build_mcpme_host.py", "--output", str(tmp_path / SECRET)])
+    monkeypatch.setattr(sys, "argv", ["build_meecp_host.py", "--output", str(tmp_path / SECRET)])
     with pytest.raises(SystemExit) as raised:
-        runpy.run_path(str(SCRIPTS / "build_mcpme_host.py"), run_name="__main__")
+        runpy.run_path(str(SCRIPTS / "build_meecp_host.py"), run_name="__main__")
     assert raised.value.code == "build_command_uv_python_find_failed_exit_1"
     assert capsys.readouterr() == ("", "")
 
@@ -142,7 +142,7 @@ def test_host_cli_exits_with_safe_command_diagnostic(monkeypatch, tmp_path, caps
 def test_bundled_model_generator_has_licensed_source_closure_without_checkout(tmp_path):
     host_builder.bundle_model_template_assets(tmp_path)
     assets = tmp_path / "templates/jevk5-llamacpp-v1/assets"
-    for name in ("backend/jevk5_app/server.py", "backend/jevk5_app/scorer.py", "backend/mcpme_jevk5/runtime.py", "backend/mcpme_local_transport.py",
+    for name in ("backend/jevk5_app/server.py", "backend/jevk5_app/scorer.py", "backend/meecp_jevk5/runtime.py", "backend/meecp_local_transport.py",
                  "vendor/jevk5/prompt.py", "vendor/jevk5/LICENSE", "model-manifest.json",
                  "THIRD_PARTY_NOTICES.md", "uv.lock", "scripts/jevk5-package-launcher.c"):
         copied = assets / name
@@ -155,12 +155,12 @@ def test_bundled_model_generator_has_licensed_source_closure_without_checkout(tm
 def test_host_build_preserves_nested_document_links_and_binds_all_document_hashes(monkeypatch, tmp_path, with_engine):
     source = tmp_path / "source"
     files = {"pyproject.toml": '[project]\nversion = "0.1.0"\n', "uv.lock": "synthetic lock",
-             "backend/mcpme/service.py": "synthetic source", "backend/mcpme_service/__init__.py": "synthetic service runtime",
-             "backend/mcpme_local_transport.py": "synthetic transport",
+             "backend/meecp/service.py": "synthetic source", "backend/meecp_service/__init__.py": "synthetic service runtime",
+             "backend/meecp_local_transport.py": "synthetic transport",
              "README.md": "synthetic readme", "THIRD_PARTY_NOTICES.md": "synthetic notices",
-             "scripts/mcpme-command-reap.c": "synthetic helper source",
-             "scripts/mcpme-command-resource-reap.c": "synthetic monitor source",
-             "scripts/mcpme-command-resource-v1.h": "synthetic monitor header",
+             "scripts/meecp-command-reap.c": "synthetic helper source",
+             "scripts/meecp-command-resource-reap.c": "synthetic monitor source",
+             "scripts/meecp-command-resource-v1.h": "synthetic monitor header",
              "assets/brand/source.svg": "synthetic branding", "templates/catalog.json": "{}",
              "templates/task/.venv/private-input.txt": "excluded local environment",
              "docs/AUTOMATIC_PREPARATION.md": "[Review](reviews/DIRECTORY_ONBOARDING_REVIEW.md)\n",
@@ -214,7 +214,7 @@ def test_host_build_preserves_nested_document_links_and_binds_all_document_hashe
     monkeypatch.setattr(host_builder, "bundle_textgen_toolchain", bundle_engine)
     host = host_builder.build(tmp_path / "host", textgen_engine=engine if with_engine else None)
     receipt = json.loads((host / "build.json").read_text())
-    service_runtime = "backend/mcpme_service/__init__.py"
+    service_runtime = "backend/meecp_service/__init__.py"
     assert (host / service_runtime).read_bytes() == (source / service_runtime).read_bytes()
     assert receipt["artifact_sha256"][service_runtime] == hashlib.sha256((source / service_runtime).read_bytes()).hexdigest()
     included = {"docs/AUTOMATIC_PREPARATION.md", "docs/reviews/DIRECTORY_ONBOARDING_REVIEW.md", "docs/reviews/figure.svg"}
@@ -228,15 +228,15 @@ def test_host_build_preserves_nested_document_links_and_binds_all_document_hashe
     if with_engine:
         assert receipt["artifact_sha256"]["preparation-toolchain/engine"] == hashlib.sha256(b"synthetic exact engine").hexdigest()
     assert receipt["signing"] == "ad_hoc_native_helpers"
-    assert receipt["artifact_sha256"]["bin/mcpme-reap"] == hashlib.sha256((host / "bin/mcpme-reap").read_bytes()).hexdigest()
+    assert receipt["artifact_sha256"]["bin/meecp-reap"] == hashlib.sha256((host / "bin/meecp-reap").read_bytes()).hexdigest()
     assert len([call for call in calls if call[0] == "/usr/bin/codesign" and "--sign" in call]) == 3
     resource = json.loads((host / "command-resource-execution.json").read_bytes())
     assert resource["receipt_format"] == 4
     assert resource["production_admission"] == "disabled"
     assert resource["configuration_authority"] == "inventory-only"
     assert all(resource[key] is False for key in ("lifetime_coverage_complete", "hard_aggregate_enforced", "result_admissible"))
-    for key, relative in (("helper_source_sha256", "scripts/mcpme-command-resource-reap.c"),
-                          ("helper_header_sha256", "scripts/mcpme-command-resource-v1.h")):
+    for key, relative in (("helper_source_sha256", "scripts/meecp-command-resource-reap.c"),
+                          ("helper_header_sha256", "scripts/meecp-command-resource-v1.h")):
         assert resource[key] == hashlib.sha256((source / relative).read_bytes()).hexdigest()
     assert resource["helper_sha256"] == receipt["artifact_sha256"][resource["helper"]]
     assert receipt["artifact_sha256"]["command-resource-execution.json"] == hashlib.sha256((host / "command-resource-execution.json").read_bytes()).hexdigest()
@@ -248,7 +248,7 @@ def test_host_build_preserves_nested_document_links_and_binds_all_document_hashe
         assert receipt["artifact_sha256"][name] == hashlib.sha256((host / name).read_bytes()).hexdigest()
     assert set(receipt["artifact_sha256"]) == {path.relative_to(host).as_posix() for path in host.rglob("*")
                                              if path.is_file() and path != host / "build.json"}
-    assert {"python/bin/python3.12", "bin/mcpme", "licenses/python-LICENSE.txt"} <= receipt["artifact_sha256"].keys()
+    assert {"python/bin/python3.12", "bin/meecp", "licenses/python-LICENSE.txt"} <= receipt["artifact_sha256"].keys()
     helper = host / metadata["helper"]
     helper.write_bytes(helper.read_bytes() + b" distribution signature")
     host_builder.refresh_command_inventory(host)
@@ -303,7 +303,7 @@ def test_private_runtime_copy_rejects_concurrent_source_substitution_without_blo
     (source / "python").write_bytes(b"original")
     code = "\n".join([
         "import os, sys", "from pathlib import Path", "sys.path.insert(0, sys.argv[1])",
-        "import build_mcpme_host as builder", "source = Path(sys.argv[2])", "original = os.open",
+        "import build_meecp_host as builder", "source = Path(sys.argv[2])", "original = os.open",
         "def replace(path, flags, *args, **kwargs):",
         "    if Path(path) == source / 'python':",
         "        if sys.argv[4] == 'fifo':",
@@ -349,9 +349,9 @@ def test_host_cli_sanitizes_actual_runtime_cycle(monkeypatch, tmp_path, capsys, 
     monkeypatch.setattr(host_builder.subprocess, "check_output", lambda *args, **kwargs: str(source / "bin/python3.12"))
     monkeypatch.setattr(host_builder.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(host_builder.platform, "machine", lambda: "arm64")
-    monkeypatch.setattr(sys, "argv", ["build_mcpme_host.py", "--output", str(tmp_path / "output")])
+    monkeypatch.setattr(sys, "argv", ["build_meecp_host.py", "--output", str(tmp_path / "output")])
     with pytest.raises(SystemExit) as raised:
-        runpy.run_path(str(SCRIPTS / "build_mcpme_host.py"), run_name="__main__")
+        runpy.run_path(str(SCRIPTS / "build_meecp_host.py"), run_name="__main__")
     assert raised.value.code == "host_build_failed"
     assert raised.value.__suppress_context__ is True
     assert capsys.readouterr() == ("", "")

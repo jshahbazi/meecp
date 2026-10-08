@@ -33,28 +33,28 @@ PROGRAM = "import sys, launcher_dependency; print(launcher_dependency.VALUE); pr
 def test_source_launcher_ignores_hostile_cwd(tmp_path):
     root = tmp_path / "source"
     (root / "scripts").mkdir(parents=True)
-    shutil.copy2(ROOT / "scripts/mcpme", root / "scripts/mcpme")
+    shutil.copy2(ROOT / "scripts/meecp", root / "scripts/meecp")
     (root / ".venv/bin").mkdir(parents=True)
     (root / ".venv/bin/python3").symlink_to(sys.executable)
-    _package(root, "mcpme", PROGRAM)
-    result = subprocess.run([str(root / "scripts/mcpme"), "--help"], cwd=_hostile(tmp_path, "mcpme"), text=True, capture_output=True)
+    _package(root, "meecp", PROGRAM)
+    result = subprocess.run([str(root / "scripts/meecp"), "--help"], cwd=_hostile(tmp_path, "meecp"), text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     assert "trusted-dependency" in result.stdout and "--help" in result.stdout
 
 
 def test_generated_launcher_relocation_ignores_hostile_cwd(tmp_path):
-    spec = importlib.util.spec_from_file_location("host_builder", ROOT / "scripts/build_mcpme_host.py")
+    spec = importlib.util.spec_from_file_location("host_builder", ROOT / "scripts/build_meecp_host.py")
     builder = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(builder)
     root = tmp_path / "original host"
     (root / "bin").mkdir(parents=True)
     (root / "python/bin").mkdir(parents=True)
     (root / "python/bin/python3.12").symlink_to(sys.executable)
-    _package(root, "mcpme", PROGRAM)
-    builder.write_launcher(root / "bin/mcpme")
+    _package(root, "meecp", PROGRAM)
+    builder.write_launcher(root / "bin/meecp")
     relocated = tmp_path / "relocated host"
     root.rename(relocated)
-    result = subprocess.run([str(relocated / "bin/mcpme"), "--help"], cwd=_hostile(tmp_path, "mcpme"), text=True, capture_output=True)
+    result = subprocess.run([str(relocated / "bin/meecp"), "--help"], cwd=_hostile(tmp_path, "meecp"), text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     assert "trusted-dependency" in result.stdout and "--help" in result.stdout
 
@@ -81,12 +81,12 @@ def test_native_package_launcher_safe_imports_and_argument_forwarding(tmp_path):
     (root / "bin").mkdir(parents=True)
     (root / "python/bin").mkdir(parents=True)
     (root / "python/bin/python3.12").symlink_to(sys.executable)
-    _package(root, "mcpme_jevk5", PROGRAM)
+    _package(root, "meecp_jevk5", PROGRAM)
     launcher = root / "bin/jevk5-engine"
     subprocess.run(["/usr/bin/cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
                     str(ROOT / "scripts/jevk5-package-launcher.c"), "-o", str(launcher)], check=True, capture_output=True)
     result = subprocess.run([str(launcher), "--fixture", "argument with spaces"],
-                            cwd=_hostile(tmp_path, "mcpme_jevk5"), text=True, capture_output=True)
+                            cwd=_hostile(tmp_path, "meecp_jevk5"), text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     assert "trusted-dependency" in result.stdout
     assert "['engine', '--fixture', 'argument with spaces']" in result.stdout

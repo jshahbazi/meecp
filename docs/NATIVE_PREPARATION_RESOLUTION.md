@@ -8,14 +8,14 @@ After a successful, settled resolution, the workspace asks the host for a fresh 
 
 Public resolution and preparation availability remain host-controlled. Native self-tests verify UI contracts and stale-response handling; they do not establish the integrated release gates in [AUTOMATIC_PREPARATION.md](AUTOMATIC_PREPARATION.md).
 
-The owner CLI exposes the same durable jobs through `mcpme resolutions plan`, `start`, `list`, `get`, `cancel` and `recover`. Planning takes an import ID, revision, exact inspected candidate and closed resolution policy file. Starting requires the reviewed plan ID, plan digest and stable UUID idempotency key. Recovery reconciles owned work and does not replay execution. Existing preparation grants cannot access resolution routes. Ordinary CLI and native launches keep resolution and preparation execution unavailable until the installed acceptance gates pass.
+The owner CLI exposes the same durable jobs through `meecp resolutions plan`, `start`, `list`, `get`, `cancel` and `recover`. Planning takes an import ID, revision, exact inspected candidate and closed resolution policy file. Starting requires the reviewed plan ID, plan digest and stable UUID idempotency key. Recovery reconciles owned work and does not replay execution. Existing preparation grants cannot access resolution routes. Ordinary CLI and native launches keep resolution and preparation execution unavailable until the installed acceptance gates pass.
 
 ## Native acceptance driver
 
 The explicit test command drives the real preparation view and the production authenticated Unix-socket request and parent draft-adoption callbacks against an already launched host:
 
 ```sh
-.build/debug/McpmeMenuBar --preparation-native-acceptance /absolute/path/to/case.json
+.build/debug/MeecpMenuBar --preparation-native-acceptance /absolute/path/to/case.json
 ```
 
 The host must expose its normal owner-only `manager-connection.json` and manager socket. Test execution requires an intentionally enabled development host factory; this command grants no backend execution capability. Acceptance should use a relocated packaged host with fresh caches and independent package installation, runtime invocation and restart verification.

@@ -1,6 +1,6 @@
 # Phase 2: source imports and external preparation
 
-This first Phase 2 milestone implements source intake and resumable preparation. It builds on Phase 1's sealed local packages, reviewed installation plans, and supervised runtime checks. The full Phase 2 acceptance in [MCPME_DESIGN.md](MCPME_DESIGN.md) remains open.
+This first Phase 2 milestone implements source intake and resumable preparation. It builds on Phase 1's sealed local packages, reviewed installation plans, and supervised runtime checks. The full Phase 2 acceptance in [MEECP_DESIGN.md](MEECP_DESIGN.md) remains open.
 
 ## Supported flow
 
@@ -15,7 +15,7 @@ Open **Add App** and select **Try JSON Utilities**. The bundled starter is compi
 Verify an actual bundled starter through relocated private host storage and real MCP clients:
 
 ```sh
-uv run --locked python scripts/verify_mcpme.py --host /absolute/path/to/mcpme.app/Contents/Resources/host --package /absolute/path/to/mcpme.app/Contents/Resources/starter-packages/json-utilities
+uv run --locked python scripts/verify_meecp.py --host /absolute/path/to/meecp.app/Contents/Resources/host --package /absolute/path/to/meecp.app/Contents/Resources/starter-packages/json-utilities
 ```
 
 The app build receipt records the starter package identity, digest, and lock hash. It binds the package after nested executable signing; the final app signature then seals that exact package.
@@ -28,13 +28,13 @@ The first source snapshot limits are 2,048 files, 16 MiB per file, 64 MiB total,
 
 ## CLI
 
-Use the installed launcher's absolute path, or `scripts/mcpme` in a development checkout. The supervisor must be running with the same state directory.
+Use the installed launcher's absolute path, or `scripts/meecp` in a development checkout. The supervisor must be running with the same state directory.
 
 ```sh
-scripts/mcpme imports create --source /absolute/path/to/source --name "My Tool" --intent "Expose the JSON validation function" --json
-scripts/mcpme imports list --json
-scripts/mcpme imports inspect DRAFT_UUID --json
-scripts/mcpme imports export DRAFT_UUID --revision 1 --json
+scripts/meecp imports create --source /absolute/path/to/source --name "My Tool" --intent "Expose the JSON validation function" --json
+scripts/meecp imports list --json
+scripts/meecp imports inspect DRAFT_UUID --json
+scripts/meecp imports export DRAFT_UUID --revision 1 --json
 ```
 
 Export emits a versioned specification and generated agent instructions on demand. Save that JSON in a private file in the external agent's workspace, or use Copy Agent Instructions in the native window. The draft stores selected source references and structured nonsecret choices. It stores no generated instruction history or build logs. The handoff includes the draft/revision, snapshot location, resolved source identity, supported template IDs, and the package return command.
@@ -42,10 +42,10 @@ Export emits a versioned specification and generated agent instructions on deman
 Use the [package-authoring guide](PACKAGE_AUTHORING.md) and bundled `templates` in that separate workspace. Preparation runs only under the external agent session's authority. The host does not infer an MCP interface from arbitrary source or launch an agent when instructions are copied.
 
 ```sh
-scripts/mcpme imports attach DRAFT_UUID --revision 1 --package /absolute/path/to/prepared-package --json
-scripts/mcpme install plan --import DRAFT_UUID --revision 1 --json
-scripts/mcpme install apply --plan PLAN_UUID --json
-scripts/mcpme operations get OPERATION_UUID --json
+scripts/meecp imports attach DRAFT_UUID --revision 1 --package /absolute/path/to/prepared-package --json
+scripts/meecp install plan --import DRAFT_UUID --revision 1 --json
+scripts/meecp install apply --plan PLAN_UUID --json
+scripts/meecp operations get OPERATION_UUID --json
 ```
 
 Attach validates the complete package statically and seals a copy. For source imports, its manifest must declare the exact exported `source.revision`. The host verifies package identity; that declaration alone does not prove that an agent implemented the requested behavior correctly. Review the actual tools, access declarations, resources, and start effects in the plan. Apply performs the existing supervised MCP initialization/schema checks. Client registration remains a separate action.
@@ -55,9 +55,9 @@ Attach validates the complete package statically and seals a copy. For source im
 ## Revisions and recovery
 
 ```sh
-scripts/mcpme imports revise DRAFT_UUID --revision 1 --intent "Expose only validation" --json
-scripts/mcpme imports cancel DRAFT_UUID --revision 2 --json
-scripts/mcpme imports expire DRAFT_UUID --revision 2 --json
+scripts/meecp imports revise DRAFT_UUID --revision 1 --intent "Expose only validation" --json
+scripts/meecp imports cancel DRAFT_UUID --revision 2 --json
+scripts/meecp imports expire DRAFT_UUID --revision 2 --json
 ```
 
 An edit increments the revision and clears the attachment. A stale return or plan fails. Repeating attachment of the same package to the same revision returns the existing result; replacing it requires an explicit edit. Editing the original source or agent output does not alter the sealed attachment. Revalidating a tampered attachment prevents planning/apply.
@@ -83,4 +83,4 @@ Typed nonsecret configuration and immutable owner-managed secret references are 
 - Raw pinned JevK5 GGUF and engine intake, resumed engine selection, export-driven preparation and actual model-client acceptance are implemented.
 - [The completion audit](PHASE2_COMPLETION.md) records passed committed-build checks. Reference-document services and integrated provider preparation remain later work.
 
-Read [verification](MCPME_PHASE2_VERIFICATION.md) for the checks performed on this milestone. The repeatable bundled-host acceptance command is `uv run --locked python scripts/verify_phase2.py --host /absolute/path/to/host`. It uses only synthetic source and a temporary private installation. Neither prepared-package declarations nor synthetic integration checks establish publisher trust or model quality.
+Read [verification](MEECP_PHASE2_VERIFICATION.md) for the checks performed on this milestone. The repeatable bundled-host acceptance command is `uv run --locked python scripts/verify_phase2.py --host /absolute/path/to/host`. It uses only synthetic source and a temporary private installation. Neither prepared-package declarations nor synthetic integration checks establish publisher trust or model quality.

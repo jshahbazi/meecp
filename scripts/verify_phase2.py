@@ -18,13 +18,13 @@ from mcp.client.streamable_http import streamable_http_client
 
 
 async def verify(host_path: Path) -> dict:
-    with tempfile.TemporaryDirectory(prefix="mcpme-phase2-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="meecp-phase2-") as temporary:
         root = Path(temporary).resolve()
         host = root / "relocated-host"
         shutil.copytree(host_path, host, symlinks=True)
         state = root / "state"
-        launcher = host / "bin/mcpme"
-        reaper = host / "bin/mcpme-reap"
+        launcher = host / "bin/meecp"
+        reaper = host / "bin/meecp-reap"
         process = None
         runtime_environment = {"PATH": "/usr/bin:/bin", "HOME": str(root), "LANG": "en_US.UTF-8"}
 
@@ -88,7 +88,7 @@ async def verify(host_path: Path) -> dict:
             if built.returncode or not json.loads(built.stdout).get("prepared"):
                 raise ValueError("phase2_preparation_failed")
             direct = command("imports", "create", "--source", str(package), "--name", "Prepared Python", "--json")
-            assert direct["state"] == "ready_to_plan" and direct["source"]["file_inventory"] == "mcpme.lock.json"
+            assert direct["state"] == "ready_to_plan" and direct["source"]["file_inventory"] == "meecp.lock.json"
             attached = command("imports", "attach", draft["draft_id"], "--revision", str(draft["revision"]), "--package", str(package), "--json")
             assert attached["state"] == "ready_to_plan"
             first_plan = command("install", "plan", "--import", draft["draft_id"], "--revision", str(draft["revision"]), "--json")

@@ -14,7 +14,7 @@ def harness_module(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_independent_probe_cleanup_retains_unsettled_owner_evidence(tmp_path, monkeypatch, harness_module):
-    from mcpme.processes import OwnershipLost
+    from meecp.processes import OwnershipLost
     workspace = tmp_path / "probe"
     workspace.mkdir()
     class Owner:
@@ -26,15 +26,15 @@ async def test_independent_probe_cleanup_retains_unsettled_owner_evidence(tmp_pa
     async def verify(*args, **kwargs):
         assert isinstance(kwargs["owner"], Owner)
         raise OwnershipLost()
-    monkeypatch.setattr("mcpme.processes.ProcessOwner", Owner)
-    monkeypatch.setattr("mcpme.preparation_verifier.verify_prepared_package", verify)
+    monkeypatch.setattr("meecp.processes.ProcessOwner", Owner)
+    monkeypatch.setattr("meecp.preparation_verifier.verify_prepared_package", verify)
     with pytest.raises(OwnershipLost):
         await harness_module.relocation_probe(tmp_path / "package", object(), tmp_path / "reaper", workspace)
     assert (tmp_path / "ownership-unsettled").is_file()
 
 
 def test_failed_acceptance_retains_workspace_without_removing_evidence(tmp_path, monkeypatch, capsys, harness_module):
-    from mcpme.processes import OwnershipLost
+    from meecp.processes import OwnershipLost
     base = tmp_path / "owned-proof"
     base.mkdir()
     async def verify(*args):

@@ -35,7 +35,7 @@ class PublicTextgenHarness(textgen.Harness):
         return await common.Harness.start(self, state, environment, home, enabled=False)
 
     async def public_defaults(self):
-        from mcpme.preparation_textgen import ENGINE_ID, TASK_ID, VERSION, references
+        from meecp.preparation_textgen import ENGINE_ID, RECIPE_VERSION, TASK_ID, VERSION, references
         common.require(VERSION == "1.0.21", "public_textgen_producer_version_changed")
         keys = {item.id: item.key for item in references()}
         base, state, home, environment = self.new_case("public-textgen-capabilities")
@@ -45,11 +45,11 @@ class PublicTextgenHarness(textgen.Harness):
                 await self.cli(state, environment, home, "capabilities", "--json"),
                 keys[ENGINE_ID], keys[TASK_ID])
             recipe = await self.recipe(state, environment, home)
-            common.require(recipe["state"] == "enabled" and recipe["version"] == VERSION,
+            common.require(recipe["state"] == "enabled" and recipe["version"] == RECIPE_VERSION,
                 "public_textgen_recipe_unavailable")
             common.require((await self.cli(state, environment, home, "preparations", "list", "--json"))["preparations"] == [],
                 "public_textgen_review_executed_work")
-            return {"passed": True, "admission_digest": identity, "recipe_version": VERSION,
+            return {"passed": True, "admission_digest": identity, "recipe_version": RECIPE_VERSION,
                 "review_created_no_jobs": True}
         finally:
             await self.shutdown(child, state)

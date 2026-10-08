@@ -8,11 +8,11 @@ import subprocess
 
 import pytest
 
-from mcpme.preparation_agent_contracts import AnalysisGuideV1
-from mcpme.preparation_agent_guides import AnalysisGuideRegistry, builtin_analysis_guides
-from mcpme.preparation_agent_recipe_choices import AgentRecipeChoiceRegistry, builtin_recipe_choice_rules
-from mcpme.preparation_contracts import PreparationError, canonical_bytes
-from mcpme.supervisor import Supervisor
+from meecp.preparation_agent_contracts import AnalysisGuideV1
+from meecp.preparation_agent_guides import AnalysisGuideRegistry, builtin_analysis_guides
+from meecp.preparation_agent_recipe_choices import AgentRecipeChoiceRegistry, builtin_recipe_choice_rules
+from meecp.preparation_contracts import PreparationError, canonical_bytes
+from meecp.supervisor import Supervisor
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCKED = "mcpme.agent-python-adapter"
@@ -43,14 +43,14 @@ def recommended(value):
 
 
 def add_alias(host, root, recipe_id, version="1.0.2"):
-    shutil.copytree(ROOT / "templates/builtin-recipes/agent-unlocked-python-adapter-v1-0-1", root)
-    manifest = json.loads((root / "mcpme.recipe.json").read_bytes())
+    shutil.copytree(ROOT / "templates/builtin-recipes/agent-unlocked-python-adapter-v1-0-2", root)
+    manifest = json.loads((root / "meecp.recipe.json").read_bytes())
     manifest.update(id=recipe_id, version=version)
     raw = canonical_bytes(manifest)
-    lock = json.loads((root / "mcpme.recipe.lock.json").read_bytes())
+    lock = json.loads((root / "meecp.recipe.lock.json").read_bytes())
     lock["manifest_sha256"] = hashlib.sha256(raw).hexdigest()
-    (root / "mcpme.recipe.json").write_bytes(raw)
-    (root / "mcpme.recipe.lock.json").write_bytes(canonical_bytes(lock))
+    (root / "meecp.recipe.json").write_bytes(raw)
+    (root / "meecp.recipe.lock.json").write_bytes(canonical_bytes(lock))
     record = host.recipes.add(root)
     return host.recipes.enable(record["recipe_id"], record["version"])
 
@@ -87,8 +87,8 @@ async def test_cold_metadata_recommends_only_an_exact_supported_path(tmp_path, f
 
 async def test_options_never_read_source_recipe_bytes_launch_or_resolve_credentials(tmp_path, monkeypatch):
     import httpx
-    from mcpme.preparation_agent_backend import OpenAIResponsesBackend
-    from mcpme.preparation_agent_host import AgentProviderConfiguration
+    from meecp.preparation_agent_backend import OpenAIResponsesBackend
+    from meecp.preparation_agent_host import AgentProviderConfiguration
     host = Supervisor(tmp_path / "state", tmp_path / "unused-reaper")
     try:
         draft = capture(host, tmp_path / "source", {"worker.py": WORKER})
@@ -102,7 +102,7 @@ async def test_options_never_read_source_recipe_bytes_launch_or_resolve_credenti
                 blocked.setattr(Path, method, forbidden)
             blocked.setattr(subprocess, "Popen", forbidden)
             blocked.setattr(host.recipes, "resolve", forbidden)
-            blocked.setattr("mcpme.preparation_agent_host._read_file", forbidden)
+            blocked.setattr("meecp.preparation_agent_host._read_file", forbidden)
             value = options(host, draft)
             assert recommended(value) == [UNLOCKED]
             assert value["providers"][0]["provider_id"] == configured.provider_id
@@ -117,11 +117,11 @@ async def test_unavailable_recipe_is_never_selected_or_reenabled(tmp_path, actio
     host = Supervisor(tmp_path / "state", tmp_path / "unused-reaper")
     try:
         draft = capture(host, tmp_path / "source", {"worker.py": WORKER})
-        getattr(host.recipes, action)(UNLOCKED, "1.0.1")
+        getattr(host.recipes, action)(UNLOCKED, "1.0.2")
         value = options(host, draft)
         assert recommended(value) == []
         assert UNLOCKED not in {item["id"] for item in value["recipes"]}
-        assert host.recipes.inspect(UNLOCKED, "1.0.1")["state"] != "enabled"
+        assert host.recipes.inspect(UNLOCKED, "1.0.2")["state"] != "enabled"
     finally:
         await host.close()
 
@@ -149,7 +149,7 @@ async def test_independent_exact_recipe_alias_can_be_chosen_without_dispatcher_c
         draft = capture(host, tmp_path / "source", {"worker.py": WORKER})
         add_alias(host, tmp_path / "alias-a", "test.independent-adapter")
         assert recommended(options(host, draft)) == [UNLOCKED]
-        host.recipes.disable(UNLOCKED, "1.0.1")
+        host.recipes.disable(UNLOCKED, "1.0.2")
         assert recommended(options(host, draft)) == ["test.independent-adapter"]
         add_alias(host, tmp_path / "alias-b", "test.second-adapter")
         assert recommended(options(host, draft)) == []
@@ -161,7 +161,7 @@ async def test_multiple_builtin_versions_require_explicit_selection(tmp_path):
     host = Supervisor(tmp_path / "state", tmp_path / "unused-reaper")
     try:
         draft = capture(host, tmp_path / "source", {"worker.py": WORKER})
-        add_alias(host, tmp_path / "alias", UNLOCKED, "1.0.2")
+        add_alias(host, tmp_path / "alias", UNLOCKED, "1.0.3")
         assert recommended(options(host, draft)) == []
     finally:
         await host.close()
@@ -182,7 +182,7 @@ async def test_overlapping_trusted_guide_rules_require_an_explicit_choice(tmp_pa
 
 
 async def test_real_inventory_over_limit_is_bounded_and_cannot_default(tmp_path):
-    from test_mcpme_preparations import recipe_bundle
+    from test_meecp_preparations import recipe_bundle
     host = Supervisor(tmp_path / "state", tmp_path / "unused-reaper")
     try:
         draft = capture(host, tmp_path / "source", {"worker.py": WORKER})

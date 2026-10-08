@@ -31,7 +31,7 @@ async def serve():
     tool = Tool(name=declaration["name"], description=declaration["description"], inputSchema=declaration["input_schema"],
                 outputSchema=declaration["output_schema"], annotations=declaration["annotations"])
     input_validator, output_validator = Draft202012Validator(tool.inputSchema), Draft202012Validator(tool.outputSchema)
-    server, lock = Server("mcpme-onnx-hotdog", version="1.0.0"), anyio.Lock()
+    server, lock = Server("meecp-onnx-hotdog", version="1.0.0"), anyio.Lock()
 
     @server.list_tools()
     async def list_tools():

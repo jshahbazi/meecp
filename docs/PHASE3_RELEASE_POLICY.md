@@ -245,7 +245,7 @@ backend, policy, templates and assets, match. That permits review of unchanged
 backend/runtime source evidence. It does not imply a full Python re-run at 24bae0f8 or byte-identical outer v9/v10
 apps. All host Python bytes, 162 effective requirements and nonartifact toolchain
 metadata match. Of 33 changed host Mach-O members, 32 loadable bodies match with
-CMS excluded; the newly compiled host/bin/mcpme-handoff body differs even when
+CMS excluded; the newly compiled host/bin/meecp-handoff body differs even when
 UUID is masked. Full 4,223 Python/all 27 host opt-ins remain source 3ddaaddc/signed v9
 receipts transferred only for unchanged code scope with independent input proof.
 They did not rerun on v10. Fresh current management/live/CLI/TextGen/lifecycle independently validate the

@@ -39,9 +39,14 @@ JOB_STATES = frozenset({"queued", "snapshotting", "preparing", "verifying", "rea
     "succeeded", "cancel_requested", "canceled", "failed", "interrupted"})
 DIAGNOSTIC = {"stage": "bootstrap", "case": "none"}
 
+
+def receipt_path(package):
+    from meecp.preparations import receipt_name
+    return package.root / receipt_name(package)
+
 CALLABLE_SOURCE = "def double(n: int) -> dict[str, int]:\n    return {'value': n * 2}\n"
 MCP_PROJECT = ('[project]\nname="native-dynamic-fixture"\nversion="1.0.0"\n'
-    'dependencies=["mcp==1.30.0"]\n[tool.mcpme]\nmcp_module="worker:main"\n')
+    'dependencies=["mcp==1.30.0"]\n[tool.meecp]\nmcp_module="worker:main"\n')
 MCP_SOURCE = (
     "import asyncio\nfrom mcp.server import Server\nfrom mcp.server.models import InitializationOptions\n"
     "from mcp.server.stdio import stdio_server\n"
@@ -66,9 +71,9 @@ MCP_SOURCE = (
 ENABLED_HOST = (
     "import asyncio,logging,sys\nfrom pathlib import Path\n"
     "sys.path[:0]=[sys.argv[1],sys.argv[2]]\nlogging.disable(logging.CRITICAL)\n"
-    "from mcpme.supervisor import serve\nfrom mcpme.preparation_runner import PreparationRunner\n"
-    "from mcpme.preparation_resolution_runner import OwnedResolutionRunner\n"
-    "from mcpme.preparation_resolved_python import ResolvedPythonComponent\n"
+    "from meecp.supervisor import serve\nfrom meecp.preparation_runner import PreparationRunner\n"
+    "from meecp.preparation_resolution_runner import OwnedResolutionRunner\n"
+    "from meecp.preparation_resolved_python import ResolvedPythonComponent\n"
     "def preparation(*args,**kwargs):\n kwargs['enabled']=True\n"
     " kwargs['enabled_families']=frozenset({ResolvedPythonComponent().reference.key})\n"
     " return PreparationRunner(*args,**kwargs)\n"
@@ -183,7 +188,7 @@ def relocate_host_and_native(root, host_path, native_path, report):
     if app is not None:
         require(host_path == app / "Contents/Resources/host", "native_app_host_pair_mismatch")
         verify_native_app_signature(native_path)
-        relocated = root / "relocated mcpme.app"
+        relocated = root / "relocated meecp.app"
 
         def copy_plain(source, destination):
             # Preserve signed bytes and modes without inheriting file flags.
@@ -197,7 +202,7 @@ def relocate_host_and_native(root, host_path, native_path, report):
         verify_native_app_signature(native)
         report.update({"native_bundle_preserved": True, "native_app_signature_verified": True})
         return host, native
-    host, native = root / "relocated host", root / "McpmeMenuBar"
+    host, native = root / "relocated host", root / "MeecpMenuBar"
     shutil.copytree(host_path, host, symlinks=True)
     shutil.copyfile(native_path, native)
     native.chmod(0o700)
@@ -224,7 +229,7 @@ def preparation_ownership_count(state, job_id=None):
 @contextmanager
 def isolated_workspace(report):
     # An unproved shutdown must not erase ownership/recovery evidence.
-    temporary = tempfile.TemporaryDirectory(prefix="mcpme-native-onboarding-", delete=False)
+    temporary = tempfile.TemporaryDirectory(prefix="meecp-native-onboarding-", delete=False)
     root, lease = Path(temporary.name).resolve(), {"safe_to_remove": True}
     try:
         yield root, lease
@@ -240,7 +245,7 @@ class Harness:
     def __init__(self, root, host, native, lease):
         self.root, self.host, self.native = root, host, native
         self.lease = lease
-        self.launcher, self.reaper = host / "bin/mcpme", host / "bin/mcpme-reap"
+        self.launcher, self.reaper = host / "bin/meecp", host / "bin/meecp-reap"
         self.children = set()
         self.states = []
 
@@ -296,7 +301,7 @@ class Harness:
 
     async def manager(self, state, route, body):
         import httpx
-        from mcpme_local_transport import private_transport, socket_path
+        from meecp_local_transport import private_transport, socket_path
         connection = private_json(state / "manager-connection.json")
         async with httpx.AsyncClient(base_url=connection["endpoint"], trust_env=False, timeout=30,
                 follow_redirects=False, transport=private_transport(socket_path(state, "manager")),
@@ -319,7 +324,7 @@ class Harness:
             "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8", "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONHOME": "/nonexistent", "PYTHONUSERBASE": "/nonexistent"}
         # The launcher must not import an ambient module from its working directory.
-        (home / "mcpme.py").write_text("raise RuntimeError('ambient module imported')\n")
+        (home / "meecp.py").write_text("raise RuntimeError('ambient module imported')\n")
         return base, state, home, environment
 
     async def start(self, state, environment, home, *, enabled):
@@ -374,7 +379,7 @@ class Harness:
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
         from mcp.client.streamable_http import streamable_http_client
-        from mcpme_local_transport import private_transport, socket_path
+        from meecp_local_transport import private_transport, socket_path
 
         async def check(read, write):
             async with ClientSession(read, write) as session:
@@ -509,16 +514,16 @@ class Harness:
         return draft, candidates, receipt, native_receipt
 
     async def case(self, label):
-        from mcpme.contracts import Tool, validate_package
-        from mcpme.preparation_inputs import parse_preparation_receipt
-        from mcpme.recipes import validate_bundle
+        from meecp.contracts import Tool, validate_package
+        from meecp.preparation_inputs import parse_preparation_receipt
+        from meecp.recipes import validate_bundle
         stage("source_intake", label)
         started = time.monotonic()
         base, state, home, environment = self.new_case(label)
         source = base / "ordinary source"
         source.mkdir(mode=0o700)
         original_files = self.source_fixture(source, label)
-        require("uv.lock" not in original_files and "mcpme.prepare.json" not in original_files
+        require("uv.lock" not in original_files and "meecp.prepare.json" not in original_files
             and (label == "dynamic_mcp" or "pyproject.toml" not in original_files), "fixture_prepared_in_advance")
         child = await self.start(state, environment, home, enabled=True)
         try:
@@ -566,7 +571,7 @@ class Harness:
             package = validate_package(package_root)
             require(package.digest == attached["attachment"]["digest"] == prepared["expected_package_digest"]
                 == receipt["attached_package_digest"], "native_attachment_identity_mismatch")
-            proof = parse_preparation_receipt((package_root / "mcpme.preparation.json").read_bytes())
+            proof = parse_preparation_receipt((receipt_path(package)).read_bytes())
             require(proof.schema_version == 2 and proof.binding.revision == receipt["reviewed_revision"]
                 and proof.binding.source_revision == draft["source"]["revision"]
                 and not proof.inputs.original_dependency_locks and proof.inputs.derived_inputs
@@ -625,7 +630,7 @@ class Harness:
                 http_calls += await self.sdk(state, environment, home, slot_id, expected_tools, calls, "http")
                 stdio_calls += await self.sdk(state, environment, home, slot_id, expected_tools, calls, "stdio")
                 stage("recipe_lifecycle")
-                accepted_receipt_sha256 = digest(package_root / "mcpme.preparation.json")
+                accepted_receipt_sha256 = digest(receipt_path(package))
                 retained_recipe = {key: retained[key] for key in ("digest", "path", "manifest", "evidence")}
                 removed = await self.cli(state, environment, home, "recipes", "remove", "--id", selected_recipe["recipe_id"],
                     "--version", "1.0.0", "--json")
@@ -646,7 +651,7 @@ class Harness:
                 resumed = await self.cli(state, environment, home, "imports", "inspect", draft["draft_id"], "--json")
                 require(resumed["state"] == "installed" and resumed["result_slot_id"] == slot_id
                     and resumed["attachment"]["digest"] == package.digest
-                    and digest(package_root / "mcpme.preparation.json") == accepted_receipt_sha256
+                    and digest(receipt_path(package)) == accepted_receipt_sha256
                     and validate_package(package_root).digest == package.digest,
                     "recipe_remove_changed_accepted_package")
                 http_calls += await self.sdk(state, environment, home, slot_id, expected_tools, calls, "http")
@@ -688,7 +693,7 @@ class Harness:
         require(not failed, "acceptance_cleanup_unsettled")
         if not self.lease["safe_to_remove"]:
             return
-        from mcpme_local_transport import socket_path
+        from meecp_local_transport import socket_path
         for state in self.states:
             try:
                 directory = socket_path(state, "manager").parent

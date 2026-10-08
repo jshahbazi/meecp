@@ -3,10 +3,10 @@ import copy
 
 import pytest
 
-from mcpme.imports import ImportStore
-from mcpme.recipes import RecipeStore, RecipeError, builtin_components, canonical_digest, LEGACY_COMPONENT_KEYS
-from mcpme.preparation_builtin_recipes import seed_builtin_recipes
-from test_mcpme_recipes import recipe
+from meecp.imports import ImportStore
+from meecp.recipes import RecipeStore, RecipeError, builtin_components, canonical_digest, LEGACY_COMPONENT_KEYS
+from meecp.preparation_builtin_recipes import seed_builtin_recipes
+from test_meecp_recipes import recipe
 
 
 def extra():

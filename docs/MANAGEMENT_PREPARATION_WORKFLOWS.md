@@ -8,15 +8,15 @@ The facade exposes 45 typed tools: 40 management tools plus native authorization
 
 | Tools | Operation |
 | --- | --- |
-| `mcpme_list_recipes`, `mcpme_get_recipe`, `mcpme_get_recipe_schema` | Read versioned recipe metadata and manifest/lock schemas |
-| `mcpme_register_recipe` | Statically validate and register one exact reviewed bundle |
-| `mcpme_enable_recipe`, `mcpme_disable_recipe`, `mcpme_deprecate_recipe`, `mcpme_revoke_recipe`, `mcpme_remove_recipe` | Change one exact recipe version's registry state |
-| `mcpme_inspect_preparation_source`, `mcpme_get_preparation_form` | Inspect a saved draft and its focused questions without executing source |
-| `mcpme_plan_preparation`, `mcpme_plan_preparation_form` | Review an exact descriptor or normalized form answers and execution policy |
-| `mcpme_plan_resolution` | Review dependency/interface resolution for an exact source candidate |
-| `mcpme_start_preparation`, `mcpme_list_preparations`, `mcpme_get_preparation`, `mcpme_cancel_preparation` | Start, inspect and cancel preparation jobs within the connection's scope |
-| `mcpme_start_resolution`, `mcpme_list_resolutions`, `mcpme_get_resolution`, `mcpme_cancel_resolution` | Start, inspect and cancel resolution jobs within the connection's scope |
-| `mcpme_inspect_upgrade_plan`, `mcpme_plan_upgrade`, `mcpme_apply_upgrade` | Inspect a saved upgrade plan, prepare an exact candidate plan, and apply one owner-reviewed plan through an exact upgrade grant |
+| `meecp_list_recipes`, `meecp_get_recipe`, `meecp_get_recipe_schema` | Read versioned recipe metadata and manifest/lock schemas |
+| `meecp_register_recipe` | Statically validate and register one exact reviewed bundle |
+| `meecp_enable_recipe`, `meecp_disable_recipe`, `meecp_deprecate_recipe`, `meecp_revoke_recipe`, `meecp_remove_recipe` | Change one exact recipe version's registry state |
+| `meecp_inspect_preparation_source`, `meecp_get_preparation_form` | Inspect a saved draft and its focused questions without executing source |
+| `meecp_plan_preparation`, `meecp_plan_preparation_form` | Review an exact descriptor or normalized form answers and execution policy |
+| `meecp_plan_resolution` | Review dependency/interface resolution for an exact source candidate |
+| `meecp_start_preparation`, `meecp_list_preparations`, `meecp_get_preparation`, `meecp_cancel_preparation` | Start, inspect and cancel preparation jobs within the connection's scope |
+| `meecp_start_resolution`, `meecp_list_resolutions`, `meecp_get_resolution`, `meecp_cancel_resolution` | Start, inspect and cancel resolution jobs within the connection's scope |
+| `meecp_inspect_upgrade_plan`, `meecp_plan_upgrade`, `meecp_apply_upgrade` | Inspect a saved upgrade plan, prepare an exact candidate plan, and apply one owner-reviewed plan through an exact upgrade grant |
 
 Read and prepare grants can inspect recipes, sources, forms and job metadata. Prepare grants can request code-free plans. All four earlier grant modes still deny preparation/resolution start and cancel, recipe mutation, and grant issuance/revocation.
 
@@ -46,10 +46,10 @@ Recipe registration validates declarative bundle bytes and begins in the propose
 Create and inspect a plan through the existing preparation or resolution commands. Issue an execution credential after reviewing the returned scope:
 
 ```sh
-scripts/mcpme authorize --preparation-plan PLAN_UUID --plan-digest PLAN_SHA256 --idempotency-key ATTEMPT_UUID --json
-scripts/mcpme authorize --resolution-plan PLAN_UUID --plan-digest PLAN_SHA256 --idempotency-key ATTEMPT_UUID --json
-scripts/mcpme --credential-file /absolute/private/grant.json preparations start --plan PLAN_UUID --plan-digest PLAN_SHA256 --idempotency-key ATTEMPT_UUID --json
-scripts/mcpme --credential-file /absolute/private/grant.json management export --json
+scripts/meecp authorize --preparation-plan PLAN_UUID --plan-digest PLAN_SHA256 --idempotency-key ATTEMPT_UUID --json
+scripts/meecp authorize --resolution-plan PLAN_UUID --plan-digest PLAN_SHA256 --idempotency-key ATTEMPT_UUID --json
+scripts/meecp --credential-file /absolute/private/grant.json preparations start --plan PLAN_UUID --plan-digest PLAN_SHA256 --idempotency-key ATTEMPT_UUID --json
+scripts/meecp --credential-file /absolute/private/grant.json management export --json
 ```
 
 Use the actual plan digest and one newly selected attempt UUID. A wrong plan or key is denied. Concurrent retries return only the original job created by that grant. An execution grant cannot adopt an owner job or another grant's job, even if their plan and key match.
@@ -57,16 +57,16 @@ Use the actual plan digest and one newly selected attempt UUID. A wrong plan or 
 Registering a recipe requires an exact reviewed bundle digest and path:
 
 ```sh
-scripts/mcpme authorize --recipe RECIPE_ID --recipe-version VERSION --recipe-digest BUNDLE_SHA256 --recipe-action register --recipe-action enable --recipe-path /absolute/private/recipe --json
-scripts/mcpme --credential-file /absolute/private/grant.json recipes add --path /absolute/private/recipe --json
-scripts/mcpme --credential-file /absolute/private/grant.json recipes enable --id RECIPE_ID --version VERSION --json
-scripts/mcpme recipes schema --json
-scripts/mcpme grants revoke GRANT_UUID --json
+scripts/meecp authorize --recipe RECIPE_ID --recipe-version VERSION --recipe-digest BUNDLE_SHA256 --recipe-action register --recipe-action enable --recipe-path /absolute/private/recipe --json
+scripts/meecp --credential-file /absolute/private/grant.json recipes add --path /absolute/private/recipe --json
+scripts/meecp --credential-file /absolute/private/grant.json recipes enable --id RECIPE_ID --version VERSION --json
+scripts/meecp recipes schema --json
+scripts/meecp grants revoke GRANT_UUID --json
 ```
 
 Grant issuance and revocation are owner-management routes. The MCP tool list has no grant administration tool. Explicit owner-issued workflow credentials use the owner-only credential-file format and compatibility export path. Their tokens are returned only through the private credential file; metadata responses contain its reference.
 
-[Native authorization](MANAGEMENT_MCP.md#connect-an-external-agent) also supports exact preparation/resolution approval through `mcpme_request_access`, binding the saved plan ID, digest, and idempotency key. The private live connection receives a fresh leased credential after native review. Approval requires an explicit subsequent execution call. Remembered inspection/planning consent does not authorize execution or recipe mutations.
+[Native authorization](MANAGEMENT_MCP.md#connect-an-external-agent) also supports exact preparation/resolution approval through `meecp_request_access`, binding the saved plan ID, digest, and idempotency key. The private live connection receives a fresh leased credential after native review. Approval requires an explicit subsequent execution call. Remembered inspection/planning consent does not authorize execution or recipe mutations.
 
 New modes default to 300 seconds and accept 1–3,600 seconds. Their expiry fences active work as well as queued admission. Revocation commits first, then the owner route drains only the grant's verified original job association. Expiry/revocation monitors cancel active owned work. The original process handles, journal and resource reservations remain held until cleanup settles. If an association is corrupt, cleanup does not select a replacement job; the revocation stays durable and execution fails closed.
 

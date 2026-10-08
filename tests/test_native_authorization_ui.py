@@ -12,10 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def native_authorization_binary():
     if platform.system() != "Darwin":
         pytest.skip("AppKit authorization is macOS-only")
-    result = subprocess.run(["swift", "build", "--product", "McpmeMenuBar"], cwd=ROOT,
+    result = subprocess.run(["swift", "build", "--product", "MeecpMenuBar"], cwd=ROOT,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
     assert result.returncode == 0, "native_build_failed"
-    return ROOT / ".build/debug/McpmeMenuBar"
+    return ROOT / ".build/debug/MeecpMenuBar"
 
 
 @pytest.mark.parametrize("flag,receipt", [

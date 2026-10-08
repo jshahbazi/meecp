@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+unset PYTHONHOME PYTHONUSERBASE PYTHONSTARTUP PYTHONINSPECT
+export PYTHONPATH="$ROOT/backend"
+export PYTHONNOUSERSITE=1
+export PYTHONDONTWRITEBYTECODE=1
+exec "$ROOT/.venv/bin/python3" -P -m meecp "$@"

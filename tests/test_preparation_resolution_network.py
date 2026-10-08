@@ -9,10 +9,10 @@ import sys
 import httpx
 import pytest
 
-from mcpme.downloads import DownloadError, PinnedHTTPSNetwork
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_resolution_network import ResolutionIndexBroker, sandbox_profile
-from mcpme.preparation_processes import PreparationExecutor
+from meecp.downloads import DownloadError, PinnedHTTPSNetwork
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_resolution_network import ResolutionIndexBroker, sandbox_profile
+from meecp.preparation_processes import PreparationExecutor
 from test_preparation_processes import group_reaper
 
 

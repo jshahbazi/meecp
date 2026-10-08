@@ -1,5 +1,5 @@
 [project]
-name = "jevk5-menubar"
+name = "meecp"
 version = "0.1.0"
 description = "Local JevK5 decision model and MCP service for a macOS menu bar app"
 requires-python = ">=3.12,<3.13"

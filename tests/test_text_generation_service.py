@@ -4,8 +4,8 @@ import httpx
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
-from mcpme_textgen.adapter import TextGenerationError
-from mcpme_textgen.service import AttachedTextModel, make_app, model_declaration
+from meecp_textgen.adapter import TextGenerationError
+from meecp_textgen.service import AttachedTextModel, make_app, model_declaration
 
 
 def config():

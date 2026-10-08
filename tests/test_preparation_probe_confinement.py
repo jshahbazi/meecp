@@ -13,11 +13,11 @@ import tempfile
 
 import pytest
 
-from mcpme.contracts import validate_package
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_probe_confinement import ProbeConfinementV1
-from mcpme.preparation_verifier import verify_prepared_package
-from mcpme.processes import ProcessOwner
+from meecp.contracts import validate_package
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_probe_confinement import ProbeConfinementV1
+from meecp.preparation_verifier import verify_prepared_package
+from meecp.processes import ProcessOwner
 from test_preparation_verifier import probe_fixture, probe_reaper
 
 pytestmark = pytest.mark.skipif(sys.platform != "darwin" or platform.machine() != "arm64"
@@ -25,19 +25,19 @@ pytestmark = pytest.mark.skipif(sys.platform != "darwin" or platform.machine() !
 
 
 def _lock_all(root):
-    manifest = json.loads((root / "mcpme.package.json").read_bytes())
-    lock = json.loads((root / "mcpme.lock.json").read_bytes())
-    lock["manifest_sha256"] = hashlib.sha256((root / "mcpme.package.json").read_bytes()).hexdigest()
+    manifest = json.loads((root / "meecp.package.json").read_bytes())
+    lock = json.loads((root / "meecp.lock.json").read_bytes())
+    lock["manifest_sha256"] = hashlib.sha256((root / "meecp.package.json").read_bytes()).hexdigest()
     lock["artifacts"] = []
     for path in sorted(root.rglob("*")):
-        if path.is_dir() or path.name in {"mcpme.package.json", "mcpme.lock.json"}:
+        if path.is_dir() or path.name in {"meecp.package.json", "meecp.lock.json"}:
             continue
         value = path.read_bytes()
         digest = hashlib.sha256(value).hexdigest()
         lock["artifacts"].append({"path": str(path.relative_to(root)), "size": len(value), "sha256": digest,
                                   "executable": bool(path.stat().st_mode & 0o111), "source": "prepared:sha256:" + digest,
                                   "provenance": "Synthetic private runtime fixture", "license": "LICENSE"})
-    (root / "mcpme.lock.json").write_text(json.dumps(lock))
+    (root / "meecp.lock.json").write_text(json.dumps(lock))
 
 
 @pytest.fixture(scope="module")
@@ -196,7 +196,7 @@ def test_private_data_directory_cannot_leave_workspace(private_runtime, probe_re
 
 @pytest.mark.parametrize("replacement", ["home", "workspace"])
 def test_directory_replacement_during_final_hash_is_rejected(private_runtime, probe_reaper, tmp_path, monkeypatch, replacement):
-    from mcpme import preparation_probe_confinement as confinement
+    from meecp import preparation_probe_confinement as confinement
     package, descriptor, workspace = _private_fixture(tmp_path, private_runtime)
     validated = validate_package(package)
     plan = ProbeConfinementV1.capture(validated, workspace, probe_reaper)

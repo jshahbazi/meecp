@@ -4,6 +4,7 @@ import hashlib
 import importlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,7 +12,20 @@ import pytest
 @pytest.fixture
 def driver(monkeypatch):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))
-    return importlib.import_module("verify_phase3_public_release_native_agent")
+    module = importlib.import_module("verify_phase3_public_release_native_agent")
+    from meecp import preparation_release_command_admission
+    keys = {item["id"]: (item["id"], item["version"], item["digest"])
+            for group in ROOT_POLICY["preparation"]["recipe_component_sets"] for item in group}
+    # This harness deliberately exercises the original, byte-frozen 1.0.12
+    # release with its historical producers. Current-source gates retain their
+    # current exact identities outside the fixture.
+    monkeypatch.setattr(preparation_release_command_admission, "COMMAND_COMPONENT", keys["host-command-json-v1"])
+    monkeypatch.setattr(module.command, "COMPONENT", keys["host-command-json-v1"])
+    monkeypatch.setattr(module.public, "RESOLVED", keys["resolved-python-v1"])
+    monkeypatch.setattr(module.public, "ONNX", keys["onnxruntime-cpu-v1"])
+    monkeypatch.setattr(module.public, "HOTDOG", keys["yolo11-coco-detect-v1"])
+    monkeypatch.setattr(module, "TEXTGEN_VERSION", "1.0.12")
+    return module
 
 
 # Literal combined policy for TextGen 1.0.12 and service connector 1.0.0.
@@ -136,8 +150,8 @@ ROOT_POLICY = json.loads(ROOT_POLICY_JSON)
 
 
 def references():
-    from mcpme.preparation_components import ComponentReference
-    from mcpme.preparation_textgen import ENGINE_ID, TASK_ID
+    from meecp.preparation_components import ComponentReference
+    from meecp.preparation_textgen import ENGINE_ID, TASK_ID
     keys = {item["id"]: ComponentReference.model_validate(item).key
         for group in ROOT_POLICY["preparation"]["recipe_component_sets"] for item in group}
     return keys[ENGINE_ID], keys[TASK_ID]
@@ -177,7 +191,7 @@ def test_actual_candidate_policy_requires_typed_exact_closed_record(driver, dama
 
 @pytest.mark.parametrize("previous_version", [None, "1.0.9", "1.0.10", "1.0.11", "1.0.13"])
 def test_textgen_keys_bind_actual_current_producer_to_literal_policy(driver, monkeypatch, previous_version):
-    from mcpme import preparation_textgen
+    from meecp import preparation_textgen
     assert ENGINE[0] == preparation_textgen.ENGINE_ID == "llamacpp-cpu-v1"
     assert TASK[0] == preparation_textgen.TASK_ID == "text-generate-v1"
     assert preparation_textgen.VERSION == "1.0.21"
@@ -192,7 +206,7 @@ def test_textgen_keys_bind_actual_current_producer_to_literal_policy(driver, mon
 
 def test_historical_driver_accepts_only_explicit_frozen_12_refs(driver, monkeypatch):
     from types import SimpleNamespace
-    from mcpme import preparation_textgen
+    from meecp import preparation_textgen
     monkeypatch.setattr(preparation_textgen, "VERSION", "1.0.12")
     monkeypatch.setattr(preparation_textgen, "references", lambda: [
         SimpleNamespace(id=ENGINE[0], key=ENGINE), SimpleNamespace(id=TASK[0], key=TASK)])
@@ -221,28 +235,42 @@ def test_historical13_policy_changes_only_textgen_references():
 
 
 def test_current21_policy_binds_textgen_and_agent_implementations():
-    from mcpme.preparation_release_policy import POLICY_PATH
+    from meecp.preparation_release_policy import POLICY_PATH
     expected = json.loads(historical13_fixture_bytes())
     expected["preparation"]["families"][3] = {"id": "text-generate-v1", "version": "1.0.21",
-        "digest": "ad814ce4186bd3474fe9759991208d80eca0f491d449a00c38aee44b23c5b1d2"}
+        "digest": "248d72f37779f22d57ab3d64b5fc1e706db9092df79da27a762693ce3df81e07"}
     expected["preparation"]["recipe_component_sets"][4] = [
         {"id": "llamacpp-cpu-v1", "version": "1.0.21",
-         "digest": "438e6822bfc22187f91b51f496a6575db5a1bfeb55e7ddf3216d60a98883554d"},
+         "digest": "b60b073b403824ab742cdb0a5df7b2008ff5d8b19323b976d510e097f2abbc04"},
         {"id": "text-generate-v1", "version": "1.0.21",
-         "digest": "ad814ce4186bd3474fe9759991208d80eca0f491d449a00c38aee44b23c5b1d2"}]
+         "digest": "248d72f37779f22d57ab3d64b5fc1e706db9092df79da27a762693ce3df81e07"}]
+    current_digests = {
+        "python-function-v1": "a633c70b645b143d89d25584f4b61a69d490eda01fc986b7e46b54f0bce71561",
+        "resolved-python-v1": "e5b174b7626e3bb89cd4a8727099662d111608e1465b01218342bb68f10a6b90",
+        "onnxruntime-cpu-v1": "08f524978bf50f0ff1c9aa1f2db57393868076282c3aa879686a22cdff2afd30",
+        "yolo11-coco-detect-v1": "869a91491f8772054988d4df367ba53706dbb88a6e3c8dbfcc7f8d0bc39b5888",
+        "host-command-json-v1": "339cbe6ebad51b2a0e4e73228e3f7d119d81ac784908fffd93363340bc91684b",
+        "llamacpp-cpu-v1": "b60b073b403824ab742cdb0a5df7b2008ff5d8b19323b976d510e097f2abbc04",
+        "text-generate-v1": "248d72f37779f22d57ab3d64b5fc1e706db9092df79da27a762693ce3df81e07",
+        "openai-chat-completions-v1": "532b386405bc2f780cab626ea10d355d3f5602a7ac9be1622cd7f2f85990f46e",
+        "loopback-http-bearer-v1": "7c7cd180ec08f8401c23c338464ae60e65f7428ef5a3f3f9e026f2cca246f62b",
+        "service-text-generate-v1": "7894f9c2e54b1d40bb62a6e2e7cee4aeff3b02d5920fb966284d655739638fb5",
+        "agent-unlocked-python-adapter-v1": "3850d78dc24ab286cd4bb40825e0d52a83869c91c4278c525cfd6462ee822b49",
+    }
     for component in [*expected["preparation"]["families"],
                       *[item for group in expected["preparation"]["recipe_component_sets"] for item in group],
                       *expected["agent"]["components"]]:
-        if component["id"] == "agent-unlocked-python-adapter-v1":
-            component["digest"] = "30a6e459f76f4feabff58ff5481b5cc95f9589e03436a8aac109583a4cbfa26c"
+        component["digest"] = current_digests[component["id"]]
+    expected["command"]["component"][2] = current_digests["host-command-json-v1"]
+    expected["agent"]["providers"][0]["adapter_digest"] = "ac66e8bb563139d93577da365b9d3a9b29166244babc9aa215ec90024eda88f1"
     policy_path = Path(__file__).resolve().parents[1] / POLICY_PATH
     assert json.loads(policy_path.read_bytes()) == expected
     assert hashlib.sha256(policy_path.read_bytes()).hexdigest() == (
-        "29d0359e9846afff79061c0fd0d0bf265f88fd78deb6c62193af1ba614ca9dcc")
-    from mcpme import preparation_textgen
+        "ca7d40f1dd0075e757597caea0b5437c87fc63437818e54f815666471bf242b2")
+    from meecp import preparation_textgen
     assert {item.key for item in preparation_textgen.references()} == {
-        ("llamacpp-cpu-v1", "1.0.21", "438e6822bfc22187f91b51f496a6575db5a1bfeb55e7ddf3216d60a98883554d"),
-        ("text-generate-v1", "1.0.21", "ad814ce4186bd3474fe9759991208d80eca0f491d449a00c38aee44b23c5b1d2")}
+        ("llamacpp-cpu-v1", "1.0.21", "b60b073b403824ab742cdb0a5df7b2008ff5d8b19323b976d510e097f2abbc04"),
+        ("text-generate-v1", "1.0.21", "248d72f37779f22d57ab3d64b5fc1e706db9092df79da27a762693ce3df81e07")}
 
 
 def historical14_fixture_bytes():
@@ -271,6 +299,7 @@ def selected12_fixture_bytes():
 
 
 def test_lifecycle_policy_guard_accepts_historical_and_current_bytes(tmp_path, monkeypatch):
+    from meecp import preparation_agent_providers, preparation_release_command_admission
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))
     lifecycle = importlib.import_module("verify_phase3_recipe_lifecycle")
     management = importlib.import_module("verify_phase3_public_management")
@@ -281,14 +310,25 @@ def test_lifecycle_policy_guard_accepts_historical_and_current_bytes(tmp_path, m
                           (selected12_fixture_bytes(), "selected_model_accepted", "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375"),
                           (historical13_fixture_bytes(), "selected_model_accepted", "8a9a8fd69217352b49e0e338d4d652df8cebcac86609edae1190a88cd2d9a592"),
                           (historical14_fixture_bytes(), "selected_model_accepted", "5bb20b7a8cde39368a5cc3d03a92a4ed3f69d92ac56c317b6f696432863925ea"),
-                          ((Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes(), "selected_model_accepted", "29d0359e9846afff79061c0fd0d0bf265f88fd78deb6c62193af1ba614ca9dcc")):
+                          ((Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes(), "selected_model_accepted", "ca7d40f1dd0075e757597caea0b5437c87fc63437818e54f815666471bf242b2")):
         policy_path.write_bytes(raw)
         # Frozen policies are checked with their original agent producer.
         with monkeypatch.context() as producer:
-            if expected != "29d0359e9846afff79061c0fd0d0bf265f88fd78deb6c62193af1ba614ca9dcc":
+            if expected != "ca7d40f1dd0075e757597caea0b5437c87fc63437818e54f815666471bf242b2":
+                historical = json.loads(raw)
+                keys = {item["id"]: (item["id"], item["version"], item["digest"])
+                        for group in historical["preparation"]["recipe_component_sets"] for item in group}
+                producer.setattr(preparation_release_command_admission, "COMMAND_COMPONENT", keys["host-command-json-v1"])
+                producer.setattr(management, "PYTHON", keys["python-function-v1"])
+                producer.setattr(management, "RESOLVED", keys["resolved-python-v1"])
                 producer.setattr(management.live, "UNLOCKED", {
                     "id": "agent-unlocked-python-adapter-v1", "version": "1.0.0",
                     "digest": "7d37411ca8119c2433fa44a59080d89a48c3618f7f909bbcb2977646b445882f"})
+                if historical["agent"]["providers"]:
+                    adapter_digest = historical["agent"]["providers"][0]["adapter_digest"]
+                    producer.setattr(management, "REVIEWED_ADAPTER_DIGEST", adapter_digest)
+                    producer.setattr(preparation_agent_providers, "OpenAIResponsesAdapter",
+                                     lambda: SimpleNamespace(digest=adapter_digest))
             scope, observed = lifecycle.verify_lifecycle_policy(host)
         assert observed == expected and scope == expected_scope
 
@@ -478,7 +518,7 @@ def test_fixture_source_inputs_are_bounded_regular_owned_bytes(driver, tmp_path,
 async def test_signed_composition_preserves_inputs_and_cannot_project_incomplete_cases(driver, tmp_path, monkeypatch, fault):
     app = tmp_path.resolve() / "Synthetic.app"
     host = app / "Contents/Resources/host"
-    native = app / "Contents/MacOS/mcpme"
+    native = app / "Contents/MacOS/meecp"
     native.parent.mkdir(parents=True); native.write_bytes(b"Synthetic native metadata"); native.chmod(0o700)
     policy = host / driver.command.POLICY_PATH; policy.parent.mkdir(parents=True)
     policy_value = copy.deepcopy(ROOT_POLICY)

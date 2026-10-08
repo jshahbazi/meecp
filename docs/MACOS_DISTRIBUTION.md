@@ -1,6 +1,6 @@
 # macOS installer distribution
 
-mcpme targets Apple silicon and macOS 26 or later. The DMG contains `mcpme.app`
+meecp targets Apple silicon and macOS 26 or later. The DMG contains `meecp.app`
 and an Applications shortcut. The application includes its locked
 Python runtime and server dependencies; tool packages and model weights are
 installed separately.
@@ -12,7 +12,7 @@ Build from the repository root with the managed Python 3.12.13 runtime installed
 ```sh
 uv python install 3.12.13
 uv sync --locked
-uv run --locked python scripts/build_mcpme_dmg.py --output dist/mcpme-dev.dmg
+uv run --locked python scripts/build_meecp_dmg.py --output dist/meecp-dev.dmg
 ```
 
 The app uses ad hoc signatures. The DMG is unsigned and unnotarized. Its
@@ -32,12 +32,12 @@ rejected for this mode. Supply the exact certificate name or its SHA-1 identity
 as reported by `security find-identity -v -p codesigning`.
 
 ```sh
-uv run --locked python scripts/build_mcpme_dmg.py \
+uv run --locked python scripts/build_meecp_dmg.py \
   --command-signed-asset /path/to/command-native-v1.tar.gz \
   --sign-identity 'Developer ID Application: Your Name (TEAMID)' \
-  --notary-profile mcpme-release \
+  --notary-profile meecp-release \
   --keychain /path/to/release.keychain-db \
-  --output dist/mcpme-release.dmg
+  --output dist/meecp-release.dmg
 ```
 
 The active Phase 3 command policy requires the exact reviewed
@@ -76,20 +76,20 @@ The builder:
    outputs.
 
 The app's version comes from `[project].version` in `pyproject.toml`. On the
-read-only DMG, open `mcpme.app` and choose **Install and Restart**.
+read-only DMG, open `meecp.app` and choose **Install and Restart**.
 The installer checks signature, version metadata, Apple silicon architecture,
 and minimum macOS version, then stages the signed app and gracefully quits the current copy with a
 75-second wait, atomically replaces the selected installation, and launches the
 result. The prompt shows the destination. A single running installation in
 `/Applications` or `~/Applications` takes precedence. Otherwise an existing
-`/Applications/mcpme.app` is preferred, then an existing personal copy. A new
+`/Applications/meecp.app` is preferred, then an existing personal copy. A new
 copy goes in `/Applications` when writable and `~/Applications` otherwise.
 An unwritable existing system installation requires a manual Finder copy with
 administrator authorization. Active Phase 3 release admission requires the
 bundle files and embedded host to be owned by the running user; an
 administrator-owned `/Applications` ancestor is allowed. Root-owned bundle
 members fail startup and do not receive development authority. A user-owned
-`~/Applications/mcpme.app` is supported. Because destination selection prefers
+`~/Applications/meecp.app` is supported. Because destination selection prefers
 an existing system copy, quit and remove that copy before selecting a personal
 installation. Updates also require a writable destination parent and a
 user-owned installer lock. A refused quit or timeout prevents replacement.
@@ -97,7 +97,7 @@ A confirmed launch failure restores the prior bundle. An unconfirmed launch
 retains the installed candidate and a recovery folder beside it; read that
 folder's `RECOVERY.md` before restoring its previous bundle. Normal startup
 policies apply after restart; manually configured services do not auto-resume.
-The manual DMG path remains available, but requires quitting mcpme before
+The manual DMG path remains available, but requires quitting meecp before
 dragging the app to Applications. See [Host application updates](AUTO_UPDATE_PLAN.md) for the
 separate, still-planned automatic updater.
 
@@ -112,7 +112,7 @@ installer whose receipt records that notarization was not requested. It is not l
 notarized release. The native app builder also accepts `--sign-identity` and
 `--keychain` when an app is needed independently of a DMG.
 
-`--app /path/to/mcpme.app` packages a copy of an existing app. For a release,
+`--app /path/to/meecp.app` packages a copy of an existing app. For a release,
 that input must already be signed by the selected certificate, with a
 compatible application build receipt. The source app is not modified by
 stapling. An ad hoc app cannot be upgraded to a release solely by signing the
@@ -145,7 +145,7 @@ swift test
 In a logged-in macOS session, opt into native lifecycle tests as well:
 
 ```sh
-MCPME_RUN_INSTALL_LIFECYCLE_TESTS=1 swift test --filter AppInstallationTests
+MEECP_RUN_INSTALL_LIFECYCLE_TESTS=1 swift test --filter AppInstallationTests
 ```
 
 These launch signed synthetic apps in a temporary directory, replace one from

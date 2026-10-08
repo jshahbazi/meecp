@@ -24,7 +24,7 @@ import verify_phase3_native_command as command
 
 common = command.onboarding
 require = common.require
-COMPONENT = ("host-command-json-v1", "1.0.1", "a216f2ed58294410850afc4bd63f9b9b63c945464a1f10d1b735bd8de26cd607")
+COMPONENT = ("host-command-json-v1", "1.0.1", "339cbe6ebad51b2a0e4e73228e3f7d119d81ac784908fffd93363340bc91684b")
 INSTALLED_PLATFORM = "3898759c85d08268db02963c0e822e2bd3c9657d337e1e5c5708e0bb0738c83b"
 RESOURCE_PLATFORM = "03a5e27b4931b1eaa705f0a4be373bc202ac7dd3bb4d71a438c2eb6ffeae1b8a"
 CERTIFICATE = "EFE6CD2666B9106E68724C38ADD1C405267A2F94"
@@ -212,7 +212,7 @@ class PublicCommandHarness(command.CommandHarness):
             require(draft["source"]["kind"] == "application_directory", "public_command_intake_changed")
             form = await self.manager(state, "/v1/preparations/form", {"import_id": draft["draft_id"], "revision": draft["revision"]})
             require(form["execution_available"] is True and form["resolution_required"] is False
-                and form["recipe"]["id"] == "mcpme.native-command" and form["recipe"]["version"] == "1.0.1",
+                and form["recipe"]["id"] == "mcpme.native-command" and form["recipe"]["version"] == "1.0.2",
                 "public_command_form_inactive")
             recipe = await self.cli(state, environment, home, "recipes", "inspect", "--id", form["recipe"]["id"],
                 "--version", form["recipe"]["version"], "--json")
@@ -250,7 +250,7 @@ class PublicCommandHarness(command.CommandHarness):
         return result
 
     async def upgrade(self, original):
-        from mcpme.contracts import validate_package
+        from meecp.contracts import validate_package
         require(original["source_removed"] is True and original["original_state_removed"] is True,
             "public_command_upgrade_source_not_removed")
         state = self.root / "relocation/state"
@@ -275,7 +275,7 @@ class PublicCommandHarness(command.CommandHarness):
         upgrade_root = self.root / "second signed build"; upgrade_root.mkdir(mode=0o700)
         copied = {}
         host, native = common.relocate_host_and_native(upgrade_root, self.upgrade_app / "Contents/Resources/host",
-            self.upgrade_app / "Contents/MacOS/mcpme", copied)
+            self.upgrade_app / "Contents/MacOS/meecp", copied)
         require(copied["native_bundle_preserved"] is True, "public_command_upgrade_bundle_not_preserved")
         active_policy(host)
         successor = PublicCommandHarness(upgrade_root, host, native, self.lease,

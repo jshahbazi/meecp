@@ -14,7 +14,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
-from mcpme.contracts import (LOCK_NAME, MANIFEST_NAME, MAX_LOCK_METADATA_BYTES, MAX_METADATA_BYTES,
+from meecp.contracts import (LOCK_NAME, MANIFEST_NAME, MAX_LOCK_METADATA_BYTES, MAX_METADATA_BYTES,
                              PackageError, _read_file, validate_package)
 
 

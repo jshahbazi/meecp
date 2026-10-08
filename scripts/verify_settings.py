@@ -27,7 +27,7 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-from mcpme.contracts import validate_package  # noqa: E402
+from meecp.contracts import validate_package  # noqa: E402
 
 
 SYNTHETIC_VALUE = "phase2 synthetic service key"
@@ -125,7 +125,7 @@ def synthetic_package(host: Path, base: Path, output: Path) -> None:
             "enabled": {"type": "boolean", "default": True}}},
         "resources": {"memory_mb": 256, "cpu_only": True},
         "licenses": ["licenses/fixture-LICENSE.txt", "licenses/python-LICENSE.txt", "licenses/runtime-NOTICE.md"]}
-    manifest_path = output / "mcpme.package.json"
+    manifest_path = output / "meecp.package.json"
     manifest_path.write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n")
     artifacts = []
     for directory, names, files in os.walk(output):
@@ -133,7 +133,7 @@ def synthetic_package(host: Path, base: Path, output: Path) -> None:
         for name in sorted(files):
             path = Path(directory) / name
             relative = path.relative_to(output).as_posix()
-            if relative == "mcpme.package.json":
+            if relative == "meecp.package.json":
                 continue
             with path.open("rb") as source:
                 checksum = hashlib.file_digest(source, "sha256").hexdigest()
@@ -147,12 +147,12 @@ def synthetic_package(host: Path, base: Path, output: Path) -> None:
         "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(), "artifacts": artifacts,
         "build": {"recipe": "synthetic-settings-verifier-v1", "builder": "verify_settings.py",
                   "toolchain": "copied bundled CPython; standard-library stdio fixture"}}
-    (output / "mcpme.lock.json").write_text(json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n")
+    (output / "meecp.lock.json").write_text(json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n")
     validate_package(output)
 
 
 async def verify(host_path: Path, package_path: Path) -> dict:
-    with tempfile.TemporaryDirectory(prefix="mcpme-settings-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="meecp-settings-") as temporary:
         root = Path(temporary).resolve()
         host, package, state = root / "relocated host", root / "synthetic package", root / "private state"
         shutil.copytree(host_path, host, symlinks=True)
@@ -160,7 +160,7 @@ async def verify(host_path: Path, package_path: Path) -> dict:
             synthetic_package(host, package_path, package)
         except Exception:
             raise VerificationError("settings_fixture_failed") from None
-        launcher, reaper = host / "bin/mcpme", host / "bin/mcpme-reap"
+        launcher, reaper = host / "bin/meecp", host / "bin/meecp-reap"
         environment = {"PATH": "/usr/bin:/bin", "HOME": str(root), "LANG": "en_US.UTF-8"}
         process = None
 

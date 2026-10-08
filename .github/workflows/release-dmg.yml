@@ -58,7 +58,7 @@ jobs:
         id: command_asset
         env:
           MCPME_COMMAND_SIGNED_ASSET_BASE64: ${{ secrets.MCPME_COMMAND_SIGNED_ASSET_BASE64 }}
-        run: uv run --locked python .github/scripts/prepare_command_asset.py --output "$RUNNER_TEMP/mcpme-release-assets/command-native-v1.tar.gz"
+        run: uv run --locked python .github/scripts/prepare_command_asset.py --output "$RUNNER_TEMP/meecp-release-assets/command-native-v1.tar.gz"
       - name: Run tests before importing credentials
         run: uv run --locked python -m pytest -q
       - name: Import temporary Apple credentials
@@ -76,23 +76,23 @@ jobs:
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
           COMMAND_SIGNED_ASSET: ${{ steps.command_asset.outputs.path }}
         run: |
-          uv run --locked python scripts/build_mcpme_dmg.py \
+          uv run --locked python scripts/build_meecp_dmg.py \
             --version "$RELEASE_VERSION" \
             --command-signed-asset "$COMMAND_SIGNED_ASSET" \
             --sign-identity "$MACOS_SIGNING_IDENTITY" \
-            --keychain "$RUNNER_TEMP/mcpme-signing/signing.keychain-db" \
-            --notary-profile mcpme-notary \
-            --output "dist/mcpme-$RELEASE_VERSION-arm64.dmg"
+            --keychain "$RUNNER_TEMP/meecp-signing/signing.keychain-db" \
+            --notary-profile meecp-notary \
+            --output "dist/meecp-$RELEASE_VERSION-arm64.dmg"
       - name: Remove temporary Apple credentials
         if: always()
         run: uv run --locked python .github/scripts/apple_credentials.py cleanup
       - name: Upload verified release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: mcpme-release-${{ github.sha }}
+          name: meecp-release-${{ github.sha }}
           path: |
-            dist/mcpme-${{ steps.release.outputs.version }}-arm64.dmg
-            dist/mcpme-${{ steps.release.outputs.version }}-arm64.dmg.build.json
+            dist/meecp-${{ steps.release.outputs.version }}-arm64.dmg
+            dist/meecp-${{ steps.release.outputs.version }}-arm64.dmg.build.json
           if-no-files-found: error
           retention-days: 30
 
@@ -114,7 +114,7 @@ jobs:
       - name: Download this run's verified assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: mcpme-release-${{ github.sha }}
+          name: meecp-release-${{ github.sha }}
           path: dist
       - name: Publish complete release with verified checksums
         env:

@@ -1,6 +1,6 @@
 """Pinned YOLO11n CPU task. Images remain in memory; failures contain no input.
 
-Adapted from mcpme's AGPL-3.0 hotdog example; full text is LICENSE-MODEL.
+Adapted from meecp's AGPL-3.0 hotdog example; full text is LICENSE-MODEL.
 """
 from __future__ import annotations
 

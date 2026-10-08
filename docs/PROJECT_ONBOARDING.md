@@ -1,10 +1,10 @@
-# Adding an app to mcpme
+# Adding an app to meecp
 
 Status: accepted product direction, 2026-10-01. Prepared packages, source-folder and Markdown/text intake, resumable drafts, and external preparation are implemented in the first [Phase 2 milestone](PHASE2_ONBOARDING.md). Reference-document services and integrated preparation remain pending. This document describes the complete intended journey; consult the milestone record for verified scope.
 
 The proposed [automatic-preparation implementation plan](AUTOMATIC_PREPARATION.md) covers extensible versioned recipes, binary artifact intake, controlled preparation jobs, optional integrated agents, and parallel delivery gates.
 
-This document defines the Add App experience. It refines the user-facing flow in [MCPME_DESIGN.md](MCPME_DESIGN.md), which remains the technical reference for packages, import drafts, authorization, installation, and lifecycle management.
+This document defines the Add App experience. It refines the user-facing flow in [MEECP_DESIGN.md](MEECP_DESIGN.md), which remains the technical reference for packages, import drafts, authorization, installation, and lifecycle management.
 
 ## Decision
 
@@ -12,7 +12,7 @@ Use a deterministic **drop, review, add** workflow with optional agent preparati
 
 The first release uses the user's external coding agent for custom preparation. An integrated agent with user-supplied LLM API credentials is a later extension of the same workflow. No LLM connection is required to begin setup or install a compatible prepared package.
 
-The next onboarding milestone, [Phase 3 automatic preparation](MCPME_DESIGN.md#phase-3-automatic-app-preparation), removes that manual handoff for supported inputs. Users select an app directory or configure a service connection; mcpme inspects it, asks for missing information, assembles dependencies and adapters, tests the result, and presents the installation review. Packages remain an internal installation boundary. User-authored manifests and manually collected runtime files are not the target experience. Deterministic recipes handle known combinations; agent assistance handles unfamiliar integration work through the same modular contracts. This execution path is not available in the current foundation.
+The next onboarding milestone, [Phase 3 automatic preparation](MEECP_DESIGN.md#phase-3-automatic-app-preparation), removes that manual handoff for supported inputs. Users select an app directory or configure a service connection; meecp inspects it, asks for missing information, assembles dependencies and adapters, tests the result, and presents the installation review. Packages remain an internal installation boundary. User-authored manifests and manually collected runtime files are not the target experience. Deterministic recipes handle known combinations; agent assistance handles unfamiliar integration work through the same modular contracts. This execution path is not available in the current foundation.
 
 The product should minimize what the user must explain: inspect the supplied source, identify missing information, and ask the next useful question. Inspection can identify a likely source type; it cannot establish which tools the user wants or turn an arbitrary program into an MCP service automatically.
 
@@ -87,7 +87,7 @@ For a document, offer two choices:
 
 A handbook and a specification for a tool have different roles. Do not silently interpret all documents as instructions or promise that any document can become a runnable service.
 
-The information route requires a supported document-service template with defined search/read behavior, source references, parsing limits, and update behavior. It is not available merely because mcpme can extract text. Until that template exists, explain the missing preparation and retain a draft; do not advertise a completed document-library feature. Broader PDF extraction and OCR are later work.
+The information route requires a supported document-service template with defined search/read behavior, source references, parsing limits, and update behavior. It is not available merely because meecp can extract text. Until that template exists, explain the missing preparation and retain a draft; do not advertise a completed document-library feature. Broader PDF extraction and OCR are later work.
 
 Keep source documents as explicitly selected source references or artifacts under the import contract. Store structured, nonsecret requirements in the draft. Do not copy source contents, conversation transcripts, prompts, credentials, or build logs into draft records, event journals, or diagnostic exports.
 
@@ -134,7 +134,7 @@ Tools             Validate JSON against a schema
 Source            Prepared local package
 Declared use      No file writes or network requests
 Start now         Yes
-When mcpme opens  Manual
+When meecp opens  Manual
 
 Package and verification details…
 
@@ -155,7 +155,7 @@ After successful installation and runtime verification, show **App ready**, make
 
 ### 6. Manage an installed app
 
-Select an installed app in **Manage Apps** to view its details and choose **Manual** or **Automatic when mcpme opens**. Saving that choice changes the policy for future launches; it does not start or stop the current runtime. An explicit Stop suppresses automatic startup across mcpme restarts until Start clears the suppression.
+Select an installed app in **Manage Apps** to view its details and choose **Manual** or **Automatic when meecp opens**. Saving that choice changes the policy for future launches; it does not start or stop the current runtime. An explicit Stop suppresses automatic startup across meecp restarts until Start clears the suppression.
 
 **Remove App** closes the app's endpoint, stops its owned processes, revokes its connection credential, and removes it from the installed-app list. The host retains its data and sealed package for recovery and leaves the original source intact. Removal follows a durable operation so progress remains visible after the window closes.
 

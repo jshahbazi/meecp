@@ -8,11 +8,11 @@ import uuid
 import httpx
 import pytest
 
-from mcpme.grants import read_credential
-from mcpme.preparation_agent_host import AgentPreparationHost
-from mcpme.preparation_agent_providers import AgentProviderRegistry, AgentProviderError, OpenAIResponsesAdapter
-from mcpme.preparation_contracts import PreparationError
-from mcpme.supervisor import Supervisor, management_app
+from meecp.grants import read_credential
+from meecp.preparation_agent_host import AgentPreparationHost
+from meecp.preparation_agent_providers import AgentProviderRegistry, AgentProviderError, OpenAIResponsesAdapter
+from meecp.preparation_contracts import PreparationError
+from meecp.supervisor import Supervisor, management_app
 from test_preparation_agent_host import foundation, selection, completed, handler_for
 
 
@@ -120,7 +120,7 @@ async def test_same_provider_generation_and_review_survive_restart(foundation, t
 
 
 async def test_rotation_during_mock_dispatch_cannot_publish_or_adopt(foundation, tmp_path):
-    from mcpme.preparation_agent_backend import OpenAIResponsesBackend
+    from meecp.preparation_agent_backend import OpenAIResponsesBackend
     from test_preparation_agent import role_of
     imports, _, preparations, draft, descriptor = foundation
     entered, release = asyncio.Event(), asyncio.Event()
@@ -198,7 +198,7 @@ def test_bounded_registry_limit_and_unsafe_private_state_fail_closed(tmp_path):
 
 
 async def test_default_supervisor_owner_crud_and_review_keep_execution_gates_closed(tmp_path, monkeypatch, caplog):
-    from mcpme.preparation_agent_backend import OpenAIResponsesBackend
+    from meecp.preparation_agent_backend import OpenAIResponsesBackend
     async def forbidden(*args, **kwargs):
         raise AssertionError("configuration attempted dispatch")
     monkeypatch.setattr(OpenAIResponsesBackend, "complete", forbidden)

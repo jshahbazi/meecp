@@ -5,13 +5,13 @@ import uuid
 
 import pytest
 
-from mcpme import __main__ as cli
-from mcpme.grants import GrantError
-from mcpme.private import read_private_json, write_private_json
-from mcpme.supervisor import Supervisor
-from mcpme.upgrades import UpgradeError
-from test_mcpme_grants import client, credential
-from test_mcpme_upgrade_host import UpgradeFixture, settle
+from meecp import __main__ as cli
+from meecp.grants import GrantError
+from meecp.private import read_private_json, write_private_json
+from meecp.supervisor import Supervisor
+from meecp.upgrades import UpgradeError
+from test_meecp_grants import client, credential
+from test_meecp_upgrade_host import UpgradeFixture, settle
 
 
 def upgrade_grant(host, plan):

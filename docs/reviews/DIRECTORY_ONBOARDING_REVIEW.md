@@ -4,7 +4,7 @@ Review date: 2026-10-03. Code baseline: `1fa4dd7196f70823f1b80764f69ed80b0f8b7a9
 
 ## Recommendation
 
-Make **Phase 3: automatic app preparation** the next product milestone. Move the existing multiple-model-engine milestone to Phase 4. Selecting a directory should let mcpme inspect what is present, establish the desired tools, assemble a supported adapter and its dependencies, verify the resulting package, and continue to the existing Add App review. The user should supply purpose, choices and credentials when necessary. mcpme should generate package files, locks and preparation descriptors.
+Make **Phase 3: automatic app preparation** the next product milestone. Move the existing multiple-model-engine milestone to Phase 4. Selecting a directory should let meecp inspect what is present, establish the desired tools, assemble a supported adapter and its dependencies, verify the resulting package, and continue to the existing Add App review. The user should supply purpose, choices and credentials when necessary. meecp should generate package files, locks and preparation descriptors.
 
 Keep the host centered on package identity, MCP contracts, process ownership and lifecycle. Put language, adapter, provider and model knowledge in versioned components and recipes. Python, JevK5 and the hotdog detector are useful acceptance fixtures. They must not become branches in the common onboarding architecture.
 
@@ -24,7 +24,7 @@ The [automatic preparation plan](../AUTOMATIC_PREPARATION.md) already specifies 
 - Generated native forms and independently added recipes are explicit acceptance requirements.
 - Unknown GUI applications require an API, CLI or specific automation adapter. The design does not promise that an agent can derive useful tools from any executable.
 
-The [foundation implementation](../../backend/mcpme/preparations.py) also addresses a difficult race correctly: cancellation, recipe revocation, draft identity and verified package identity are checked when attachment is admitted. Preserve that work while adding execution.
+The [foundation implementation](../../backend/meecp/preparations.py) also addresses a difficult race correctly: cancellation, recipe revocation, draft identity and verified package identity are checked when attachment is admitted. Preserve that work while adding execution.
 
 ## Concrete gaps in the implementation
 
@@ -38,7 +38,7 @@ The [foundation implementation](../../backend/mcpme/preparations.py) also addres
 | `preparation_contracts.py:305–308` fixes CPU-only resources; `contracts.py:197–205` requires language-model context metadata for model artifacts. | Preparation cannot describe every model topology; resident vision would need a different model contract. | Keep the first CPU detector explicit. Introduce discriminated model metadata only when a supported resident/GPU family needs it. |
 | `preparations.py:119–125` reports unavailable runner/verifier capabilities; `:138–143` fixes the candidate to stdio. | No directory is automatically prepared through the management API today. | Add execution endpoints only with owned execution, cancellation/recovery and real verification. |
 
-The package layer is already broader than the preparation layer: [PackageManifest](../../backend/mcpme/contracts.py) supports `mcp-stdio`, constrained `mcp-http` and `model-service`. HTTP validation at `contracts.py:439–448` requires a particular single-service readiness and identity contract. An arbitrary HTTP server URL does not satisfy it.
+The package layer is already broader than the preparation layer: [PackageManifest](../../backend/meecp/contracts.py) supports `mcp-stdio`, constrained `mcp-http` and `model-service`. HTTP validation at `contracts.py:439–448` requires a particular single-service readiness and identity contract. An arbitrary HTTP server URL does not satisfy it.
 
 Two statements in the older preparation plan need reconciliation when the roadmap is updated: its header says implementation has not started, despite the merged foundation; its starting-point table says HTTP-only packages are unsupported, despite the current constrained HTTP package implementation. The narrower statement remains correct: the automatic preparation planner does not support HTTP preparation yet.
 
@@ -92,7 +92,7 @@ A connector can be implemented in Python, Node or a native binary. A Python app 
 
 For GLM, DeepSeek and Bedrock, select a tested protocol/auth component and model/endpoint configuration. A compatible request format may allow reuse, but it does not establish equivalent streaming, structured-output, cancellation, context or authentication behavior. Keep provider names in recipe/catalog metadata and tested configurations rather than native window or supervisor dispatch branches.
 
-Authentication requires explicit capability selection. Z.AI documents bearer-key authentication and distinct endpoint guidance for its coding offering. AWS documents both SigV4 and Bedrock API-key authentication, together with IAM requirements. Consequently, even “Bedrock” should not imply one universal auth mechanism. The selected adapter must bind the actual endpoint/API/auth combination. These are upstream API facts, not claims that mcpme currently supports either provider. [Z.AI API introduction](https://docs.z.ai/api-reference/introduction), [Amazon Bedrock endpoints](https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints.html).
+Authentication requires explicit capability selection. Z.AI documents bearer-key authentication and distinct endpoint guidance for its coding offering. AWS documents both SigV4 and Bedrock API-key authentication, together with IAM requirements. Consequently, even “Bedrock” should not imply one universal auth mechanism. The selected adapter must bind the actual endpoint/API/auth combination. These are upstream API facts, not claims that meecp currently supports either provider. [Z.AI API introduction](https://docs.z.ai/api-reference/introduction), [Amazon Bedrock endpoints](https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints.html).
 
 Reuse the current configuration/secret-reference machinery where it fits. The preparation planner currently rejects secret references, so automatic provider preparation needs an explicit extension. For expiring AWS credentials, choose and test a credential-refresh mechanism; do not silently inherit the user's shell environment or assume an immutable secret record can refresh a session. Do not expose credentials in descriptors, packages, journals or diagnostics.
 

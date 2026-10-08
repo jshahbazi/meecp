@@ -1,6 +1,6 @@
 # Private Pi worker
 
-mcpme embeds `@earendil-works/pi-coding-agent` 1.0.2 behind a JSONL host broker.
+meecp embeds `@earendil-works/pi-coding-agent` 1.0.2 behind a JSONL host broker.
 The worker runs an actual Pi coding session with the user's selected provider,
 model, and API key. The host controls every filesystem write, subprocess, and
 download requested by the model. The worker does not execute Pi's built-in
@@ -86,7 +86,7 @@ verification belongs to the host before worker launch.
 `npm ci --ignore-scripts --no-audit --no-fund && npm test` runs real SDK tests
 against a synthetic loopback provider without a paid model request. To check the
 bundled closure, run the same test file with the bundled Node and set
-`MCPME_PI_TEST_WORKER` to the absolute bundled worker path.
+`MEECP_PI_TEST_WORKER` to the absolute bundled worker path.
 
 The worker's host tools are an API boundary. They require the host's
 workspace/process/network confinement; the

@@ -13,7 +13,7 @@ from .bridge import run_bridge
 from .runtime import ModelManager
 from .server import make_app, parent_watchdog
 from .state import HOST, PORT, PrivateState
-from mcpme_local_transport import bind_private_listener
+from meecp_local_transport import bind_private_listener
 
 
 async def serve(resources: Path, state_dir: Path, parent_pid: int):

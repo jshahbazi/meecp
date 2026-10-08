@@ -12,17 +12,17 @@ import uuid
 
 import pytest
 
-from mcpme import authorization
-from mcpme.grants import GrantError, read_credential
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_inspection import inspect_source
-from mcpme.private import read_private_json, write_private_json
-from mcpme.registry import Registry, RegistryError
-from mcpme.supervisor import Supervisor
-from mcpme_local_transport import socket_path
-from test_mcpme_preparations import descriptor, policy, recipe_bundle
+from meecp import authorization
+from meecp.grants import GrantError, read_credential
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_inspection import inspect_source
+from meecp.private import read_private_json, write_private_json
+from meecp.registry import Registry, RegistryError
+from meecp.supervisor import Supervisor
+from meecp_local_transport import socket_path
+from test_meecp_preparations import descriptor, policy, recipe_bundle
 from test_preparation_resolution import request as resolution_request
-from test_mcpme_host import prepared
+from test_meecp_host import prepared
 from test_native_authorization import access, api, channel, decision, frame, host, pi_routes
 
 

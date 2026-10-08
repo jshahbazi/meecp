@@ -31,8 +31,8 @@ NATIVE_STAGES = common.NATIVE_STAGES | {"capture_selection", "capture_start", "c
 ENABLED_HOST = (
     "import asyncio,logging,sys\nfrom pathlib import Path\n"
     "sys.path[:0]=[sys.argv[1],sys.argv[2]]\nlogging.disable(logging.CRITICAL)\n"
-    "from mcpme.supervisor import serve\nfrom mcpme.preparation_runner import PreparationRunner\n"
-    "from mcpme.preparation_onnx import component_reference\n"
+    "from meecp.supervisor import serve\nfrom meecp.preparation_runner import PreparationRunner\n"
+    "from meecp.preparation_onnx import component_reference\n"
     "def preparation(*args,**kwargs):\n kwargs['enabled']=True\n runner=PreparationRunner(*args,**kwargs)\n"
     " runner.enabled_families=frozenset({component_reference().key})\n return runner\n"
     "asyncio.run(serve(Path(sys.argv[3]),Path(sys.argv[4]),int(sys.argv[5]),preparation_runner_factory=preparation))\n"
@@ -41,7 +41,7 @@ ENABLED_HOST = (
 
 @contextmanager
 def isolated_workspace(report):
-    temporary = tempfile.TemporaryDirectory(prefix="mcpme-native-onnx-", delete=False)
+    temporary = tempfile.TemporaryDirectory(prefix="meecp-native-onnx-", delete=False)
     root, lease = Path(temporary.name).resolve(), {"safe_to_remove": True}
     try:
         yield root, lease
@@ -96,7 +96,7 @@ class Harness(common.Harness):
         self.retired_states = set()
 
     def retire_socket(self, state):
-        from mcpme_local_transport import socket_path
+        from meecp_local_transport import socket_path
         directory = socket_path(state, "manager").parent
         known = {"manager.sock", *(path.name + ".sock" for path in (state / "slots").glob("*"))}
         for path in directory.iterdir():
@@ -141,7 +141,7 @@ class Harness(common.Harness):
 
     async def manager_get(self, state, route):
         import httpx
-        from mcpme_local_transport import private_transport, socket_path
+        from meecp_local_transport import private_transport, socket_path
         connection = common.private_json(state / "manager-connection.json")
         async with httpx.AsyncClient(base_url=connection["endpoint"], trust_env=False, timeout=30,
                 follow_redirects=False, transport=private_transport(socket_path(state, "manager")),
@@ -164,7 +164,7 @@ class Harness(common.Harness):
             raise
 
     def selected(self, base):
-        from mcpme.preparation_onnx import MODEL_BYTES, MODEL_SHA256
+        from meecp.preparation_onnx import MODEL_BYTES, MODEL_SHA256
         selected = base / "selected"
         selected.mkdir(mode=0o700)
         model, license = selected / "model.onnx", selected / "LICENSE"
@@ -237,7 +237,7 @@ class Harness(common.Harness):
                 and captured["reservation_retained"] is False, "wrong_weights_capture_unsettled")
             draft = await self.cli(state, environment, home, "imports", "inspect", receipt["draft_id"], "--json")
             inspected = await self.manager(state, "/v1/preparations/form", {"import_id": receipt["draft_id"], "revision": draft["revision"]})
-            from mcpme.preparation_onnx import OnnxPreparationFamily
+            from meecp.preparation_onnx import OnnxPreparationFamily
             # The frozen host's generic form exposes a selection blocker when
             # no candidate exists. Verify its production family's precise static
             # rejection independently; never parse or execute the wrong model.
@@ -253,9 +253,9 @@ class Harness(common.Harness):
             await self.shutdown(child, state)
 
     async def onnx_case(self, label):
-        from mcpme.contracts import Tool, validate_package
-        from mcpme.preparation_inputs import parse_preparation_receipt, parse_preparation_descriptor
-        from mcpme.preparation_onnx import MODEL_BYTES, MODEL_SHA256, onnx_hotdog_tool, onnx_hotdog_fixtures
+        from meecp.contracts import Tool, validate_package
+        from meecp.preparation_inputs import parse_preparation_receipt, parse_preparation_descriptor
+        from meecp.preparation_onnx import MODEL_BYTES, MODEL_SHA256, onnx_hotdog_tool, onnx_hotdog_fixtures
         common.stage("source_intake")
         started = time.monotonic()
         base, state, home, environment = self.new_case(label)
@@ -273,7 +273,7 @@ class Harness(common.Harness):
                     "--start", "--start-policy", "host", "--json")
                 original = draft["source"]
             recipe = await self.cli(state, environment, home, "recipes", "inspect", "--id", "mcpme.onnx-hotdog",
-                "--version", "1.0.0", "--json")
+                "--version", "1.0.1", "--json")
             common.require(recipe["state"] == "enabled", "onnx_default_recipe_missing")
             code, receipt, output = await self.native_capture(base, state, home, environment, model, license, draft)
             if code or receipt.get("passed") is not True:
@@ -321,7 +321,7 @@ class Harness(common.Harness):
             package = validate_package(Path(attached["attachment"]["path"]))
             common.require(package.digest == attached["attachment"]["digest"] == prepared["expected_package_digest"]
                 == receipt["attached_package_digest"], "native_onnx_package_identity_mismatch")
-            proof = parse_preparation_receipt((package.root / "mcpme.preparation.json").read_bytes())
+            proof = parse_preparation_receipt((common.receipt_path(package)).read_bytes())
             component_ids = {item.id for item in proof.inputs.components}
             common.require(proof.schema_version == 2 and proof.inputs.descriptor_version == 2
                 and component_ids == {"onnxruntime-cpu-v1", "yolo11-coco-detect-v1"}
@@ -357,16 +357,16 @@ class Harness(common.Harness):
             await self.shutdown(child, state)
             common.stage("restart")
             child = await self.start(state, environment, home, enabled=False)
-            retained = await self.cli(state, environment, home, "recipes", "inspect", "--id", recipe["recipe_id"], "--version", "1.0.0", "--json")
+            retained = await self.cli(state, environment, home, "recipes", "inspect", "--id", recipe["recipe_id"], "--version", recipe["version"], "--json")
             common.require(retained["state"] == "enabled" and retained["digest"] == recipe["digest"]
                 and retained["epoch"] == recipe["epoch"], "onnx_enabled_recipe_restart_failed")
             http_calls += await self.sdk(state, environment, home, slot_id, expected_tools, calls, "http")
             stdio_calls += await self.sdk(state, environment, home, slot_id, expected_tools, calls, "stdio")
             common.stage("recipe_lifecycle")
-            disabled = await self.cli(state, environment, home, "recipes", "disable", "--id", recipe["recipe_id"], "--version", "1.0.0", "--json")
+            disabled = await self.cli(state, environment, home, "recipes", "disable", "--id", recipe["recipe_id"], "--version", recipe["version"], "--json")
             await self.shutdown(child, state)
             child = await self.start(state, environment, home, enabled=False)
-            retained = await self.cli(state, environment, home, "recipes", "inspect", "--id", recipe["recipe_id"], "--version", "1.0.0", "--json")
+            retained = await self.cli(state, environment, home, "recipes", "inspect", "--id", recipe["recipe_id"], "--version", recipe["version"], "--json")
             common.require(retained["state"] == "disabled" and retained["digest"] == disabled["digest"]
                 and retained["epoch"] == disabled["epoch"], "onnx_disabled_recipe_restart_failed")
             http_calls += await self.sdk(state, environment, home, slot_id, expected_tools, calls, "http")

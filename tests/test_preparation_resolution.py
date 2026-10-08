@@ -12,14 +12,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from mcpme.imports import ImportStore
-from mcpme.preparation_contracts import PreparationError, contract_digest
-from mcpme.preparation_inspection import inspect_source
-from mcpme.preparation_resolution import ResolutionPolicyV1, ResolutionRequestV1, ResolutionStore, result_from_files
-from mcpme.preparation_resolution_runner import OwnedResolutionRunner, dependency_project, discover_interface
-from mcpme.preparation_components import ComponentReference
-from mcpme.ownership_receipts import prepare_receipt
-from mcpme.processes import OwnershipLost, ProcessOwner
+from meecp.imports import ImportStore
+from meecp.preparation_contracts import PreparationError, contract_digest
+from meecp.preparation_inspection import inspect_source
+from meecp.preparation_resolution import ResolutionPolicyV1, ResolutionRequestV1, ResolutionStore, result_from_files
+from meecp.preparation_resolution_runner import OwnedResolutionRunner, dependency_project, discover_interface
+from meecp.preparation_components import ComponentReference
+from meecp.ownership_receipts import prepare_receipt
+from meecp.processes import OwnershipLost, ProcessOwner
 from test_preparation_processes import group_reaper
 
 
@@ -121,7 +121,7 @@ def test_resolution_policy_is_closed(damage):
 @pytest.fixture
 def controlled(source, monkeypatch, tmp_path, group_reaper):
     imports, store, draft, candidate, folder = source
-    monkeypatch.setattr("mcpme.preparation_resolution_runner.load_private_toolchain", lambda *args: SimpleNamespace(identity="a" * 64))
+    monkeypatch.setattr("meecp.preparation_resolution_runner.load_private_toolchain", lambda *args: SimpleNamespace(identity="a" * 64))
     async def producer(*args):
         return ComponentReference(id="python-resolution-v1", version="1.0.0", digest="b" * 64)
     monkeypatch.setattr(OwnedResolutionRunner, "_producer", producer)
@@ -223,7 +223,7 @@ async def test_status_recovery_cannot_interrupt_owned_authorization_before_regis
 
 
 async def test_completed_worker_cleanup_failure_does_not_poison_recovered_close(controlled, monkeypatch):
-    from mcpme import preparation_resolution_runner as module
+    from meecp import preparation_resolution_runner as module
     runner, draft, candidate, resources = controlled
     plan = await runner.plan(draft["draft_id"], 1, candidate["candidate_id"], policy())
     def runtime_failure(*args):
@@ -355,7 +355,7 @@ def test_source_execution_or_incompatible_requirement_blocks_plan(source, metada
 async def test_real_missing_lock_owned_private_resolution(source):
     imports, store, draft, candidate, folder = source
     host = Path(os.environ["MCPME_RESOLUTION_HOST"]).resolve()
-    runner = OwnedResolutionRunner(store, host, host / "bin/mcpme-reap", enabled=True)
+    runner = OwnedResolutionRunner(store, host, host / "bin/meecp-reap", enabled=True)
     try:
         plan = await runner.plan(draft["draft_id"], 1, candidate["candidate_id"], policy())
         job = await runner.start(plan["plan_id"], plan["plan_digest"], str(uuid.uuid4()))
@@ -375,7 +375,7 @@ async def test_real_missing_lock_owned_private_resolution(source):
 async def test_real_foreground_sdk_dynamic_interface_resolution(source):
     imports, store, _, _, folder = source
     (folder / "pyproject.toml").write_text('[project]\nname="synthetic"\nversion="1.0.0"\ndependencies=["mcp==1.30.0"]\n'
-        '[tool.mcpme]\nmcp_module="worker"\n')
+        '[tool.meecp]\nmcp_module="worker"\n')
     (folder / "worker.py").write_text('import asyncio\nfrom mcp.server import Server\nfrom mcp.server.models import InitializationOptions\n'
         'from mcp.server.stdio import stdio_server\nfrom mcp.types import Tool,ServerCapabilities,ToolsCapability\n'
         'server=Server("synthetic")\n@server.list_tools()\nasync def tools():\n'
@@ -386,7 +386,7 @@ async def test_real_foreground_sdk_dynamic_interface_resolution(source):
     draft = imports.create(folder, name="Dynamic MCP")
     candidate = next(item for item in inspect_source(draft)["candidates"] if item["kind"] == "python-mcp")
     host = Path(os.environ["MCPME_RESOLUTION_HOST"]).resolve()
-    runner = OwnedResolutionRunner(store, host, host / "bin/mcpme-reap", enabled=True)
+    runner = OwnedResolutionRunner(store, host, host / "bin/meecp-reap", enabled=True)
     try:
         plan = await runner.plan(draft["draft_id"], 1, candidate["candidate_id"], policy(True))
         job = await runner.start(plan["plan_id"], plan["plan_digest"], str(uuid.uuid4()))
@@ -409,7 +409,7 @@ async def test_real_discovery_stop_reaps_owned_private_interpreter(tmp_path, sto
     for name in ("source", "home", "tmp"):
         (workspace / name).mkdir(mode=0o700)
     (workspace / "source/worker.py").write_text("import time\ntime.sleep(60)\n")
-    owner = ProcessOwner(host / "bin/mcpme-reap")
+    owner = ProcessOwner(host / "bin/meecp-reap")
     task = asyncio.create_task(discover_interface(owner, host / "python/bin/python3.12", host / "python",
         workspace / "source", workspace, {"declared_module":"worker", "declared_entrypoint":"worker"},
         timeout=.5 if stop == "deadline" else 60, memory_mb=512, check=lambda:None))

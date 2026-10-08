@@ -15,16 +15,16 @@ import uuid
 
 import pytest
 
-from mcpme.host_command import HostCommandAdmission
-from mcpme.imports import ImportStore
-from mcpme.preparation_command import CommandFamily, component_catalog, write_command_recipe
-from mcpme.preparation_command_owner import CommandPreparationOwner
-from mcpme.preparation_command_verifier import verify_command_package
-from mcpme.preparation_contracts import ExecutionPolicy, PreparationError, canonical_bytes
-from mcpme.preparation_forms import PreparationForms
-from mcpme.preparation_runner import seal_receipt
-from mcpme.preparations import PreparationStore
-from mcpme.recipes import RecipeStore
+from meecp.host_command import HostCommandAdmission
+from meecp.imports import ImportStore
+from meecp.preparation_command import CommandFamily, component_catalog, write_command_recipe
+from meecp.preparation_command_owner import CommandPreparationOwner
+from meecp.preparation_command_verifier import verify_command_package
+from meecp.preparation_contracts import ExecutionPolicy, PreparationError, canonical_bytes
+from meecp.preparation_forms import PreparationForms
+from meecp.preparation_runner import seal_receipt
+from meecp.preparations import PreparationStore
+from meecp.recipes import RecipeStore
 from test_host_command import native, digest, pytestmark
 from test_preparation_command import SCHEMA
 
@@ -120,7 +120,7 @@ async def wait_entered(event):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("winner", ["cancel", "revision"])
 async def test_registration_hash_worker_holds_no_sql_lock_and_rechecks_winner(tmp_path, native, monkeypatch, winner):
-    from mcpme import contracts
+    from meecp import contracts
     imports, store, factory = intake(tmp_path, native, create_owner=False)
     job_id = factory.args[2]
     entered, release = threading.Event(), threading.Event()
@@ -155,8 +155,8 @@ async def test_registration_hash_worker_holds_no_sql_lock_and_rechecks_winner(tm
         assert isinstance(result, Exception)
         assert observations == [(True, True)]
         assert not store.command_ownership(job_id)
-        from mcpme.preparation_command_owner import recover_command_ownership
-        from mcpme.private import read_private_json
+        from meecp.preparation_command_owner import recover_command_ownership
+        from meecp.private import read_private_json
         workspace = Path(job["workspace"])
         metadata = read_private_json(workspace / "command-probe-v3/owner.json")
         assert recover_command_ownership(workspace, metadata)  # constructor released its held lock
@@ -170,7 +170,7 @@ async def test_registration_hash_worker_holds_no_sql_lock_and_rechecks_winner(tm
 @pytest.mark.parametrize("boundary", ["session", "invoke", "response"])
 @pytest.mark.parametrize("winner", ["cancel", "revision"])
 async def test_publication_hash_worker_rechecks_authority_before_launch_or_write(tmp_path, native, monkeypatch, boundary, winner):
-    from mcpme import preparation_command_owner as module
+    from meecp import preparation_command_owner as module
     imports, store, owner = intake(tmp_path, native)
     handle = await owner.session(owner.package) if boundary != "session" else None
     entered, release = threading.Event(), threading.Event()
@@ -240,12 +240,12 @@ async def test_actual_managed_command_cancel_requires_native_settlement(tmp_path
 @pytest.mark.parametrize("cancel_during_construction", [False, True])
 async def test_runner_owns_real_command_constructor_and_settles_without_attachment(tmp_path, native, monkeypatch, cancel_during_construction):
     from types import SimpleNamespace
-    from mcpme.preparation_runner import PreparationRunner
+    from meecp.preparation_runner import PreparationRunner
     imports, store, draft, descriptor = intake(tmp_path, native, "tree", prepare_job=False)
     # Only distribution discovery is controlled here; intake, forms, bindings,
     # builder, native executor, SDK verifier, SQLite and cleanup are actual.
-    monkeypatch.setattr("mcpme.preparation_runner.load_private_toolchain", lambda *args: SimpleNamespace(identity="d" * 64))
-    monkeypatch.setattr("mcpme.preparation_runner.dependency_identity", lambda *args: "e" * 64)
+    monkeypatch.setattr("meecp.preparation_runner.load_private_toolchain", lambda *args: SimpleNamespace(identity="d" * 64))
+    monkeypatch.setattr("meecp.preparation_runner.dependency_identity", lambda *args: "e" * 64)
     runner = PreparationRunner(store, tmp_path / "host", native[0], enabled=True,
         enabled_families=tuple(store.families), command_admission=HostCommandAdmission(native[1], digest(native[1])))
     entered, release = threading.Event(), threading.Event()
@@ -289,7 +289,7 @@ async def test_runner_owns_real_command_constructor_and_settles_without_attachme
 
 @pytest.mark.asyncio
 async def test_canceled_publication_joins_hash_worker_before_settlement(tmp_path, native, monkeypatch):
-    from mcpme import preparation_command_owner as module
+    from meecp import preparation_command_owner as module
     imports, store, owner = intake(tmp_path, native)
     entered, release = threading.Event(), threading.Event()
     original = module.validate_package

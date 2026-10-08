@@ -7,10 +7,10 @@ from dataclasses import replace
 import pytest
 from pydantic import ValidationError
 
-from mcpme.imports import ImportStore
-from mcpme.preparation_components import ComponentRegistry, PythonSourceComponent, SourceBinding, SourceFileBinding
-from mcpme.preparation_contracts import PreparationError, PreparationReceipt, canonical_bytes
-from mcpme.preparation_inputs import (
+from meecp.imports import ImportStore
+from meecp.preparation_components import ComponentRegistry, PythonSourceComponent, SourceBinding, SourceFileBinding
+from meecp.preparation_contracts import PreparationError, PreparationReceipt, canonical_bytes
+from meecp.preparation_inputs import (
     CollectionReference, DerivedInputReference, PreparationReceiptV2, RuntimeReference,
     SourceValidationReference, adapt_descriptor, bind_preparation_inputs,
     parse_bound_inputs, parse_preparation_receipt, validate_builder_result,

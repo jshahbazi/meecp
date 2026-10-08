@@ -10,14 +10,14 @@ import uuid
 
 import pytest
 
-from mcpme.preparation_admission import PublicPreparationAdmission
-from mcpme.preparation_agent_public_resolution import PublicAgentResolutionStore, PublicAgentResolutionRunner
-from mcpme.preparation_agent_unlocked_resolution import _AGENT_RESOLUTION
-from mcpme.preparation_components import ComponentReference
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_release_policy import AgentExecutionAdmission
-from mcpme.preparation_resolution import ResolutionRequestV1, result_from_files
-from mcpme.preparation_inspection import inspect_source
+from meecp.preparation_admission import PublicPreparationAdmission
+from meecp.preparation_agent_public_resolution import PublicAgentResolutionStore, PublicAgentResolutionRunner
+from meecp.preparation_agent_unlocked_resolution import _AGENT_RESOLUTION
+from meecp.preparation_components import ComponentReference
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_release_policy import AgentExecutionAdmission
+from meecp.preparation_resolution import ResolutionRequestV1, result_from_files
+from meecp.preparation_inspection import inspect_source
 from test_preparation_agent_unlocked_store import foundation, REFERENCE
 from test_preparation_agent_unlocked_resolution import request_for
 

@@ -42,14 +42,14 @@ class VerificationError(ValueError):
 def _host_paths(host: Path) -> None:
     if not host.is_absolute() or host.resolve() != host or not host.is_dir() or host.is_symlink():
         raise VerificationError("phase3_primitives_absolute_host_required")
-    required = ("backend/mcpme/__init__.py", "python/bin/python3.12", "python/site-packages",
-                "preparation-toolchain/toolchain.json", "bin/mcpme-reap", "pyproject.toml", "uv.lock",
+    required = ("backend/meecp/__init__.py", "python/bin/python3.12", "python/site-packages",
+                "preparation-toolchain/toolchain.json", "bin/meecp-reap", "pyproject.toml", "uv.lock",
                 "templates/LICENSE", "build.json")
     for relative in required:
         path = host / relative
         if not path.exists() or path.resolve() != path:
             raise VerificationError("phase3_primitives_built_host_required")
-    if not os.access(host / "bin/mcpme-reap", os.X_OK):
+    if not os.access(host / "bin/meecp-reap", os.X_OK):
         raise VerificationError("phase3_primitives_native_reaper_required")
 
 
@@ -73,11 +73,11 @@ def _check_module_origins(host: Path) -> None:
     site = host / "python/site-packages"
     for name, module in tuple(sys.modules.items()):
         filename = getattr(module, "__file__", None)
-        if name == "mcpme._private_preparation_generator":
+        if name == "meecp._private_preparation_generator":
             if not filename or Path(filename).resolve() != host / "preparation-toolchain/templates/prepare.py":
                 raise VerificationError("phase3_primitives_bundled_import_required")
             continue
-        if name == "mcpme" or name.startswith("mcpme."):
+        if name == "meecp" or name.startswith("meecp."):
             allowed = (backend,)
         elif name in {"mcp", "packaging"} or name.startswith(("mcp.", "packaging.")):
             allowed = (site,)
@@ -141,15 +141,15 @@ async def _settle_task(task: asyncio.Task) -> None:
 async def verify(host: Path, base: Path) -> dict:
     _host_paths(host)
     _host_imports(host)
-    from mcpme.imports import ImportStore
-    from mcpme.preparation_acquisition import WheelAcquirer
-    from mcpme.preparation_builder import load_private_toolchain, prepare_bound
-    from mcpme.preparation_contracts import PreparationError, parse_descriptor
-    from mcpme.preparation_processes import PreparationExecutor
-    from mcpme.preparation_verifier import verify_prepared_package
-    from mcpme.preparations import PreparationStore
-    from mcpme.recipe_sdk import scaffold_recipe
-    from mcpme.recipes import RecipeStore
+    from meecp.imports import ImportStore
+    from meecp.preparation_acquisition import WheelAcquirer
+    from meecp.preparation_builder import load_private_toolchain, prepare_bound
+    from meecp.preparation_contracts import PreparationError, parse_descriptor
+    from meecp.preparation_processes import PreparationExecutor
+    from meecp.preparation_verifier import verify_prepared_package
+    from meecp.preparations import PreparationStore
+    from meecp.recipe_sdk import scaffold_recipe
+    from meecp.recipes import RecipeStore
     _check_module_origins(host)
 
     started = time.monotonic()
@@ -223,7 +223,7 @@ async def verify(host: Path, base: Path) -> dict:
         if plan["execution_available"] is not False or plan["descriptor_digest"] != descriptor.digest:
             raise PreparationError("phase3_primitives_public_boundary_changed")
         toolchain = await asyncio.to_thread(load_private_toolchain, host, check)
-        reaper = host / "bin/mcpme-reap"
+        reaper = host / "bin/meecp-reap"
         executor = PreparationExecutor(reaper)
         acquisition = WheelAcquirer()
         candidate = base / "candidate"
@@ -320,7 +320,7 @@ def main() -> int:
     failure = None
     try:
         _host_paths(arguments.host)
-        base = Path(tempfile.mkdtemp(prefix="mcpme-phase3-primitives-", dir="/private/tmp")).resolve()
+        base = Path(tempfile.mkdtemp(prefix="meecp-phase3-primitives-", dir="/private/tmp")).resolve()
         result = asyncio.run(verify(arguments.host, base))
         if arguments.keep_artifacts:
             result["artifact_directory"] = str(base)

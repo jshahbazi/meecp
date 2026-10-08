@@ -10,8 +10,8 @@ import time
 
 import pytest
 
-from mcpme import command_resource_execution_v1 as module
-from mcpme.command_resource_execution_v1 import CommandExecutionError, SEED_SIZE, read_resource_completion
+from meecp import command_resource_execution_v1 as module
+from meecp.command_resource_execution_v1 import CommandExecutionError, SEED_SIZE, read_resource_completion
 from test_command_resource_v1 import ROOT, binaries, digest, executor, spec, pytestmark
 
 
@@ -106,7 +106,7 @@ async def test_helper_loss_retains_ownership_even_after_fixture_self_exit(binari
 
 CHILD = '''import asyncio,sys
 from pathlib import Path
-from mcpme.command_resource_execution_v1 import CommandResourceExecutorV1,CommandResourceSpecV1
+from meecp.command_resource_execution_v1 import CommandResourceExecutorV1,CommandResourceSpecV1
 async def main():
  helper,target,state=map(Path,sys.argv[1:4])
  owner=CommandResourceExecutorV1(helper,sys.argv[4],state,expected_platform_policy=sys.argv[6],admit=lambda spec:True)
@@ -120,7 +120,7 @@ asyncio.run(main())
 @pytest.mark.asyncio
 @pytest.mark.parametrize("sync_failure", [False, True])
 async def test_host_sigkill_while_final_resource_payload_sync_has_no_visible_proof(binaries, tmp_path, sync_failure):
-    source = (ROOT / "scripts/mcpme-command-resource-reap.c").read_text()
+    source = (ROOT / "scripts/meecp-command-resource-reap.c").read_text()
     source = source.replace('if (fsync(receipt_fd)) return -1;',
         'usleep(600000); ' + ('return -1;' if sync_failure else 'if (fsync(receipt_fd)) return -1;'))
     variant = tmp_path / "variant.c"

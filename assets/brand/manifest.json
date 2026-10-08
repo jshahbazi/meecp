@@ -15,11 +15,11 @@
       "sha256": "9cb019a513567905b09d8cf52791b1cc07c1ca86eff1a9906afb2b3f7a73c1fc",
       "width": 1902
     },
-    "mcpme-banner.png": {
-      "bytes": 1349640,
+    "meecp-banner.png": {
+      "bytes": 1605101,
       "has_alpha": false,
       "height": 827,
-      "sha256": "dd0f1b70fdaef5b4c0ecd3713d87cf3139b3e9624ccb8d135cbf2e49fccaae4a",
+      "sha256": "9df902cec7aa528db00af7c7ac94fe43df399a9c59d6a58c3f36073d0d7a72f3",
       "width": 1902
     },
     "menu-bar-pedestal-master.png": {
@@ -53,7 +53,8 @@
   },
   "created": "2026-10-01",
   "generation_briefs": "../../docs/BRAND_PROMPTS.md",
-  "identity": "mcpme angled lowercase m on pedestal",
-  "native_exporter": "AppKit / scripts/mcpme-icon.swift",
-  "schema_version": 1
+  "identity": "meecp angled lowercase m on pedestal",
+  "native_exporter": "AppKit / scripts/meecp-icon.swift",
+  "schema_version": 1,
+  "updated": "2026-10-08"
 }

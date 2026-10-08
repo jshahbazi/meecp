@@ -29,7 +29,7 @@ artifact checks remain joined and off the event loop at verifier entry and
 publication. No proof is reloaded or recaptured. Cleanup continues after
 revocation and uses the same ownership journals and reservation settlement.
 
-Only `backend/mcpme/preparation_runner.py` changes production behavior, by one
+Only `backend/meecp/preparation_runner.py` changes production behavior, by one
 callback argument. No published CLI, agent, resolved-Python or ONNX component
 module, helper, historical recipe, signed asset or original app is modified.
 The final TextGen backend closure must be minted centrally after this change;

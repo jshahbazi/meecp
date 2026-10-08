@@ -10,9 +10,9 @@ import subprocess
 
 import pytest
 
-from mcpme import command_resource_execution_v1 as resource_execution
-from mcpme.command_resource_execution_v1 import CommandExecutionError, CommandResourceExecutorV1, CommandResourceSpecV1, _platform_policy
-from mcpme.command_resource_policy_v1 import ResourcePolicyV1
+from meecp import command_resource_execution_v1 as resource_execution
+from meecp.command_resource_execution_v1 import CommandExecutionError, CommandResourceExecutorV1, CommandResourceSpecV1, _platform_policy
+from meecp.command_resource_policy_v1 import ResourcePolicyV1
 
 ROOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.skipif(platform.system() != "Darwin" or platform.machine() != "arm64" or
@@ -29,7 +29,7 @@ def binaries(tmp_path_factory):
     package = root / "package"
     package.mkdir(mode=0o700)
     paths = (root / "helper", package / "target")
-    for source, output in zip(("scripts/mcpme-command-resource-reap.c", "tests/fixtures/command_resource_target.c"), paths):
+    for source, output in zip(("scripts/meecp-command-resource-reap.c", "tests/fixtures/command_resource_target.c"), paths):
         compiled = subprocess.run(["clang", "-Wall", "-Wextra", "-Werror", "-O2", str(ROOT / source), "-o", str(output)],
             capture_output=True, timeout=30)
         assert compiled.returncode == 0

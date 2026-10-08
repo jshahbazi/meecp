@@ -4,10 +4,10 @@ import uuid
 
 import pytest
 
-from mcpme.preparation_agent_adapter_store import CODE_PATH
-from mcpme.preparation_contracts import PreparationError, contract_digest
-from mcpme.preparation_forms import PreparationForms
-from mcpme.preparation_resolution import ResolutionRequestV1, result_from_files
+from meecp.preparation_agent_adapter_store import CODE_PATH
+from meecp.preparation_contracts import PreparationError, contract_digest
+from meecp.preparation_forms import PreparationForms
+from meecp.preparation_resolution import ResolutionRequestV1, result_from_files
 from test_preparation_agent_unlocked import foundation, analyzed
 
 
@@ -75,8 +75,8 @@ async def test_commit_uses_metadata_only_and_carries_exact_resolution(foundation
     def forbidden(*args,**kwargs):
         raise AssertionError("full_byte_validation_in_selection_transaction")
     with monkeypatch.context() as patch:
-        patch.setattr("mcpme.preparation_agent_unlocked_store.original_snapshot",forbidden)
-        patch.setattr("mcpme.preparation_agent_unlocked_store.read_resolution_inputs",forbidden)
+        patch.setattr("meecp.preparation_agent_unlocked_store.original_snapshot",forbidden)
+        patch.setattr("meecp.preparation_agent_unlocked_store.read_resolution_inputs",forbidden)
         committed = preparations.commit_descriptor_selection(checked,check_current=lambda:True)
     selected = preparations.cleanup_descriptor_selection(committed)
     assert selected["revision"] == 2 and selected["source"] == draft["source"] and not selected["attachment"]

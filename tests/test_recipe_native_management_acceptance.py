@@ -23,7 +23,7 @@ def native_recipe_driver(tmp_path_factory):
         return {path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in inputs}
     before = hashes()
     child = subprocess.Popen(["/usr/bin/swift", "build", "--package-path", str(root),
-        "--scratch-path", str(scratch), "-c", "release", "--product", "McpmeMenuBar"],
+        "--scratch-path", str(scratch), "-c", "release", "--product", "MeecpMenuBar"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         output, error = child.communicate(timeout=180)
@@ -33,7 +33,7 @@ def native_recipe_driver(tmp_path_factory):
         pytest.fail("native_recipe_compile_timeout", pytrace=False)
     if child.returncode != 0:
         pytest.fail("native_recipe_compile_failed", pytrace=False)
-    binary = scratch / "arm64-apple-macosx" / "release" / "McpmeMenuBar"
+    binary = scratch / "arm64-apple-macosx" / "release" / "MeecpMenuBar"
     assert binary.is_file()
     assert hashes() == before
     private_json(scratch / "native-build-receipt.json", {"schema_version": 1,
@@ -68,7 +68,7 @@ def file_identity(path):
     "wrong_nonce", "expired", "manager_replaced", "marker_hardlink", "fixture_mode",
     "symlink_folder", "claimed_nonce", "existing_output"])
 def test_compiled_driver_rejects_unowned_or_stale_fixture(native_recipe_driver, tmp_path, fault):
-    workspace = tmp_path.resolve() / ("mcpme-native-onboarding-" + str(uuid.uuid4()))
+    workspace = tmp_path.resolve() / ("meecp-native-onboarding-" + str(uuid.uuid4()))
     root = workspace / "native_management"
     state, folder, home, temporary = (root / name for name in ("state", "recipe", "home", "tmp"))
     for directory in (workspace, root, state, folder, home, temporary):
@@ -152,7 +152,7 @@ def test_compiled_context_checks_replay_and_same_byte_inode_substitution(native_
 
 
 def test_python_canonical_fixture_reaches_exact_once_claim(native_recipe_driver, tmp_path):
-    workspace = tmp_path.resolve() / ("mcpme-native-onboarding-" + str(uuid.uuid4()))
+    workspace = tmp_path.resolve() / ("meecp-native-onboarding-" + str(uuid.uuid4()))
     root = workspace / "native_management"
     state, home, temporary = (root / name for name in ("state", "home", "tmp"))
     for directory in (workspace, root, state, home, temporary):

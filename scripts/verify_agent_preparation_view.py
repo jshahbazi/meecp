@@ -9,12 +9,12 @@ import tempfile
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    with tempfile.TemporaryDirectory(prefix="mcpme-agent-view-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="meecp-agent-view-") as temporary:
         private = Path(temporary).resolve()
         source = private / "main.swift"
         source.write_text('import AppKit\nlet _ = NSApplication.shared\nexit(runAgentPreparationContractSelfTest() ? 0 : 1)\n')
         executable = private / "contract"
-        inputs = [root / "Sources/McpmeMenuBar" / name for name in (
+        inputs = [root / "Sources/MeecpMenuBar" / name for name in (
             "Brand.swift", "WorkspaceStyle.swift", "PreparationForms.swift", "ServiceConnectionView.swift", "PreparationResolution.swift", "AgentProviderSettingsView.swift", "AgentPreparationView.swift")]
         commands = [("compile", ["/usr/bin/swiftc", *map(str, inputs), str(source), "-o", str(executable)]),
                     ("handlers", [str(executable)])]

@@ -2,11 +2,11 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_release_artifact import verify_release_artifact
-from mcpme.preparation_release_policy import POLICY_PATH
-from mcpme.preparation_verifier import VerificationReport
-from mcpme.contracts import validate_package
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_release_artifact import verify_release_artifact
+from meecp.preparation_release_policy import POLICY_PATH
+from meecp.preparation_verifier import VerificationReport
+from meecp.contracts import validate_package
 from test_preparation_runner import controlled, foundation, group_reaper, started, finished
 from test_preparation_release_artifact import artifact
 from test_public_preparation_admission import legacy_admission
@@ -31,7 +31,7 @@ async def test_runner_command_probe_callback_rejects_held_release_mutation(contr
             self.check = check
         async def close(self): pass
         def confirm_completed(self): return True
-    monkeypatch.setattr('mcpme.preparation_command_owner.CommandPreparationOwner', ProbeOwner)
+    monkeypatch.setattr('meecp.preparation_command_owner.CommandPreparationOwner', ProbeOwner)
     async def verify(root, descriptor, workspace, *, timeout_seconds, owner):
         # Match the real verifier's full initial check, then change the held
         # artifact before using the exact callback wired by production _work.
@@ -83,7 +83,7 @@ async def test_actual_native_boundary_uses_runner_release_fence(native, controll
         def __init__(self, *args, check, **kwargs): self.check = check
         async def close(self): pass
         def confirm_completed(self): return True
-    monkeypatch.setattr('mcpme.preparation_command_owner.CommandPreparationOwner', ProbeOwner)
+    monkeypatch.setattr('meecp.preparation_command_owner.CommandPreparationOwner', ProbeOwner)
     async def verify(root, descriptor, workspace, *, timeout_seconds, owner):
         await runner._check_release()
         target = tmp_path / 'native-probe'
@@ -93,7 +93,7 @@ async def test_actual_native_boundary_uses_runner_release_fence(native, controll
         actual.check = owner.check
         final = actual.executor.before_native_create
         spawned = []
-        import mcpme.command_execution_v2 as execution
+        import meecp.command_execution_v2 as execution
         original_popen = execution.subprocess.Popen
         def popen(*args, **kwargs):
             spawned.append(True)

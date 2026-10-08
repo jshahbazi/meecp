@@ -5,8 +5,8 @@ import threading
 
 import pytest
 
-from mcpme.preparation_agent_host import AgentPreparationHost
-from mcpme.preparation_contracts import PreparationError
+from meecp.preparation_agent_host import AgentPreparationHost
+from meecp.preparation_contracts import PreparationError
 from test_preparation_agent_host import foundation, provider, handler_for, planned_start, completed
 
 
@@ -153,8 +153,8 @@ async def test_options_does_not_restore_a_job_from_another_revision(foundation, 
 
 async def test_actual_attachment_after_analysis_is_preserved_and_blocks_adoption(foundation, tmp_path):
     from pathlib import Path
-    from mcpme.contracts import validate_package
-    from test_mcpme_imports import prepared_for
+    from meecp.contracts import validate_package
+    from test_meecp_imports import prepared_for
     imports, _, store, draft, descriptor = foundation
     agent = AgentPreparationHost(store, tmp_path / "agent", providers=(provider(handler_for(descriptor)),), simulated_enabled=True)
     try:

@@ -5,8 +5,8 @@ import os
 from pathlib import Path
 import subprocess
 
-from mcpme.supervisor import Supervisor, management_app, HostServer, bind_listener
-from mcpme_local_transport import bind_private_listener
+from meecp.supervisor import Supervisor, management_app, HostServer, bind_listener
+from meecp_local_transport import bind_private_listener
 import uvicorn
 
 
@@ -87,7 +87,7 @@ async def test_actual_service_owner_native_creation(tmp_path):
     root = Path(__file__).resolve().parents[1]
     source = tmp_path / "main.swift"; source.write_text(SWIFT)
     executable = tmp_path / "native"
-    inputs = [root / "Sources/McpmeMenuBar" / name for name in ("Brand.swift", "WorkspaceStyle.swift", "PreparationForms.swift", "ServiceConnectionView.swift", "PreparationResolution.swift")]
+    inputs = [root / "Sources/MeecpMenuBar" / name for name in ("Brand.swift", "WorkspaceStyle.swift", "PreparationForms.swift", "ServiceConnectionView.swift", "PreparationResolution.swift")]
     inputs += list((root / "Sources/PrivateTransport").glob("*.swift"))
     compiled = await asyncio.to_thread(subprocess.run, ["/usr/bin/swiftc", *map(str, inputs), str(source), "-o", str(executable)],
         capture_output=True, timeout=90)
@@ -102,8 +102,8 @@ async def test_actual_service_owner_native_creation(tmp_path):
         async with asyncio.timeout(5):
             while not server.started: await asyncio.sleep(0.01)
         secret = host.secrets.create("Synthetic", "synthetic-native-credential")
-        from mcpme.preparation_service import references, descriptor, ServicePreparationFamily, validate_components
-        from mcpme.preparation_service_source import source as service_source
+        from meecp.preparation_service import references, descriptor, ServicePreparationFamily, validate_components
+        from meecp.preparation_service_source import source as service_source
         from test_service_source_contracts import connection
         selected = connection(); selected["endpoint"]["port"] = 12345
         selected.update({key: ref.model_dump() for key, ref in zip(("protocol","transport_auth","task"), references())})

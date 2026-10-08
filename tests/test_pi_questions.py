@@ -6,8 +6,8 @@ import uuid
 
 import pytest
 
-from mcpme.pi_questions import PiQuestionError, PiQuestions
-from mcpme.settings import SecretStore
+from meecp.pi_questions import PiQuestionError, PiQuestions
+from meecp.settings import SecretStore
 
 
 @pytest.fixture

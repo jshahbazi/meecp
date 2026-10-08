@@ -6,7 +6,7 @@ The source base is `1364ceaa1fdc349f5c41974ab4627bead3bf4d14`. The backend saved
 
 ## Native boundary
 
-`McpmeMenuBar --recipes-native-acceptance /absolute/case.json` accepts only a private fixture below a private workspace named `mcpme-native-onboarding-*`. Its state directory must be the fixture's sibling `state` directory. A fresh UUID nonce, short expiry, and exact manager-connection file identity must match the private marker issued by the trusted acceptance harness. The driver consumes the nonce through an exclusive private claim file.
+`MeecpMenuBar --recipes-native-acceptance /absolute/case.json` accepts only a private fixture below a private workspace named `meecp-native-onboarding-*`. Its state directory must be the fixture's sibling `state` directory. A fresh UUID nonce, short expiry, and exact manager-connection file identity must match the private marker issued by the trusted acceptance harness. The driver consumes the nonce through an exclusive private claim file.
 
 The fixture, marker, manager file, containing directories, and selected folder retain their observed identities. The driver checks current context before requests and mutations. Closed action and body allowlists restrict the driver to recipe add, inspect, refresh, enable, disable, deprecate, revoke, remove, and bounded ordinary generated-form inspection. It cannot start preparation, installation, a provider request, or model execution.
 

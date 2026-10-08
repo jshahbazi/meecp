@@ -1,6 +1,6 @@
-# mcpme artwork generation briefs
+# meecp artwork generation briefs
 
-Generated with the built-in ImageGen tool. These briefs describe brand artwork and contain no application request data.
+Generated with the built-in ImageGen tool. These historical briefs record the original artwork generation, including the former mcpme wordmark. The current program name is meecp; exact original prompts remain below to preserve provenance. They contain no application request data.
 
 ## Initial illustration
 
@@ -77,4 +77,16 @@ Image 2: TYPOGRAPHY REFERENCE ONLY, the original banner with the approved styliz
 Primary request: add the exact lowercase word "mcpme" to the empty LEFT side of Image 1, using precisely the rounded geometric dark green lettering style, scale, spacing, and placement from Image 2. The word should occupy the same quiet left area, to the left of all sculptural objects, vertically centered as in the original banner.
 Exact text: "mcpme". Five lowercase letters, in order m c p m e. No tagline or extra text.
 Constraints: change only the left negative space by adding this wordmark. Preserve Image 1's three pedestal sockets and every cable placement, the slightly taller cylindrical pedestal, m geometry and angle, all modules, bases, materials, colors, lighting, shadows, camera, background, margins, exact dimensions and composition. Do not restore any socket to the m. No watermark.
+```
+
+## meecp wordmark rename
+
+Edited with the built-in ImageGen tool on 2026-10-08. The current banner is `assets/brand/meecp-banner.png`, an opaque 1902 × 827 landscape image.
+
+```text
+Use case: text-localization.
+Asset type: meecp repository banner.
+Edit target: the original approved mcpme banner.
+Primary request: replace only the left wordmark mcpme with the exact lowercase word meecp: five letters, in order m e e c p. Keep the rounded bold dark forest green typography, scale, baseline, and placement.
+Constraints: preserve the cream background, lighting, green m sculpture and pedestal, green cube, lavender database, pale green cloud, all cables, materials, colors, and framing. Opaque landscape image.
 ```

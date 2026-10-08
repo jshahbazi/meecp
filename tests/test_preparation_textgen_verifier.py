@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from mcpme import preparation_textgen_verifier as verifier
-from mcpme.preparation_contracts import PreparationError
+from meecp import preparation_textgen_verifier as verifier
+from meecp.preparation_contracts import PreparationError
 from test_preparation_textgen import descriptor, draft
 
 

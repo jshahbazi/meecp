@@ -32,7 +32,7 @@ Forced real inference confirmed that each selected end token stops with EOS. A s
 
 ## Task and ownership contract
 
-[The private adapter](../backend/mcpme_textgen/adapter.py) accepts exactly `{"text": string, "max_output_tokens": integer}`. Text is nonempty UTF-8, at most 8,192 bytes, without structural ChatML markers. Output budget is 1–64. The result is exactly `{"text": string, "input_tokens": integer, "output_tokens": integer, "stop_reason": "eos" | "stop" | "length"}`. Counts include generated end tokens reported by this engine. The result contains no chain-of-thought, tool-call or structured-output guarantee.
+[The private adapter](../backend/meecp_textgen/adapter.py) accepts exactly `{"text": string, "max_output_tokens": integer}`. Text is nonempty UTF-8, at most 8,192 bytes, without structural ChatML markers. Output budget is 1–64. The result is exactly `{"text": string, "input_tokens": integer, "output_tokens": integer, "stop_reason": "eos" | "stop" | "length"}`. Counts include generated end tokens reported by this engine. The result contains no chain-of-thought, tool-call or structured-output guarantee.
 
 Errors contain only a fixed code: `invalid_request`, `input_limit`, `context_limit`, `queue_full`, `engine_unavailable`, `inference_failed`, `invalid_engine_response`, `output_limit` or `ownership_unsettled`. Transport bypasses proxies, rejects redirects and caps response bytes. Token lists reject booleans and out-of-vocabulary IDs. Completion must confirm full prompt evaluation, no truncation, a terminal stop and a matching output count.
 
@@ -48,7 +48,7 @@ Run from a locked development checkout:
 
 ```sh
 uv run --frozen python scripts/verify_phase3_llm.py --engine-build /absolute/path/to/JevK5.app --weights /absolute/path/to/qwen2.5-0.5b-instruct-q4_k_m.gguf --jevk5-weights /absolute/path/to/jevk5-4b-v0.3-Q8_0.gguf --report /absolute/path/to/ignored-report.json
-uv run --frozen pytest -q tests/test_text_generation.py tests/test_scorer.py tests/test_runtime.py tests/test_mcpme_model_imports.py tests/test_mcpme_model_service.py --tb=no
+uv run --frozen pytest -q tests/test_text_generation.py tests/test_scorer.py tests/test_runtime.py tests/test_meecp_model_imports.py tests/test_meecp_model_service.py --tb=no
 ```
 
 The harness acquires nothing. Supply exactly the pinned existing artifacts; it verifies their bytes before execution and emits only fixed stage/check labels, hashes and counts. The reported run passed all 11 actual checks and 100 focused regression tests. The source selection was recorded before this acceptance run. Initial development runs exposed a private-temp-path normalization issue and the engine's EOS suppression when `ignore_eos=True`; both harness assumptions were corrected before the passing run. Explicit EOS and ordinary stop cases now test the actual behaviors separately.
@@ -87,13 +87,13 @@ Reproduce the package checkpoint:
 
 ```sh
 uv run --frozen python scripts/verify_phase3_llm_installed.py --host /absolute/private-host --package /absolute/sealed-package --report /absolute/ignored-installed-report.json
-uv run --frozen python scripts/measure_phase3_llm_package.py --package /absolute/sealed-package --reaper /absolute/private-host/bin/mcpme-reap --report /absolute/ignored-memory-report.json
+uv run --frozen python scripts/measure_phase3_llm_package.py --package /absolute/sealed-package --reaper /absolute/private-host/bin/meecp-reap --report /absolute/ignored-memory-report.json
 ```
 
 The new adapter/service tests plus unchanged scorer/runtime/model-import/model-service regressions passed **107 tests**. Final A4 still requires trusted assets and exact recipe registration through managed preparation, native forms/build/probe/attachment, matching captured source/recipe receipts, restricted relocated execution, and independent integrated acceptance. Installed lifecycle and workload measurements narrow those remaining gates; they do not enable generic LLM preparation.
 ## Managed preparation integration slice
 
-The new `mcpme.preparation_textgen` family declares two closed component
+The new `meecp.preparation_textgen` family declares two closed component
 identities: `llamacpp-cpu-v1` and `text-generate-v1`. Its source bindings preserve
 the original folder/document snapshot and independently bind the captured
 model collection. The builder uses the durable runner's command and wheel
@@ -164,7 +164,7 @@ toolchain manifest, and hashes the complete result. Template virtual
 environments are excluded from both template copies.
 
 ```sh
-uv run --locked python scripts/build_mcpme_host.py --output /absolute/path/to/fresh-host --textgen-engine /absolute/path/to/JevK5.app/Contents/Resources
+uv run --locked python scripts/build_meecp_host.py --output /absolute/path/to/fresh-host --textgen-engine /absolute/path/to/JevK5.app/Contents/Resources
 uv run --locked python scripts/verify_phase3_textgen_managed.py --host /absolute/path/to/fresh-host --model /absolute/path/to/qwen2.5-0.5b-instruct-q4_k_m.gguf --source-mode captured --install-lifecycle
 ```
 

@@ -25,11 +25,11 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
-from build_mcpme_app import MACHO_MAGIC, sign_runtime, verify_signature
-from mcpme.model_intake import copy_artifact
-from mcpme.preparation_acquisition import WheelAcquirer
-from mcpme.preparation_builder import _runtime, load_private_toolchain
-from mcpme.preparation_textgen_signed_runtime import PROFILE
+from build_meecp_app import MACHO_MAGIC, sign_runtime, verify_signature
+from meecp.model_intake import copy_artifact
+from meecp.preparation_acquisition import WheelAcquirer
+from meecp.preparation_builder import _runtime, load_private_toolchain
+from meecp.preparation_textgen_signed_runtime import PROFILE
 from signed_textgen_asset import admit_archive, verify_signatures
 
 logging.disable(logging.CRITICAL)
@@ -112,8 +112,8 @@ def build(engine, toolchain_host, destination, archive, metadata):
     input_hashes = {name: digest(engine / name) for name in closure}
     producer_hashes = {name: digest(ROOT / name) for name in (
         "scripts/build_signed_textgen_runtime.py", "scripts/signed_textgen_asset.py",
-        "scripts/build_mcpme_app.py", "backend/mcpme/preparation_builder.py",
-        "backend/mcpme/preparation_textgen_signed_runtime.py")}
+        "scripts/build_meecp_app.py", "backend/meecp/preparation_builder.py",
+        "backend/meecp/preparation_textgen_signed_runtime.py")}
     for name, record in closure.items():
         copy_artifact(engine / name, None if name == "llama/llama-server" else runtime / name,
                       limit=128 * 1024**2, role="runtime-file", expected_sha256=record["sha256"], expected_size=record["bytes"])
@@ -207,7 +207,7 @@ def build(engine, toolchain_host, destination, archive, metadata):
                 "provenance_sha256": digest(metadata / "signed-runtime-provenance.json")}
     private_json(metadata / "signed-runtime.json", manifest)
     private_json(metadata / "engine-closure.json", signed_closure)
-    from mcpme.preparation_textgen_signed_runtime import manifest as read_manifest
+    from meecp.preparation_textgen_signed_runtime import manifest as read_manifest
     value = read_manifest(metadata)
     admit_archive(archive, value=value)
     verify_signatures(runtime, value)

@@ -6,13 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from mcpme.imports import ImportStore
-from mcpme.preparation_components import ComponentReference, parse_component_descriptor
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparations import PreparationStore
-from mcpme.preparation_runner import PreparationRunner
-from mcpme.preparation_verifier import VerificationReport
-from mcpme.recipes import RecipeStore
+from meecp.imports import ImportStore
+from meecp.preparation_components import ComponentReference, parse_component_descriptor
+from meecp.preparation_contracts import PreparationError
+from meecp.preparations import PreparationStore
+from meecp.preparation_runner import PreparationRunner
+from meecp.preparation_verifier import VerificationReport
+from meecp.recipes import RecipeStore
 from test_preparation_components import FakeNativeComponent, v2_descriptor
 from test_preparation_processes import group_reaper
 
@@ -95,7 +95,7 @@ async def test_global_runner_switch_does_not_admit_composite_family(composite, t
     store, draft, family, raw = composite
     value = parse_component_descriptor(raw)
     monkeypatch.setattr(store, "_bound_descriptor", lambda *args: (value, draft, {}))
-    monkeypatch.setattr("mcpme.preparation_runner.load_private_toolchain",
+    monkeypatch.setattr("meecp.preparation_runner.load_private_toolchain",
                         lambda *args: pytest.fail("denied family loaded execution inputs"))
     runner = PreparationRunner(store, tmp_path, tmp_path / "reaper", enabled=True)
     with pytest.raises(PreparationError, match="^preparation_family_unavailable$"):
@@ -132,7 +132,7 @@ async def test_specialist_verifier_receives_same_owned_process_boundary(composit
         return report
     expected_owner = owner
     family.verify = specialist
-    monkeypatch.setattr("mcpme.preparation_runner.verify_prepared_package",
+    monkeypatch.setattr("meecp.preparation_runner.verify_prepared_package",
                         lambda *args, **kwargs: pytest.fail("specialist fell through to stdio probe"))
     runner = PreparationRunner(store, tmp_path, tmp_path / "reaper", enabled=True,
                                enabled_families=(family.component.reference.key,))
@@ -151,7 +151,7 @@ async def test_nonstdio_family_requires_specialist_and_stdio_keeps_existing_prob
     family.target_profile = "mcp-stdio"
     async def stdio(*args, **kwargs):
         return "stdio-verifier"
-    monkeypatch.setattr("mcpme.preparation_runner.verify_prepared_package", stdio)
+    monkeypatch.setattr("meecp.preparation_runner.verify_prepared_package", stdio)
     assert await runner._verify(tmp_path, parse_component_descriptor(raw), tmp_path,
                                 timeout_seconds=1, owner=None) == "stdio-verifier"
     await runner.close()

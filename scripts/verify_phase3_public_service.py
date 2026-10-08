@@ -25,11 +25,11 @@ from verify_phase3_public_native_command import _json, signature
 
 require = common.require
 REFERENCES = (
-    ("openai-chat-completions-v1", "1.0.0", "01d9379a0ed5fdd9fc86e1b6aeb47465f153162af57157cfbd42f6644f338587"),
-    ("loopback-http-bearer-v1", "1.0.0", "2f93a9f9258fa5d2b6b9c854f9e828d2f43ceeb7f0108183759e9f428fbaa4dc"),
-    ("service-text-generate-v1", "1.0.0", "bc540561a87cba329d1d62d837596d6318a2d740fc4f6cf49b3eab95a9145d75"),
+    ("openai-chat-completions-v1", "1.0.0", "532b386405bc2f780cab626ea10d355d3f5602a7ac9be1622cd7f2f85990f46e"),
+    ("loopback-http-bearer-v1", "1.0.0", "7c7cd180ec08f8401c23c338464ae60e65f7428ef5a3f3f9e026f2cca246f62b"),
+    ("service-text-generate-v1", "1.0.0", "7894f9c2e54b1d40bb62a6e2e7cee4aeff3b02d5920fb966284d655739638fb5"),
 )
-RECIPE = ("mcpme.local-openai-text", "1.0.0", "579defab9a646d37f07eb92f2e6a2260ad1923477f1cadb96c46fc9edf6d28c3")
+RECIPE = ("mcpme.local-openai-text", "1.0.1", "44d2bcd08a26a5d15fb84959c9c88a2c4b3deef5a17dbe98b69346cd487392ff")
 POLICY_PATH = "templates/release-policies/phase3-v1.json"
 NATIVE_STAGES = common.NATIVE_STAGES | {"service_selection", "service_review_only"}
 NATIVE_ERRORS = frozenset({"service_native_context_stale", "native_acceptance_context_stale",
@@ -166,10 +166,10 @@ class PublicServiceHarness(common.Harness):
         return receipt
 
     async def case(self):
-        from mcpme.contracts import Tool, validate_package
-        from mcpme.preparation_service import references
-        from mcpme.preparation_service_receipts import parse_receipt
-        from mcpme.recipes import validate_bundle
+        from meecp.contracts import Tool, validate_package
+        from meecp.preparation_service import references
+        from meecp.preparation_service_receipts import parse_receipt
+        from meecp.recipes import validate_bundle
         require(tuple(ref.key for ref in references()) == REFERENCES, "public_service_component_mismatch")
         base, state, home, environment = self.new_case("service")
         child = await self.start(state, environment, home, enabled=False)
@@ -189,7 +189,7 @@ class PublicServiceHarness(common.Harness):
                     and job["reservation_retained"] is False and common.preparation_ownership_count(state) == 0,
                     "public_service_source_or_ownership_mismatch")
                 package_root = Path(draft["attachment"]["path"]); package = validate_package(package_root)
-                proof = parse_receipt((package_root / "mcpme.preparation.json").read_bytes())
+                proof = parse_receipt((common.receipt_path(package)).read_bytes())
                 require(proof.schema_version == 3 and proof.inputs.schema_version == 2
                     and proof.binding.source_revision == draft["source"]["revision"]
                     and proof.service_probe_grant_digest == job["service_probe_grant_digest"]
@@ -197,7 +197,7 @@ class PublicServiceHarness(common.Harness):
                     and package.digest == native["attached_package_digest"] == job["expected_package_digest"]
                     and job["verification"]["tools_checked"] == 2 and job["verification"]["fixtures_checked"] == 1,
                     "public_service_receipt_mismatch")
-                for name in ("service.json", "mcpme.preparation.json", "mcpme.package.json", "mcpme.lock.json"):
+                for name in ("service.json", *(path.name for path in package.metadata_paths), common.receipt_path(package).name):
                     data = (package_root / name).read_bytes()
                     require(secret["secret_id"].encode() not in data and credential.encode() not in data
                         and str(state).encode() not in data, "public_service_portability_mismatch")

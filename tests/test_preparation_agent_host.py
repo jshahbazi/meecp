@@ -11,13 +11,13 @@ import uuid
 import httpx
 import pytest
 
-from mcpme.preparation_agent_backend import OpenAIResponsesBackend
-from mcpme.preparation_agent_host import AgentPreparationHost, AgentProviderConfiguration, agent_preparation_routes
-from mcpme.preparation_contracts import PreparationError
-from mcpme.imports import ImportStore
-from mcpme.recipes import RecipeStore
-from mcpme.preparations import PreparationStore
-from test_mcpme_preparations import recipe_bundle, descriptor as synthetic_descriptor
+from meecp.preparation_agent_backend import OpenAIResponsesBackend
+from meecp.preparation_agent_host import AgentPreparationHost, AgentProviderConfiguration, agent_preparation_routes
+from meecp.preparation_contracts import PreparationError
+from meecp.imports import ImportStore
+from meecp.recipes import RecipeStore
+from meecp.preparations import PreparationStore
+from test_meecp_preparations import recipe_bundle, descriptor as synthetic_descriptor
 from test_preparation_agent import response, role_of, output
 
 
@@ -113,8 +113,8 @@ async def test_review_start_candidate_adoption_preserves_normal_preparation_auth
 
 
 async def test_authenticated_routes_preserve_host_origin_and_old_grant_denial(tmp_path):
-    from mcpme.supervisor import Supervisor, management_app
-    from mcpme.grants import read_credential
+    from meecp.supervisor import Supervisor, management_app
+    from meecp.grants import read_credential
     host = Supervisor(tmp_path / "actual-host", tmp_path / "unused-reaper")
     agent = AgentPreparationHost(host.preparations, tmp_path / "agent")
     owner, port = "synthetic-owner", 19886

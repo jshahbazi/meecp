@@ -12,17 +12,17 @@ import time
 import pytest
 import anyio
 
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_processes import PreparationExecutor
-from mcpme.processes import OwnershipLost
-from mcpme.processes import ProcessOwner
-from mcpme.processes import OwnedProcess
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_processes import PreparationExecutor
+from meecp.processes import OwnershipLost
+from meecp.processes import ProcessOwner
+from meecp.processes import OwnedProcess
 
 
 @pytest.fixture(scope="module")
 def group_reaper(tmp_path_factory):
-    output = tmp_path_factory.mktemp("preparation-reaper") / "mcpme-reap"
-    source = Path(__file__).resolve().parents[1] / "scripts/mcpme-reap.c"
+    output = tmp_path_factory.mktemp("preparation-reaper") / "meecp-reap"
+    source = Path(__file__).resolve().parents[1] / "scripts/meecp-reap.c"
     subprocess.run(["cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", str(source), "-o", str(output)],
                    check=True, capture_output=True)
     return output
@@ -221,7 +221,7 @@ def test_parent_sigkill_reaps_group_descendants(group_reaper, tmp_path):
     )
     helper.write_text("\n".join([
         "import asyncio,sys", "from pathlib import Path", "sys.path.insert(0," + repr(str(backend)) + ")",
-        "from mcpme.processes import ProcessOwner", "async def run():",
+        "from meecp.processes import ProcessOwner", "async def run():",
         "    owner=ProcessOwner(Path(" + repr(str(group_reaper)) + "))",
         "    process=await owner.launch(Path(sys.executable), ['-c'," + repr(target) + "],Path(" + repr(str(tmp_path)) + "),{},owned_group=True,stop_grace=0.05)",
         "    Path('wrapper').write_text(str(process.reaper_pid))", "    await asyncio.sleep(100)", "asyncio.run(run())",

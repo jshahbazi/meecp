@@ -8,9 +8,9 @@ import uuid
 
 import pytest
 
-from mcpme.preparation_command import CommandFamily, structural_schema
-from mcpme.preparation_components import SnapshotFile, SourceSnapshot, parse_component_descriptor
-from mcpme.preparation_contracts import PreparationError, canonical_bytes, contract_digest
+from meecp.preparation_command import CommandFamily, structural_schema
+from meecp.preparation_components import SnapshotFile, SourceSnapshot, parse_component_descriptor
+from meecp.preparation_contracts import PreparationError, canonical_bytes, contract_digest
 from test_preparation_command_source import image
 
 
@@ -61,7 +61,7 @@ def test_directory_questions_copy_builder_exact_source_closure(tmp_path):
     assert candidate.manifest.validation.fixtures[0].expected == {"ok": True}
     assert not candidate.manifest.configuration.fields
     assert {p.relative_to(candidate.root).as_posix() for p in candidate.root.rglob("*") if p.is_file()} == {
-        "mcpme.package.json", "mcpme.lock.json", *("source/" + item["path"] for item in draft["source"]["files"])}
+        "meecp.package.json", "meecp.lock.json", *("source/" + item["path"] for item in draft["source"]["files"])}
 
 
 @pytest.mark.parametrize("mutation", ["schema", "helper", "source", "effects", "args"])

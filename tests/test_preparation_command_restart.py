@@ -10,12 +10,12 @@ import time
 
 import pytest
 
-from mcpme.imports import ImportStore
-from mcpme.preparation_command import CommandFamily, component_catalog
-from mcpme.preparation_command_owner import recover_command_ownership
-from mcpme.preparation_runner import PreparationRunner
-from mcpme.preparations import PreparationStore
-from mcpme.recipes import RecipeStore
+from meecp.imports import ImportStore
+from meecp.preparation_command import CommandFamily, component_catalog
+from meecp.preparation_command_owner import recover_command_ownership
+from meecp.preparation_runner import PreparationRunner
+from meecp.preparations import PreparationStore
+from meecp.recipes import RecipeStore
 from test_host_command import native, digest, pytestmark
 from test_preparation_command_managed import intake
 from test_preparation_command_measured import measured_admission
@@ -23,13 +23,13 @@ from test_preparation_command_measured import measured_admission
 
 CHILD = '''import asyncio,os,sys,time
 from pathlib import Path
-from mcpme.contracts import validate_package
-from mcpme.host_command import HostCommandAdmission
-from mcpme.imports import ImportStore
-from mcpme.preparation_command import CommandFamily,component_catalog
-from mcpme.preparation_command_owner import CommandPreparationOwner,CommandPreparationResourceAdmission
-from mcpme.preparations import PreparationStore
-from mcpme.recipes import RecipeStore
+from meecp.contracts import validate_package
+from meecp.host_command import HostCommandAdmission
+from meecp.imports import ImportStore
+from meecp.preparation_command import CommandFamily,component_catalog
+from meecp.preparation_command_owner import CommandPreparationOwner,CommandPreparationResourceAdmission
+from meecp.preparations import PreparationStore
+from meecp.recipes import RecipeStore
 async def main():
  imports=ImportStore(Path(sys.argv[1]))
  recipes=RecipeStore(imports,component_catalog=component_catalog())

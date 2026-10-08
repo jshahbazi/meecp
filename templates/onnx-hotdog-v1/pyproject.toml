@@ -1,5 +1,5 @@
 [project]
-name = "mcpme-onnx-hotdog-runtime"
+name = "meecp-onnx-hotdog-runtime"
 version = "1.0.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [

@@ -2,7 +2,7 @@ import struct
 
 import pytest
 
-from mcpme.command_resource_policy_v1 import ResourcePolicyError, ResourcePolicyV1, ResourceReportV1
+from meecp.command_resource_policy_v1 import ResourcePolicyError, ResourcePolicyV1, ResourceReportV1
 
 
 @pytest.mark.parametrize("field,value", [("footprint_bytes", True), ("footprint_bytes", 0),

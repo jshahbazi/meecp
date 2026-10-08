@@ -8,7 +8,7 @@ import sys
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-import build_mcpme_host as builder
+import build_meecp_host as builder
 
 
 @pytest.mark.skipif(platform.system() != "Darwin" or platform.machine() != "arm64", reason="Requires Apple silicon signing tools")
@@ -22,10 +22,10 @@ def test_actual_compile_sign_and_resign_refresh_only_artifact_hash(tmp_path):
     before = json.loads(inventory.read_bytes())
     helper = tmp_path / before["helper"]
     assert before["helper_sha256"] == hashlib.sha256(helper.read_bytes()).hexdigest()
-    for key, relative in (("helper_source_sha256", "scripts/mcpme-command-resource-reap.c"),
-                          ("helper_header_sha256", "scripts/mcpme-command-resource-v1.h")):
+    for key, relative in (("helper_source_sha256", "scripts/meecp-command-resource-reap.c"),
+                          ("helper_header_sha256", "scripts/meecp-command-resource-v1.h")):
         assert before[key] == hashlib.sha256((builder.ROOT / relative).read_bytes()).hexdigest()
-    builder.run("/usr/bin/codesign", "--force", "--sign", "-", "--identifier", "local.mcpme.resource.packaging-check", str(helper))
+    builder.run("/usr/bin/codesign", "--force", "--sign", "-", "--identifier", "local.meecp.resource.packaging-check", str(helper))
     builder.run("/usr/bin/codesign", "--verify", "--strict", str(helper))
     assert hashlib.sha256(helper.read_bytes()).hexdigest() != before["helper_sha256"]
     builder.refresh_command_resource_inventory(tmp_path)

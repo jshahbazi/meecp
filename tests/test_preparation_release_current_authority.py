@@ -5,13 +5,13 @@ import uuid
 import httpx
 import pytest
 
-from mcpme.preparation_agent_backend import OpenAIResponsesBackend
-from mcpme.preparation_agent_host import AgentPreparationHost, _AdmittedBackend
-from mcpme.preparation_agent_providers import AgentProviderRegistry, OpenAIResponsesAdapter
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_release_artifact import verify_release_artifact
-from mcpme.preparation_release_policy import AgentExecutionAdmission, POLICY_PATH
-from mcpme.preparation_resolution import result_from_files
+from meecp.preparation_agent_backend import OpenAIResponsesBackend
+from meecp.preparation_agent_host import AgentPreparationHost, _AdmittedBackend
+from meecp.preparation_agent_providers import AgentProviderRegistry, OpenAIResponsesAdapter
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_release_artifact import verify_release_artifact
+from meecp.preparation_release_policy import AgentExecutionAdmission, POLICY_PATH
+from meecp.preparation_resolution import result_from_files
 from test_preparation_release_artifact import artifact
 from test_preparation_agent_adapter import adapter_foundation
 from test_preparation_agent_host import completed
@@ -23,7 +23,7 @@ from test_preparation_agent_public_resolution import public_request
 
 def mutate(artifact, damage):
     app, host, policy, *_ = artifact
-    path = policy if damage == "policy" else app/"Contents/_CodeSignature/CodeResources" if damage == "seal" else host/"backend/mcpme/preparation_release_artifact.py"
+    path = policy if damage == "policy" else app/"Contents/_CodeSignature/CodeResources" if damage == "seal" else host/"backend/meecp/preparation_release_artifact.py"
     path.write_bytes(b"changed synthetic artifact")
 
 

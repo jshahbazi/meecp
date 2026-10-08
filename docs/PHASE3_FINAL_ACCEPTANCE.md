@@ -136,7 +136,7 @@ Current live/CLI/TextGen/lifecycle receipts independently close their selected w
 Independent input checks establish unchanged host Python bytes, all 162 effective
 requirements and nonartifact toolchain metadata. Among 33 changed host Mach-O
 members, 32 loadable bodies match with CMS excluded. The newly compiled
-host/bin/mcpme-handoff loadable body differs even when UUID is masked.
+host/bin/meecp-handoff loadable body differs even when UUID is masked.
 Therefore the signed v9 full 4,223-test Python/27 actual host-opt-in receipt is transferred
 only for unchanged code scope with independently verified inputs. It does not
 become a v10 full-suite/27-opt-in replay or prove complete host/bundle byte identity.

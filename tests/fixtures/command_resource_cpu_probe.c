@@ -8,7 +8,7 @@
 #include <sys/resource.h>
 #include <time.h>
 #include <unistd.h>
-#include "../../scripts/mcpme-command-resource-v1.h"
+#include "../../scripts/meecp-command-resource-v1.h"
 
 static uint64_t ns(struct timespec value) { return (uint64_t)value.tv_sec * 1000000000 + value.tv_nsec; }
 int main(void) {

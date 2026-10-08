@@ -11,14 +11,14 @@ import time
 
 import pytest
 
-from mcpme.host_command import CommandSession, HostCommandAdmission
-from mcpme.command_execution_v2 import CommandExecutionError
-from mcpme.preparation_command_owner import CommandPreparationOwner, recover_command_ownership
-from mcpme.preparation_command_verifier import verify_command_package
-from mcpme.preparation_components import parse_component_descriptor
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_contracts import canonical_bytes
-from mcpme.private import read_private_json, write_private_json
+from meecp.host_command import CommandSession, HostCommandAdmission
+from meecp.command_execution_v2 import CommandExecutionError
+from meecp.preparation_command_owner import CommandPreparationOwner, recover_command_ownership
+from meecp.preparation_command_verifier import verify_command_package
+from meecp.preparation_components import parse_component_descriptor
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_contracts import canonical_bytes
+from meecp.private import read_private_json, write_private_json
 from test_host_command import native, digest, pytestmark
 from test_preparation_command import selected
 
@@ -26,7 +26,7 @@ from test_preparation_command import selected
 @pytest.mark.asyncio
 async def test_canceled_transport_setup_transfers_fd_before_await(monkeypatch):
     from types import SimpleNamespace
-    from mcpme.preparation_command_verifier import command_transport
+    from meecp.preparation_command_verifier import command_transport
     service = SimpleNamespace(sessions={})
     package = SimpleNamespace(manifest=SimpleNamespace(lifecycle=SimpleNamespace(max_request_bytes=65536)))
     handle = CommandSession(service, None, package, publication_check=lambda: True)
@@ -241,10 +241,10 @@ async def test_actual_host_sigkill_recovery_requires_native_publication(tmp_path
     workspace.mkdir(mode=0o700)
     script = '''import asyncio,json,os,sys,time
 from pathlib import Path
-from mcpme.contracts import validate_package
-from mcpme.host_command import HostCommandAdmission
-from mcpme.preparation_components import parse_component_descriptor
-from mcpme.preparation_command_owner import CommandPreparationOwner
+from meecp.contracts import validate_package
+from meecp.host_command import HostCommandAdmission
+from meecp.preparation_components import parse_component_descriptor
+from meecp.preparation_command_owner import CommandPreparationOwner
 class Store:
  def get(self,job): return {"binding":{"import_id":"fixture","revision":1}}
  def check_authority(self,job): pass

@@ -22,8 +22,8 @@ if not ASSETS.is_dir():
 sys.path[:0] = [str(ROOT / "backend"), str(ASSETS / "backend"), str(ASSETS / "vendor")]
 
 from jevk5_app.server import make_app
-from mcpme.contracts import validate_package
-from mcpme.model_intake import (ENGINE_BUILD, MAX_ENGINE_BYTES, MAX_METADATA_BYTES, MAX_WEIGHT_BYTES,
+from meecp.contracts import validate_package
+from meecp.model_intake import (ENGINE_BUILD, MAX_ENGINE_BYTES, MAX_METADATA_BYTES, MAX_WEIGHT_BYTES,
                                 MODEL, PROFILE, canonical_digest, copy_artifact, engine_records)
 
 
@@ -74,7 +74,7 @@ def exported_snapshot(export: dict, destination: Path) -> None:
                 or type(record["size"]) is not int or record["size"] < 0 or type(record["executable"]) is not bool):
             raise ValueError("invalid_source_file_list")
         relative, role = record["path"], record["role"]
-        from mcpme.contracts import package_relative_path
+        from meecp.contracts import package_relative_path
         package_relative_path(relative)
         if relative in seen or role not in {"model-weights", "runtime-file", "receipt", "license"}:
             raise ValueError("invalid_source_file_list")
@@ -135,7 +135,7 @@ def prepare(destination: Path, legacy: Path | None, host: Path, setup_export: Pa
         if setup_export.stat().st_size > 1024 * 1024:
             raise ValueError("invalid_setup_export")
         export = json.loads(setup_export.read_bytes())
-        inputs = tempfile.TemporaryDirectory(prefix="mcpme-jevk5-inputs-", dir=destination.parent)
+        inputs = tempfile.TemporaryDirectory(prefix="meecp-jevk5-inputs-", dir=destination.parent)
         try:
             exported_snapshot(export, Path(inputs.name))
         except BaseException:
@@ -154,9 +154,9 @@ def prepare(destination: Path, legacy: Path | None, host: Path, setup_export: Pa
     destination.mkdir(parents=True)
     ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
     shutil.copytree(host / "python", destination / "python", symlinks=False, ignore=ignore)
-    for name in ("jevk5_app", "mcpme_jevk5"):
+    for name in ("jevk5_app", "meecp_jevk5"):
         shutil.copytree(ASSETS / "backend" / name, destination / "backend" / name, ignore=ignore)
-    shutil.copyfile(ASSETS / "backend/mcpme_local_transport.py", destination / "backend/mcpme_local_transport.py")
+    shutil.copyfile(ASSETS / "backend/meecp_local_transport.py", destination / "backend/meecp_local_transport.py")
     shutil.copytree(ASSETS / "vendor", destination / "vendor", ignore=ignore)
     shutil.copytree(resources / "llama", destination / "llama", ignore=ignore)
     # The old fixed-name reaper is intentionally absent: the host owns the real engine.
@@ -219,10 +219,10 @@ def prepare(destination: Path, legacy: Path | None, host: Path, setup_export: Pa
         "resources": {"memory_mb": 8192, "cpu_only": False, "gpu": True},
         "licenses": ["THIRD_PARTY_NOTICES.md", "vendor/jevk5/LICENSE", *[str(p.relative_to(destination))
                      for p in sorted((destination / "licenses").rglob("*")) if p.is_file()]]}
-    (destination / "mcpme.package.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    (destination / "meecp.package.json").write_text(json.dumps(manifest, indent=2) + "\n")
     artifacts = []
     for path in sorted(destination.rglob("*")):
-        if not path.is_file() or path.name == "mcpme.package.json":
+        if not path.is_file() or path.name == "meecp.package.json":
             continue
         relative = str(path.relative_to(destination))
         source = revision
@@ -236,13 +236,13 @@ def prepare(destination: Path, legacy: Path | None, host: Path, setup_export: Pa
                           "provenance": "Verified local build; original engine hashes in runtime-manifest.json; dependencies in uv.lock.",
                           "license": license})
     lock = {"schema_version": 1, "package_id": "local.jevk5", "version": "1.0.0",
-            "manifest_sha256": digest(destination / "mcpme.package.json"), "artifacts": artifacts,
+            "manifest_sha256": digest(destination / "meecp.package.json"), "artifacts": artifacts,
             "build": {"recipe": "scripts/prepare_jevk5_package.py: verified pinned model and relocated runtime, private Python, native exec launchers",
-                      "builder": "mcpme JevK5 package v1", "toolchain": run("/usr/bin/cc", "--version").splitlines()[0]}}
-    (destination / "mcpme.lock.json").write_text(json.dumps(lock, separators=(",", ":")) + "\n")
+                      "builder": "meecp JevK5 package v1", "toolchain": run("/usr/bin/cc", "--version").splitlines()[0]}}
+    (destination / "meecp.lock.json").write_text(json.dumps(lock, separators=(",", ":")) + "\n")
     package = validate_package(destination)
     if export is not None:
-        from mcpme.imports import _model_return
+        from meecp.imports import _model_return
         # A version probe/build cannot silently alter the selected runtime and
         # then describe the edited bytes as the draft's original artifacts.
         _model_return(export, package)
@@ -256,7 +256,7 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--legacy-app", type=Path)
     parser.add_argument("--setup-export", type=Path)
-    parser.add_argument("--host", type=Path, default=ROOT / "dist/mcpme-host")
+    parser.add_argument("--host", type=Path, default=ROOT / "dist/meecp-host")
     args = parser.parse_args()
     try:
         package = prepare(args.output.absolute(), args.legacy_app.absolute() if args.legacy_app else None,

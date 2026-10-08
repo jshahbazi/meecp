@@ -9,7 +9,7 @@ import sys
 import pytest
 
 from test_management_workflow_grants import workflow, issued, start
-from test_mcpme_preparations import foundation
+from test_meecp_preparations import foundation
 
 
 @pytest.fixture
@@ -55,8 +55,8 @@ def test_explicit_closed_policy_has_exact_python_closure(driver, policy):
 
 
 def test_actual_current_policy_has_exact_python_closure_and_reviewed_agent(driver, tmp_path, monkeypatch):
-    from mcpme.preparation_agent_providers import OpenAIResponsesAdapter
-    from mcpme.preparation_release_policy import ReleasePolicy
+    from meecp.preparation_agent_providers import OpenAIResponsesAdapter
+    from meecp.preparation_release_policy import ReleasePolicy
     source = Path(__file__).resolve().parents[1] / "templates/release-policies/phase3-v1.json"
     data = source.read_bytes(); value = json.loads(data)
     target = tmp_path / driver.POLICY_PATH
@@ -97,7 +97,7 @@ def test_selected_policy_rejects_any_unreviewed_agent_authority(driver, tmp_path
 
 
 def test_typed_policy_requires_current_adapter_without_constructing_provider(driver, monkeypatch):
-    from mcpme.preparation_agent_providers import OpenAIResponsesAdapter
+    from meecp.preparation_agent_providers import OpenAIResponsesAdapter
     source = Path(__file__).resolve().parents[1] / "templates/release-policies/phase3-v1.json"
     before = source.read_bytes()
     monkeypatch.setattr(OpenAIResponsesAdapter, "digest", property(lambda _: "0" * 64))
@@ -151,10 +151,10 @@ def test_capabilities_require_actual_public_host_admission(driver, fault):
 
 @pytest.mark.parametrize("fault", [None, "command", "credential", "state", "environment", "extra-server"])
 def test_export_pins_actual_shipped_command_state_and_credential(driver, tmp_path, fault):
-    launcher, state, credential = (tmp_path / name for name in ("mcpme", "state", "credential"))
+    launcher, state, credential = (tmp_path / name for name in ("meecp", "state", "credential"))
     configuration = {"command": str(launcher), "args": ["--state-dir", str(state), "--credential-file",
         str(credential), "management", "connect"]}
-    value = {"configuration": {"mcpServers": {"mcpme-management": configuration}}}
+    value = {"configuration": {"mcpServers": {"meecp-management": configuration}}}
     if fault == "command": configuration["command"] = "/usr/bin/python3"
     elif fault == "credential": configuration["args"][3] = str(tmp_path / "other")
     elif fault == "state": configuration["args"][1] = str(tmp_path / "other")
@@ -172,14 +172,14 @@ async def test_actual_bundled_export_reaches_exact_native_sdk_entrypoint(driver,
     from contextlib import asynccontextmanager
     import uuid
     import mcp.client.stdio as transport
-    from mcpme import __main__ as cli
-    from mcpme.private import write_private_json
+    from meecp import __main__ as cli
+    from meecp.private import write_private_json
 
     app = tmp_path / app_name
     host = app / "Contents/Resources/host"
-    module = host / "backend/mcpme/__main__.py"
-    native = app / "Contents/MacOS/mcpme"
-    launcher = host / "bin/mcpme"
+    module = host / "backend/meecp/__main__.py"
+    native = app / "Contents/MacOS/meecp"
+    launcher = host / "bin/meecp"
     for path in (module, native, launcher):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("Synthetic location fixture.\n")
@@ -314,18 +314,18 @@ def test_real_persisted_binding_projection_never_accepts_owner_fallback_or_plan_
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fault", [None, "form", "resolution", "recipe", "component", "plan", "job", "unknown-tool"])
 async def test_static_mcp_review_requires_real_shipped_recipe_shape_and_no_jobs(driver, harness, monkeypatch, fault):
-    from mcpme.management import operations
-    from mcpme.recipes import validate_bundle
-    builtin = Path(__file__).resolve().parents[1] / "templates/builtin-recipes/python-callable-v1"
+    from meecp.management import operations
+    from meecp.recipes import validate_bundle
+    builtin = Path(__file__).resolve().parents[1] / "templates/builtin-recipes/python-callable-v1-0-1"
     checked = validate_bundle(builtin)
-    recipe = {**checked, "recipe_id": checked["manifest"]["id"], "version": "1.0.0", "state": "enabled", "revoked": False}
+    recipe = {**checked, "recipe_id": checked["manifest"]["id"], "version": checked["manifest"]["version"], "state": "enabled", "revoked": False}
     reference = {"id": recipe["recipe_id"], "version": recipe["version"], "digest": recipe["digest"]}
     form = {"execution_available": fault != "form", "resolution_required": fault == "resolution", "recipe": reference,
         "candidate_id": "a" * 64, "form_digest": "b" * 64, "fields": []}
     if fault == "recipe": recipe["state"] = "disabled"
     elif fault == "component": recipe["manifest"]["steps"][0]["digest"] = "d" * 64
     tools = [item.tool for item in operations().values()]
-    if fault == "unknown-tool": tools.append(SimpleNamespace(name="mcpme_authorize", inputSchema={"additionalProperties": False}))
+    if fault == "unknown-tool": tools.append(SimpleNamespace(name="meecp_authorize", inputSchema={"additionalProperties": False}))
     class Session:
         async def list_tools(self): return SimpleNamespace(tools=tools)
     denied, calls = [], []
@@ -333,21 +333,21 @@ async def test_static_mcp_review_requires_real_shipped_recipe_shape_and_no_jobs(
         calls.append(name)
         if error:
             denied.append((name, error)); return {}
-        if name == "mcpme_capabilities": return capability(driver)
-        if name == "mcpme_create_import": return {"draft_id": "draft", "revision": 1}
-        if name == "mcpme_get_preparation_form": return form
-        if name == "mcpme_get_recipe": return recipe
-        if name == "mcpme_plan_preparation_form":
+        if name == "meecp_capabilities": return capability(driver)
+        if name == "meecp_create_import": return {"draft_id": "draft", "revision": 1}
+        if name == "meecp_get_preparation_form": return form
+        if name == "meecp_get_recipe": return recipe
+        if name == "meecp_plan_preparation_form":
             return {"execution_available": fault != "plan", "blockers": [], "plan_id": "plan", "plan_digest": "c" * 64}
-        if name == "mcpme_list_preparations": return {"preparations": [{}] if fault == "job" else []}
-        if name == "mcpme_list_resolutions": return {"resolutions": []}
+        if name == "meecp_list_preparations": return {"preparations": [{}] if fault == "job" else []}
+        if name == "meecp_list_resolutions": return {"resolutions": []}
         return {}
     monkeypatch.setattr(harness, "invoke", invoke)
     if fault is None:
         draft, plan = await harness.review(Session(), Path("/synthetic-source"))
         assert plan["plan_id"] == "plan" and draft["revision"] == 1
-        assert denied == [("mcpme_start_preparation", "grant_scope"), ("mcpme_enable_recipe", "grant_scope"),
-            ("mcpme_apply_install", "grant_scope")]
+        assert denied == [("meecp_start_preparation", "grant_scope"), ("meecp_enable_recipe", "grant_scope"),
+            ("meecp_apply_install", "grant_scope")]
     else:
         with pytest.raises(driver.common.AcceptanceError): await harness.review(Session(), Path("/synthetic-source"))
         assert not denied
@@ -357,7 +357,7 @@ async def test_static_mcp_review_requires_real_shipped_recipe_shape_and_no_jobs(
 async def test_closed_release_fails_before_signature_or_start_without_input_mutation(driver, policy, tmp_path, monkeypatch):
     app = tmp_path / "Closed.app"
     host = app / "Contents/Resources/host"; host.mkdir(parents=True)
-    native = app / "Contents/MacOS/mcpme"; native.parent.mkdir(parents=True); native.write_bytes(b"metadata fixture")
+    native = app / "Contents/MacOS/meecp"; native.parent.mkdir(parents=True); native.write_bytes(b"metadata fixture")
     target = host / driver.POLICY_PATH; target.parent.mkdir(parents=True)
     policy.value["preparation"]["recipe_component_sets"] = []
     target.write_text(json.dumps(policy.value))
@@ -402,7 +402,7 @@ async def test_actual_silent_sdk_child_times_out_and_original_transport_handle_j
     monkeypatch.setattr(driver, "SDK_SESSION_SECONDS", 1.5)
     state, credential = tmp_path / "state", tmp_path / "credential"
     async def cli(*args):
-        return {"configuration": {"mcpServers": {"mcpme-management": {"command": str(launcher),
+        return {"configuration": {"mcpServers": {"meecp-management": {"command": str(launcher),
             "args": ["--state-dir", str(state), "--credential-file", str(credential), "management", "connect"]}}}}
     monkeypatch.setattr(harness, "cli", cli)
     caught = None
@@ -436,7 +436,7 @@ async def test_actual_early_exit_is_not_reclassified_as_a_fired_sdk_timeout(driv
     monkeypatch.setattr(driver, "SDK_SESSION_SECONDS", 8)
     state, credential = tmp_path / "state", tmp_path / "credential"
     async def cli(*args):
-        return {"configuration": {"mcpServers": {"mcpme-management": {"command": str(launcher),
+        return {"configuration": {"mcpServers": {"meecp-management": {"command": str(launcher),
             "args": ["--state-dir", str(state), "--credential-file", str(credential), "management", "connect"]}}}}
     monkeypatch.setattr(harness, "cli", cli)
     caught = None
@@ -469,7 +469,7 @@ async def test_pending_prelaunch_journal_never_counts_as_a_started_probe(driver,
     monkeypatch.setattr(driver, "probe_entry", pending)
     with pytest.raises(driver.common.AcceptanceError, match="^management_slow_worker_not_observed$"):
         await harness.wait_job(tmp_path, {}, tmp_path, identifier, owned=True,
-            observation=(object(), object(), (1, 2, 3, 4, 5), "mcpme-probe-" + "a" * 32))
+            observation=(object(), object(), (1, 2, 3, 4, 5), "meecp-probe-" + "a" * 32))
     assert len(scans) == 1 and "probe_entry_witness" not in harness.report
 
 
@@ -478,7 +478,7 @@ async def test_actual_owned_process_chain_entry_marker_and_original_handles_join
     import asyncio
     import subprocess
     import uuid
-    marker = "mcpme-probe-" + uuid.uuid4().hex
+    marker = "meecp-probe-" + uuid.uuid4().hex
     probe = ("import ctypes,sys\napi=ctypes.CDLL('/usr/lib/libSystem.B.dylib')\n"
         "api.pthread_setname_np.argtypes=[ctypes.c_char_p]\napi.pthread_setname_np.restype=ctypes.c_int\n"
         "assert api.pthread_setname_np(" + repr(marker.encode()) + ")==0\nsys.stdin.buffer.read()\n")
@@ -500,7 +500,7 @@ async def test_actual_owned_process_chain_entry_marker_and_original_handles_join
                 witness = driver.probe_entry(reader, manager, identity, executable, executable, marker)
                 await asyncio.sleep(.02)
         assert witness["probe"][1] == witness["reaper"][0] and witness["reaper"][1] == manager.pid
-        assert driver.probe_entry(reader, manager, identity, executable, executable, "mcpme-probe-" + "0" * 32) is None
+        assert driver.probe_entry(reader, manager, identity, executable, executable, "meecp-probe-" + "0" * 32) is None
         assert driver.probe_entry(reader, manager, identity, tmp_path / "wrong-reaper", executable, marker) is None
         assert driver.probe_entry(reader, manager, identity, executable, tmp_path / "wrong-interpreter", marker) is None
         with pytest.raises(driver.common.AcceptanceError):
@@ -531,4 +531,4 @@ def test_marker_scan_rechecks_full_start_and_path_chain(driver, fault):
         def children(self, pid): return {10: [20], 20: [30]}[pid]
         def tagged(self, pid, marker): self.changed = True; return True
     with pytest.raises(driver.common.AcceptanceError, match="^management_probe_identity_changed$"):
-        driver.probe_entry(Reader(), manager, baseline, Path(paths[20]), Path(paths[30]), "mcpme-probe-" + "a" * 32)
+        driver.probe_entry(Reader(), manager, baseline, Path(paths[20]), Path(paths[30]), "meecp-probe-" + "a" * 32)

@@ -12,14 +12,14 @@ import tarfile
 
 import pytest
 
-from mcpme import preparation_textgen_signed_runtime as runtime
-from mcpme.preparation_contracts import PreparationError
+from meecp import preparation_textgen_signed_runtime as runtime
+from meecp.preparation_contracts import PreparationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import signed_textgen_asset as assets
-import build_mcpme_app as app_builder
-import build_mcpme_host as host_builder
-import build_mcpme_dmg as dmg_builder
+import build_meecp_app as app_builder
+import build_meecp_host as host_builder
+import build_meecp_dmg as dmg_builder
 from test_distribution_signing import closed_release_source
 
 

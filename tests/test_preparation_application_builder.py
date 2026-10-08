@@ -10,12 +10,12 @@ import stat
 
 import pytest
 
-from mcpme.imports import ImportStore
-from mcpme.preparation_application_builder import copy_application_snapshot
-from mcpme import preparation_application_builder as adapter
-from mcpme.preparation_application_source import read_application_snapshot
-from mcpme.preparation_builder import prepare_bound
-from mcpme.preparation_contracts import PreparationError
+from meecp.imports import ImportStore
+from meecp.preparation_application_builder import copy_application_snapshot
+from meecp import preparation_application_builder as adapter
+from meecp.preparation_application_source import read_application_snapshot
+from meecp.preparation_builder import prepare_bound
+from meecp.preparation_contracts import PreparationError
 from test_preparation_builder import (
     acquire, draft_and_descriptor, stub_runner, synthetic_license_pins, toolchain,
 )

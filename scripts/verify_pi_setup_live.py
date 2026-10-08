@@ -40,7 +40,7 @@ CASES = {
             "and records fields exactly. Build a self-contained Node package with its own Node runtime, a pinned npm "
             "lockfile and installed dependency closure. Test quoted commas, quoted newlines and Unicode fields. "
             "No credentials or runtime user configuration are needed.",
-        "files": {"package.json": json.dumps({"name": "mcpme-synthetic-csv", "version": "1.0.0", "private": True,
+        "files": {"package.json": json.dumps({"name": "meecp-synthetic-csv", "version": "1.0.0", "private": True,
             "type": "module", "dependencies": {"csv-parse": "^6.0.0"}}, indent=2) + "\n",
             "parse-csv.mjs": "import { parse } from 'csv-parse/sync';\n"
                 "export function parse_csv(csv) {\n"
@@ -108,7 +108,7 @@ def key_from_file(path):
 def bundled_host(path):
     root = path.resolve(strict=True)
     require(root.is_dir(), "acceptance_host_missing")
-    for name in ("bin/mcpme-reap", "backend/mcpme/pi_setup.py", "templates/pi_package.py",
+    for name in ("bin/meecp-reap", "backend/meecp/pi_setup.py", "templates/pi_package.py",
                  "pi-runtime/inventory.json", "pi-runtime/bin/node", "pi-runtime/worker.mjs"):
         require((root / name).is_file(), "acceptance_host_incomplete")
     require((root / "python/site-packages").is_dir(), "acceptance_host_incomplete")
@@ -152,8 +152,8 @@ async def acceptance(args):
     bundle = bundled_host(args.host_root)
     # Exercise the supplied built host, rather than a newer checkout's modules.
     sys.path[:0] = [str(bundle / "backend"), str(bundle / "python/site-packages")]
-    from mcpme.supervisor import Supervisor
-    from mcpme.private import ensure_private_directory
+    from meecp.supervisor import Supervisor
+    from meecp.private import ensure_private_directory
 
     parent = args.run_root.resolve()
     parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -165,7 +165,7 @@ async def acceptance(args):
     source = synthetic_source(base, args.case)
     host, job_id, cleanup_failed = None, None, False
     try:
-        host = Supervisor(base / "state", bundle / "bin/mcpme-reap")
+        host = Supervisor(base / "state", bundle / "bin/meecp-reap")
         await host.initialize()
         key = key_from_file(args.key_file)
         try:

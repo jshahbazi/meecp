@@ -28,11 +28,11 @@ sys.path.insert(0, str(ROOT / "backend"))
 sys.dont_write_bytecode = True
 logging.disable(logging.CRITICAL)
 
-from mcpme.contracts import validate_package
-from mcpme.processes import ProcessOwner
-from mcpme_textgen.adapter import LoopbackTransport, render_prompt
-from mcpme_textgen.fixture import file_hash
-from mcpme_textgen.service import model_declaration
+from meecp.contracts import validate_package
+from meecp.processes import ProcessOwner
+from meecp_textgen.adapter import LoopbackTransport, render_prompt
+from meecp_textgen.fixture import file_hash
+from meecp_textgen.service import model_declaration
 
 
 def require(value):
@@ -51,7 +51,7 @@ async def verify(args, report):
     source = args.package.resolve()
     package_identity = validate_package(source)
     report["package_digest"] = package_identity.digest
-    root = Path(tempfile.mkdtemp(prefix="mcpme-text-memory-")).resolve()
+    root = Path(tempfile.mkdtemp(prefix="meecp-text-memory-")).resolve()
     owner = ProcessOwner(args.reaper.resolve())
     engine = adapter = None
     try:

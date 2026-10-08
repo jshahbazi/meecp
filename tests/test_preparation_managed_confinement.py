@@ -11,15 +11,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from mcpme.contracts import MAX_ARTIFACTS, validate_package
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_onnx import OnnxPreparationFamily
-from mcpme.preparation_probe_confinement import ProbeConfinementV1
-from mcpme.preparation_resolved_python import ResolvedPythonFamily
-from mcpme.preparation_runner import PreparationRunner
-from mcpme.preparation_verifier import _ProbeLaunchIdentity, verify_prepared_package
-from test_mcpme_packages import edit_manifest
-from test_mcpme_preparations import foundation
+from meecp.contracts import MAX_ARTIFACTS, validate_package
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_onnx import OnnxPreparationFamily
+from meecp.preparation_probe_confinement import ProbeConfinementV1
+from meecp.preparation_resolved_python import ResolvedPythonFamily
+from meecp.preparation_runner import PreparationRunner
+from meecp.preparation_verifier import _ProbeLaunchIdentity, verify_prepared_package
+from test_meecp_packages import edit_manifest
+from test_meecp_preparations import foundation
 from test_preparation_processes import group_reaper
 from test_preparation_probe_confinement import _lock_all, _private_fixture, private_runtime
 from test_preparation_runner import controlled, finished, started
@@ -41,7 +41,7 @@ async def test_managed_common_selection_is_host_owned(monkeypatch, tmp_path, fam
     async def selected(*args, **kwargs):
         received.append(kwargs)
         return "checked"
-    monkeypatch.setattr("mcpme.preparation_runner.verify_prepared_package", selected)
+    monkeypatch.setattr("meecp.preparation_runner.verify_prepared_package", selected)
     assert await runner._verify(tmp_path, descriptor, tmp_path, timeout_seconds=1, owner=None) == "checked"
     assert received == [{"timeout_seconds": 1, "owner": None, "confine_private_python": True}]
     runner.enabled = False
@@ -88,7 +88,8 @@ def test_probe_graph_flag_is_trusted_exact_boolean(tmp_path, value):
 
 
 def test_metadata_guard_enforces_file_membership_cap_before_stat(tmp_path, monkeypatch):
-    package = SimpleNamespace(root=tmp_path / "package", lock=SimpleNamespace(
+    package = SimpleNamespace(root=tmp_path / "package", metadata_paths=(
+        tmp_path / "package/meecp.package.json", tmp_path / "package/meecp.lock.json"), lock=SimpleNamespace(
         artifacts=[SimpleNamespace(path="file-" + str(index)) for index in range(MAX_ARTIFACTS + 1)]))
     plan = SimpleNamespace(reaper=tmp_path / "reaper", workspace=tmp_path / "probe",
                            home=tmp_path / "probe/home", temporary=tmp_path / "probe/tmp")
@@ -135,10 +136,10 @@ def _real_verifier(controlled, private_runtime, monkeypatch, *, checks="", unkno
                    onnx_launcher=False, graph_accounting=False):
     runner, *_ = controlled
     runner.probe_graph_accounting = graph_accounting
-    monkeypatch.setattr("mcpme.preparation_runner.prepare_bound",
+    monkeypatch.setattr("meecp.preparation_runner.prepare_bound",
                         _managed_build(private_runtime, runner.store, checks=checks, unknown=unknown,
                                        onnx_launcher=onnx_launcher))
-    monkeypatch.setattr("mcpme.preparation_runner.verify_prepared_package", verify_prepared_package)
+    monkeypatch.setattr("meecp.preparation_runner.verify_prepared_package", verify_prepared_package)
     return runner
 
 
@@ -352,7 +353,7 @@ async def test_joined_validation_never_recaptures_changed_locked_bytes(controlle
             with (package.root / "LICENSE").open("ab") as output:
                 output.write(b"changed synthetic notice\n")
         return package
-    monkeypatch.setattr("mcpme.preparation_verifier.validate_package", validate_then_change)
+    monkeypatch.setattr("meecp.preparation_verifier.validate_package", validate_then_change)
     original_spawn = asyncio.create_subprocess_exec
     async def tracked(*args, **kwargs):
         native.append(True)

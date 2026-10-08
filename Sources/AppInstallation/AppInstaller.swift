@@ -43,18 +43,18 @@ public enum AppInstaller {
     }
 
     static func selectDestination(system: URL, personal: URL, running: [URL]) -> URL {
-        let known = [system.appendingPathComponent("mcpme.app", isDirectory: true),
-                     personal.appendingPathComponent("mcpme.app", isDirectory: true)]
+        let known = [system.appendingPathComponent("meecp.app", isDirectory: true),
+                     personal.appendingPathComponent("meecp.app", isDirectory: true)]
         let current = Set(running.map { $0.standardizedFileURL }).intersection(Set(known.map { $0.standardizedFileURL }))
         if current.count == 1, let destination = current.first { return destination }
-        if FileManager.default.fileExists(atPath: system.appendingPathComponent("mcpme.app").path) {
-            return system.appendingPathComponent("mcpme.app", isDirectory: true)
+        if FileManager.default.fileExists(atPath: system.appendingPathComponent("meecp.app").path) {
+            return system.appendingPathComponent("meecp.app", isDirectory: true)
         }
-        if FileManager.default.fileExists(atPath: personal.appendingPathComponent("mcpme.app").path) ||
+        if FileManager.default.fileExists(atPath: personal.appendingPathComponent("meecp.app").path) ||
             !FileManager.default.isWritableFile(atPath: system.path) {
-            return personal.appendingPathComponent("mcpme.app", isDirectory: true)
+            return personal.appendingPathComponent("meecp.app", isDirectory: true)
         }
-        return system.appendingPathComponent("mcpme.app", isDirectory: true)
+        return system.appendingPathComponent("meecp.app", isDirectory: true)
     }
 
     private struct Identity: Equatable {
@@ -77,7 +77,7 @@ public enum AppInstaller {
               let data = try? Data(contentsOf: app.appendingPathComponent("Contents/Info.plist")),
               let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
               info["CFBundleIdentifier"] as? String == bundleIdentifier,
-              info["CFBundleExecutable"] as? String == "mcpme",
+              info["CFBundleExecutable"] as? String == "meecp",
               info["CFBundlePackageType"] as? String == "APPL" else { throw AppInstallError.invalidBundle }
     }
 
@@ -104,7 +104,7 @@ public enum AppInstaller {
             throw AppInstallError.incompatible
         }
         try validateCompatibility(info)
-        try tool("/usr/bin/lipo", [app.appendingPathComponent("Contents/MacOS/mcpme").path, "-verify_arch", "arm64"],
+        try tool("/usr/bin/lipo", [app.appendingPathComponent("Contents/MacOS/meecp").path, "-verify_arch", "arm64"],
                  failure: .incompatible)
     }
 
@@ -129,7 +129,7 @@ public enum AppInstaller {
     public static func install(from source: URL, to destination: URL, hooks: InstallHooks) throws {
         let files = FileManager.default
         try validateIdentity(source); try hooks.verify(source)
-        guard destination.lastPathComponent == "mcpme.app",
+        guard destination.lastPathComponent == "meecp.app",
               source.resolvingSymlinksInPath() != destination.resolvingSymlinksInPath() else {
             throw AppInstallError.invalidDestination
         }
@@ -141,7 +141,7 @@ public enum AppInstaller {
         }
         // Keep the lock inode: unlinking it would let another installer lock a
         // different inode while this transaction is still running.
-        let lock = open(parent.appendingPathComponent(".mcpme-install.lock").path,
+        let lock = open(parent.appendingPathComponent(".meecp-install.lock").path,
                         O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard lock >= 0 else { throw AppInstallError.busy }
         defer { close(lock) }
@@ -152,14 +152,14 @@ public enum AppInstaller {
         defer { flock(lock, LOCK_UN) }
         let previous = try identity(destination)
         if previous != nil { try validateIdentity(destination) }
-        let workspace = parent.appendingPathComponent(".mcpme-install-" + UUID().uuidString.lowercased(), isDirectory: true)
+        let workspace = parent.appendingPathComponent(".meecp-install-" + UUID().uuidString.lowercased(), isDirectory: true)
         do { try files.createDirectory(at: workspace, withIntermediateDirectories: false,
                                        attributes: [.posixPermissions: 0o700]) }
         catch { throw AppInstallError.copy }
-        let staged = workspace.appendingPathComponent("mcpme.app", isDirectory: true)
+        let staged = workspace.appendingPathComponent("meecp.app", isDirectory: true)
         var retainRecovery = false
         defer { if !retainRecovery { try? files.removeItem(at: workspace) } }
-        let recovery = "# mcpme installation recovery\n\nIf installation was interrupted, the mcpme.app beside this folder is the newly installed copy. After replacement, mcpme.app in this folder is the previous copy. Quit mcpme before restoring that previous copy. Application Support was not changed by the installer.\n"
+        let recovery = "# meecp installation recovery\n\nIf installation was interrupted, the meecp.app beside this folder is the newly installed copy. After replacement, meecp.app in this folder is the previous copy. Quit meecp before restoring that previous copy. Application Support was not changed by the installer.\n"
         do { try recovery.write(to: workspace.appendingPathComponent("RECOVERY.md"), atomically: true, encoding: .utf8) }
         catch { throw AppInstallError.copy }
         try tool("/usr/bin/ditto", [source.path, staged.path], failure: .copy)
@@ -208,7 +208,9 @@ public enum AppInstaller {
         for app in running {
             guard app.bundleIdentifier == bundleIdentifier, app.processIdentifier != getpid(),
                   let bundle = app.bundleURL, let executable = app.executableURL,
-                  executable.resolvingSymlinksInPath() == bundle.appendingPathComponent("Contents/MacOS/mcpme").resolvingSymlinksInPath()
+                  let name = Bundle(url: bundle)?.object(forInfoDictionaryKey: "CFBundleExecutable") as? String,
+                  ["meecp", "mcpme"].contains(name),
+                  executable.resolvingSymlinksInPath() == bundle.appendingPathComponent("Contents/MacOS/\(name)").resolvingSymlinksInPath()
             else { throw AppInstallError.stop }
             try verifySignature(bundle)
         }
@@ -219,7 +221,7 @@ public enum AppInstaller {
         while running.contains(where: { !$0.isTerminated }) && ProcessInfo.processInfo.systemUptime < deadline {
             Thread.sleep(forTimeInterval: 0.05)
         }
-        // Never force-kill a discovered PID. Normal mcpme quit owns host cleanup.
+        // Never force-kill a discovered PID. Normal meecp quit owns host cleanup.
         guard running.allSatisfy({ $0.isTerminated }) else { throw AppInstallError.stop }
     }
 

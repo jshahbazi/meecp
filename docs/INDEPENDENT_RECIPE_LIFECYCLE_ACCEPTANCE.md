@@ -70,7 +70,7 @@ binary:
 ```sh
 uv run --python 3.12 python scripts/verify_phase3_recipe_lifecycle.py \
   --host /absolute/path/to/sealed-host \
-  --native /absolute/path/to/McpmeMenuBar \
+  --native /absolute/path/to/MeecpMenuBar \
   --output /absolute/path/to/new-receipt.json
 ```
 

@@ -12,10 +12,10 @@ and secret reference IDs before applying the plan.
 ## Plan and apply
 
 ```sh
-scripts/mcpme upgrade plan --slot SLOT_UUID --package /absolute/path/to/package --json
-scripts/mcpme upgrade inspect --plan PLAN_UUID --json
-scripts/mcpme upgrade apply --plan PLAN_UUID --json
-scripts/mcpme operations get OPERATION_UUID --json
+scripts/meecp upgrade plan --slot SLOT_UUID --package /absolute/path/to/package --json
+scripts/meecp upgrade inspect --plan PLAN_UUID --json
+scripts/meecp upgrade apply --plan PLAN_UUID --json
+scripts/meecp operations get OPERATION_UUID --json
 ```
 
 Supply `--settings /absolute/private/settings.json` to change configuration or
@@ -67,8 +67,8 @@ user data.
 ## Cancel, stop and recover
 
 ```sh
-scripts/mcpme operations cancel OPERATION_UUID --json
-scripts/mcpme operations recover OPERATION_UUID --json
+scripts/meecp operations cancel OPERATION_UUID --json
+scripts/meecp operations recover OPERATION_UUID --json
 ```
 
 Cancel applies to an installation or upgrade before exposure. It durably records

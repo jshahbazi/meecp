@@ -35,8 +35,8 @@ def policy():
 
 
 def test_review_binds_current_adapter_and_only_selected_model(driver, policy, monkeypatch):
-    from mcpme.preparation_agent_providers import OpenAIResponsesAdapter
-    from mcpme.preparation_release_policy import ReleasePolicy
+    from meecp.preparation_agent_providers import OpenAIResponsesAdapter
+    from meecp.preparation_release_policy import ReleasePolicy
     monkeypatch.setattr(OpenAIResponsesAdapter, "backend", lambda *_: pytest.fail("backend constructed"))
     before = copy.deepcopy(policy)
     review = driver.prepare_review(policy, "synthetic-explicit-model")
@@ -69,7 +69,7 @@ def test_rejects_conflicting_agent_authority_and_unknown_configuration(driver, p
 
 
 def test_exact_current_admission_review_is_idempotent(driver, policy, monkeypatch):
-    from mcpme.preparation_agent_providers import OpenAIResponsesAdapter
+    from meecp.preparation_agent_providers import OpenAIResponsesAdapter
     monkeypatch.setattr(OpenAIResponsesAdapter, "backend", lambda *_: pytest.fail("backend constructed"))
     current = driver.prepare_review(policy, "synthetic-explicit-model")["candidate_policy"]
     current["policy_id"] = "synthetic-already-reviewed-policy"
@@ -209,7 +209,7 @@ def test_closed_policy_denied_before_credentials(driver, policy, monkeypatch):
 
 @pytest.mark.parametrize("fault", ["wrong_model", "wrong_adapter", "wrong_digest", "extra_model", "locked_resolution"])
 def test_exact_candidate_rejects_authority_substitution(driver, policy, fault):
-    from mcpme.preparation_agent_providers import OpenAIResponsesAdapter
+    from meecp.preparation_agent_providers import OpenAIResponsesAdapter
     candidate = driver.prepare_review(policy, "synthetic")["candidate_policy"]
     row = candidate["agent"]["providers"][0]
     if fault == "wrong_model": row["models"] = ["other"]
@@ -507,10 +507,10 @@ def test_failure_projection_preserves_exact_native_handoff_conditions(driver):
 @pytest.mark.asyncio
 async def test_failure_observation_reads_production_ledger_before_cleanup(driver, tmp_path, monkeypatch):
     from test_preparation_agent import request_for
-    from mcpme.preparation_agent_contracts import AgentUsageV1
-    from mcpme.preparation_agent_coordinator import AgentAttemptStore
-    from mcpme.preparation_agent_host import AgentPreparationHost
-    from mcpme.preparation_contracts import canonical_bytes
+    from meecp.preparation_agent_contracts import AgentUsageV1
+    from meecp.preparation_agent_coordinator import AgentAttemptStore
+    from meecp.preparation_agent_host import AgentPreparationHost
+    from meecp.preparation_contracts import canonical_bytes
     request, _ = request_for(source_revision="sha256:" + "a" * 64)
     store = AgentAttemptStore(tmp_path / "journal")
     try:
@@ -594,7 +594,7 @@ def test_main_preserves_fixed_native_fallback_and_metadata(driver, tmp_path, mon
 
 @pytest.mark.parametrize("fault", ["missing_generation", "invalid_generation", "extra_secret", "simulation_marker", "expired", "replaced_manager"])
 def test_compiled_live_fixture_denied_before_claim(native_recipe_driver, tmp_path, driver, fault):
-    workspace = tmp_path.resolve() / ("mcpme-native-onboarding-" + str(uuid.uuid4()))
+    workspace = tmp_path.resolve() / ("meecp-native-onboarding-" + str(uuid.uuid4()))
     base = workspace / "live-agent"
     state, home, temporary = (base / name for name in ("state", "home", "tmp"))
     for path in (workspace, base, state, home, temporary): path.mkdir(mode=0o700)
@@ -622,9 +622,9 @@ def test_compiled_live_fixture_denied_before_claim(native_recipe_driver, tmp_pat
 
 async def test_real_owner_parent_refuses_closed_live_profile_before_provider_call(native_recipe_driver, tmp_path, driver):
     import uvicorn
-    from mcpme.supervisor import Supervisor, management_app, HostServer, bind_listener
-    from mcpme_local_transport import bind_private_listener
-    workspace = tmp_path.resolve() / ("mcpme-native-onboarding-" + str(uuid.uuid4()))
+    from meecp.supervisor import Supervisor, management_app, HostServer, bind_listener
+    from meecp_local_transport import bind_private_listener
+    workspace = tmp_path.resolve() / ("meecp-native-onboarding-" + str(uuid.uuid4()))
     base = workspace / "live-agent"
     state, home, temporary = (base / name for name in ("state", "home", "tmp"))
     for path in (workspace, base, state, home, temporary): path.mkdir(mode=0o700)

@@ -5,13 +5,13 @@ import uuid
 
 import pytest
 
-from mcpme.imports import ImportStore
-from mcpme.preparation_agent_contracts import AgentProposalV1
-from mcpme.preparation_agent_adapter_store import original_snapshot, CODE_PATH
-from mcpme.preparation_agent_unlocked_contracts import (DEPENDENCY_NAMESPACE,
+from meecp.imports import ImportStore
+from meecp.preparation_agent_contracts import AgentProposalV1
+from meecp.preparation_agent_adapter_store import original_snapshot, CODE_PATH
+from meecp.preparation_agent_unlocked_contracts import (DEPENDENCY_NAMESPACE,
     canonical_dependency_project, checked_requirements, specification_from_proposal)
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_resolution_runner import MCP_VERSION, PYTHON_VERSION
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_resolution_runner import MCP_VERSION, PYTHON_VERSION
 from test_preparation_agent_adapter import TOOL, CODE, MODULE
 
 

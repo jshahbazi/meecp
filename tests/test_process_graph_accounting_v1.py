@@ -8,9 +8,9 @@ import threading
 
 import pytest
 
-from mcpme.process_graph_accounting_v1 import FixedProcessGraphV1, GraphMemberV1
-from mcpme.processes import ProcessOwner, OwnershipLost, ProcessError
-from test_mcpme_processes import reaper
+from meecp.process_graph_accounting_v1 import FixedProcessGraphV1, GraphMemberV1
+from meecp.processes import ProcessOwner, OwnershipLost, ProcessError
+from test_meecp_processes import reaper
 
 ROOT = Path(__file__).resolve().parents[1]
 

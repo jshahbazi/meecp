@@ -1,1 +1,1 @@
-"""Private exact-fixture text generation spike; no advertised host capability."""
+"""Compatibility entrypoint for the immutable signed text generation launcher."""

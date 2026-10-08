@@ -30,11 +30,11 @@ import verify_phase3_public_native_command as signed
 import verify_phase3_live_agent as live
 
 require = common.require
-PYTHON = ("python-function-v1", "1.0.0", "b28f98582aeff09e344b4a7049af7fdadbaf19436dc6724638ab64b6a9139d4e")
-RESOLVED = ("resolved-python-v1", "1.0.1", "3c24410b46415cb83b9d945ebf0049f552e9f7493943164f311939a79b49000e")
+PYTHON = ("python-function-v1", "1.0.0", "a633c70b645b143d89d25584f4b61a69d490eda01fc986b7e46b54f0bce71561")
+RESOLVED = ("resolved-python-v1", "1.0.1", "e5b174b7626e3bb89cd4a8727099662d111608e1465b01218342bb68f10a6b90")
 POLICY_PATH = "templates/release-policies/phase3-v1.json"
 REVIEWED_AGENT_MODEL = "gpt-6.1-sol"
-REVIEWED_ADAPTER_DIGEST = "f651b36ab4b3d4fe6479457e5a31f129b1339c41536e02bfb53cbbf4025cebc1"
+REVIEWED_ADAPTER_DIGEST = "ac66e8bb563139d93577da365b9d3a9b29166244babc9aa215ec90024eda88f1"
 TERMINAL = {"succeeded", "failed", "canceled", "interrupted"}
 SDK_READ_SECONDS = 30
 SDK_STEP_SECONDS = 20
@@ -107,7 +107,7 @@ class DarwinProcessReader:
 
 
 def probe_entry(reader, manager, manager_identity, reaper, interpreter, marker):
-    require(re.fullmatch(r"mcpme-probe-[0-9a-f]{32}", marker), "management_probe_marker_invalid")
+    require(re.fullmatch(r"meecp-probe-[0-9a-f]{32}", marker), "management_probe_marker_invalid")
     require(manager.poll() is None and reader.identity(manager.pid) == manager_identity,
         "management_original_manager_changed")
     for wrapper_pid in reader.children(manager.pid):
@@ -141,9 +141,9 @@ def agent_policy_scope(value):
 
 def typed_policy_scope(data):
     """Validate using the selected host modules after host-origin binding."""
-    from mcpme.preparation_release_policy import ReleasePolicy
-    from mcpme.preparation_contracts import load_contract
-    from mcpme.preparation_agent_providers import OpenAIResponsesAdapter
+    from meecp.preparation_release_policy import ReleasePolicy
+    from meecp.preparation_contracts import load_contract
+    from meecp.preparation_agent_providers import OpenAIResponsesAdapter
     try:
         value = load_contract(data)
         ReleasePolicy.model_validate(value).admissions()
@@ -209,7 +209,7 @@ def answers(form):
 def validate_export(value, launcher, state, credential):
     expected = {"command": str(launcher), "args": ["--state-dir", str(state), "--credential-file",
         str(credential), "management", "connect"]}
-    require(value.get("configuration") == {"mcpServers": {"mcpme-management": expected}},
+    require(value.get("configuration") == {"mcpServers": {"meecp-management": expected}},
         "management_export_binding_changed")
     return expected
 
@@ -237,8 +237,8 @@ def source_snapshot(root):
 
 def binding_snapshot(state, grant, job):
     """Read original persisted metadata; never mutate a job, grant, or authority."""
-    from mcpme.management_workflow_grants import job_identity
-    from mcpme.preparation_contracts import canonical_bytes, contract_digest
+    from meecp.management_workflow_grants import job_identity
+    from meecp.preparation_contracts import canonical_bytes, contract_digest
     path = state / "imports.sqlite"
     detail = path.lstat()
     require(stat.S_ISREG(detail.st_mode) and detail.st_uid == os.getuid() and detail.st_nlink == 1
@@ -368,7 +368,7 @@ class ManagementHarness(common.Harness):
             require(result.isError and value.get("error", {}).get("code") == error, "management_denial_changed")
         else:
             if result.isError or "error" in value:
-                from mcpme.management import SAFE_ERROR_CODES
+                from meecp.management import SAFE_ERROR_CODES
                 code = value.get("error", {}).get("code")
                 raise common.AcceptanceError(code if isinstance(code, str) and code in SAFE_ERROR_CODES else "management_call_failed")
         return value
@@ -376,32 +376,32 @@ class ManagementHarness(common.Harness):
     async def review(self, session, source):
         listed = await self.discovery(session)
         names = {item.name for item in listed.tools}
-        require(len(names) == len(listed.tools) == 40 and not any("authorize" in name or "secret" in name for name in names)
+        require(len(names) == len(listed.tools) == 43 and not any("authorize" in name or "secret" in name for name in names)
             and all(item.inputSchema.get("additionalProperties") is False for item in listed.tools), "management_tools_changed")
-        public_capabilities(await self.invoke(session, "mcpme_capabilities"))
-        await self.invoke(session, "mcpme_get_recipe_schema")
-        await self.invoke(session, "mcpme_list_recipes")
-        draft = await self.invoke(session, "mcpme_create_import", {"source": str(source), "name": "Synthetic management fixture"})
+        public_capabilities(await self.invoke(session, "meecp_capabilities"))
+        await self.invoke(session, "meecp_get_recipe_schema")
+        await self.invoke(session, "meecp_list_recipes")
+        draft = await self.invoke(session, "meecp_create_import", {"source": str(source), "name": "Synthetic management fixture"})
         args = {"import_id": draft["draft_id"], "revision": draft["revision"]}
-        await self.invoke(session, "mcpme_inspect_preparation_source", args)
-        form = await self.invoke(session, "mcpme_get_preparation_form", args)
+        await self.invoke(session, "meecp_inspect_preparation_source", args)
+        form = await self.invoke(session, "meecp_get_preparation_form", args)
         require(form["execution_available"] is True and form["resolution_required"] is False
-            and form["recipe"]["id"] == "mcpme.python-callable" and form["recipe"]["version"] == "1.0.0",
+            and form["recipe"]["id"] == "mcpme.python-callable" and form["recipe"]["version"] == "1.0.1",
             "management_form_not_admitted")
-        recipe = await self.invoke(session, "mcpme_get_recipe", {"recipe_id": form["recipe"]["id"], "version": form["recipe"]["version"]})
+        recipe = await self.invoke(session, "meecp_get_recipe", {"recipe_id": form["recipe"]["id"], "version": form["recipe"]["version"]})
         require(recipe["state"] == "enabled" and recipe["revoked"] is False and recipe["digest"] == form["recipe"]["digest"]
             and {(item["component"], item["version"], item["digest"]) for item in recipe["manifest"]["steps"]} == {PYTHON},
             "management_recipe_not_admitted")
-        plan = await self.invoke(session, "mcpme_plan_preparation_form", {**args, "candidate_id": form["candidate_id"],
+        plan = await self.invoke(session, "meecp_plan_preparation_form", {**args, "candidate_id": form["candidate_id"],
             "recipe": form["recipe"], "form_digest": form["form_digest"], "answers": answers(form)})
         require(plan["execution_available"] is True and plan["blockers"] == [] and isinstance(plan["plan_id"], str)
             and re.fullmatch(r"[0-9a-f]{64}", plan["plan_digest"]), "management_review_unavailable")
-        require((await self.invoke(session, "mcpme_list_preparations"))["preparations"] == []
-            and (await self.invoke(session, "mcpme_list_resolutions"))["resolutions"] == [], "management_review_created_jobs")
+        require((await self.invoke(session, "meecp_list_preparations"))["preparations"] == []
+            and (await self.invoke(session, "meecp_list_resolutions"))["resolutions"] == [], "management_review_created_jobs")
         payload = {"plan_id": plan["plan_id"], "plan_digest": plan["plan_digest"], "idempotency_key": str(uuid.uuid4())}
-        await self.invoke(session, "mcpme_start_preparation", payload, error="grant_scope")
-        await self.invoke(session, "mcpme_enable_recipe", {"recipe_id": recipe["recipe_id"], "version": recipe["version"]}, error="grant_scope")
-        await self.invoke(session, "mcpme_apply_install", {"plan_id": str(uuid.uuid4())}, error="grant_scope")
+        await self.invoke(session, "meecp_start_preparation", payload, error="grant_scope")
+        await self.invoke(session, "meecp_enable_recipe", {"recipe_id": recipe["recipe_id"], "version": recipe["version"]}, error="grant_scope")
+        await self.invoke(session, "meecp_apply_install", {"plan_id": str(uuid.uuid4())}, error="grant_scope")
         return draft, plan
 
     async def wait_job(self, state, environment, home, identifier, *, owned=False, observation=None):
@@ -442,7 +442,7 @@ class ManagementHarness(common.Harness):
         require((current.get("attachment") is None) == canceled
             and (await self.cli(state, environment, home, "slots", "list", "--json"))["slots"] == [], "management_attachment_or_install_changed")
         if not canceled:
-            from mcpme.contracts import validate_package
+            from meecp.contracts import validate_package
             package = validate_package(Path(current["attachment"]["path"]))
             require(package.digest == job["expected_package_digest"] == job["verification"]["package_digest"]
                 and job["verification"]["tools_checked"] == job["verification"]["fixtures_checked"] == 1,
@@ -451,7 +451,7 @@ class ManagementHarness(common.Harness):
     async def case(self, label, *, revoke):
         base, state, home, environment = self.new_case(label)
         source = base / "source"; source.mkdir(mode=0o700)
-        marker = "mcpme-probe-" + uuid.uuid4().hex
+        marker = "meecp-probe-" + uuid.uuid4().hex
         for name in ("pyproject.toml", "uv.lock"):
             shutil.copyfile(self.host / name, source / name)
         (source / "LICENSE").write_text("Synthetic fixture dedicated to the public domain under CC0.\n")
@@ -484,20 +484,20 @@ class ManagementHarness(common.Harness):
                 expected_error="grant_scope")
             payload = {"plan_id": plan["plan_id"], "plan_digest": plan["plan_digest"], "idempotency_key": key}
             async with self.sdk(state, environment, home, credential) as session:
-                await self.invoke(session, "mcpme_start_preparation", {**payload, "idempotency_key": str(uuid.uuid4())}, error="grant_scope")
-                await self.invoke(session, "mcpme_create_import", {"source": str(source), "name": "Denied"}, error="grant_scope")
-                await self.invoke(session, "mcpme_apply_install", {"plan_id": str(uuid.uuid4())}, error="grant_scope")
-                first = await self.invoke(session, "mcpme_start_preparation", payload)
-                duplicate = await self.invoke(session, "mcpme_start_preparation", payload)
+                await self.invoke(session, "meecp_start_preparation", {**payload, "idempotency_key": str(uuid.uuid4())}, error="grant_scope")
+                await self.invoke(session, "meecp_create_import", {"source": str(source), "name": "Denied"}, error="grant_scope")
+                await self.invoke(session, "meecp_apply_install", {"plan_id": str(uuid.uuid4())}, error="grant_scope")
+                first = await self.invoke(session, "meecp_start_preparation", payload)
+                duplicate = await self.invoke(session, "meecp_start_preparation", payload)
                 require(first["job_id"] == duplicate["job_id"], "management_attempt_duplicated")
-                require([item["job_id"] for item in (await self.invoke(session, "mcpme_list_preparations"))["preparations"]]
+                require([item["job_id"] for item in (await self.invoke(session, "meecp_list_preparations"))["preparations"]]
                     == [first["job_id"]], "management_job_scope_changed")
                 active = await self.wait_job(state, environment, home, first["job_id"], owned=revoke,
                     observation=(reader, child, manager_identity, marker) if revoke else None)
                 captured = binding_snapshot(state, grant, active)
                 if revoke:
                     await self.cli(state, environment, home, "grants", "revoke", grant["grant_id"], "--json")
-                    await self.invoke(session, "mcpme_capabilities", error="grant_revoked")
+                    await self.invoke(session, "meecp_capabilities", error="grant_revoked")
                 final = await self.wait_job(state, environment, home, first["job_id"])
                 await self.settled(state, environment, home, final, draft, canceled=revoke)
                 if revoke:
@@ -511,10 +511,10 @@ class ManagementHarness(common.Harness):
             await self.settled(state, environment, home, restarted, draft, canceled=revoke)
             async with self.sdk(state, environment, home, credential) as session:
                 if revoke:
-                    await self.invoke(session, "mcpme_start_preparation", payload, error="grant_revoked")
+                    await self.invoke(session, "meecp_start_preparation", payload, error="grant_revoked")
                     await self.cli(state, environment, home, "grants", "revoke", grant["grant_id"], "--json")
                 else:
-                    repeated = await self.invoke(session, "mcpme_start_preparation", payload)
+                    repeated = await self.invoke(session, "meecp_start_preparation", payload)
                     require(repeated["job_id"] == final["job_id"], "management_restart_attempt_duplicated")
             await self.settled(state, environment, home, restarted, draft, canceled=revoke)
             jobs = (await self.cli(state, environment, home, "preparations", "list", "--json"))["preparations"]

@@ -5,7 +5,7 @@ import json
 from mcp.types import CallToolResult
 import pytest
 
-from mcpme.pi_verification import PiVerificationError, validate_fixtures, verify_result
+from meecp.pi_verification import PiVerificationError, validate_fixtures, verify_result
 
 
 def fixture(*assertions, expected=None, with_expected=False):

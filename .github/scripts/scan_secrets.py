@@ -33,7 +33,8 @@ FINDINGS_EXIT_CODE = 10
 # for generic-api-key only. Other rules, values and paths remain unchanged.
 PUBLIC_GGUF_METADATA_DIGEST = "c828d4ced3ffa97554baf70310ae1b232a03bb63eff517952a9222567b44b5b8"
 PUBLIC_GGUF_METADATA_PATHS = (
-    "backend/mcpme_textgen/fixture.py",
+    "backend/mcpme_textgen/fixture.py",  # Preserved fetched history before the rename.
+    "backend/meecp_textgen/fixture.py",
     "templates/text-generate-v1/model-provenance.json",
     "templates/text-generate-signed-v1/model-provenance.json",
     # Byte-identical metadata shipped inside the immutable declarative recipe.
@@ -60,6 +61,7 @@ PUBLIC_GGUF_METADATA_PATHS = (
     "templates/builtin-recipes/text-generation-v1-0-19/model-provenance.json",
     "templates/builtin-recipes/text-generation-v1-0-20/model-provenance.json",
     "templates/builtin-recipes/text-generation-v1-0-21/model-provenance.json",
+    "templates/builtin-recipes/text-generation-v1-0-22/model-provenance.json",
 )
 
 
@@ -169,7 +171,7 @@ def scan(repository: Path):
     repository = repository.resolve(strict=True)
     if git_output(repository, "rev-parse", "--is-shallow-repository").strip() != b"false":
         raise ScanFailure("secret_scan_failed")
-    with tempfile.TemporaryDirectory(prefix="mcpme-secret-scan-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="meecp-secret-scan-") as temporary:
         workspace = Path(temporary)
         binary = scanner_binary(workspace)
         config = workspace / "default.toml"

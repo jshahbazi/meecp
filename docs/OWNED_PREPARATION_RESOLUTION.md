@@ -38,7 +38,7 @@ Focused tests exercise strict contracts, original-source preservation, revision/
 Opt-in cases use a real built private host and fresh empty caches:
 
 ```sh
-MCPME_RESOLUTION_HOST=/absolute/path/to/private-host uv run pytest -q tests/test_preparation_resolution.py
+MEECP_RESOLUTION_HOST=/absolute/path/to/private-host uv run pytest -q tests/test_preparation_resolution.py
 ```
 
 The unlocked-callable case resolves a real registry closure without an original lock. The foreground MCP case installs real pinned runtime wheels and discovers a dynamic schema from a running SDK server. The subsequent [derived build checkpoint](DERIVED_PREPARATION_BUILD.md) verifies generated questions, owned package construction, SDK fixtures, attachment and relocation. Installed/native acceptance and public activation remain separate gates.

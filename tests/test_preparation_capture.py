@@ -11,9 +11,9 @@ import uuid
 import pytest
 from pydantic import ValidationError
 
-from mcpme import preparation_artifacts as artifacts
-from mcpme import preparation_capture as capture
-from mcpme.imports import ImportStore
+from meecp import preparation_artifacts as artifacts
+from meecp import preparation_capture as capture
+from meecp.imports import ImportStore
 
 
 BUDGET = 8 * 1024 * 1024

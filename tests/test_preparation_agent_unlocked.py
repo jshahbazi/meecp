@@ -6,15 +6,15 @@ import uuid
 
 import pytest
 
-from mcpme.imports import ImportStore
-from mcpme.recipes import RecipeStore
-from mcpme.preparations import PreparationStore
-from mcpme.preparation_agent_host import AgentPreparationHost
-from mcpme.preparation_agent_unlocked import AgentUnlockedPythonFamily, component_catalog
-from mcpme.preparation_agent_unlocked_store import AgentUnlockedInputStore
-from mcpme.preparation_agent_unlocked_resolution import AgentUnlockedResolutionStore, OwnedAgentUnlockedResolutionRunner
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_forms import PreparationForms
+from meecp.imports import ImportStore
+from meecp.recipes import RecipeStore
+from meecp.preparations import PreparationStore
+from meecp.preparation_agent_host import AgentPreparationHost
+from meecp.preparation_agent_unlocked import AgentUnlockedPythonFamily, component_catalog
+from meecp.preparation_agent_unlocked_store import AgentUnlockedInputStore
+from meecp.preparation_agent_unlocked_resolution import AgentUnlockedResolutionStore, OwnedAgentUnlockedResolutionRunner
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_forms import PreparationForms
 from test_preparation_agent_adapter import handler
 from test_preparation_agent_host import provider, completed
 from test_preparation_agent_unlocked_contracts import captured
@@ -23,7 +23,7 @@ from test_preparation_agent_unlocked_store import bundle, COMPONENT
 
 @pytest.fixture
 def foundation(tmp_path, monkeypatch):
-    from mcpme import recipes as module
+    from meecp import recipes as module
     original = module.builtin_components
     monkeypatch.setattr(module, "builtin_components", lambda: {**original(), **component_catalog()})
     source = captured(tmp_path)

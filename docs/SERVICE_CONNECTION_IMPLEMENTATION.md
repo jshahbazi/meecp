@@ -2,7 +2,7 @@
 
 Status: implemented source checkpoint; independent review and final signed public acceptance remain required. This work
 implements the service-only input required by `AUTOMATIC_PREPARATION.md:43` and
-the Phase 3 directory-or-service flow in `MCPME_DESIGN.md`. The registry advertises the local connector's static scope. Execution requires the exact release-policy family and component closure.
+the Phase 3 directory-or-service flow in `MEECP_DESIGN.md`. The registry advertises the local connector's static scope. Execution requires the exact release-policy family and component closure.
 
 ## First supported connection
 

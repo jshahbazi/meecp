@@ -24,7 +24,7 @@ int main(int argc, char **argv) {
     setenv("PYTHONDONTWRITEBYTECODE", "1", 1);
     char **args = calloc((size_t)argc + 5, sizeof(char *));
     if (!args) return 2;
-    args[0] = python; args[1] = "-P"; args[2] = "-m"; args[3] = "mcpme_jevk5"; args[4] = (char *)role;
+    args[0] = python; args[1] = "-P"; args[2] = "-m"; args[3] = "meecp_jevk5"; args[4] = (char *)role;
     for (int i = 1; i < argc; i++) args[i + 4] = argv[i];
     execv(python, args);
     return 2;

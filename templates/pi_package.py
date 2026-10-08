@@ -16,8 +16,8 @@ import secrets
 import stat
 import sys
 
-MANIFEST = "mcpme.package.json"
-LOCK = "mcpme.lock.json"
+MANIFEST = "meecp.package.json"
+LOCK = "meecp.lock.json"
 MAX_ARTIFACTS = 20_000
 MAX_PACKAGE_BYTES = 64 * 1024 * 1024 * 1024
 ATTRS = ("st_dev", "st_ino", "st_mode", "st_nlink", "st_size", "st_mtime_ns", "st_ctime_ns")

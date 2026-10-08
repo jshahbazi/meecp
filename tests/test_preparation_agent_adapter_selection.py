@@ -6,8 +6,8 @@ import shutil
 
 import pytest
 
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_agent_adapter_store import CODE_PATH
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_agent_adapter_store import CODE_PATH
 from test_preparation_agent_adapter import adapter_foundation, analyze
 
 pytestmark = pytest.mark.asyncio
@@ -89,7 +89,7 @@ async def test_changed_derived_inputs_after_full_validation_cannot_commit_select
 @pytest.mark.parametrize("path", ["agent", "direct"])
 async def test_unchanged_selection_uses_metadata_inside_commit(
         adapter_foundation, tmp_path, monkeypatch, path):
-    from mcpme import preparation_agent_adapter_store as module
+    from meecp import preparation_agent_adapter_store as module
     imports, _, preparations, draft, _, _, _ = adapter_foundation
     host, plan, job = await analyze(adapter_foundation, tmp_path)
     original = module.read_snapshot

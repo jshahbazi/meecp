@@ -14,11 +14,11 @@ from starlette.routing import Route
 
 from jevk5_app import bridge as legacy
 from jevk5_app.contracts import ServiceError
-from mcpme_local_transport import bind_private_listener, checked_socket, private_transport, socket_path
-from mcpme.__main__ import call
-from mcpme.bridge import Bridge
-from mcpme.policy import LocalPolicy
-from mcpme.private import write_private_json
+from meecp_local_transport import bind_private_listener, checked_socket, private_transport, socket_path
+from meecp.__main__ import call
+from meecp.bridge import Bridge
+from meecp.policy import LocalPolicy
+from meecp.private import write_private_json
 
 
 @pytest.fixture
@@ -141,7 +141,7 @@ def test_private_socket_rejects_permissions_symlinks_and_foreign_owner(private_s
         path.unlink()
         actual.rename(path)
         # Model a different UID in the metadata check without needing privileges.
-        monkeypatch.setattr("mcpme_local_transport.os.getuid", lambda: path.lstat().st_uid + 1)
+        monkeypatch.setattr("meecp_local_transport.os.getuid", lambda: path.lstat().st_uid + 1)
         with pytest.raises(ValueError, match="unsafe_private_transport"):
             checked_socket(path)
     finally:

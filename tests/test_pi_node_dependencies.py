@@ -8,9 +8,9 @@ import sys
 
 import pytest
 
-from mcpme.pi_dependencies import _node_bin_launchers, _node_lock, install_dependencies, node_project
-from mcpme.pi_tools import PiToolBroker
-from mcpme.preparation_contracts import PreparationError
+from meecp.pi_dependencies import _node_bin_launchers, _node_lock, install_dependencies, node_project
+from meecp.pi_tools import PiToolBroker
+from meecp.preparation_contracts import PreparationError
 from test_preparation_processes import group_reaper
 
 
@@ -25,7 +25,7 @@ def test_node_metadata_accepts_project_specific_scripts_and_lock_rejects_credent
 
 
 def test_bin_launcher_keeps_target_script_location_and_regular_files(tmp_path):
-    from mcpme.pi_environment import copy_regular_tree
+    from meecp.pi_environment import copy_regular_tree
     source = tmp_path / "source"
     executable = source / "node_modules/package with spaces/bin/command.js"
     executable.parent.mkdir(parents=True)
@@ -41,7 +41,7 @@ def test_bin_launcher_keeps_target_script_location_and_regular_files(tmp_path):
     assert not launcher.is_symlink() and launcher.stat().st_nlink == 1
     value = launcher.read_text()
     assert "'../package with spaces/bin/command.js'" in value
-    assert '"$@"' in value and ".mcpme-node/bin" in value
+    assert '"$@"' in value and ".meecp-node/bin" in value
     assert "require('../lib/main.js')" not in value
 
 
@@ -74,7 +74,7 @@ async def test_real_npm_lock_install_and_relocated_private_node(tmp_path, group_
         runtime = Path(metadata["runtime_path"])
         assert metadata["dependency_count"] >= 2
         assert metadata["bin_launcher_count"] == 1
-        assert (runtime / ".mcpme-node/licenses/NODE-LICENSE.txt").is_file()
+        assert (runtime / ".meecp-node/licenses/NODE-LICENSE.txt").is_file()
         notices = json.loads(Path(metadata["dependency_notices_path"]).read_bytes())
         number = next(item for item in notices["distributions"] if item["name"] == "is-number")
         assert number["version"] == "7.0.0" and number["integrity"].startswith("sha512-")
@@ -91,6 +91,6 @@ async def test_real_npm_lock_install_and_relocated_private_node(tmp_path, group_
         assert execution["success"], execution
         assert (relocated / "built.txt").read_text() == "built"
         assert not any(path.is_symlink() for path in relocated.rglob("*"))
-        assert not list(broker.workspace.glob(".mcpme-dependencies-*"))
+        assert not list(broker.workspace.glob(".meecp-dependencies-*"))
     finally:
         await broker.close()

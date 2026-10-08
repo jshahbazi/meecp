@@ -7,7 +7,7 @@ This implements the static foundation and controlled durable-job checkpoint of t
 | Area | Behavior |
 | --- | --- |
 | Portable descriptor | Strict schema 1 for an explicitly selected Python callable or Python MCP module, full tool schemas, pinned dependencies, artifact identities, declared access/resources and synthetic fixtures. |
-| Recipe bundle | Closed tree with `mcpme.recipe.json`, `mcpme.recipe.lock.json`, exact component pins, bounded input/form metadata and retained license/provenance files. Addition and inspection execute no recipe or source code. |
+| Recipe bundle | Closed tree with `meecp.recipe.json`, `meecp.recipe.lock.json`, exact component pins, bounded input/form metadata and retained license/provenance files. Addition and inspection execute no recipe or source code. |
 | Recipe development kit | `recipes scaffold` produces a complete metadata example; `recipes lock` refreshes hashes after authoring; `recipes check` validates its closed tree without registering it. These operate locally. |
 | Registry | Immutable recipe ID/version/digest, static addition, enable/disable/deprecate/revoke/remove, evidence identity checks and retained bytes. Removing a revoked recipe preserves its revocation. |
 | Preparation planning | Static inspection and metadata planning execute no source. Controlled execution plans additionally bind exact source/descriptor/recipe/policy, actual runner/verifier/native helper/dependency bytes and private runtime identity with an expiring single-use intention. |
@@ -15,7 +15,7 @@ This implements the static foundation and controlled durable-job checkpoint of t
 | Attachment | Package validation and copying occur outside the database write transaction. A short transaction chooses the admission winner and publishes the attachment. Owned staging and crash recovery protect live copies. |
 | Management | Owner-only recipe/preparation inspection, planning, start, cancellation and recovery routes with CLI access and bounded progress. Existing scoped management grants cannot call preparation routes. |
 
-Descriptor, recipe and job contracts have independent versions. New JSON identities use the domain-separated canonical serialization in [preparation_contracts.py](../backend/mcpme/preparation_contracts.py). Existing source identities and package schema/lock digests retain their original algorithms. Duplicate keys, nonfinite values, extra fields, credentials recognizable by the intake patterns, and excessive depth/size fail before persistence. Initial planning rejects regular-expression schema keywords, dynamic references and recursive references to bound static schema work.
+Descriptor, recipe and job contracts have independent versions. New JSON identities use the domain-separated canonical serialization in [preparation_contracts.py](../backend/meecp/preparation_contracts.py). Existing source identities and package schema/lock digests retain their original algorithms. Duplicate keys, nonfinite values, extra fields, credentials recognizable by the intake patterns, and excessive depth/size fail before persistence. Initial planning rejects regular-expression schema keywords, dynamic references and recursive references to bound static schema work.
 
 ## One admission transaction
 
@@ -23,7 +23,7 @@ Recipe state and preparation jobs use the existing import database, connection a
 
 Installation operations and installation grants retain their existing registry database and authorization rules. This checkpoint creates no new scoped preparation execution grant and delegates no owner credential. Only internal host code can record verification or invoke managed admission; recipe/API callers cannot report a passing gate. Managed execution identities hash actual implementation files, the compiled native helper and the loaded SDK's dependency closure. Legacy synthetic foundation jobs keep their metadata contract identities and cannot authorize real execution.
 
-Preparation receipts are ordinary locked artifacts named `mcpme.preparation.json`. They bind job/source/descriptor/recipe/policy identities, dependency/runtime and fixture identities. The final package digest lives in the job record, avoiding a digest cycle. The internal verifier must also compare the candidate's declared interface/access/resources/lifecycle with the selected descriptor. A receipt by itself establishes no runtime behavior.
+Preparation receipts are ordinary locked artifacts named `meecp.preparation.json`. They bind job/source/descriptor/recipe/policy identities, dependency/runtime and fixture identities. The final package digest lives in the job record, avoiding a digest cycle. The internal verifier must also compare the candidate's declared interface/access/resources/lifecycle with the selected descriptor. A receipt by itself establishes no runtime behavior.
 
 Canceling a request or shutdown awaiting file work does not stop its underlying thread. The supervisor retains that work, its database and owner lock until it settles, including across repeated canceled shutdown attempts. Concurrent static file work is bounded. The current attachment copier does not offer immediate byte-level cancellation; draft invalidation closes result admission while copying settles. Job reservation release requires explicit ownership settlement. Interrupted work with unsettled ownership blocks a replacement attempt.
 
@@ -34,15 +34,15 @@ Same-user processes remain inside the trust boundary. Cryptographic validation d
 The following commands create an example using the existing callable component, check it statically, then register and enable its metadata:
 
 ```sh
-mcpme recipes scaffold --output /absolute/path/to/new-recipe --id local.example --version 1.0.0 --component python-function-v1 --json
-mcpme recipes check --path /absolute/path/to/new-recipe --json
-mcpme recipes add --path /absolute/path/to/new-recipe --json
-mcpme recipes enable --id local.example --version 1.0.0 --json
-mcpme recipes inspect --id local.example --version 1.0.0 --json
-mcpme recipes list --json
+meecp recipes scaffold --output /absolute/path/to/new-recipe --id local.example --version 1.0.0 --component python-function-v1 --json
+meecp recipes check --path /absolute/path/to/new-recipe --json
+meecp recipes add --path /absolute/path/to/new-recipe --json
+meecp recipes enable --id local.example --version 1.0.0 --json
+meecp recipes inspect --id local.example --version 1.0.0 --json
+meecp recipes list --json
 ```
 
-The scaffold includes reusable bounded input/form metadata, synthetic fixture metadata, full template notices and an exact tree lock. After editing metadata and selecting a new version, run `mcpme recipes lock --path /absolute/path/to/new-recipe --json`, then `recipes check`. Locking preserves declared provenance/license records and captures file hashes; it does not establish publisher trust. Registration never runs an installer, matches source by executing a hook, or imports a Python module. The first catalog recognizes the exact bundled `python-function-v1` and `existing-mcp-v1` components; unsupported components and executable workers cannot be enabled.
+The scaffold includes reusable bounded input/form metadata, synthetic fixture metadata, full template notices and an exact tree lock. After editing metadata and selecting a new version, run `meecp recipes lock --path /absolute/path/to/new-recipe --json`, then `recipes check`. Locking preserves declared provenance/license records and captures file hashes; it does not establish publisher trust. Registration never runs an installer, matches source by executing a hook, or imports a Python module. The first catalog recognizes the exact bundled `python-function-v1` and `existing-mcp-v1` components; unsupported components and executable workers cannot be enabled.
 
 IDs are namespaced and versions immutable. The same ID/version with different bytes fails. Explicit descriptors select their immutable recipe independently of overlapping variants. A new host capability or executable worker requires implementation and independent acceptance before it is available through this mechanism.
 

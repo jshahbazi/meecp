@@ -1,0 +1,39 @@
+{
+  "form": [],
+  "id": "mcpme.python-callable",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "kind": "declarative",
+  "licenses": [
+    "LICENSE"
+  ],
+  "provenance": {
+    "origin": "meecp-shipped-recipe-v1",
+    "publisher": "meecp contributors"
+  },
+  "requirements": {
+    "architecture": "arm64",
+    "capabilities": [
+      "declarative-composition",
+      "python-function-v1"
+    ],
+    "host_api_version": 1,
+    "os": "macos",
+    "package_schema": 1,
+    "protocol": "2025-11-25"
+  },
+  "schema_version": 1,
+  "steps": [
+    {
+      "component": "python-function-v1",
+      "config": {},
+      "digest": "a633c70b645b143d89d25584f4b61a69d490eda01fc986b7e46b54f0bce71561",
+      "version": "1.0.0"
+    }
+  ],
+  "version": "1.0.1",
+  "worker_api_version": 1
+}

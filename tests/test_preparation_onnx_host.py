@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from mcpme import preparation_onnx as onnx
-from mcpme.preparation_artifacts import AcquisitionRequestV1
-from mcpme.preparation_capture import AttachImportTargetV1, CapturePolicyV1, CreateImportTargetV1
-from mcpme.supervisor import Supervisor
+from meecp import preparation_onnx as onnx
+from meecp.preparation_artifacts import AcquisitionRequestV1
+from meecp.preparation_capture import AttachImportTargetV1, CapturePolicyV1, CreateImportTargetV1
+from meecp.supervisor import Supervisor
 
 
 @pytest.mark.parametrize("source_kind", ["captured", "folder"])
@@ -89,12 +89,14 @@ async def test_added_onnx_seed_preserves_user_lifecycle_and_other_recipes_across
     host = Supervisor(state, tmp_path / "unused-reaper")
     try:
         legacy = {item["recipe_id"]: item for item in host.recipes.list() if item["recipe_id"] != "mcpme.onnx-hotdog"}
-        before = getattr(host.recipes, action)("mcpme.onnx-hotdog", "1.0.0")
+        seed = next(item for item in host.builtin_recipe_metadata["recipes"]
+                    if item["recipe_id"] == "mcpme.onnx-hotdog")
+        before = getattr(host.recipes, action)("mcpme.onnx-hotdog", seed["version"])
     finally:
         await host.close()
     restarted = Supervisor(state, tmp_path / "unused-reaper")
     try:
-        assert restarted.recipes.inspect("mcpme.onnx-hotdog", "1.0.0") == before
+        assert restarted.recipes.inspect("mcpme.onnx-hotdog", seed["version"]) == before
         assert {item["recipe_id"]: item for item in restarted.recipes.list()
                 if item["recipe_id"] != "mcpme.onnx-hotdog"} == legacy
         assert restarted.preparation_runner.enabled is False

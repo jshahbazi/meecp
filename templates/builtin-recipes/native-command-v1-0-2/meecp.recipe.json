@@ -1,0 +1,37 @@
+{
+  "form": [],
+  "id": "mcpme.native-command",
+  "input_schema": {
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "kind": "declarative",
+  "licenses": [
+    "LICENSE"
+  ],
+  "provenance": {
+    "origin": "meecp fixed native JSON command component",
+    "publisher": "meecp contributors"
+  },
+  "requirements": {
+    "architecture": "arm64",
+    "capabilities": [
+      "declarative-composition"
+    ],
+    "host_api_version": 1,
+    "os": "macos",
+    "package_schema": 2,
+    "protocol": "2025-11-25"
+  },
+  "schema_version": 1,
+  "steps": [
+    {
+      "component": "host-command-json-v1",
+      "config": {},
+      "digest": "339cbe6ebad51b2a0e4e73228e3f7d119d81ac784908fffd93363340bc91684b",
+      "version": "1.0.1"
+    }
+  ],
+  "version": "1.0.2",
+  "worker_api_version": 1
+}

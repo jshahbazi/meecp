@@ -177,7 +177,7 @@ def test_release_workflow_admits_fixed_archive_before_tests_and_credentials():
     preparation = workflow.split("Prepare reviewed signed command helpers", 1)[1].split("Run tests before", 1)[0]
     assert "id: command_asset" in preparation
     assert "MCPME_COMMAND_SIGNED_ASSET_BASE64: ${{ secrets.MCPME_COMMAND_SIGNED_ASSET_BASE64 }}" in preparation
-    assert '.github/scripts/prepare_command_asset.py --output "$RUNNER_TEMP/mcpme-release-assets/command-native-v1.tar.gz"' in preparation
+    assert '.github/scripts/prepare_command_asset.py --output "$RUNNER_TEMP/meecp-release-assets/command-native-v1.tar.gz"' in preparation
     build = workflow.split("Build, sign, notarize, and verify DMG", 1)[1].split("Remove temporary Apple credentials", 1)[0]
     assert "COMMAND_SIGNED_ASSET: ${{ steps.command_asset.outputs.path }}" in build
     assert '--command-signed-asset "$COMMAND_SIGNED_ASSET"' in build

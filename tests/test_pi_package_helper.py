@@ -11,7 +11,7 @@ import sys
 
 import pytest
 
-from mcpme.contracts import PackageError, validate_package
+from meecp.contracts import PackageError, validate_package
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("pi_package_helper", ROOT / "templates/pi_package.py")
@@ -37,7 +37,7 @@ def package(tmp_path):
         "tools": [{"name": "synthetic", "description": "Synthetic fixture tool",
             "input_schema": {"type": "object", "properties": {}}}],
         "licenses": ["LICENSE", "DEPENDENCIES.md"]}
-    (root / "mcpme.package.json").write_text(json.dumps(manifest) + "\n")
+    (root / "meecp.package.json").write_text(json.dumps(manifest) + "\n")
     return root
 
 
@@ -57,26 +57,26 @@ def test_seals_complete_tree_with_actual_host_schema(tmp_path, monkeypatch):
     assert all(entry["license"] == "DEPENDENCIES.md" for entry in lock["artifacts"])
     assert all(entry["source"] == "prepared:sha256:" + entry["sha256"] for entry in lock["artifacts"])
     assert next(entry for entry in lock["artifacts"] if entry["path"] == "bin/service")["executable"] is True
-    assert root.joinpath("mcpme.lock.json").stat().st_mode & 0o777 == 0o600
+    assert root.joinpath("meecp.lock.json").stat().st_mode & 0o777 == 0o600
 
 
 def test_relocking_is_deterministic_and_binds_changed_bytes_modes_and_manifest(tmp_path):
     root = package(tmp_path)
     helper.seal(root)
-    original = (root / "mcpme.lock.json").read_bytes()
+    original = (root / "meecp.lock.json").read_bytes()
     original_digest = validate_package(root).digest
     helper.seal(root)
-    assert (root / "mcpme.lock.json").read_bytes() == original
+    assert (root / "meecp.lock.json").read_bytes() == original
     (root / "verification.json").write_text("[{}]\n")
     with pytest.raises(PackageError, match="artifact_hash_mismatch|artifact_size_mismatch|package_changed"):
         validate_package(root)
-    manifest = json.loads((root / "mcpme.package.json").read_text())
+    manifest = json.loads((root / "meecp.package.json").read_text())
     manifest["name"] = "Updated fixture"
-    (root / "mcpme.package.json").write_text(json.dumps(manifest))
+    (root / "meecp.package.json").write_text(json.dumps(manifest))
     (root / "DEPENDENCIES.md").chmod(0o700)
     helper.seal(root)
     assert validate_package(root).digest != original_digest
-    lock = json.loads((root / "mcpme.lock.json").read_text())
+    lock = json.loads((root / "meecp.lock.json").read_text())
     assert next(entry for entry in lock["artifacts"] if entry["path"] == "DEPENDENCIES.md")["executable"] is True
     assert not list(root.glob(".pi-lock-*"))
 
@@ -92,14 +92,14 @@ def test_detects_artifact_mutation_before_publishing_lock(tmp_path, monkeypatch)
     monkeypatch.setattr(helper, "_read", mutate)
     with pytest.raises(helper.LockError, match="^pi_lock_changed$"):
         helper.seal(root)
-    assert not (root / "mcpme.lock.json").exists()
+    assert not (root / "meecp.lock.json").exists()
 
 
 @pytest.mark.parametrize("kind", ["symlink", "hardlink", "fifo", "writable", "special_mode", "empty_directory", "directory_writable", "lock_symlink"])
 def test_rejects_unsafe_tree_without_changing_existing_lock(tmp_path, kind):
     root = package(tmp_path)
     helper.seal(root)
-    old = (root / "mcpme.lock.json").read_bytes()
+    old = (root / "meecp.lock.json").read_bytes()
     expected = "pi_lock_unsafe_file"
     if kind == "symlink":
         (root / "link").symlink_to(root / "LICENSE")
@@ -114,16 +114,16 @@ def test_rejects_unsafe_tree_without_changing_existing_lock(tmp_path, kind):
     elif kind == "directory_writable":
         (root / "bin").chmod(0o777)
     elif kind == "lock_symlink":
-        (root / "mcpme.lock.json").unlink()
+        (root / "meecp.lock.json").unlink()
         target = tmp_path / "external-lock.json"
         target.write_bytes(old)
-        (root / "mcpme.lock.json").symlink_to(target)
+        (root / "meecp.lock.json").symlink_to(target)
     else:
         (root / "unused").mkdir()
         expected = "pi_lock_empty_directory"
     with pytest.raises(helper.LockError, match="^" + expected + "$"):
         helper.seal(root)
-    assert (root / "mcpme.lock.json").read_bytes() == old
+    assert (root / "meecp.lock.json").read_bytes() == old
 
 
 @pytest.mark.parametrize("change", ["missing", "empty", "undeclared", "duplicate_json", "traversal"])
@@ -137,13 +137,13 @@ def test_requires_declared_nonempty_licenses_and_closed_metadata(tmp_path, chang
     elif change == "undeclared":
         primary = "verification.json"
     elif change == "duplicate_json":
-        file = root / "mcpme.package.json"
+        file = root / "meecp.package.json"
         file.write_text(file.read_text().replace('"schema_version": 1', '"schema_version": 1, "schema_version": 1'))
     else:
         primary = "../LICENSE"
     with pytest.raises(helper.LockError):
         helper.seal(root, primary_license=primary)
-    assert not (root / "mcpme.lock.json").exists()
+    assert not (root / "meecp.lock.json").exists()
 
 
 def test_cli_uses_stdlib_and_emits_fixed_codes_without_input_or_exception_text(tmp_path):
@@ -157,7 +157,7 @@ def test_cli_uses_stdlib_and_emits_fixed_codes_without_input_or_exception_text(t
     assert invalid.returncode == 1
     assert json.loads(invalid.stdout) == {"success": False, "code": "pi_lock_arguments_invalid"}
     assert invalid.stderr == ""
-    (root / "mcpme.package.json").write_text("private-invalid-json-marker")
+    (root / "meecp.package.json").write_text("private-invalid-json-marker")
     failed = subprocess.run(command + [str(root)], capture_output=True, text=True)
     assert failed.returncode == 1
     assert json.loads(failed.stdout) == {"success": False, "code": "pi_lock_failed"}

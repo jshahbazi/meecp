@@ -7,7 +7,7 @@ import Foundation
 final class PrivateHTTPTests: XCTestCase {
     private enum FixtureFailure: Error { case bind }
     private func state(_ name: String = UUID().uuidString) throws -> URL {
-        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("mcpme-\(name)-\(UUID().uuidString)")
+        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("meecp-\(name)-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: url) }
         return url

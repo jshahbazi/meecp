@@ -8,7 +8,7 @@ Baseline: `1d723e5af50639aa40702091c3e39e47dc3020dd`, including the standalone h
 
 ## Intended result
 
-A user selects source, a program, or model artifacts, supplies any missing intent, and prepares a package inside mcpme. Complete supported recipes run without an LLM. Optional integrated agents resolve unfamiliar interfaces or implement adapters. Every route produces the same sealed package and resumes the same import review and installation flow.
+A user selects source, a program, or model artifacts, supplies any missing intent, and prepares a package inside meecp. Complete supported recipes run without an LLM. Optional integrated agents resolve unfamiliar interfaces or implement adapters. Every route produces the same sealed package and resumes the same import review and installation flow.
 
 Users should not author package manifests, collect dependency trees, or manually return prepared artifacts for the supported automatic path. A directory may contain several services or languages; inspection proposes bounded integration candidates and asks only for missing choices. Package generation is a host preparation responsibility. Preserve the external-agent route while automatic capabilities are being implemented.
 
@@ -22,21 +22,21 @@ The first usable milestone must prepare both a Python callable and the exact hot
 
 | Current implementation | Consequence for this plan |
 | --- | --- |
-| [ImportStore](../backend/mcpme/imports.py) snapshots selected source and attaches packages statically. | Preserve code-free intake, attachment, and installation planning. |
+| [ImportStore](../backend/meecp/imports.py) snapshots selected source and attaches packages statically. | Preserve code-free intake, attachment, and installation planning. |
 | Text-source intake excludes models, runtime trees and binaries, with 16 MiB/file and 64 MiB total bounds. | Add separate binary-artifact intake and ownership. Preserve existing source discovery and digest rules. |
 | [The preparation generator](../templates/prepare.py) packages explicitly selected Python callables and existing foreground MCP servers using private Python and locked wheels. | Reuse the deterministic builder behind a durable preparation worker. Interface selection and recipe completeness need new support. |
 | [The catalog](../templates/catalog.json) includes Python, existing MCP, and a JevK5-specific recipe. | These identifiers do not establish general CLI, YOLO, or LLM support. |
-| [Schema 1](../backend/mcpme/contracts.py) supports macOS arm64/macOS 26+, tools-only MCP 2025-11-25, `mcp-stdio`, constrained authenticated `mcp-http`, and `model-service`. | Package HTTP support is implemented; automatic HTTP preparation remains unsupported by the current planner. Additional platforms need separate capability work. |
+| [Schema 1](../backend/meecp/contracts.py) supports macOS arm64/macOS 26+, tools-only MCP 2025-11-25, `mcp-stdio`, constrained authenticated `mcp-http`, and `model-service`. | Package HTTP support is implemented; automatic HTTP preparation remains unsupported by the current planner. Additional platforms need separate capability work. |
 | Schema-1 stdio requires CPU-only operation, no model/process-graph fields and a memory declaration of at most 4096 MiB. | Package the first detector as embedded CPU ONNX with one session. GPU or resident vision requires a later contract extension. |
 | Model-service metadata requires `context_tokens`. [JevK5 preparation](../templates/jevk5-llamacpp-v1/README.md) uses a specific engine, scorer and model identity. | Preserve JevK5 semantics. Introduce separate engine recipes and task adapters; avoid fictional context metadata for vision. |
-| [Preparation grants](../backend/mcpme/grants.py) authorize bounded metadata/attachment/planning without package execution. | Create distinct job-bound authority for preparation execution and probes. Existing grants retain their scope. |
+| [Preparation grants](../backend/meecp/grants.py) authorize bounded metadata/attachment/planning without package execution. | Create distinct job-bound authority for preparation execution and probes. Existing grants retain their scope. |
 | [The Phase 2 verifier](../scripts/verify_phase2.py) already prepares synthetic Python through explicit generator arguments, installs it, invokes it and restarts the host. | Extend this end-to-end harness to exercise automatic preparation through the native/API route. |
 
 The [recorded hotdog preparation baseline](HOTDOG_PREPARATION_BASELINE.md) established 19 source-test passes and 31 package checks, including real inference on three generated negative images and relocation with original source, global runtime, network and package writes denied. Positive postprocessing used controlled tensors. Those checks establish functionality for that workload; they provide no generalization accuracy result.
 
 ## Common preparation contract
 
-Add `mcpme.prepare.json` with **preparation descriptor schema 1**. Keep descriptor, import/export and package versions independent. Preserve package schema 1 initially. The descriptor is bounded declarative data interpreted by versioned recipes; it contains no arbitrary shell commands.
+Add `meecp.prepare.json` with **preparation descriptor schema 1**. Keep descriptor, import/export and package versions independent. Preserve package schema 1 initially. The descriptor is bounded declarative data interpreted by versioned recipes; it contains no arbitrary shell commands.
 
 The implemented descriptor-v1 foundation is limited to Python callable/MCP inputs and requires a source lock and complete tool schemas. Generalize new families through a new descriptor version and component validation/result seam; preserve v1 parsing and identities. Missing source locks or dynamically discovered interfaces require a bounded discovery/resolution attempt that produces separately identified derived artifacts before the final build is bound. Do not pretend generated locks were original source inputs. A fresh Python recipe proves extension within Python capabilities; separately verify a non-Python implementation before advertising family-independent execution.
 
@@ -75,7 +75,7 @@ Keep three objects distinct: the **descriptor** selects a recipe and supplies ap
 
 ### Bundle and stable runner contract
 
-A recipe bundle has `mcpme.recipe.json`, `mcpme.recipe.lock.json`, input/form schemas, documentation, nonsecret fixtures, and any declared implementation/runtime artifacts. Its closed-tree lock hashes every file and preserves licenses/provenance. Recipe IDs are namespaced; semantic versions are immutable. A `(recipe_id, version)` collision with different content fails rather than replacing the existing bytes.
+A recipe bundle has `meecp.recipe.json`, `meecp.recipe.lock.json`, input/form schemas, documentation, nonsecret fixtures, and any declared implementation/runtime artifacts. Its closed-tree lock hashes every file and preserves licenses/provenance. Recipe IDs are namespaced; semantic versions are immutable. A `(recipe_id, version)` collision with different content fails rather than replacing the existing bytes.
 
 The manifest declares recipe-worker API version, descriptor/form schema versions, platform/package/protocol requirements, required runner capabilities, accepted artifact roles, matching rules, runtime/task dependencies, resource/effect ceilings, supported process topology, replay/cancellation behavior, and required acceptance gates. Bundle admission is static. Merely viewing or adding a bundle never launches its implementation.
 
@@ -102,7 +102,7 @@ Use a bounded form vocabulary for files, callable choices, enums, strings, numer
 
 ### Easy authoring and addition
 
-Provide a recipe development kit with a scaffold command, reusable step library, schema helpers, fake runner services and a common acceptance harness. Proposed commands are `mcpme recipes scaffold`, `check`, `test`, `add`, `list`, `inspect`, `enable`, `disable`, `remove` and `deprecate`.
+Provide a recipe development kit with a scaffold command, reusable step library, schema helpers, fake runner services and a common acceptance harness. Proposed commands are `meecp recipes scaffold`, `check`, `test`, `add`, `list`, `inspect`, `enable`, `disable`, `remove` and `deprecate`.
 
 An author or agent scaffolds from the nearest supported recipe, fills input/form metadata and fixtures, and runs `check` for static validation. `test` runs the common and family-specific gates under explicit preparation authority using a development-verification attempt bound to the candidate digest. This attempt may test a proposed bundle before enablement, but cannot promote it or bypass production attachment admission. `add` statically snapshots the bundle into private versioned storage and presents identity, provenance, effects and compatibility for admission. Enabling a third-party executable recipe requires applicable review/authority; an agent cannot approve its own extension. Publisher signatures may strengthen provenance when supported, but a hash alone does not establish publisher trust.
 
@@ -128,7 +128,7 @@ A recipe's receipt records the full resolved component/recipe digest set. Rechec
 
 ### Extensibility acceptance gate
 
-After baseline recipe-management support exists, build a fresh minimal recipe using the development kit outside the host tree. Add it through CLI and native recipe management, complete its generated input form, prepare a synthetic app, validate and attach it, restart mcpme, then repeat inspection. Adding this recipe must require zero host dispatcher/UI/import source edits.
+After baseline recipe-management support exists, build a fresh minimal recipe using the development kit outside the host tree. Add it through CLI and native recipe management, complete its generated input form, prepare a synthetic app, validate and attach it, restart meecp, then repeat inspection. Adding this recipe must require zero host dispatcher/UI/import source edits.
 
 Exercise version collision, incompatible worker/schema/platform/capability, unsupported form field, dependency cycle, missing notice/runtime artifact, false gate evidence, worker cancellation/reaping, disabled queued start, revocation during verification/attachment, update during an active job, and removal with retained receipts. Recipe-reported results alone cannot satisfy mandatory independent acceptance checks. Common checks plus recipe-specific fixtures run in parallel where independent; their evidence is tied to the exact bundle/component digests.
 
@@ -220,7 +220,7 @@ The setup window displays a detected candidate and focused missing-fields questi
 
 A native descriptor form and repository descriptor generate the same normalized request. Show actual tools, effects, source/artifact provenance, download requirements, declared resources and preparation execution scope. Progress comes from real worker stages, bytes/files and validation counts. Closing the window preserves the job. **Cancel Preparation** terminates owned preparation and preserves the draft. **Cancel Draft** invalidates pending results and coordinates source/staging cleanup. Installation cancellation remains unsupported; new preparation controls cannot imply it exists.
 
-Add versioned recipe management and preparation plan/start/list/inspect/cancel operations to the CLI, management API and management MCP facade. Proposed namespaces are `mcpme recipes ...` for the versioned registry and `mcpme preparations inspect-source|plan|start|list|get|cancel` for app jobs. Recipe metadata routes live under `/v1/recipes`; preparation routes live under `/v1/preparations`. Code-free planning remains static. Execution requires its own scope. Import summaries reference preparation job ID/status without conflating them with installation operation ID/status.
+Add versioned recipe management and preparation plan/start/list/inspect/cancel operations to the CLI, management API and management MCP facade. Proposed namespaces are `meecp recipes ...` for the versioned registry and `meecp preparations inspect-source|plan|start|list|get|cancel` for app jobs. Recipe metadata routes live under `/v1/recipes`; preparation routes live under `/v1/preparations`. Code-free planning remains static. Execution requires its own scope. Import summaries reference preparation job ID/status without conflating them with installation operation ID/status.
 
 The [management preparation workflow contract](MANAGEMENT_PREPARATION_WORKFLOWS.md) implements the MCP recipe/preparation/resolution surfaces with separately owner-issued exact execution grants. Earlier read/prepare/install/lifecycle grants retain their execution denials. New job authority and grant association commit together; current checks cannot reinterpret a missing association as owner authority.
 
@@ -324,7 +324,7 @@ Agents commit complete slices. The integration owner applies them into the integ
 | A5: integrated agent | Documented backend works end to end on unfamiliar synthetic source; source transfer and execution are scoped; parallel subtask outputs integrate; bounded usage/cancellation/restart succeed; stale output cannot attach or install. |
 | A6: broader coverage | New runtimes, model families, resident/GPU vision, GUI automation or provider-backed runtime services each pass their own compatibility and authority gates before advertisement. |
 
-Extend [import tests](../tests/test_mcpme_imports.py), [host tests](../tests/test_mcpme_host.py), [grant tests](../tests/test_mcpme_grants.py), [process tests](../tests/test_mcpme_processes.py), [template tests](../tests/test_mcpme_templates.py) and [Phase 2 verification](../scripts/verify_phase2.py). Preserve existing multi-slot and management regressions.
+Extend [import tests](../tests/test_meecp_imports.py), [host tests](../tests/test_meecp_host.py), [grant tests](../tests/test_meecp_grants.py), [process tests](../tests/test_meecp_processes.py), [template tests](../tests/test_meecp_templates.py) and [Phase 2 verification](../scripts/verify_phase2.py). Preserve existing multi-slot and management regressions.
 
 Exercise races at source/artifact copy, dependency resolution, seal, probe, attach and success publication. Include revise/cancel/expiry versus start/attach; authority expiry while queued or awaiting resource admission; cancellation versus spawn acknowledgement; provider disconnect versus tool completion; duplicate start; disk exhaustion; source mutation; symlink/ancestor replacement; missing notices; tampered receipts; raw log/credential leakage; unsupported capabilities; crash after seal/attachment publication; and restart with an old worker still running. Terminal cancellation leaves no owned work or admissible late result. Lost ownership retains reservations and requires reconciliation.
 

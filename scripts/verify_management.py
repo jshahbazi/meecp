@@ -24,7 +24,7 @@ async def verify(host_path: Path, package_path: Path) -> dict:
         package = root / "synthetic package"
         shutil.copytree(package_path, package)
         state = root / "private state"
-        launcher, reaper = host / "bin/mcpme", host / "bin/mcpme-reap"
+        launcher, reaper = host / "bin/meecp", host / "bin/meecp-reap"
         environment = {"PATH": "/usr/bin:/bin", "HOME": str(root), "LANG": "en_US.UTF-8"}
         process = None
 
@@ -74,7 +74,7 @@ async def verify(host_path: Path, package_path: Path) -> dict:
             async with asyncio.timeout(60):
                 while operation["status"] in {"pending", "running"}:
                     await asyncio.sleep(0.05)
-                    operation = await invoke(session, "mcpme_get_operation", {"operation_id": operation["operation_id"]})
+                    operation = await invoke(session, "meecp_get_operation", {"operation_id": operation["operation_id"]})
             assert operation["status"] == "completed"
             return operation
 
@@ -89,40 +89,40 @@ async def verify(host_path: Path, package_path: Path) -> dict:
                         assert set(initialized.capabilities.model_dump(exclude_none=True)) == {"tools"}
                         listed = await session.list_tools()
                         assert len(listed.tools) == 18 and not any("authorize" in item.name for item in listed.tools)
-                        caps = await invoke(session, "mcpme_capabilities")
+                        caps = await invoke(session, "meecp_capabilities")
                         assert "scoped_grants" not in caps["unsupported"] and caps["management_mcp"] == "scoped_stdio"
-                        draft = await invoke(session, "mcpme_create_import", {
+                        draft = await invoke(session, "meecp_create_import", {
                             "source": str(package), "name": "Management fixture", "start": False})
-                        plan = await invoke(session, "mcpme_plan_install", {"import_id": draft["draft_id"], "revision": 1})
-                        await invoke(session, "mcpme_apply_install", {"plan_id": plan["plan_id"]}, error="grant_scope")
+                        plan = await invoke(session, "meecp_plan_install", {"import_id": draft["draft_id"], "revision": 1})
+                        await invoke(session, "meecp_apply_install", {"plan_id": plan["plan_id"]}, error="grant_scope")
                 installation = command("authorize", "--plan", plan["plan_id"], "--json")
                 installation_parameters = parameters(installation)
                 async with stdio_client(installation_parameters, errlog=errors) as (read, write):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
-                        reviewed = await invoke(session, "mcpme_inspect_install_plan", {"plan_id": plan["plan_id"]})
+                        reviewed = await invoke(session, "meecp_inspect_install_plan", {"plan_id": plan["plan_id"]})
                         assert reviewed["plan_digest"] == installation["plan_digest"]
-                        first, duplicate = await asyncio.gather(*(invoke(session, "mcpme_apply_install", {"plan_id": plan["plan_id"]}) for _ in range(2)))
+                        first, duplicate = await asyncio.gather(*(invoke(session, "meecp_apply_install", {"plan_id": plan["plan_id"]}) for _ in range(2)))
                         assert first["operation_id"] == duplicate["operation_id"]
                         operation = await wait(session, first)
-                        await invoke(session, "mcpme_start_slot", {"slot_id": operation["slot_id"]}, error="grant_scope")
+                        await invoke(session, "meecp_start_slot", {"slot_id": operation["slot_id"]}, error="grant_scope")
                 process.terminate()
                 await asyncio.to_thread(process.wait, 30)
                 process = await start()
                 async with stdio_client(installation_parameters, errlog=errors) as (read, write):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
-                        resumed = await invoke(session, "mcpme_apply_install", {"plan_id": plan["plan_id"]})
+                        resumed = await invoke(session, "meecp_apply_install", {"plan_id": plan["plan_id"]})
                         assert resumed["operation_id"] == operation["operation_id"]
                 lifecycle = command("authorize", "--slot", operation["slot_id"], "--action", "start", "--action", "stop", "--json")
                 async with stdio_client(parameters(lifecycle), errlog=errors) as (read, write):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
-                        await wait(session, await invoke(session, "mcpme_start_slot", {"slot_id": operation["slot_id"]}))
-                        await invoke(session, "mcpme_restart_slot", {"slot_id": operation["slot_id"]}, error="grant_scope")
-                        await wait(session, await invoke(session, "mcpme_stop_slot", {"slot_id": operation["slot_id"]}))
+                        await wait(session, await invoke(session, "meecp_start_slot", {"slot_id": operation["slot_id"]}))
+                        await invoke(session, "meecp_restart_slot", {"slot_id": operation["slot_id"]}, error="grant_scope")
+                        await wait(session, await invoke(session, "meecp_stop_slot", {"slot_id": operation["slot_id"]}))
                         command("grants", "revoke", lifecycle["grant_id"], "--json")
-                        await invoke(session, "mcpme_capabilities", error="grant_credential_unavailable")
+                        await invoke(session, "meecp_capabilities", error="grant_credential_unavailable")
             assert len(command("slots", "list", "--json")["slots"]) == 1
             return {"verified": True, "relocated_host": True, "management_stdio_sdk": True,
                     "preparation_scope": True, "exact_plan_grant": True, "duplicate_apply": True,

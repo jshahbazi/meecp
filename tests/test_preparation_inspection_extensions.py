@@ -17,7 +17,7 @@ def test_cold_untyped_directory_with_agent_family_is_inspectable(adapter_foundat
 
 def test_missing_optional_blockers_preserves_other_inspection_diagnostics(adapter_foundation, monkeypatch):
     _, _, preparations, draft, _, family, _ = adapter_foundation
-    from mcpme import preparation_inspection
+    from meecp import preparation_inspection
     original = preparation_inspection.inspect_source
 
     def legacy(value):

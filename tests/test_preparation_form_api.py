@@ -8,10 +8,10 @@ from pathlib import Path
 import httpx
 import pytest
 
-from mcpme.grants import read_credential
-from mcpme.preparation_contracts import PreparationError
-from mcpme.recipe_sdk import scaffold_recipe
-from mcpme.supervisor import Supervisor, management_app
+from meecp.grants import read_credential
+from meecp.preparation_contracts import PreparationError
+from meecp.recipe_sdk import scaffold_recipe
+from meecp.supervisor import Supervisor, management_app
 
 
 def prepare_source(host, root, *, custom_recipe=True):

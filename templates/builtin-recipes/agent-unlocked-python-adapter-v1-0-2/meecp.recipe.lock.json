@@ -1,0 +1,27 @@
+{
+  "artifacts": [
+    {
+      "license": "LICENSE",
+      "origin": "meecp-shipped-recipe-v1",
+      "path": "LICENSE",
+      "sha256": "4be78795230eef6d9133360ed678144b68ab84bbb3b2dab36e79470f16f8b45d",
+      "size": 1075
+    },
+    {
+      "license": "LICENSE",
+      "origin": "meecp-shipped-recipe-v1",
+      "path": "README.md",
+      "sha256": "c6c0df9b401227f5fe999f142231d1bb41bf7c6e65fd017c6934190c6dda5a32",
+      "size": 397
+    },
+    {
+      "license": "LICENSE",
+      "origin": "meecp-shipped-recipe-v1",
+      "path": "THIRD_PARTY_NOTICES.md",
+      "sha256": "d8b3b4c7f8cbc9cd0332c5aac1223f36ed3bc69deb56c560bfd4dceed6319af8",
+      "size": 310
+    }
+  ],
+  "manifest_sha256": "0fcda64717486cc6a81ac399efab4f365967dae32dc8d0139fd1bd2dde9b25d9",
+  "schema_version": 1
+}

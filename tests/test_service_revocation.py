@@ -4,15 +4,15 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from mcpme.preparation_contracts import PreparationError
-from mcpme.preparation_service_routes import revoke
+from meecp.preparation_contracts import PreparationError
+from meecp.preparation_service_routes import revoke
 
 
 @pytest.mark.parametrize("fault", ["invalid-package", "gateway-unsettled", "client-cancel"])
 async def test_service_revocation_retains_and_joins_all_scopes(fault):
     entered = asyncio.Event(); resume = asyncio.Event(); stopped = []; revoked = []
     slots = [NS(id="first", generation=1), NS(id="second", generation=1)]
-    package = NS(manifest=NS(profile="mcp-stdio"), lock=NS(artifacts=[NS(path=name) for name in ("service.json", "backend/mcpme_service/server.py")]))
+    package = NS(manifest=NS(profile="mcp-stdio"), lock=NS(artifacts=[NS(path=name) for name in ("service.json", "backend/meecp_service/server.py")]))
     async def static(function, slot):
         if slot.id == "first" and fault == "invalid-package": raise PreparationError("package_identity_mismatch")
         return package

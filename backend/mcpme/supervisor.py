@@ -80,7 +80,7 @@ def capabilities(host=None) -> dict:
             "limits": {"slots": 16, "request_bytes": DEFAULT_REQUEST_BYTES,
                        "max_request_bytes": MAX_REQUEST_BYTES, "idle_seconds": 300},
             "installation": "prepared_local_packages_and_imports", "management_credentials": "owner_and_scoped_grants",
-            "management_grant_modes": ["read", "prepare", "lifecycle", "install",
+            "management_grant_modes": ["read", "prepare", "lifecycle", "install", "upgrade",
                                        "recipe-management", "preparation-execution", "resolution-execution"],
             "management_mcp": "scoped_stdio", "preparation_job_schema_versions": [1, 2], "resolution_job_schema_versions": [1, 2],
             "import_schema_versions": [1], "import_sources": ["local_folder", "markdown", "text", "prepared_package", "artifact_collection", "captured_artifact_collection", "service_connection"],
@@ -105,7 +105,7 @@ def capabilities(host=None) -> dict:
                         "value_export": False, "rotation": "new_reference"},
             "downloads": {"format": "zip", "transport": "https", "credentials": "owner_only",
                           "pins": ["sha256", "size"], "redirects": False, "resume_partial": False},
-            "upgrades": {"credentials": "owner_only", "data_policy": "clone_before_probe",
+            "upgrades": {"credentials": "owner_and_exact_upgrade_grants", "data_policy": "clone_before_probe",
                          "rollback_policy": "before_exposure_only", "recovery": "selected_generation"},
             "model_intake": {"contract_versions": [1], "kind": "artifact_collection", "weights": ["gguf"],
                              "profiles": ["jevk5-llamacpp-v1"], "max_artifact_bytes": 64 * 1024**3},
@@ -390,6 +390,8 @@ class Supervisor(UpgradeHost):
                     if agent_preparation_factory is None else {}))
             from .pi_setup import PiSetup
             self.pi_setup = PiSetup(self)
+            from .authorization import AuthorizationBroker
+            self.authorization = AuthorizationBroker(self)
         except BaseException:
             if hasattr(self, "imports"):
                 self.imports.close()
@@ -2199,6 +2201,9 @@ class Supervisor(UpgradeHost):
 
     async def close(self):
         self.closing = True
+        # Close credential-free admission before joining any owned runner.
+        if hasattr(self, "authorization"):
+            await self.authorization.close()
         preparation_error = None
         if (self._preparation_close_task is None or self._preparation_close_task.done()
                 and (self._preparation_close_task.cancelled() or self._preparation_close_task.exception() is not None)):
@@ -2307,8 +2312,14 @@ def management_app(host: Supervisor, token: str, port: int):
                 payload = load_json(await request.body())
                 if not isinstance(payload, dict):
                     raise HostError("invalid_request")
+            if route.startswith("/v1/authorization/"):
+                principal = request.scope["mcpme.principal"]
+                if principal.get("owner") is not True or grant_id is not None:
+                    raise GrantError("grant_scope", 403)
+                result = await host.authorization.owner_request(request.method, route, payload)
+                return JSONResponse({"api_version": 1, **result})
             if grant_id is not None:
-                if (route.startswith(("/v1/downloads", "/v1/secrets", "/v1/upgrade", "/v1/artifact-captures", "/v1/artifacts"))
+                if (route.startswith(("/v1/downloads", "/v1/secrets", "/v1/artifact-captures", "/v1/artifacts"))
                         or route.startswith("/v1/operations/") and request.method != "GET"):
                     # Workflow execution grants do not confer owner-only
                     # acquisition, secret-store or installation administration.
@@ -2419,7 +2430,7 @@ def management_app(host: Supervisor, token: str, port: int):
                 if route == "/v1/upgrade/plan":
                     result = await host.plan_upgrade(payload)
                 elif route == "/v1/upgrade/apply" and set(payload) == {"plan_id"}:
-                    result = await host.apply_upgrade(payload["plan_id"])
+                    result = await host.apply_upgrade(payload["plan_id"], grant_id=grant_id)
                 elif route.startswith("/v1/operations/"):
                     if payload or request.path_params["action"] not in {"cancel", "recover"}:
                         raise HostError("invalid_operation_request")
@@ -2554,6 +2565,13 @@ def management_app(host: Supervisor, token: str, port: int):
                         if "import_id" in plan:
                             host.reconcile_imports()
                             host.imports.validate_binding(plan["import_id"], plan["import_revision"], plan["import_digest"])
+                    elif payload.get("mode") == "upgrade":
+                        plan_id = payload.get("plan_id")
+                        inspected = await host.static_work(host.inspect_upgrade_plan, plan_id)
+                        host.validate_upgrade_review(plan_id, inspected=inspected)
+                        plan = host.read_upgrade_plan(plan_id)
+                        if inspected["plan_digest"] != plan_digest(plan):
+                            raise GrantError("grant_plan_changed", 409)
                     result = host.grants.issue(payload, plan=plan)
                 elif route.endswith("/revoke") and "grant_id" in request.path_params and not payload:
                     identifier = request.path_params["grant_id"]
@@ -2637,6 +2655,13 @@ def management_app(host: Supervisor, token: str, port: int):
             return JSONResponse({"api_version": 1, "error": {"code": "invalid_request"}}, status_code=400)
 
     app = Starlette(routes=[Route("/v1/capabilities", dispatch), Route("/v1/status", dispatch), Route("/v1/slots", dispatch),
+        Route("/v1/authorization/profiles", dispatch, methods=["GET", "POST"]),
+        Route("/v1/authorization/profiles/{profile_id}/revoke", dispatch, methods=["POST"]),
+        Route("/v1/authorization/requests", dispatch),
+        Route("/v1/authorization/requests/{request_id}", dispatch),
+        Route("/v1/authorization/requests/{request_id}/{decision}", dispatch, methods=["POST"]),
+        Route("/v1/authorization/sessions", dispatch),
+        Route("/v1/authorization/sessions/{session_id}/disconnect", dispatch, methods=["POST"]),
         Route("/v1/downloads", dispatch, methods=["GET", "POST"]),
         Route("/v1/downloads/{download_id}", dispatch),
         Route("/v1/downloads/{download_id}/cancel", dispatch, methods=["POST"]),
@@ -2718,6 +2743,7 @@ async def serve(state_dir: Path, reaper: Path, parent_pid: int | None = None, *,
     try:
         private_listener = bind_private_listener(host.root, "manager")
         await host.initialize()
+        await host.authorization.start(f"http://127.0.0.1:{port}")
         write_private_json(host.root / "manager-connection.json", {"api_version": 1,
             "endpoint": f"http://127.0.0.1:{port}", "token": token, "supervisor_pid": os.getpid()})
         if parent_pid is not None:

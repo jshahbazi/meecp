@@ -158,7 +158,7 @@ async def call(state_dir: Path, method: str, path: str, body: dict | None = None
         from .grants import read_credential
         # Reopen for every call; a removed or unsafe file never selects owner authority.
         token = read_credential(credential_file)["token"]
-    timeout = 300 if path in {"/v1/install/plan", "/v1/upgrade/plan", "/v1/migrations/jevk5/plan", "/v1/imports",
+    timeout = 300 if path in {"/v1/install/plan", "/v1/upgrade/plan", "/v1/upgrade/apply", "/v1/migrations/jevk5/plan", "/v1/imports",
                              "/v1/preparations/plan", "/v1/preparations/inspect-source", "/v1/resolutions/plan"} or path.endswith(("/attach", "/engine")) else 30
     async with httpx.AsyncClient(base_url=endpoint(connection), timeout=timeout, follow_redirects=False, trust_env=False,
                                  transport=private_transport(socket_path(state_dir, "manager")),
@@ -266,6 +266,7 @@ def parser() -> argparse.ArgumentParser:
     authorize = commands.add_parser("authorize")
     scope = authorize.add_mutually_exclusive_group(required=True)
     scope.add_argument("--plan", type=uuid_argument)
+    scope.add_argument("--upgrade-plan", type=uuid_argument, help="Authorize one exact saved generation upgrade plan.")
     scope.add_argument("--read-only", action="store_true")
     scope.add_argument("--prepare", action="store_true")
     scope.add_argument("--slot", type=uuid_argument, action="append", dest="slot_ids")
@@ -300,8 +301,11 @@ def parser() -> argparse.ArgumentParser:
         item.add_argument("secret_id", type=uuid_argument)
         item.add_argument("--json", action="store_true")
     management = commands.add_parser("management").add_subparsers(dest="action", required=True)
-    management.add_parser("connect")
-    management.add_parser("export").add_argument("--json", action="store_true")
+    for action in ("connect", "export"):
+        item = management.add_parser(action)
+        item.add_argument("--profile", type=uuid_argument, help="Public remembered connection profile; contains no credential.")
+        if action == "export":
+            item.add_argument("--json", action="store_true")
     imports = commands.add_parser("imports").add_subparsers(dest="action", required=True)
     imports.add_parser("list").add_argument("--json", action="store_true")
     service = imports.add_parser("create-service")
@@ -457,17 +461,30 @@ async def execute(args) -> dict | None:
     if credential is not None and args.command in {"serve", "connect", "connections"}:
         return {"error": {"code": "management_credential_not_invocation"}}
     if args.command == "management":
-        if credential is None:
-            return {"error": {"code": "management_credential_required"}}
-        from .grants import read_credential
-        grant = read_credential(credential)
+        profile = getattr(args, "profile", None)
+        if credential is not None and profile is not None:
+            return {"error": {"code": "invalid_management_authorization"}}
+        if credential is not None:
+            from .grants import read_credential
+            grant = read_credential(credential)
         if args.action == "connect":
             from .management import run_management
-            await run_management(state, credential)
+            await run_management(state, credential, profile=profile)
             return None
-        return {"grant_id": grant["grant_id"], "configuration": {"mcpServers": {
-            "mcpme-management": {"command": str(cli_launcher()), "args": ["--state-dir", str(state),
-                "--credential-file", str(credential), "management", "connect"]}}}}
+        if credential is not None:
+            return {"grant_id": grant["grant_id"], "configuration": {"mcpServers": {
+                "mcpme-management": {"command": str(cli_launcher()), "args": ["--state-dir", str(state),
+                    "--credential-file", str(credential), "management", "connect"]}}}}
+        if profile is None:
+            await ensure_host(state)
+            result = await api("POST", "/v1/authorization/profiles", {})
+            if "error" in result:
+                return result
+            profile = uuid_argument(result["profile"]["profile_id"])
+        selectors = [] if state == DEFAULT_STATE.absolute() else ["--state-dir", str(state)]
+        return {"profile_id": profile, "configuration": {"mcpServers": {
+            "mcpme-management": {"command": str(cli_launcher()), "args": selectors +
+                ["management", "connect", "--profile", profile]}}}}
     if args.command == "authorize":
         workflow_plan = args.preparation_plan or args.resolution_plan
         recipe_options = (args.recipe_version, args.recipe_digest, args.recipe_actions, args.recipe_path)
@@ -489,10 +506,11 @@ async def execute(args) -> dict | None:
             return await api("POST", "/v1/grants", body)
         if args.plan_digest is not None or args.idempotency_key is not None or any(value is not None for value in recipe_options):
             return {"error": {"code": "invalid_grant_request"}}
-        if args.plan is not None:
+        if args.plan is not None or args.upgrade_plan is not None:
             if args.actions or args.ttl_seconds not in {None, 900}:
                 return {"error": {"code": "invalid_grant_request"}}
-            body = {"mode": "install", "plan_id": args.plan, "ttl_seconds": 900}
+            body = {"mode": "upgrade" if args.upgrade_plan is not None else "install",
+                    "plan_id": args.upgrade_plan or args.plan, "ttl_seconds": 900}
         elif args.slot_ids is not None:
             if not args.actions:
                 return {"error": {"code": "invalid_grant_request"}}

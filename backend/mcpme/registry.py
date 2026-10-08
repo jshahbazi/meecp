@@ -162,7 +162,7 @@ class Registry:
             self._connection.execute("PRAGMA journal_mode = DELETE")
             self._connection.execute("PRAGMA synchronous = FULL")
             version = self._connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3, 4):
+            if version not in (0, 1, 2, 3, 4, 5):
                 self._connection.close()
                 raise RegistryError("unsupported_registry_schema")
             self._connection.executescript("""
@@ -216,7 +216,10 @@ class Registry:
                     for row in self._connection.execute("SELECT slot_id FROM slots WHERE settings_digest IS NOT NULL").fetchall():
                         self._connection.execute("UPDATE slots SET settings_path=? WHERE slot_id=?",
                             (str(self.state_root / "slots" / row[0] / "settings.json"), row[0]))
-                self._connection.execute("PRAGMA user_version = 4")
+                # Version 5 requires live session guards for native consent
+                # grants. Earlier hosts must reject this state rather than
+                # treating those token hashes as standalone file authority.
+                self._connection.execute("PRAGMA user_version = 5")
         except sqlite3.Error:
             if hasattr(self, "_connection"):
                 self._connection.close()

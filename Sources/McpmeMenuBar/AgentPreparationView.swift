@@ -585,6 +585,7 @@ final class AgentPreparationView: NSStackView {
     private var adoptButton: NSButton!
     private var analysisBlocksNavigation: Bool { busy || pendingStart != nil || job?.active == true }
     var blocksNavigation: Bool { analysisBlocksNavigation || providerSettings.blocksNavigation }
+    var authorizationPresentationBlocked: Bool { providerSettings.blocksNavigation }
 
     override init(frame: NSRect) {
         super.init(frame: frame); orientation = .vertical; alignment = .leading; spacing = 8

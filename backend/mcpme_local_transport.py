@@ -14,7 +14,7 @@ import httpx
 
 
 def _service_name(service: str) -> str:
-    if service not in {"manager", "jevk5"} and str(uuid.UUID(service)) != service:
+    if service not in {"manager", "jevk5", "authorization"} and str(uuid.UUID(service)) != service:
         raise ValueError("invalid_private_service")
     return service
 

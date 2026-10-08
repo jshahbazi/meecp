@@ -15,7 +15,7 @@ Run a JSON validator alongside a local decision model. Connect several clients t
 - **Connect your assistant.** Copy an app's connection configuration and add it to your MCP client. Its endpoint stays stable across restarts.
 - **Share a local model.** Use a model of your choice through a prepared package, and connect multiple assistants to the same running app.
 - **Bring your own tools.** Choose source, paste a project link, or describe an app. The bundled Pi agent prepares its MCP integration with your configured model, then opens package review.
-- **Give an assistant management access.** Create an expiring grant for a separate management MCP connection. Allow inspection, preparation, controls for selected apps, or installation of one reviewed plan.
+- **Give an assistant management access.** Copy a management connection and approve it in the native app. Remember inspection/planning access, review each execution plan, and revoke access from Approved Connections. Explicit file grants remain available for unattended clients.
 
 mcpme requires **Apple silicon and macOS 26 or later**. The supported features and remaining work are listed below.
 
@@ -81,7 +81,7 @@ Advanced Add App paths support pinned package downloads, typed configuration and
 
 ## Let an assistant manage apps
 
-mcpme has a separate [management MCP connection](docs/MANAGEMENT_MCP.md). The owner issues a grant through the local owner CLI and chooses its scope: read, prepare, start/stop/restart selected apps, or install one exact reviewed plan. Grants expire and can be revoked. The host must already be running; connecting the management client does not launch it.
+mcpme has a separate [management MCP connection](docs/MANAGEMENT_MCP.md). Choose **Copy Management Connection** and paste the copied instructions and JSON configuration into your agent, then approve inspection/planning in the native popup. Remembered approval applies to this integration under your macOS account. Each connection receives a fresh scoped credential that expires and can be revoked. The installed facade can launch its containing app once when needed. Explicit owner-issued file grants remain available for read, prepare, selected app controls, and one reviewed installation plan.
 
 Preparation access can save drafts and attach packages, but installation requires its own grant. Changing startup policies, removing apps, and issuing or revoking grants remain owner actions. Copy the management configuration into your MCP client using the guide; each app's ordinary MCP connection continues to expose its own tools.
 

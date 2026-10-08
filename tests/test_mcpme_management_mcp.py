@@ -52,7 +52,7 @@ async def test_sdk_prepare_plan_exact_grant_duplicate_apply_and_revocation(tmp_p
             assert set(initialized.capabilities.model_dump(exclude_none=True)) == {"tools"}
             listed = await client.list_tools()
             names = {tool.name for tool in listed.tools}
-            assert len(names) == 40
+            assert len(names) == 45
             assert not {"mcpme_authorize", "mcpme_revoke_grant", "mcpme_issue_grant"} & names
             assert all(tool.inputSchema["additionalProperties"] is False for tool in listed.tools)
             assert not host.workers and not host.owners and not host.registry.list_slots()
@@ -98,7 +98,7 @@ async def test_sdk_handshake_and_tool_list_require_no_host_or_slot_start(tmp_pat
     async with sdk(state, credential, tmp_path / "stderr") as client:
         initialized = await client.initialize()
         assert initialized.serverInfo.name == "mcpme-management"
-        assert len((await client.list_tools()).tools) == 40
+        assert len((await client.list_tools()).tools) == 45
         invalid = await client.call_tool("mcpme_apply_install", {"plan_id": str(uuid.uuid4()), "approved": SENTINEL})
         assert invalid.isError and invalid.structuredContent["error"]["code"] == "invalid_tool_arguments"
         unknown = await client.call_tool("mcpme_authorize", {"token": SENTINEL})
@@ -112,6 +112,15 @@ async def test_sdk_handshake_and_tool_list_require_no_host_or_slot_start(tmp_pat
 @pytest.mark.parametrize("name,arguments", [
     ("mcpme_plan_install", {"package": "/pkg", "import_id": str(uuid.uuid4()), "revision": 1}),
     ("mcpme_plan_install", {"import_id": str(uuid.uuid4())}),
+    ("mcpme_plan_upgrade", {"slot_id": str(uuid.uuid4()), "package": "/pkg", "settings": SENTINEL}),
+    ("mcpme_plan_upgrade", {"slot_id": str(uuid.uuid4()), "package": "/pkg", "settings": {
+        "configuration": {"nested": {"private": SENTINEL}}, "secret_references": {}}}),
+    ("mcpme_plan_upgrade", {"slot_id": str(uuid.uuid4()), "package": "/pkg", "settings": {
+        "configuration": {}, "secret_references": {}, "token": SENTINEL}}),
+    ("mcpme_plan_upgrade", {"package": "/pkg"}),
+    ("mcpme_apply_upgrade", {"plan_id": str(uuid.uuid4()), "approved": True}),
+    ("mcpme_request_access", {"action": {"kind": "upgrade", "plan_id": str(uuid.uuid4()),
+        "plan_digest": "a" * 64, "idempotency_key": str(uuid.uuid4())}}),
     ("mcpme_revise_import", {"draft_id": str(uuid.uuid4()), "revision": 1}),
     ("mcpme_revise_import", {"draft_id": str(uuid.uuid4()), "revision": True, "intent": SENTINEL}),
     ("mcpme_revise_import", {"draft_id": str(uuid.uuid4()), "revision": 1, "requirements": {"api_key": SENTINEL}}),

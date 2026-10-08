@@ -96,7 +96,7 @@ entry only after its matching instance/nonce receipt proves completion. Losing t
 reaper before that proof leaves `ownership_lost` and blocks replacement. No recovery
 path discovers or signals a recorded PID.
 
-## Owner API
+## Owner API and scoped upgrade access
 
 The following routes require the owner credential:
 
@@ -108,10 +108,18 @@ The following routes require the owner credential:
 | `POST /v1/operations/OPERATION_UUID/cancel` | `{}` |
 | `POST /v1/operations/OPERATION_UUID/recover` | `{}` |
 
-Read the result through `GET /v1/operations/OPERATION_UUID`. Existing scoped grants
-retain their previously defined read, prepare, lifecycle or exact-install authority;
-they do not acquire upgrade, cancellation or recovery authority. Slot invocation
-credentials have no management authority.
+Read the result through `GET /v1/operations/OPERATION_UUID`. The management MCP adds
+read access to inspect a saved upgrade plan and preparation access to create one. An
+owner-issued upgrade grant may apply only the exact saved plan digest, slot UUID and
+expected generation captured in its scope; its first successful apply atomically binds
+one durable upgrade operation and retries return that operation. It cannot change the
+candidate, settings, slot snapshot or target. Upgrade cancellation and recovery remain
+owner-only. Slot invocation credentials have no management authority.
+
+The native owner review shows the candidate package, configuration, secret-reference
+names and exact plan digest before issuing an upgrade grant. Approval is for that
+one saved plan and slot snapshot; it does not authorize another upgrade or replay a
+stale plan.
 
 See [PHASE2_COMPLETION.md](PHASE2_COMPLETION.md) for the current acceptance evidence
 and the pending final artifact checks.

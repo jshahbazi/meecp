@@ -157,6 +157,10 @@ class WorkflowGrantStore:
         try:
             scope = json.loads(row["scope"])
             metadata = {"schema_version", "mode", "grant_id", "created_at", "expires_at", "token_digest"}
+            if "native_session" in scope:
+                if scope["native_session"] is not True:
+                    raise ValueError()
+                metadata.add("native_session")
             fields = {"recipe", "actions", "path"} if row["mode"] == "recipe-management" else {"kind", "plan", "idempotency_key"}
             if (row["mode"] not in MODES or type(scope) is not dict or set(scope) != metadata | fields
                     or type(scope.get("schema_version")) is not int or scope["schema_version"] != 1
@@ -177,7 +181,13 @@ class WorkflowGrantStore:
             raise GrantError("grant_revoked", 401)
         if time.time() >= row["expires_at"]:
             raise GrantError("grant_expired", 401)
-        self._scope(row)
+        scope = self._scope(row)
+        native_session = scope.get("native_session") is True
+        guard = getattr(self, "session_guard", None)
+        if native_session and guard is None:
+            raise GrantError("grant_revoked", 401)
+        if guard is not None:
+            guard(grant_id, required=native_session)
         return row
 
     def _plan(self, kind, plan_id):
@@ -195,7 +205,7 @@ class WorkflowGrantStore:
             raise GrantError("grant_plan_changed", 409)
         return plan
 
-    def issue(self, payload):
+    def issue(self, payload, *, export_credential=True):
         if not isinstance(payload, dict) or payload.get("mode") not in MODES:
             raise GrantError("invalid_grant", 400)
         mode = payload["mode"]
@@ -241,14 +251,25 @@ class WorkflowGrantStore:
                     raise GrantError("grant_operation_mismatch", 409)
                 scope.update(kind=kind, plan=_plan_identity(plan), idempotency_key=payload["idempotency_key"])
         grant_id, token = str(uuid.uuid4()), secrets.token_urlsafe(32)
+        if not export_credential:
+            scope["native_session"] = True
         path = self.root / (grant_id + ".json")
+        retired = []
         try:
             with self.imports._transaction():
                 if self.db.execute("SELECT count(*) FROM workflow_management_grants").fetchone()[0] >= MAX_GRANTS:
-                    raise GrantError("grant_limit", 409)
+                    # Failed native handoffs are inactive history, not admitted
+                    # attempts. Keep every job-bound record for its existing
+                    # authority checks while reclaiming unused stale hashes.
+                    retired = [row[0] for row in self.db.execute("""SELECT grant_id FROM workflow_management_grants
+                        WHERE job_id IS NULL AND (revoked=1 OR expires_at<=?)""", (time.time(),))]
+                    self.db.executemany("DELETE FROM workflow_management_grants WHERE grant_id=?", [(item,) for item in retired])
+                    if self.db.execute("SELECT count(*) FROM workflow_management_grants").fetchone()[0] >= MAX_GRANTS:
+                        raise GrantError("grant_limit", 409)
                 if mode != "recipe-management":
                     self._check_plan(scope)
-                write_private_json(path, {"schema_version": 1, "grant_id": grant_id, "token": token})
+                if export_credential:
+                    write_private_json(path, {"schema_version": 1, "grant_id": grant_id, "token": token})
                 now = time.time()
                 scope.update(grant_id=grant_id, created_at=now, expires_at=now + ttl,
                              token_digest=hashlib.sha256(token.encode()).hexdigest())
@@ -258,14 +279,19 @@ class WorkflowGrantStore:
         except BaseException:
             path.unlink(missing_ok=True)
             raise
+        for retired_id in retired:
+            self._reclaim(retired_id)
+        if not export_credential:
+            return {"grant_id": grant_id, "token": token, "expires_at": now + ttl}
         return self.inspect(grant_id)
 
     def inspect(self, grant_id):
         with self.imports._lock:
             row = self._row(grant_id);scope = self._scope(row)
             result = {key: row[key] for key in ("grant_id", "mode", "created_at", "expires_at", "scope_digest", "job_id")}
-            result.update(revoked=bool(row["revoked"]), expired=time.time() >= row["expires_at"],
-                          credential_file=str(self.root / (grant_id + ".json")))
+            result.update(revoked=bool(row["revoked"]), expired=time.time() >= row["expires_at"])
+            if scope.get("native_session") is not True:
+                result["credential_file"] = str(self.root / (grant_id + ".json"))
             if row["mode"] == "recipe-management":
                 result.update(recipe=scope["recipe"], actions=scope["actions"])
             else:

@@ -115,12 +115,32 @@ async def test_exact_plan_authorize_and_inspection_use_fixed_expiry(tmp_path):
         assert len(host.grants.list()["grants"]) == 1
 
 
-@pytest.mark.parametrize("arguments", [
-    ["management", "export"], ["management", "connect"],
-])
-async def test_management_requires_explicit_scoped_file(tmp_path, arguments):
-    result = await execute(tmp_path, *arguments)
-    assert result["error"]["code"] == "management_credential_required"
+async def test_management_connect_without_file_selects_session_authorization(tmp_path, monkeypatch):
+    seen = []
+    async def run(state, credential, *, profile):
+        seen.append((state, credential, profile))
+    monkeypatch.setattr("mcpme.management.run_management", run)
+    assert await execute(tmp_path, "management", "connect") is None
+    profile = str(uuid.uuid4())
+    assert await execute(tmp_path, "management", "connect", "--profile", profile) is None
+    assert seen == [(tmp_path, None, None), (tmp_path, None, profile)]
+
+
+async def test_public_profile_export_contains_no_authority_and_no_host_reads(tmp_path, monkeypatch):
+    profile = str(uuid.uuid4())
+    async def forbidden(*args, **kwargs):
+        pytest.fail("public_profile_export_read_owner_authority")
+    monkeypatch.setattr(cli, "call", forbidden)
+    result = await execute(tmp_path, "management", "export", "--profile", profile)
+    args = result["configuration"]["mcpServers"]["mcpme-management"]["args"]
+    assert args == ["--state-dir", str(tmp_path), "management", "connect", "--profile", profile]
+    assert "credential" not in json.dumps(result) and "token" not in json.dumps(result)
+
+
+async def test_profile_and_explicit_file_modes_cannot_be_mixed(tmp_path):
+    result = await execute(tmp_path, "--credential-file", tmp_path / "missing", "management", "connect",
+                           "--profile", str(uuid.uuid4()))
+    assert result == {"error": {"code": "invalid_management_authorization"}}
 
 
 @pytest.mark.parametrize("arguments", [

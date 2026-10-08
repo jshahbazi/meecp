@@ -36,6 +36,14 @@ Build mcpme and give it a first app: JSON Utilities, a small tool that checks wh
 You'll need Xcode Command Line Tools and `uv`. From the repository root:
 
 ```sh
+./build.sh
+```
+
+The script installs the pinned Python runtime, syncs locked dependencies, and builds the current checkout without running tests. Each run creates a fresh app bundle under `dist/` and prints its path and launch command. To choose a destination, run `./build.sh dist/mcpme-dev.app`; relative destinations use the repository root. Existing app bundles are preserved.
+
+For the direct builder and a separate JSON Utilities package:
+
+```sh
 uv python install 3.12.13
 uv sync --locked
 uv run --locked python scripts/build_mcpme_app.py

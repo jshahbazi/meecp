@@ -155,6 +155,7 @@ For the opt-in installer lifecycle checks, run `MCPME_RUN_INSTALL_LIFECYCLE_TEST
 
 - [Implementation guide](docs/MCPME_STATUS.md): CLI usage, builds, package contracts, and migration.
 - [Host design](docs/MCPME_DESIGN.md): architecture and planned features.
+- [meecp custom panel plan](docs/MEECP_CUSTOM_PANELS_PLAN.md): optional app workspaces, Pi generation, panel boundaries, and the planned product name.
 - [Source onboarding](docs/PHASE2_ONBOARDING.md), [package authoring](docs/PACKAGE_AUTHORING.md), and [management MCP](docs/MANAGEMENT_MCP.md): preparation, review, and assistant access.
 - [Pi setup](docs/PI_SETUP.md): internal coding agent, model settings, dependency support, and execution/verification contracts.
 - [macOS distribution](docs/MACOS_DISTRIBUTION.md), [GitHub releases](docs/GITHUB_RELEASES.md), and [automatic update plan](docs/AUTO_UPDATE_PLAN.md): installation, release verification, and planned updates.

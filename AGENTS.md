@@ -2,6 +2,8 @@
 
 - Build a standalone Apple silicon macOS app. Keep it independent of Brekko.
 - Read `docs/DESIGN.md` before changing component contracts.
+- Read the [README open-plans inventory](README.md#open-plans) and the linked owning plan before planning or implementing roadmap work.
+- Keep that inventory current when adding a plan or changing its implementation status. Update the remaining scope and Planned/Partial/Deferred status, and remove fully implemented entries. Check current source and the latest scoped acceptance records; distinguish unimplemented work from implemented behavior that still needs verification.
 - Use `uv` for Python dependency management. Keep dependencies locked.
 - Never log evidence, prompts, responses, options, tokens, API keys, or exception dumps.
 - Bind local services to 127.0.0.1 and authenticate every route; preserve Host/Origin checks.

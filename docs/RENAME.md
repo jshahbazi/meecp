@@ -1,6 +1,6 @@
 # meecp rename
 
-The program is named **meecp**. Current source and documentation use `meecp` for the Python packages, command launcher, build scripts, app bundle, release artifacts, and management MCP tools. The native Swift target and source directory are `MeecpMenuBar`; operator-facing environment settings use `MEECP_`.
+The program is named **meecp**. The canonical repository is [github.com/jshahbazi/meecp](https://github.com/jshahbazi/meecp); repository links and release automation use this destination. Current source and documentation use `meecp` for the Python packages, command launcher, build scripts, app bundle, release artifacts, and management MCP tools. The native Swift target and source directory are `MeecpMenuBar`; operator-facing environment settings use `MEECP_`.
 
 Build with `uv run --locked python scripts/build_meecp_app.py`, then open `dist/meecp.app`. A relocated CLI host uses `dist/meecp-host/bin/meecp`. The architecture and implementation guides are [MEECP_DESIGN.md](MEECP_DESIGN.md) and [MEECP_STATUS.md](MEECP_STATUS.md).
 
@@ -20,7 +20,6 @@ Some existing installation and package identities retain their original spelling
 | Frozen signed helpers | `mcpme-command-reap` and `mcpme-command-resource-reap`; preserves the reviewed archive filenames and signatures. The original `mcpme-command-resource-v1.h` include remains available to compile the unchanged signed-helper source. |
 | Frozen TextGen launcher | `mcpme_textgen`; a compatibility entry point forwards to `meecp_textgen` and preserves exit status. |
 | Dependency-index credentials | Existing `UV_INDEX_MCPME_PI_DEPENDENCIES_*` and `UV_INDEX_MCPME_RESOLUTION_*` variables remain valid package-building contracts. |
-| Repository address | `github.com/jshahbazi/mcpme`; the repository destination has not changed. |
 
 New packages use `meecp.package.json` and `meecp.lock.json`; preparation and recipe descriptors use `meecp.prepare.json`, `meecp.recipe.json`, and `meecp.recipe.lock.json`. New preparation receipts use `meecp.preparation.json`; existing receipts retain the filename bound by their artifact lock. Readers also accept a complete corresponding legacy `mcpme` filename pair. Mixed or duplicate descriptor pairs are rejected. Package process launchers accept `--meecp-config-fd` and the existing `--mcpme-config-fd` alias.
 

@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Report suspected vulnerabilities through [GitHub private vulnerability reporting](https://github.com/jshahbazi/mcpme/security/advisories/new). The repository maintainer receives these reports privately.
+Report suspected vulnerabilities through [GitHub private vulnerability reporting](https://github.com/jshahbazi/meecp/security/advisories/new). The repository maintainer receives these reports privately.
 
 Include the affected commit or release, a description of the security impact, and minimal steps to reproduce the issue. Use synthetic evidence and redact credentials, tokens, private project paths, and personal data. Do not attach private signing keys, certificates with private keys, or complete application state directories.
 

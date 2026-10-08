@@ -1,6 +1,6 @@
 # Preparation implementation: foundation
 
-This implements the static foundation and controlled durable-job checkpoint of the [automatic preparation plan and reviews](https://github.com/jshahbazi/mcpme/pull/23). It includes recipe management, preparation contracts, a private Python builder, independent SDK verification and atomic result admission. Public automatic execution remains disabled until the full acceptance gates pass. A recipe showing `enabled` has passed metadata compatibility checks; its `runnable` value remains `false`.
+This implements the static foundation and controlled durable-job checkpoint of the [automatic preparation plan and reviews](https://github.com/jshahbazi/meecp/pull/23). It includes recipe management, preparation contracts, a private Python builder, independent SDK verification and atomic result admission. Public automatic execution remains disabled until the full acceptance gates pass. A recipe showing `enabled` has passed metadata compatibility checks; its `runnable` value remains `false`.
 
 ## Implemented boundary
 

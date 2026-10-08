@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import shutil
 import socket
 import sqlite3
 import struct
@@ -13,6 +14,7 @@ import pytest
 
 from mcpme import authorization
 from mcpme.grants import GrantError, read_credential
+from mcpme.preparation_contracts import PreparationError
 from mcpme.preparation_inspection import inspect_source
 from mcpme.private import read_private_json, write_private_json
 from mcpme.registry import Registry, RegistryError
@@ -51,6 +53,100 @@ async def action(manager, reader, writer, kind, plan):
     result = await frame(reader, writer, proposal)
     assert result["status"] == "pending"
     return result, proposal
+
+
+async def native_preparation(manager, folder):
+    plan, _ = workflow_plan(manager, folder, "preparation")
+    profile = manager.authorization.create_profile({})["profile"]["profile_id"]
+    reader, writer, base = await access(manager, profile=profile, remember=True)
+    pending, proposal = await action(manager, reader, writer, "preparation", plan)
+    manager.authorization.approve(pending["request_id"], decision(pending))
+    grant = (await frame(reader, writer, {"type": "status"}))["handoff"]
+    await frame(reader, writer, {"type": "ack", "request_id": grant["request_id"], "grant_id": grant["grant_id"]})
+    return reader, writer, base, grant, plan, proposal
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("inactive", ["base_revoked", "base_expired", "action_revoked", "action_expired", "profile_revoked", "disconnect"])
+async def test_native_preparation_worker_admission_and_monitor_keep_live_authority(host, tmp_path, monkeypatch, inactive):
+    try:
+        _, writer, base, grant, plan, proposal = await native_preparation(host, tmp_path / "source")
+        # These are the worker calls used by PreparationRunner._start and its
+        # authority monitor, including the imports lock held during admission.
+        job = await asyncio.to_thread(host.preparations.authorize_start, plan["plan_id"], plan["plan_digest"],
+                                      proposal["idempotency_key"], grant_id=grant["grant_id"])
+        assert job["management_authority"]["grant_id"] == grant["grant_id"]
+        assert (await asyncio.to_thread(host.preparations.check_authority, job["job_id"]))["job_id"] == job["job_id"]
+        if inactive == "base_revoked":
+            host.grants.revoke(base["grant_id"])
+        elif inactive == "base_expired":
+            host.registry._connection.execute("UPDATE management_grants SET expires_at=? WHERE grant_id=?",
+                                              (time.time() - 1, base["grant_id"]))
+        elif inactive == "action_revoked":
+            host.workflow_grants.revoke(grant["grant_id"])
+        elif inactive == "action_expired":
+            expired_at = host.workflow_grants._row(grant["grant_id"])["expires_at"] + 1
+            monkeypatch.setattr(time, "time", lambda: expired_at)
+        elif inactive == "profile_revoked":
+            profile_id = host.authorization.credentials[base["grant_id"]]["profile_id"]
+            host.authorization.owner_route("POST", "/v1/authorization/profiles/" + profile_id + "/revoke", {})
+        else:
+            host.authorization.disconnect(host.authorization.credentials[base["grant_id"]]["lease_id"])
+        with pytest.raises(PreparationError, match="management_execution_(?:revoked|expired)"):
+            await asyncio.to_thread(host.preparations.check_authority, job["job_id"])
+        with pytest.raises(GrantError, match="grant_(?:revoked|expired)"):
+            await asyncio.to_thread(host.workflow_grants.authenticate, grant["token"])
+        writer.close()
+    finally:
+        await host.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unavailable", ["permissions", "missing", "busy", "replaced"])
+async def test_native_worker_authority_denies_unavailable_private_registry(host, tmp_path, unavailable):
+    saved_registry = None
+    try:
+        _, writer, base, grant, plan, proposal = await native_preparation(host, tmp_path / "source")
+        job = await asyncio.to_thread(host.preparations.authorize_start, plan["plan_id"], plan["plan_digest"],
+                                      proposal["idempotency_key"], grant_id=grant["grant_id"])
+        if unavailable == "permissions":
+            host.registry.path.chmod(0o644)
+        elif unavailable == "missing":
+            host.registry._connection.execute("DELETE FROM management_grants WHERE grant_id=?", (base["grant_id"],))
+        elif unavailable == "replaced":
+            saved_registry = host.registry.path.with_suffix(".original")
+            host.registry.path.rename(saved_registry)
+            shutil.copy2(saved_registry, host.registry.path)
+        else:
+            # A worker must settle independently even while the owner holds an
+            # exclusive registry transaction; it cannot wait on the owner loop.
+            host.registry._connection.execute("BEGIN EXCLUSIVE")
+        with pytest.raises(PreparationError, match="management_execution_revoked"):
+            await asyncio.wait_for(asyncio.to_thread(host.preparations.check_authority, job["job_id"]), 2)
+        writer.close()
+    finally:
+        if saved_registry is not None:
+            host.registry.path.unlink()
+            saved_registry.rename(host.registry.path)
+        if host.registry._connection.in_transaction:
+            host.registry._connection.execute("ROLLBACK")
+        host.registry.path.chmod(0o600)
+        await host.close()
+
+
+@pytest.mark.asyncio
+async def test_native_worker_authority_read_encodes_private_registry_uri(tmp_path, prepared):
+    _, reaper = prepared
+    manager = Supervisor(tmp_path.resolve() / "host ? # %", reaper)
+    try:
+        _, writer, _, grant, plan, proposal = await native_preparation(manager, tmp_path / "source")
+        job = await asyncio.to_thread(manager.preparations.authorize_start, plan["plan_id"], plan["plan_digest"],
+                                      proposal["idempotency_key"], grant_id=grant["grant_id"])
+        assert (await asyncio.to_thread(manager.preparations.check_authority, job["job_id"]))["job_id"] == job["job_id"]
+        assert await asyncio.to_thread(manager.workflow_grants.authenticate, grant["token"]) == {"grant_id": grant["grant_id"], "workflow_grant": True}
+        writer.close()
+    finally:
+        await manager.close()
 
 
 @pytest.mark.asyncio

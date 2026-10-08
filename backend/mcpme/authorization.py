@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict, deque
+from contextlib import closing
 from dataclasses import dataclass, field
 import ctypes
 import hashlib
@@ -18,14 +19,16 @@ from pathlib import Path
 import platform
 import re
 import socket
+import sqlite3
 import struct
+import threading
 import time
 import uuid
 import unicodedata
 
 from mcpme_local_transport import bind_private_listener, checked_socket, socket_path
 from .grants import GrantError, plan_digest
-from .private import read_private_json, write_private_json
+from .private import check_private_file, read_private_json, write_private_json
 
 SCOPES = ("inspect", "plan")
 PACKAGE_ACTIONS = frozenset({"install", "upgrade"})
@@ -126,6 +129,9 @@ class Lease:
 class AuthorizationBroker:
     def __init__(self, host):
         self.host, self.db = host, host.registry._connection
+        self.registry_thread = threading.get_ident()
+        registry_details = host.registry.path.lstat()
+        self.registry_identity = (registry_details.st_dev, registry_details.st_ino)
         self.generation = str(uuid.uuid4())
         self.server = None
         self.closing = False
@@ -237,7 +243,7 @@ class AuthorizationBroker:
         # durable row directly to avoid recursively invoking the session guard.
         ledger = self.host.grants if record["kind"] in LEDGER_ACTIONS else self.host.workflow_grants
         try:
-            row = ledger._row(grant_id)
+            row = self._guard_row(ledger, grant_id)
         except GrantError:
             raise GrantError("grant_revoked", 401) from None
         if row["revoked"]:
@@ -255,6 +261,33 @@ class AuthorizationBroker:
             if base is None:
                 raise GrantError("grant_revoked", 401)
             self.guard(base)
+
+    def _guard_row(self, ledger, grant_id):
+        if ledger is not self.host.grants or threading.get_ident() == self.registry_thread:
+            return ledger._row(grant_id)
+        # Preparation admission and authority monitors hold the imports lock on
+        # worker threads. Never send a synchronous guard back to the host loop,
+        # which may be waiting for that lock, or share its writable connection.
+        # A short-lived read-only connection sees current durable base revocation
+        # and expiry without weakening the registry's thread affinity.
+        path = self.host.registry.path
+        try:
+            check_private_file(path)
+            before = path.lstat()
+            if (before.st_dev, before.st_ino) != self.registry_identity:
+                raise ValueError()
+            with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True,
+                                         timeout=0.25, isolation_level=None)) as database:
+                database.row_factory = sqlite3.Row
+                row = database.execute("SELECT revoked,expires_at FROM management_grants WHERE grant_id=?",
+                                       (grant_id,)).fetchone()
+                check_private_file(path)
+                after = path.lstat()
+                if (after.st_dev, after.st_ino) != self.registry_identity or row is None:
+                    raise ValueError()
+                return row
+        except (OSError, ValueError, sqlite3.Error):
+            raise GrantError("grant_revoked", 401) from None
 
     async def start(self, manager_endpoint):
         if self.server is not None or self.closing:

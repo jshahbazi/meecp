@@ -99,6 +99,45 @@ generation, and returned the same operation on retry. It also checked no automat
 work on approval, remembered reconnect, live revocation, and owned cleanup. The
 verifier contains no approval API calls.
 
+## Independent review before PR
+
+The independent review found and corrected two execution blockers. The native
+upgrade parser omitted supported `mcp-http` and `host-command` profiles, so their
+complete reviews could not reach the approval popup. It now accepts all four
+supported profiles and rejects a candidate whose profile differs from the installed
+app. Independently generated broker review envelopes from valid packages in each
+profile passed the actual Swift parser; the HTTP scenario also exercises native
+presentation and approval in the coordinator self-test.
+
+The native association guard also read the owner-thread SQLite registry from
+preparation worker threads. That caused `sqlite3.ProgrammingError` during real
+worker admission and monitoring. Worker checks now open and close a bounded
+read-only connection to the same private registry inode; the owner connection
+retains its thread affinity. Eleven regressions cover native consent/ACK followed
+by worker admission and monitoring, durable base/action revocation and expiry,
+profile revocation, disconnect, missing/replaced/unsafe registry state, lock
+contention, and URI metacharacters in the state path. These preparation checks use
+synthetic fixtures and do not perform a public package build.
+
+The final affected suite, including preparation runner/resolution regressions,
+passed **442 tests in 238.51 seconds**, with nine opt-in private-runtime cases
+skipped and the existing 42 cleanup warnings. Swift passed **18 tests**, with
+three opt-in installation lifecycle cases skipped. Hotdog tests with the locked
+build dependency group passed **45 tests**. The history secret scan and all five
+packaged native self-tests passed. A broader repository run was stopped after
+569 passes and one skip because review fixes changed its source snapshot; it is
+not evidence of a complete full-suite pass. Full repository CI remains separate.
+
+The refreshed development artifact is
+`dist/mcpme-management-upgrades-20261007-reviewed.app`, rebuilt with the standard
+app builder. The real stdio/native verifier passed again with
+`native_upgrade_passed` and `native_authorization_passed`. Its three approvals
+were driven through the actual native UI in the isolated synthetic installation;
+no approval API was used. The UI showed the retained app identity and port, current
+version 1.0.0, candidate version 1.0.1, and clone/rollback policy. The verifier
+confirmed completion, one installed entry, preserved data/connection, one-operation
+retry, remembered reconnect, live revocation, and owned cleanup.
+
 ## Limits
 
 This is a local development implementation. Public signing/notarization and a release workflow were not run. The installed default application was not replaced. Strong signed-launcher attribution, other Claude distribution variants, real model-driven invocation, and exhaustive manual interactions across all macOS activation/settings/modal variants are not established by these checks. The implementation uses explicit account-scoped consent and conservative presentation deferral for those identity/focus boundaries.

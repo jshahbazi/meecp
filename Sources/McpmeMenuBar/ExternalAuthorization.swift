@@ -38,7 +38,7 @@ private func authorizationUpgradePackage(_ value: [String: Any], generationKey: 
           let version = authorizationLabel(value["version"], maximum: 128),
           version.range(of: "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[A-Za-z0-9.-]+)?$", options: .regularExpression) != nil,
           authorizationDigest(value["package_digest"]) != nil,
-          ["mcp-stdio", "model-service"].contains(value["profile"] as? String ?? ""),
+          ["mcp-stdio", "mcp-http", "model-service", "host-command"].contains(value["profile"] as? String ?? ""),
           ["manual", "host"].contains(value["start_policy"] as? String ?? ""),
           authorizationBoolean(value["start"]) != nil,
           authorizationInteger(value[generationKey]) != nil,
@@ -422,6 +422,7 @@ final class ExternalAuthorizationCoordinator: NSObject, NSWindowDelegate {
         upgrade["review"] = upgradeReview
         guard let compactUpgrade = ExternalAuthorizationRequest(upgrade), !compactUpgrade.completeReview else { return false }
         var current = review["install_effects"] as! [String: Any]
+        current["profile"] = "mcp-http"
         current["package_id"] = "org.example.synthetic"; current["version"] = "1.0.0"; current["package_digest"] = String(repeating: "e", count: 64)
         current["generation"] = 7; current["public_port"] = 19385; current["tools"] = ["validate_json"]
         var candidate = current; candidate.removeValue(forKey: "generation"); candidate["expected_generation"] = 7
@@ -431,6 +432,20 @@ final class ExternalAuthorizationCoordinator: NSObject, NSWindowDelegate {
             "data_policy": "clone_before_probe", "rollback_policy": "before_exposure_only",
             "validation": "Initialize and validate the candidate against a private app-data clone before exposure."]
         upgradeReview["upgrade_effects"] = upgradeEffects; upgrade["review"] = upgradeReview
+        for profile in ["mcp-stdio", "mcp-http", "model-service", "host-command"] {
+            var supportedCurrent = current; supportedCurrent["profile"] = profile
+            var supportedCandidate = candidate; supportedCandidate["profile"] = profile
+            var supportedEffects = upgradeEffects
+            supportedEffects["current"] = supportedCurrent; supportedEffects["candidate"] = supportedCandidate
+            var supportedReview = upgradeReview; supportedReview["upgrade_effects"] = supportedEffects
+            var supportedUpgrade = upgrade; supportedUpgrade["review"] = supportedReview
+            guard let supported = ExternalAuthorizationRequest(supportedUpgrade), supported.completeReview,
+                  supported.sameBinding(as: compactUpgrade) else { return false }
+            supportedCandidate["profile"] = profile == "mcp-stdio" ? "mcp-http" : "mcp-stdio"
+            supportedEffects["candidate"] = supportedCandidate; supportedReview["upgrade_effects"] = supportedEffects
+            supportedUpgrade["review"] = supportedReview
+            guard ExternalAuthorizationRequest(supportedUpgrade)?.completeReview == false else { return false }
+        }
         guard let detailedUpgrade = ExternalAuthorizationRequest(upgrade), detailedUpgrade.completeReview,
               detailedUpgrade.sameBinding(as: compactUpgrade) else { return false }
         var changedReview = upgradeReview; changedReview["expected_generation"] = 8

@@ -10,7 +10,7 @@ The readout is BF16, matching Uzu's internal engine dtype. Candidate normalizati
 
 For candidate logits `z`, the decision probabilities are `softmax(z / 1.22)`. Applying the official temperature power transform to full-vocabulary log probabilities gives the same candidate-normalized result because the common vocabulary normalizer cancels. Tests independently check this formula, stable ordered argmax, boolean probability, confidence, and score expected value. Matching the formula does not imply that two engines return identical logits.
 
-Build with `uv run --locked python experiments/uzu-rust/build_scoring.py --test`. The script applies the patch to a clean export of the pinned upstream revision, builds with Cargo's lockfile, and records an ignored build receipt. The scoring binary is `runtime/uzu-rust/scoring-target/release/meecp-uzu-worker`; the measured text-generation binary remains in `runtime/uzu-rust/target`.
+Build with `uv run --locked python experiments/uzu-rust/build_scoring.py --test`. The script applies the patch to a clean export of the pinned upstream revision, builds the separate `scoring/Cargo.toml` with its own lockfile, and records an ignored build receipt. The scoring binary is `runtime/uzu-rust/scoring-target/release/meecp-uzu-worker`. The original generation manifest retains its unpatched Git dependencies and disables the scoring feature; its executable remains in `runtime/uzu-rust/target`.
 
 ## Comparison protocol
 

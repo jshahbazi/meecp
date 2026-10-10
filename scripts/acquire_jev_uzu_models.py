@@ -79,7 +79,7 @@ def ranged_download(url: str, partial: Path, size: int, *, chunk_size: int = 4 *
                     curl = shutil.which("curl")
                     if curl:
                         with tempfile.NamedTemporaryFile(dir=partial.parent) as temporary:
-                            result = subprocess.run([curl, "-q", "--location", "--fail", "--silent",
+                            result = subprocess.run([curl, "-q", "-4", "--location", "--fail", "--silent",
                                 "--proto", "=https", "--proto-redir", "=https", "--max-redirs", "5",
                                 "--connect-timeout", "15", "--max-time", "120", "--max-filesize", str(end-start+1),
                                 "--range", f"{start}-{end}", "--dump-header", "-", "--output", temporary.name,

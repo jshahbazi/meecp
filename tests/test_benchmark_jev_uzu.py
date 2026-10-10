@@ -359,3 +359,56 @@ def test_machine_information_captures_chip_and_physical_ram(monkeypatch):
     assert machine["chip_model"] == "Apple M5 Max"
     assert machine["physical_ram_bytes"] == 128 * 1024**3
     assert machine["hardware_model"] == "Mac17,7"
+
+
+def native_fixture(tmp_path):
+    binary = tmp_path / "scorer"
+    binary.write_bytes(b"synthetic-scoring-binary")
+    patch = tmp_path / "scoring.patch"
+    patch.write_bytes(b"synthetic-scoring-extension")
+    lock = tmp_path / "scoring-Cargo.lock"
+    lock.write_bytes(b"separate-patched-scoring-lock")
+    manifest = tmp_path / "scoring-Cargo.toml"
+    manifest.write_bytes(b"separate-scoring-manifest")
+    receipt = tmp_path / "receipt.json"
+    receipt.write_bytes(evaluation.encoded({"binary_sha256": evaluation.file_hash(binary),
+        "scoring_patch_sha256": evaluation.file_hash(patch), "cargo_lock_sha256": evaluation.file_hash(lock),
+        "cargo_manifest": "experiments/uzu-rust/scoring/Cargo.toml",
+        "cargo_lock": "experiments/uzu-rust/scoring/Cargo.lock",
+        "cargo_manifest_sha256": evaluation.file_hash(manifest),
+        "upstream_revision": "8d01581474760bd1fc7f4a547ff1d02f7dada437"}))
+    extension = tmp_path / "extension.json"
+    extension.write_bytes(evaluation.encoded({"scoring_patch_sha256": evaluation.file_hash(patch),
+        "upstream_revision": "8d01581474760bd1fc7f4a547ff1d02f7dada437", "readout_dtype": "BF16"}))
+    return binary, receipt, extension, patch, lock, manifest
+
+
+def test_scoring_build_binding_uses_its_separate_manifest_and_lock(tmp_path):
+    fixture = native_fixture(tmp_path)
+    binding = evaluation.native_build_identity(*fixture)
+    assert evaluation.SCORING_CARGO_LOCK.relative_to(ROOT).as_posix() == "experiments/uzu-rust/scoring/Cargo.lock"
+    assert binding["scoring_cargo_lock"] == {"path": "experiments/uzu-rust/scoring/Cargo.lock",
+                                             "sha256": evaluation.file_hash(fixture[4])}
+    assert binding["scoring_cargo_manifest"] == {"path": "experiments/uzu-rust/scoring/Cargo.toml",
+                                                 "sha256": evaluation.file_hash(fixture[5])}
+    assert binding["rust_main_source_sha256"] == evaluation.file_hash(ROOT / "experiments/uzu-rust/src/main.rs")
+
+
+def test_scoring_build_binding_refuses_generation_lock_or_changed_manifest(tmp_path):
+    fixture = list(native_fixture(tmp_path))
+    original_lock = tmp_path / "generation-Cargo.lock"
+    original_lock.write_bytes(b"unpatched-production-generation-lock")
+    with pytest.raises(evaluation.EvaluationError, match="native_build_identity_mismatch"):
+        evaluation.native_build_identity(*fixture[:4], original_lock, fixture[5])
+    fixture[5].write_bytes(b"changed-scoring-manifest")
+    with pytest.raises(evaluation.EvaluationError, match="native_build_identity_mismatch"):
+        evaluation.native_build_identity(*fixture)
+
+
+def test_scoring_build_binding_requires_manifest_hash(tmp_path):
+    fixture = native_fixture(tmp_path)
+    receipt = json.loads(fixture[1].read_bytes())
+    del receipt["cargo_manifest_sha256"]
+    fixture[1].write_bytes(evaluation.encoded(receipt))
+    with pytest.raises(evaluation.EvaluationError, match="native_build_identity_mismatch"):
+        evaluation.native_build_identity(*fixture)

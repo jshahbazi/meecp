@@ -1,4 +1,5 @@
 //! Experimental local worker. Only JSON protocol replies may reach stdout.
+#[cfg(feature = "probability-scoring")]
 mod scoring;
 use std::{
     fs::{self, File},
@@ -616,7 +617,14 @@ fn run() -> Result<(), &'static str> {
     if mode == "--model-path" {
         run_lines(PathBuf::from(value))
     } else if mode == "--score-model-path" {
-        scoring::run_lines(&PathBuf::from(value))
+        #[cfg(feature = "probability-scoring")]
+        {
+            scoring::run_lines(&PathBuf::from(value))
+        }
+        #[cfg(not(feature = "probability-scoring"))]
+        {
+            Err("unknown_argument")
+        }
     } else if mode == "--meecp-config-fd" || mode == "--mcpme-config-fd" {
         run_server(
             value

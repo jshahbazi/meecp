@@ -14,6 +14,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 EXPERIMENT = ROOT / "experiments/uzu-rust"
+SCORING = EXPERIMENT / "scoring"
 RUNTIME = ROOT / "runtime/uzu-rust"
 REVISION = "8d01581474760bd1fc7f4a547ff1d02f7dada437"
 UPSTREAM_URL = "https://github.com/trymirai/uzu.git"
@@ -108,11 +109,14 @@ def main() -> int:
             env["PATH"] = str(Path(cargo).parent) + os.pathsep + env.get("PATH", "")
             env["CARGO_TARGET_DIR"] = str(RUNTIME / "scoring-target")
             env["MEECP_UZU_SCORING_PATCH_SHA256"] = str(receipt["scoring_patch_sha256"])
-            manifest = str(EXPERIMENT / "Cargo.toml")
+            manifest = str(SCORING / "Cargo.toml")
+            receipt["cargo_manifest_sha256"] = hashlib.sha256((SCORING / "Cargo.toml").read_bytes()).hexdigest()
             command([cargo, "build", "--release", "--locked", "--manifest-path", manifest], cwd=ROOT, env=env)
             binary = RUNTIME / "scoring-target/release/meecp-uzu-worker"
             receipt["binary_sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
-            receipt["cargo_lock_sha256"] = hashlib.sha256((EXPERIMENT / "Cargo.lock").read_bytes()).hexdigest()
+            receipt["cargo_lock_sha256"] = hashlib.sha256((SCORING / "Cargo.lock").read_bytes()).hexdigest()
+            receipt["cargo_manifest"] = "experiments/uzu-rust/scoring/Cargo.toml"
+            receipt["cargo_lock"] = "experiments/uzu-rust/scoring/Cargo.lock"
             receipt["rustc_version"] = command([str(Path(cargo).parent / "rustc"), "--version"], env=env).decode().strip()
             if args.test:
                 test_output = command([cargo, "test", "--release", "--locked", "--manifest-path", manifest], cwd=ROOT, env=env)

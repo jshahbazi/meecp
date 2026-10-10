@@ -1,6 +1,6 @@
 # Experimental Uzu worker
 
-This worker links Uzu's direct Metal language-model engine and Hanashi prompt renderer. It does not initialize the higher-level `uzu`/`nagare` engine, registry, telemetry, or download manager. The source is pinned to official Uzu 0.6.1 commit `8d01581474760bd1fc7f4a547ff1d02f7dada437`; `Cargo.lock` pins the dependency graph. The next-token scoring extension is retained as [uzu-next-token-scoring.patch](uzu-next-token-scoring.patch), applied to a clean export of that revision by [build_scoring.py](build_scoring.py). The original MIT license is retained in `licenses/LICENSE-UZU`.
+This worker links Uzu's direct Metal language-model engine and Hanashi prompt renderer. It does not initialize the higher-level `uzu`/`nagare` engine, registry, telemetry, or download manager. The source is pinned to official Uzu 0.6.1 commit `8d01581474760bd1fc7f4a547ff1d02f7dada437`; `Cargo.lock` pins the original dependency graph. The separate scoring build uses [scoring/Cargo.toml](scoring/Cargo.toml) and its own lockfile, enabling `probability-scoring` and a prepared local upstream override. Its extension is retained as [uzu-next-token-scoring.patch](uzu-next-token-scoring.patch), applied to a clean export of that revision by [build_scoring.py](build_scoring.py). The original MIT license is retained in `licenses/LICENSE-UZU`.
 
 Text generation remains scoped to the Qwen 3.5 experiment. It loads the supplied local `config.json`, `tokenizer.json`, and `model.safetensors`. It uses Hanashi's Qwen 3.5 field mappings with the model's exact exported chat template, the system text `You are a helpful assistant.`, and disabled thinking. Each request creates fresh state and uses greedy sampling. The separate scoring mode accepts exact causal-model token IDs with no chat rendering. Both modes reject a model directory containing a speculator.
 
@@ -9,10 +9,12 @@ Text generation remains scoped to the Qwen 3.5 experiment. It loads the supplied
 Use Apple silicon macOS, Rust 1.98 or newer, and Xcode's Metal Toolchain component. If Xcode reports that component missing, install it with `xcodebuild -downloadComponent MetalToolchain`.
 
 ```sh
+CARGO_TARGET_DIR="$PWD/runtime/uzu-rust/target" cargo build --release --locked --manifest-path experiments/uzu-rust/Cargo.toml
+CARGO_TARGET_DIR="$PWD/runtime/uzu-rust/target" cargo test --release --locked --manifest-path experiments/uzu-rust/Cargo.toml
 uv run --locked python experiments/uzu-rust/build_scoring.py --test
 ```
 
-The output executable is `runtime/uzu-rust/scoring-target/release/meecp-uzu-worker`. This preserves the earlier experiment's executable in `runtime/uzu-rust/target`. Both directories are ignored. The native executable links Apple system frameworks and libraries; it embeds its compiled Metal kernels. The build script locates the pinned revision in Cargo's Git cache or fetches that exact revision, exports it into an ignored directory, applies the tracked patch, and builds with `--locked`. It never changes Cargo's cached checkout. An ignored `runtime/uzu-rust/SCORING_BUILD_RECEIPT.json` records upstream archive, patch, lockfile, license, and executable hashes. `--prepare-only` prepares source without compiling; `--upstream-source PATH` uses an existing Git repository containing the pinned commit.
+The first two commands build and test the original text-generation worker at `runtime/uzu-rust/target/release/meecp-uzu-worker`, without any prepared local source dependency or scoring feature. The scoring helper builds `scoring/Cargo.toml` into `runtime/uzu-rust/scoring-target/release/meecp-uzu-worker`, preserving the original executable. Both directories are ignored. The native executables link Apple system frameworks and libraries and embed their compiled Metal kernels. The scoring helper locates the pinned revision in Cargo's Git cache or fetches that exact revision, exports it into an ignored directory, applies the tracked patch, and builds with `--locked` using `scoring/Cargo.lock`. It never changes Cargo's cached checkout. An ignored `runtime/uzu-rust/SCORING_BUILD_RECEIPT.json` records upstream archive, patch, lockfile, license, and executable hashes. `--prepare-only` prepares source without compiling; `--upstream-source PATH` uses an existing Git repository containing the pinned commit.
 
 ## Host-owned HTTP mode
 

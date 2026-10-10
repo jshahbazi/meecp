@@ -31,6 +31,8 @@ from meecp.processes import ProcessOwner
 from jevk5.prompt import LETTERS, answer, decision_options, prompt_text, spread
 
 EXPERIMENT = ROOT / "experiments/uzu-rust/jev-scoring"
+SCORING_CARGO_MANIFEST = ROOT / "experiments/uzu-rust/scoring/Cargo.toml"
+SCORING_CARGO_LOCK = ROOT / "experiments/uzu-rust/scoring/Cargo.lock"
 BENCH_REVISION = "7625ecb1b075cfe4d09d34141d353325825eea1d"
 JEV_REVISION = "f26426d16f59e8bbe1470e5b162cc89329e29b29"
 READOUT_HASHES = {"prompt.py": "322d69ba6abea83602f27b7a5aa0d3e6ab00847fd03ddccd35a28ae5b23acc1a",
@@ -343,18 +345,36 @@ def machine_information():
             "chip_model": fields[0], "physical_ram_bytes": int(fields[1]), "hardware_model": fields[2]}
 
 
-def configuration(args):
-    model_binding = validate_model_artifacts(args.uzu_model, args.gguf)
-    receipt_path = ROOT / "runtime/uzu-rust/SCORING_BUILD_RECEIPT.json"
+def native_build_identity(binary, receipt_path=ROOT / "runtime/uzu-rust/SCORING_BUILD_RECEIPT.json",
+                          extension_path=ROOT / "experiments/uzu-rust/SCORING_EXTENSION.json",
+                          patch_path=ROOT / "experiments/uzu-rust/uzu-next-token-scoring.patch",
+                          cargo_lock=SCORING_CARGO_LOCK, cargo_manifest=SCORING_CARGO_MANIFEST):
+    """The experimental scorer has its own patched build and dependency lock."""
     receipt = json.loads(receipt_path.read_bytes())
-    extension_path = ROOT / "experiments/uzu-rust/SCORING_EXTENSION.json"
     extension = json.loads(extension_path.read_bytes())
-    require(receipt["binary_sha256"] == file_hash(args.uzu_binary)
+    lock_hash, manifest_hash = file_hash(cargo_lock), file_hash(cargo_manifest)
+    require(receipt["binary_sha256"] == file_hash(binary)
             and receipt["scoring_patch_sha256"] == extension["scoring_patch_sha256"]
-            == file_hash(ROOT / "experiments/uzu-rust/uzu-next-token-scoring.patch")
-            and receipt["cargo_lock_sha256"] == file_hash(ROOT / "experiments/uzu-rust/Cargo.lock")
+            == file_hash(patch_path)
+            and receipt["cargo_lock_sha256"] == lock_hash
+            and receipt.get("cargo_manifest") == "experiments/uzu-rust/scoring/Cargo.toml"
+            and receipt.get("cargo_lock") == "experiments/uzu-rust/scoring/Cargo.lock"
+            and receipt.get("cargo_manifest_sha256") == manifest_hash
             and receipt["upstream_revision"] == extension["upstream_revision"]
             == "8d01581474760bd1fc7f4a547ff1d02f7dada437", "native_build_identity_mismatch")
+    return {"scoring_extension_sha256": file_hash(extension_path), "scoring_build_receipt_sha256": file_hash(receipt_path),
+            "scoring_patch_sha256": receipt["scoring_patch_sha256"], "scoring_readout_dtype": extension["readout_dtype"],
+            "scoring_build_receipt": receipt,
+            "scoring_cargo_lock": {"path": "experiments/uzu-rust/scoring/Cargo.lock", "sha256": lock_hash},
+            "scoring_cargo_manifest": {"path": "experiments/uzu-rust/scoring/Cargo.toml", "sha256": manifest_hash},
+            "rust_scoring_source_sha256": file_hash(ROOT / "experiments/uzu-rust/src/scoring.rs"),
+            "rust_main_source_sha256": file_hash(ROOT / "experiments/uzu-rust/src/main.rs"),
+            "scoring_build_recipe_sha256": file_hash(ROOT / "experiments/uzu-rust/build_scoring.py")}
+
+
+def configuration(args):
+    model_binding = validate_model_artifacts(args.uzu_model, args.gguf)
+    native_binding = native_build_identity(args.uzu_binary)
     closure = {str(p.relative_to(args.llama_binary.parent)): file_hash(p)
                for p in sorted(args.llama_binary.parent.rglob("*"))
                if p.is_file() and (p == args.llama_binary or p.suffix in (".dylib", ".metallib", ".so"))}
@@ -367,10 +387,7 @@ def configuration(args):
         "model_provenance": model_binding,
         "artifacts": {"uzu_binary_sha256": file_hash(args.uzu_binary), "uzu_model_files": model_files,
             "gguf_sha256": file_hash(args.gguf), "llama_runtime_closure": closure, "reaper_sha256": file_hash(args.reaper),
-            "scoring_extension_sha256": file_hash(extension_path), "scoring_build_receipt_sha256": file_hash(receipt_path),
-            "scoring_patch_sha256": receipt["scoring_patch_sha256"], "scoring_readout_dtype": extension["readout_dtype"],
-            "scoring_build_receipt": receipt,
-            "rust_scoring_source_sha256": file_hash(ROOT / "experiments/uzu-rust/src/scoring.rs")},
+            **native_binding},
         "profile": {"temperature": TEMPERATURE, "knockout_temperature": KNOCKOUT_TEMPERATURE,
             "context_tokens": CONTEXT, "rounds": args.rounds, "llama_n_probs": args.n_probs,
             "candidate_count": "2..16", "order": [["llama.cpp", "uzu"], ["uzu", "llama.cpp"]],
@@ -766,7 +783,12 @@ def aggregate(args):
             and config["model_provenance"]["manifest_sha256"] == file_hash(EXPERIMENT / "MODEL_PROVENANCE.json")
             and config["model_provenance"]["acquirer_sha256"] == file_hash(model_acquirer.__file__)
             and config["model_provenance"]["manifest"]["conversion"]["script_sha256"]
-            == file_hash(ROOT / "scripts/convert_jev_uzu_model.py"),
+            == file_hash(ROOT / "scripts/convert_jev_uzu_model.py")
+            and config["artifacts"]["scoring_cargo_lock"]["sha256"] == file_hash(SCORING_CARGO_LOCK)
+            and config["artifacts"]["scoring_cargo_manifest"]["sha256"] == file_hash(SCORING_CARGO_MANIFEST)
+            and config["artifacts"]["rust_main_source_sha256"] == file_hash(ROOT / "experiments/uzu-rust/src/main.rs")
+            and config["artifacts"]["rust_scoring_source_sha256"] == file_hash(ROOT / "experiments/uzu-rust/src/scoring.rs")
+            and config["artifacts"]["scoring_build_recipe_sha256"] == file_hash(ROOT / "experiments/uzu-rust/build_scoring.py"),
             "aggregate_source_identity_changed")
     _, cases = load_dataset(run_dir / "dataset.json")
     require(config["dataset_sha256"] == seal["dataset_sha256"], "aggregate_dataset_identity_changed")

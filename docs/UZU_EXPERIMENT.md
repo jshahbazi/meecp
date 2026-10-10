@@ -18,15 +18,24 @@ This is an opt-in experimental package. It is separate from the built-in CPU tex
 
 Run from the repository root on Apple silicon with managed CPython 3.12, `uv`, Rust 1.98, and Xcode with its Metal Toolchain component. Runtime, model, package, and raw acceptance artifacts stay in ignored directories. Model source revisions, sizes, hashes, licenses, and the separate conversion caveat are recorded in [MODEL_PROVENANCE.json](../experiments/uzu-rust/MODEL_PROVENANCE.json). Rust dependency notices are in [THIRD_PARTY.md](../experiments/uzu-rust/THIRD_PARTY.md).
 
-Build the current native source with the pinned-source helper:
+Build the original text-generation worker directly from its pinned upstream dependency:
+
+```sh
+CARGO_TARGET_DIR="$PWD/runtime/uzu-rust/target" cargo build --release --locked --manifest-path experiments/uzu-rust/Cargo.toml
+CARGO_TARGET_DIR="$PWD/runtime/uzu-rust/target" cargo test --release --locked --manifest-path experiments/uzu-rust/Cargo.toml
+```
+
+The original manifest and lockfile use the unpatched Git dependency and disable the scoring feature. They do not depend on prepared files under the ignored runtime directory. Their output is `runtime/uzu-rust/target/release/meecp-uzu-worker`.
+
+The separate scoring build uses the pinned-source helper:
 
 ```sh
 uv run --locked python experiments/uzu-rust/build_scoring.py --test
 ```
 
-The helper exports the pinned upstream Git object, applies [uzu-next-token-scoring.patch](../experiments/uzu-rust/uzu-next-token-scoring.patch), and builds with locked dependencies. It records the upstream, patch, lockfile, license, and executable hashes in ignored `runtime/uzu-rust/SCORING_BUILD_RECEIPT.json`. Its output is `runtime/uzu-rust/scoring-target/release/meecp-uzu-worker`. The original text-generation executable remains preserved at `runtime/uzu-rust/target/release/meecp-uzu-worker`.
+The helper exports the pinned upstream Git object, applies [uzu-next-token-scoring.patch](../experiments/uzu-rust/uzu-next-token-scoring.patch), and builds [scoring/Cargo.toml](../experiments/uzu-rust/scoring/Cargo.toml) with its separate locked dependency graph and `probability-scoring` feature enabled. It records the upstream, patch, scoring lockfile, license, and executable hashes in ignored `runtime/uzu-rust/SCORING_BUILD_RECEIPT.json`. Its output is `runtime/uzu-rust/scoring-target/release/meecp-uzu-worker`; it does not replace the text-generation executable.
 
-The following package and text-generation benchmark commands use that preserved executable by default. They require it to be present; the current helper does not rebuild or replace it. A run with a newly built executable needs explicit binary selection and a new acceptance record before extending the results below.
+The following package and text-generation benchmark commands use the original executable by default. A run with a newly built executable needs a new acceptance record before extending the results below.
 
 ```sh
 uv run --locked python scripts/acquire_uzu_models.py

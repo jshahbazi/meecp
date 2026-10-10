@@ -147,3 +147,95 @@ def test_exclusive_partial_descriptor_lock_rejects_concurrent_acquirer(tmp_path,
         assert not partial.with_suffix(".partial.receipt.json").exists()
     finally:
         os.close(descriptor)
+
+
+def test_failure_drains_bounded_window_and_receipts_successes_before_retry(tmp_path, transport, monkeypatch):
+    data = bytes(range(80))
+    partial = tmp_path / "artifact.partial"
+    calls = transport(data)
+    normal_open = acquirer.urllib.request.urlopen
+    original_wait = acquirer.wait
+    original_pool = acquirer.ThreadPoolExecutor
+    submitted = []
+    failed_future = []
+    class ObservedPool(original_pool):
+        def submit(self, fn, start):
+            submitted.append(start)
+            future = super().submit(fn, start)
+            if start == 0:
+                failed_future.append(future)
+            return future
+    def fail_first_offset(request, timeout):
+        if request.get_header("Range") == "bytes=0-7":
+            # Record retries through the same mocked transport, then fail.
+            normal_open(request, timeout)
+            raise OSError("synthetic range failure")
+        return normal_open(request, timeout)
+    def failure_completes_first(pending, **kwargs):
+        # Fix a deterministic valid completion order: the failed initial
+        # worker finishes before replacement submissions could be admitted.
+        assert len(pending) <= 8
+        failed_future[0].exception(timeout=5)
+        return original_wait(pending, **kwargs)
+    monkeypatch.setattr(acquirer, "ThreadPoolExecutor", ObservedPool)
+    monkeypatch.setattr(acquirer, "wait", failure_completes_first)
+    monkeypatch.setattr(acquirer.urllib.request, "urlopen", fail_first_offset)
+    with pytest.raises(ValueError, match="^artifact_range_failed$"):
+        acquirer.ranged_download(URL, partial, len(data), chunk_size=8)
+    assert submitted == list(range(0, 64, 8))
+    assert calls.count((0, 7)) == 3
+    assert set(calls) == {(start, start + 7) for start in range(0, 64, 8)}
+    state = json.loads(partial.with_suffix(".partial.receipt.json").read_text())
+    assert set(state["completed"]) == {str(start) for start in range(8, 64, 8)}
+    for start in range(8, 64, 8):
+        assert state["completed"][str(start)] == checksum(data[start:start + 8])
+    # Resume must fetch only the failed range and never-submitted ranges.
+    monkeypatch.setattr(acquirer, "ThreadPoolExecutor", original_pool)
+    monkeypatch.setattr(acquirer, "wait", original_wait)
+    resumed_calls = transport(data)
+    acquirer.ranged_download(URL, partial, len(data), chunk_size=8)
+    assert sorted(resumed_calls) == [(0, 7), (64, 71), (72, 79)]
+    assert partial.read_bytes() == data
+
+
+@pytest.mark.parametrize("offline", [True, False])
+def test_full_pinned_partial_promoted_without_network_or_chunk_receipt(tmp_path, monkeypatch, offline):
+    target = tmp_path / "synthetic.bin"
+    partial = target.with_suffix(".bin.partial")
+    partial.write_bytes(DATA)
+    stale_receipt = partial.with_suffix(".partial.receipt.json")
+    stale_receipt.write_text("not a usable receipt")
+    def no_network(*unused, **kwargs):
+        pytest.fail("A cryptographically complete partial must not use the network")
+    monkeypatch.setattr(acquirer.urllib.request, "urlopen", no_network)
+    monkeypatch.setattr(acquirer, "ranged_download", no_network)
+    acquirer.acquire(tmp_path, offline=offline, files=[("synthetic.bin", len(DATA), checksum(DATA))])
+    assert target.read_bytes() == DATA
+    assert not partial.exists()
+    assert not stale_receipt.exists()
+
+
+def test_wrong_hash_partial_cannot_be_promoted_offline(tmp_path, monkeypatch):
+    target = tmp_path / "synthetic.bin"
+    partial = target.with_suffix(".bin.partial")
+    partial.write_bytes(b"x" * len(DATA))
+    monkeypatch.setattr(acquirer.urllib.request, "urlopen", lambda *a, **kw: pytest.fail("offline network request"))
+    with pytest.raises(ValueError, match="^artifact_unavailable$"):
+        acquirer.acquire(tmp_path, offline=True, files=[("synthetic.bin", len(DATA), checksum(DATA))])
+    assert not target.exists()
+    assert partial.exists()
+
+
+def test_complete_partial_promotion_respects_active_acquirer_lock(tmp_path, monkeypatch):
+    target = tmp_path / "synthetic.bin"
+    partial = target.with_suffix(".bin.partial")
+    partial.write_bytes(DATA)
+    descriptor = os.open(partial, os.O_RDWR)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(BlockingIOError):
+            acquirer.acquire(tmp_path, offline=True, files=[("synthetic.bin", len(DATA), checksum(DATA))])
+        assert not target.exists()
+        assert partial.read_bytes() == DATA
+    finally:
+        os.close(descriptor)

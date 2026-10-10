@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import contextlib
 import fcntl
 import hashlib
@@ -112,15 +112,63 @@ def ranged_download(url: str, partial: Path, size: int, *, chunk_size: int = 4 *
         print(json.dumps({"state": "range_resume", "recovered_bytes": completed,
                           "expected_bytes": size}), flush=True)
         with ThreadPoolExecutor(max_workers=8) as pool:
-            futures = [pool.submit(fetch, start) for start in range(0, size, chunk_size) if str(start) not in recovered]
-            for index, future in enumerate(as_completed(futures), 1):
-                start, count, checksum = future.result()
-                recovered[str(start)] = checksum
-                checkpoint()
-                completed += count
-                if index % 32 == 0 or completed == size:
-                    print(json.dumps({"state": "downloading", "completed_bytes": completed, "expected_bytes": size}), flush=True)
-        os.fsync(descriptor)
+            offsets = iter(start for start in range(0, size, chunk_size) if str(start) not in recovered)
+            pending = set()
+            failed, finished = False, 0
+
+            def fill_window() -> None:
+                while len(pending) < 8:
+                    start = next(offsets, None)
+                    if start is None:
+                        return
+                    pending.add(pool.submit(fetch, start))
+
+            fill_window()
+            while pending:
+                done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                # Inspect the entire completed set before submitting more work:
+                # any failure stops additions, while successful in-flight work
+                # is still persisted and can be resumed later.
+                for future in done:
+                    pending.remove(future)
+                    try:
+                        start, count, checksum = future.result()
+                    except Exception:
+                        failed = True
+                        continue
+                    recovered[str(start)] = checksum
+                    checkpoint()
+                    completed += count
+                    finished += 1
+                    if finished % 32 == 0 or completed == size:
+                        print(json.dumps({"state": "downloading", "completed_bytes": completed, "expected_bytes": size}), flush=True)
+                if not failed:
+                    fill_window()
+            os.fsync(descriptor)
+            if failed:
+                # All submitted workers have completed; subprocess.run owns
+                # and reaps curl on timeout, so no child survives this return.
+                raise ValueError("artifact_range_failed") from None
+    finally:
+        os.close(descriptor)
+
+
+def promote_complete_partial(partial: Path, target: Path, size: int, checksum: str) -> bool:
+    """A complete pinned SHA is sufficient proof, regardless of chunk receipts."""
+    try:
+        descriptor = os.open(partial, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return False
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if os.fstat(descriptor).st_size != size:
+            return False
+        with os.fdopen(os.dup(descriptor), "rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != checksum:
+                return False
+        os.replace(partial, target)
+        partial.with_suffix(partial.suffix + ".receipt.json").unlink(missing_ok=True)
+        return True
     finally:
         os.close(descriptor)
 
@@ -134,9 +182,12 @@ def acquire(destination: Path, offline: bool, xet: bool = False, *,
         if matches(target, size, checksum):
             print(json.dumps({"artifact": name, "state": "verified"}), flush=True)
             continue
+        partial = target.with_suffix(target.suffix + ".partial")
+        if promote_complete_partial(partial, target, size, checksum):
+            print(json.dumps({"artifact": name, "state": "verified"}), flush=True)
+            continue
         if offline:
             raise ValueError("artifact_unavailable")
-        partial = target.with_suffix(target.suffix + ".partial")
         print(json.dumps({"artifact": name, "state": "downloading", "bytes": size}), flush=True)
         if xet and size >= 128 * 1024**2:
             # Optional fast transport from Lalamo's immutable uv.lock. The

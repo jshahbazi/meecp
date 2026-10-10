@@ -1,0 +1,1469 @@
+{
+  "by_category": {
+    "helpful_base": {
+      "cases": 16,
+      "exact_two_sided_sign_test_p": 0.625,
+      "identical_answer_cases": 0,
+      "llama_fraction_scoring_at_least_4": 0.0625,
+      "llama_fraction_scoring_at_most_2": 0.875,
+      "llama_rating_distribution": {
+        "1": 12,
+        "2": 2,
+        "3": 1,
+        "4": 1,
+        "5": 0
+      },
+      "llama_wins": 3,
+      "mean_llama_rating": 1.4375,
+      "mean_paired_rating_difference_uzu_minus_llama": 0,
+      "mean_uzu_rating": 1.4375,
+      "paired_rating_difference_bootstrap_95_percent_interval": [
+        -0.1875,
+        0.1875
+      ],
+      "ties": 12,
+      "uzu_fraction_scoring_at_least_4": 0.0,
+      "uzu_fraction_scoring_at_most_2": 0.875,
+      "uzu_rating_distribution": {
+        "1": 11,
+        "2": 3,
+        "3": 2,
+        "4": 0,
+        "5": 0
+      },
+      "uzu_win_fraction_with_half_ties": 0.4375,
+      "uzu_win_fraction_with_half_ties_bootstrap_95_percent_interval": [
+        0.3125,
+        0.5625
+      ],
+      "uzu_win_rate_excluding_ties": 0.25,
+      "uzu_wins": 1
+    },
+    "koala": {
+      "cases": 20,
+      "exact_two_sided_sign_test_p": 0.5078125,
+      "identical_answer_cases": 0,
+      "llama_fraction_scoring_at_least_4": 0.1,
+      "llama_fraction_scoring_at_most_2": 0.7,
+      "llama_rating_distribution": {
+        "1": 11,
+        "2": 3,
+        "3": 4,
+        "4": 1,
+        "5": 1
+      },
+      "llama_wins": 6,
+      "mean_llama_rating": 1.9,
+      "mean_paired_rating_difference_uzu_minus_llama": 0,
+      "mean_uzu_rating": 1.9,
+      "paired_rating_difference_bootstrap_95_percent_interval": [
+        -0.35,
+        0.35
+      ],
+      "ties": 11,
+      "uzu_fraction_scoring_at_least_4": 0.05,
+      "uzu_fraction_scoring_at_most_2": 0.65,
+      "uzu_rating_distribution": {
+        "1": 10,
+        "2": 3,
+        "3": 6,
+        "4": 1,
+        "5": 0
+      },
+      "uzu_win_fraction_with_half_ties": 0.425,
+      "uzu_win_fraction_with_half_ties_bootstrap_95_percent_interval": [
+        0.275,
+        0.575
+      ],
+      "uzu_win_rate_excluding_ties": 0.3333333333333333,
+      "uzu_wins": 3
+    },
+    "oasst": {
+      "cases": 23,
+      "exact_two_sided_sign_test_p": 0.7744140625,
+      "identical_answer_cases": 1,
+      "llama_fraction_scoring_at_least_4": 0.0,
+      "llama_fraction_scoring_at_most_2": 0.782608695652174,
+      "llama_rating_distribution": {
+        "1": 9,
+        "2": 9,
+        "3": 5,
+        "4": 0,
+        "5": 0
+      },
+      "llama_wins": 7,
+      "mean_llama_rating": 1.826086956521739,
+      "mean_paired_rating_difference_uzu_minus_llama": -0.08695652173913043,
+      "mean_uzu_rating": 1.7391304347826086,
+      "paired_rating_difference_bootstrap_95_percent_interval": [
+        -0.391304347826087,
+        0.21739130434782608
+      ],
+      "ties": 11,
+      "uzu_fraction_scoring_at_least_4": 0.0,
+      "uzu_fraction_scoring_at_most_2": 0.782608695652174,
+      "uzu_rating_distribution": {
+        "1": 11,
+        "2": 7,
+        "3": 5,
+        "4": 0,
+        "5": 0
+      },
+      "uzu_win_fraction_with_half_ties": 0.45652173913043476,
+      "uzu_win_fraction_with_half_ties_bootstrap_95_percent_interval": [
+        0.30434782608695654,
+        0.6086956521739131
+      ],
+      "uzu_win_rate_excluding_ties": 0.4166666666666667,
+      "uzu_wins": 5
+    },
+    "selfinstruct": {
+      "cases": 31,
+      "exact_two_sided_sign_test_p": 0.60723876953125,
+      "identical_answer_cases": 3,
+      "llama_fraction_scoring_at_least_4": 0.0967741935483871,
+      "llama_fraction_scoring_at_most_2": 0.7419354838709677,
+      "llama_rating_distribution": {
+        "1": 12,
+        "2": 11,
+        "3": 5,
+        "4": 1,
+        "5": 2
+      },
+      "llama_wins": 6,
+      "mean_llama_rating": 2.032258064516129,
+      "mean_paired_rating_difference_uzu_minus_llama": 0.16129032258064516,
+      "mean_uzu_rating": 2.193548387096774,
+      "paired_rating_difference_bootstrap_95_percent_interval": [
+        -0.0967741935483871,
+        0.41935483870967744
+      ],
+      "ties": 16,
+      "uzu_fraction_scoring_at_least_4": 0.16129032258064516,
+      "uzu_fraction_scoring_at_most_2": 0.6774193548387096,
+      "uzu_rating_distribution": {
+        "1": 12,
+        "2": 9,
+        "3": 5,
+        "4": 2,
+        "5": 3
+      },
+      "uzu_win_fraction_with_half_ties": 0.5483870967741935,
+      "uzu_win_fraction_with_half_ties_bootstrap_95_percent_interval": [
+        0.41935483870967744,
+        0.6612903225806451
+      ],
+      "uzu_win_rate_excluding_ties": 0.6,
+      "uzu_wins": 9
+    },
+    "vicuna": {
+      "cases": 10,
+      "exact_two_sided_sign_test_p": 1.0,
+      "identical_answer_cases": 0,
+      "llama_fraction_scoring_at_least_4": 0.3,
+      "llama_fraction_scoring_at_most_2": 0.3,
+      "llama_rating_distribution": {
+        "1": 1,
+        "2": 2,
+        "3": 4,
+        "4": 3,
+        "5": 0
+      },
+      "llama_wins": 4,
+      "mean_llama_rating": 2.9,
+      "mean_paired_rating_difference_uzu_minus_llama": 0,
+      "mean_uzu_rating": 2.9,
+      "paired_rating_difference_bootstrap_95_percent_interval": [
+        -0.4,
+        0.4
+      ],
+      "ties": 3,
+      "uzu_fraction_scoring_at_least_4": 0.3,
+      "uzu_fraction_scoring_at_most_2": 0.3,
+      "uzu_rating_distribution": {
+        "1": 1,
+        "2": 2,
+        "3": 4,
+        "4": 3,
+        "5": 0
+      },
+      "uzu_win_fraction_with_half_ties": 0.45,
+      "uzu_win_fraction_with_half_ties_bootstrap_95_percent_interval": [
+        0.2,
+        0.7
+      ],
+      "uzu_win_rate_excluding_ties": 0.42857142857142855,
+      "uzu_wins": 3
+    }
+  },
+  "by_uzu_position": {
+    "A": {
+      "cases": 50,
+      "exact_two_sided_sign_test_p": 0.2295229434967041,
+      "identical_answer_cases": 2,
+      "llama_fraction_scoring_at_least_4": 0.14,
+      "llama_fraction_scoring_at_most_2": 0.66,
+      "llama_rating_distribution": {
+        "1": 21,
+        "2": 12,
+        "3": 10,
+        "4": 5,
+        "5": 2
+      },
+      "llama_wins": 16,
+      "mean_llama_rating": 2.1,
+      "mean_paired_rating_difference_uzu_minus_llama": -0.1,
+      "mean_uzu_rating": 2,
+      "paired_rating_difference_bootstrap_95_percent_interval": [
+        -0.28,
+        0.08
+      ],
+      "ties": 25,
+      "uzu_fraction_scoring_at_least_4": 0.08,
+      "uzu_fraction_scoring_at_most_2": 0.66,
+      "uzu_rating_distribution": {
+        "1": 23,
+        "2": 10,
+        "3": 13,
+        "4": 2,
+        "5": 2
+      },
+      "uzu_win_fraction_with_half_ties": 0.43,
+      "uzu_win_fraction_with_half_ties_bootstrap_95_percent_interval": [
+        0.33,
+        0.53
+      ],
+      "uzu_win_rate_excluding_ties": 0.36,
+      "uzu_wins": 9
+    },
+    "B": {
+      "cases": 50,
+      "exact_two_sided_sign_test_p": 0.8318119049072266,
+      "identical_answer_cases": 2,
+      "llama_fraction_scoring_at_least_4": 0.04,
+      "llama_fraction_scoring_at_most_2": 0.78,
+      "llama_rating_distribution": {
+        "1": 24,
+        "2": 15,
+        "3": 9,
+        "4": 1,
+        "5": 1
+      },
+      "llama_wins": 10,
+      "mean_llama_rating": 1.8,
+      "mean_paired_rating_difference_uzu_minus_llama": 0.16,
+      "mean_uzu_rating": 1.96,
+      "paired_rating_difference_bootstrap_95_percent_interval": [
+        -0.04,
+        0.36
+      ],
+      "ties": 28,
+      "uzu_fraction_scoring_at_least_4": 0.1,
+      "uzu_fraction_scoring_at_most_2": 0.72,
+      "uzu_rating_distribution": {
+        "1": 22,
+        "2": 14,
+        "3": 9,
+        "4": 4,
+        "5": 1
+      },
+      "uzu_win_fraction_with_half_ties": 0.52,
+      "uzu_win_fraction_with_half_ties_bootstrap_95_percent_interval": [
+        0.43,
+        0.61
+      ],
+      "uzu_win_rate_excluding_ties": 0.5454545454545454,
+      "uzu_wins": 12
+    }
+  },
+  "cases": [
+    {
+      "case_id": "source-83",
+      "category": "helpful_base",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 2,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-673",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-731",
+      "category": "vicuna",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 3,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-370",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 3,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-302",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-734",
+      "category": "vicuna",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": 1,
+      "uzu_position": "B",
+      "uzu_rating": 4,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-338",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 3,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-440",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 2,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-388",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-64",
+      "category": "helpful_base",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-792",
+      "category": "vicuna",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 3,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-112",
+      "category": "helpful_base",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-753",
+      "category": "vicuna",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 1,
+      "uzu_position": "A",
+      "uzu_rating": 2,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-439",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 3,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-418",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-659",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 5,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 5,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-422",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 1,
+      "uzu_position": "A",
+      "uzu_rating": 2,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-205",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 2,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-611",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 2,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-613",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 2,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-544",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-637",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 1,
+      "uzu_position": "A",
+      "uzu_rating": 2,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-230",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-203",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-520",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": -1,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-331",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 2,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-365",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 1,
+      "uzu_position": "A",
+      "uzu_rating": 3,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-657",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-310",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 2,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-475",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 4,
+      "paired_rating_difference_uzu_minus_llama": 1,
+      "uzu_position": "A",
+      "uzu_rating": 5,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-100",
+      "category": "helpful_base",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-217",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 2,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-721",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 2,
+      "uzu_position": "B",
+      "uzu_rating": 3,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-528",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 2,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-150",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-581",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 3,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-116",
+      "category": "helpful_base",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-272",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-163",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 2,
+      "uzu_position": "B",
+      "uzu_rating": 3,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-44",
+      "category": "helpful_base",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 2,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-91",
+      "category": "helpful_base",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-156",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-227",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 5,
+      "paired_rating_difference_uzu_minus_llama": -2,
+      "uzu_position": "A",
+      "uzu_rating": 3,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-623",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-144",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-204",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 3,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-535",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 3,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-295",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-143",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-541",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": 1,
+      "uzu_position": "B",
+      "uzu_rating": 4,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-660",
+      "category": "selfinstruct",
+      "identical_answers": true,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 2,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-472",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 1,
+      "uzu_position": "B",
+      "uzu_rating": 3,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-758",
+      "category": "vicuna",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 2,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-392",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": -1,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-723",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-197",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-428",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": -1,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-363",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": -1,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-395",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": -1,
+      "uzu_position": "A",
+      "uzu_rating": 2,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-458",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 2,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-424",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-436",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 1,
+      "uzu_position": "B",
+      "uzu_rating": 2,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-42",
+      "category": "helpful_base",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-744",
+      "category": "vicuna",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 3,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-339",
+      "category": "oasst",
+      "identical_answers": true,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-172",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 1,
+      "uzu_position": "A",
+      "uzu_rating": 3,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-759",
+      "category": "vicuna",
+      "identical_answers": false,
+      "llama_rating": 4,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 4,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-59",
+      "category": "helpful_base",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-0",
+      "category": "helpful_base",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-694",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 2,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-391",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": -2,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-493",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": -1,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-597",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 1,
+      "uzu_position": "B",
+      "uzu_rating": 3,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-10",
+      "category": "helpful_base",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 3,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-801",
+      "category": "vicuna",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": -1,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-65",
+      "category": "helpful_base",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-245",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 4,
+      "paired_rating_difference_uzu_minus_llama": -1,
+      "uzu_position": "A",
+      "uzu_rating": 3,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-598",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": -2,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-578",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 3,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-728",
+      "category": "vicuna",
+      "identical_answers": false,
+      "llama_rating": 4,
+      "paired_rating_difference_uzu_minus_llama": -1,
+      "uzu_position": "B",
+      "uzu_rating": 3,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-608",
+      "category": "selfinstruct",
+      "identical_answers": true,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 2,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-283",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-461",
+      "category": "oasst",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-229",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": 1,
+      "uzu_position": "B",
+      "uzu_rating": 4,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-152",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 3,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-514",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-84",
+      "category": "helpful_base",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 1,
+      "uzu_position": "B",
+      "uzu_rating": 2,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-762",
+      "category": "vicuna",
+      "identical_answers": false,
+      "llama_rating": 4,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 4,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-711",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 2,
+      "uzu_position": "B",
+      "uzu_rating": 4,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-75",
+      "category": "helpful_base",
+      "identical_answers": false,
+      "llama_rating": 4,
+      "paired_rating_difference_uzu_minus_llama": -1,
+      "uzu_position": "A",
+      "uzu_rating": 3,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-549",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-479",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 5,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 5,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-618",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-512",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 1,
+      "uzu_position": "B",
+      "uzu_rating": 2,
+      "winner": "uzu"
+    },
+    {
+      "case_id": "source-561",
+      "category": "selfinstruct",
+      "identical_answers": false,
+      "llama_rating": 2,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 2,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-178",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-210",
+      "category": "koala",
+      "identical_answers": false,
+      "llama_rating": 3,
+      "paired_rating_difference_uzu_minus_llama": -1,
+      "uzu_position": "B",
+      "uzu_rating": 2,
+      "winner": "llama.cpp"
+    },
+    {
+      "case_id": "source-89",
+      "category": "helpful_base",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "B",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-102",
+      "category": "helpful_base",
+      "identical_answers": false,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "tie"
+    },
+    {
+      "case_id": "source-638",
+      "category": "selfinstruct",
+      "identical_answers": true,
+      "llama_rating": 1,
+      "paired_rating_difference_uzu_minus_llama": 0,
+      "uzu_position": "A",
+      "uzu_rating": 1,
+      "winner": "tie"
+    }
+  ],
+  "configuration": {
+    "artifacts": {
+      "gguf_sha256": "0ad885ffd4bb022fc4f0d33a3308fa108ef8613159d3b3a67e23abca056b7a6c",
+      "llama_binary_sha256": "f88d172551ef370aca9a38a9284ba8d6d35b287212b80080461f15f5074c550c",
+      "llama_runtime_closure": {
+        "lib/libcrypto.3.dylib": "f9563883fdbb4f2b367c708a6abd786119c935d3f9cd01fa8e11c34666775d1b",
+        "lib/libggml-base.0.dylib": "045e9778c75a3790ae1f5d02d19c85e966b277216578d226d776d85cd7d97333",
+        "lib/libggml.0.dylib": "7b262216670ab6bcc198b486777fe3b723b045660b369d8123e785e8594d9a4d",
+        "lib/libllama-common.0.dylib": "ea16c90d3fc4087309df244a11ac4b7e041ae9029d3749c3aded51ebdf19f200",
+        "lib/libllama-server-impl.dylib": "5175db0f6e7e501b0bf3b779342e0ac3f177ff706be9e0589ecc4743df9c5c1b",
+        "lib/libllama.0.dylib": "555ad4924da7fdd6e8567cea75bfb8bc92642b219ad72fab5af5f2a036544e3c",
+        "lib/libmtmd.0.dylib": "42c27b4bcbebd7e13e80c155a41397e2104a0d1d0d5ae30f70c52d3bbc2ade05",
+        "lib/libomp.dylib": "7fd28cb0ea6020f4d7c90339a046296c6a3f9955bdafb6ec4f8dc1d93de787eb",
+        "lib/libssl.3.dylib": "7e89651576fc4dfe9461f65de448fc99990dc5c32c06c413d86bdbbfc11e9774",
+        "llama-server": "f88d172551ef370aca9a38a9284ba8d6d35b287212b80080461f15f5074c550c",
+        "plugins/libggml-blas.so": "0571889bbc32bae0648fe8efd2d39a6f42a171aa786e672736f181114fe751cb",
+        "plugins/libggml-cpu-apple_m1.so": "6072198ba5851ce0870f28f5042ea6a79afbcfff99375a9f73984d6e878f872a",
+        "plugins/libggml-cpu-apple_m2_m3.so": "28a7104df79f5082ba94dbf643a62ead476c70370cf644b73863685ac901a75e",
+        "plugins/libggml-cpu-apple_m4.so": "cc7a568c84ecdda5a7408776f467f149a4c06807ab0429ac2e10e81faa028921",
+        "plugins/libggml-metal.so": "80bff4685cb0feb395a8a3ebdd6507506535f5400cd5e391f3e2a3799b3e4432"
+      },
+      "reaper_sha256": "d30f8960c06de0ec36db79142206b9cc0d28f4caf7f70713c9e71c0fdd865ab0",
+      "uzu_binary_sha256": "024406714c2126d8cbaf5b54182d9643df4563f7d7bd536034e9a620d2352a7f",
+      "uzu_config_sha256": "95fe76fdca82d8f257ac2970ed787b760e33bb8b7a0a1bad0f42dd3132704afa",
+      "uzu_tokenizer_sha256": "87a7830d63fcf43bf241c3c5242e96e62dd3fdc29224ca26fed8ea333db72de4",
+      "uzu_weights_sha256": "25e714aa91377729506000e373c143911f6f1315d13aef8f0dd63215ea8ed14b"
+    },
+    "blind_judge_instructions_sha256": "b1a4fe43e366d2edd6a0c181f6d7877f48caa7b5eff8e9b74718a714e67360ff",
+    "cases": 100,
+    "dataset_provenance_sha256": "2c29eb84e28d71cda50d956b026ad8f64ac01a5f1b5105c2a98023b46feb79a4",
+    "dataset_sha256": "26895666f20f4e23d4e733c4b528723e661a8a9d7d0327b9c7c0272976fbb006",
+    "harness_sha256": "3d947495cb312df328d15de6d0e59dface883c811f24f03c087a26b0e487111a",
+    "launch_harness_sha256": "7f208a168ae08ef50970376abc649026fea955a2d95fcd12a2ee6fc420cf23b9",
+    "machine": {
+      "architecture": "arm64",
+      "os_version": "26.7.1"
+    },
+    "method": {
+      "blocks": [
+        [
+          "llama.cpp",
+          "uzu"
+        ],
+        [
+          "uzu",
+          "llama.cpp"
+        ]
+      ],
+      "cache": "fresh state",
+      "cases_per_block": 50,
+      "context_guard": 8,
+      "context_tokens": 4096,
+      "export_caveat": "Independent Mirai-L and Q8_0 conversions; not identical weights",
+      "maximum_output_tokens": 256,
+      "position_balance": "exactly 50 Uzu A and 50 Uzu B",
+      "reference_visible": false,
+      "sampling": "greedy",
+      "system_message": "You are a helpful assistant.",
+      "thinking": "disabled"
+    },
+    "model_provenance_sha256": "80b9386f55cd00f931e80ae1657d16e68c8311668ae158712327060625643ba8",
+    "quality_protocol_sha256": "d9588f2d021736f985298e9b185cd67e5838763ee2a6ea244b054fd70c503848",
+    "schema_version": 1
+  },
+  "configuration_sha256": "737498ef74de7a933b098b047d65700df89fab62fef6a7c0edf208fc167d5c7b",
+  "dataset_sha256": "26895666f20f4e23d4e733c4b528723e661a8a9d7d0327b9c7c0272976fbb006",
+  "generation": {
+    "llama.cpp": {
+      "answers": 100,
+      "empty_answers": 0,
+      "generation_errors": 0,
+      "median_output_tokens": 256.0,
+      "median_wall_seconds": 0.9011474165599793,
+      "output_token_cap_reached_answers": 69,
+      "output_token_limit_answers": 69,
+      "startup_errors": 0,
+      "stop_reasons": {
+        "eos": 31,
+        "length": 69
+      }
+    },
+    "uzu": {
+      "answers": 100,
+      "empty_answers": 0,
+      "generation_errors": 0,
+      "median_output_tokens": 256.0,
+      "median_wall_seconds": 0.6200727289542556,
+      "output_token_cap_reached_answers": 68,
+      "output_token_limit_answers": 68,
+      "startup_errors": 0,
+      "stop_reasons": {
+        "length": 68,
+        "stop": 32
+      }
+    }
+  },
+  "judge": {
+    "identity": "/root/blind_quality_judge",
+    "method": "single independent blind paired judge",
+    "model": "gpt-6-astra"
+  },
+  "judgments_sha256": "826972dadcf2e1afc3a24f465004cb2bf5b66e830fd00799af744d1bbbe0ab3d",
+  "machine": {
+    "chip": "Apple M5 Max",
+    "cpu_cores": 18,
+    "gpu_cores": 40,
+    "memory_gib": 128,
+    "os_version": "26.7.1"
+  },
+  "measured_on": "2026-10-10",
+  "post_generation_seal_sha256": "990a796cc70824071865cb3559dd0753d2705ec45d5b4603bb087b7091bfd044",
+  "posthoc_judge_diagnostic": {
+    "assessment": "The judge observed substantive defects before endings; the causal contribution of the output cap and the effect of increasing it were not measured.",
+    "failure_patterns": [
+      "Fabricated facts and incorrect explanations or calculations",
+      "Misreading tasks and missing explicit constraints",
+      "Repetitive degeneration",
+      "Incomplete recipes, worked solutions, code and multipart answers",
+      "Introductions and self-commentary consuming the output budget"
+    ],
+    "high_scoring_answers": 18,
+    "low_scoring_answers": 141,
+    "mid_scoring_answers": 41,
+    "model": "gpt-6-astra",
+    "scope": "Qualitative follow-up after sealed primary judging; no regrading or controlled output-budget experiment"
+  },
+  "schema_version": 1,
+  "source_harness_commit": "e67a2c153712a04ee0816e8a88e9c319dc548138",
+  "statistics": {
+    "bootstrap_repetitions": 20000,
+    "bootstrap_seed": 20261010,
+    "limitations": "One judge, 100 selected prompts, different eight-bit exports, 256-token output limit; category and position slices are descriptive.",
+    "sign_test": "two-sided exact binomial, excluding ties"
+  },
+  "summary": {
+    "cases": 100,
+    "exact_two_sided_sign_test_p": 0.5600646295802107,
+    "identical_answer_cases": 4,
+    "llama_fraction_scoring_at_least_4": 0.09,
+    "llama_fraction_scoring_at_most_2": 0.72,
+    "llama_rating_distribution": {
+      "1": 45,
+      "2": 27,
+      "3": 19,
+      "4": 6,
+      "5": 3
+    },
+    "llama_wins": 26,
+    "mean_llama_rating": 1.95,
+    "mean_paired_rating_difference_uzu_minus_llama": 0.03,
+    "mean_uzu_rating": 1.98,
+    "paired_rating_difference_bootstrap_95_percent_interval": [
+      -0.11,
+      0.17
+    ],
+    "ties": 53,
+    "uzu_fraction_scoring_at_least_4": 0.09,
+    "uzu_fraction_scoring_at_most_2": 0.69,
+    "uzu_rating_distribution": {
+      "1": 45,
+      "2": 24,
+      "3": 22,
+      "4": 6,
+      "5": 3
+    },
+    "uzu_win_fraction_with_half_ties": 0.475,
+    "uzu_win_fraction_with_half_ties_bootstrap_95_percent_interval": [
+      0.41,
+      0.54
+    ],
+    "uzu_win_rate_excluding_ties": 0.44680851063829785,
+    "uzu_wins": 21
+  },
+  "verification": {
+    "answers": 200,
+    "artifact_seals_verified": true,
+    "blind_files_unchanged_after_judging": true,
+    "configuration_matches_current": true,
+    "generation_errors": 0,
+    "independent_statistics_audit_passed": true,
+    "judge_cases": 100,
+    "matched_prompt_token_sequences": 100,
+    "ownership_settled": true,
+    "position_balance": {
+      "A": 50,
+      "B": 50
+    }
+  }
+}

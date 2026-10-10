@@ -12,7 +12,7 @@ The implementation pins Uzu 0.6.1 at `8d01581474760bd1fc7f4a547ff1d02f7dada437` 
 - Greedy generation with thinking disabled, fresh model state for each request, one active request, and four waiting requests.
 - A 4096 MiB declared memory reservation, authenticated loopback routes, generation/nonce/engine identity checks, and fail-closed retirement after uncertain native outcomes.
 
-This is an opt-in experimental package. It is separate from the built-in CPU text-generation recipe. JevK5 is outside this experiment. Full Phase 4 acceptance, quality evaluation, additional model families, speculative decoding, concurrent resident GPU models, sleep/wake, pressure testing, and public distribution remain outside the measured scope.
+This is an opt-in experimental package. It is separate from the built-in CPU text-generation recipe. JevK5 is outside this experiment. Full Phase 4 acceptance, broader quality evaluation, additional model families, speculative decoding, concurrent resident GPU models, sleep/wake, pressure testing, and public distribution remain outside the measured scope.
 
 ## Reproduce
 
@@ -52,7 +52,11 @@ Measured on 2026-10-10 with macOS 26.7.1, an Apple M5 Max, 18 CPU cores, 40 GPU 
 
 Uzu's measured decode throughput was 42–46% higher. Native engine peak RSS was 1.047–1.048 GiB for Uzu and 1.087–1.088 GiB for llama.cpp; these figures exclude the host gateway and MCP adapter. Startup ranged from 0.734–1.449 s for Uzu and 0.601–0.604 s for llama.cpp. The [aggregate benchmark record](../experiments/uzu-rust/BENCHMARK_RESULTS.json) retains every timing sample, artifact and harness hashes, token-sequence identity hashes, and reaping results.
 
-These results justify keeping Uzu available as an experimental engine. They do not establish a general replacement for llama.cpp: model coverage, output quality, longer contexts, concurrent load, memory pressure, and distribution still need evaluation.
+These results justify keeping Uzu available as an experimental engine. They do not establish a general replacement for llama.cpp: model coverage, broader output quality, longer contexts, concurrent load, memory pressure, and distribution still need evaluation.
+
+## Blind quality screen
+
+The [100-prompt Astra quality screen](UZU_QUALITY_EVALUATION.md) used a fixed stratified AlpacaEval subset and matched greedy generation. Uzu won 21 pairs, llama.cpp won 26, and 53 tied. Mean scores were 1.98/5 and 1.95/5, with 9% of answers scoring at least 4 for each configuration. There was no clear relative-quality difference. Most answers reached the current 256-token cap, and the judge also found substantive errors before endings. The current small-model profile has weak absolute quality on this sample; the earlier speed result does not establish readiness for general assistant use.
 
 ## Installed-package acceptance
 

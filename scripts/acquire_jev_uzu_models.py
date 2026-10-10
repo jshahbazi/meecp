@@ -4,11 +4,16 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import contextlib
+import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -36,58 +41,83 @@ def matches(path: Path, size: int, checksum: str) -> bool:
     return path.is_file() and path.stat().st_size == size and digest(path) == checksum
 
 
-def ranged_download(url: str, partial: Path, size: int) -> None:
+def ranged_download(url: str, partial: Path, size: int, *, chunk_size: int = 4 * 1024**2) -> None:
     """Bounded parallel ranges; validate every range and the final artifact hash."""
-    chunk_size = 4 * 1024**2
     descriptor = os.open(partial, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    receipt_path = partial.with_suffix(partial.suffix + ".receipt.json")
     try:
-        extents = []
-        if os.fstat(descriptor).st_size == size and hasattr(os, "SEEK_DATA"):
-            position = 0
-            while position < size:
-                try:
-                    start = os.lseek(descriptor, position, os.SEEK_DATA)
-                    end = os.lseek(descriptor, start, os.SEEK_HOLE)
-                    extents.append((start, end))
-                    position = end
-                except OSError:
-                    break
-        # Sparse extents recover interrupted range writes. Their bytes are
-        # untrusted until the complete artifact passes its pinned SHA-256.
-        recovered = {start for start in range(0, size, chunk_size)
-                     if any(low <= start and high >= min(start + chunk_size, size)
-                            for low, high in extents)}
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        identity = {"url": url, "size": size, "chunk_size": chunk_size}
+        recovered = {}
+        if receipt_path.exists() and os.fstat(descriptor).st_size == size:
+            prior = json.loads(receipt_path.read_text())
+            if prior.get("identity") == identity:
+                for offset, checksum in prior.get("completed", {}).items():
+                    start = int(offset)
+                    if start < 0 or start >= size or start % chunk_size:
+                        continue
+                    block = os.pread(descriptor, min(chunk_size, size - start), start)
+                    if len(block) == min(chunk_size, size - start) and hashlib.sha256(block).hexdigest() == checksum:
+                        recovered[str(start)] = checksum
+        # Filesystem extents include preallocated/unwritten bytes. Reuse only
+        # explicit completed-chunk receipts whose local bytes still match.
         os.ftruncate(descriptor, size)
 
-        def fetch(start: int) -> int:
+        def checkpoint() -> None:
+            with tempfile.NamedTemporaryFile(mode="w", dir=partial.parent, delete=False) as stream:
+                json.dump({"identity": identity, "completed": recovered}, stream)
+                temporary = Path(stream.name)
+            os.replace(temporary, receipt_path)
+
+        checkpoint()
+
+        def fetch(start: int) -> tuple[int, int, str]:
             end = min(start + chunk_size, size) - 1
             for attempt in range(3):
                 try:
-                    request = urllib.request.Request(url + f"?download=true&range_offset={start}", headers={
-                        "User-Agent": "meecp-pinned-model-acquisition/1", "Range": f"bytes={start}-{end}"})
-                    with urllib.request.urlopen(request, timeout=120) as response:
-                        if response.status != 206 or response.headers.get("Content-Range") != f"bytes {start}-{end}/{size}":
-                            raise ValueError("artifact_range_mismatch")
-                        block = response.read(end - start + 2)
+                    range_url = url + f"?download=true&range_offset={start}"
+                    curl = shutil.which("curl")
+                    if curl:
+                        with tempfile.NamedTemporaryFile(dir=partial.parent) as temporary:
+                            result = subprocess.run([curl, "-q", "--location", "--fail", "--silent",
+                                "--proto", "=https", "--proto-redir", "=https", "--max-redirs", "5",
+                                "--connect-timeout", "15", "--max-time", "120", "--max-filesize", str(end-start+1),
+                                "--range", f"{start}-{end}", "--dump-header", "-", "--output", temporary.name,
+                                range_url], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=130)
+                            ranges = re.findall(rb"(?im)^content-range:\s*([^\r\n]+)", result.stdout)
+                            statuses = re.findall(rb"(?m)^HTTP/\S+\s+(\d+)", result.stdout)
+                            if result.returncode or not ranges or not statuses or statuses[-1] != b"206" or ranges[-1] != f"bytes {start}-{end}/{size}".encode():
+                                raise ValueError("artifact_range_mismatch")
+                            block = Path(temporary.name).read_bytes()
+                    else:
+                        request = urllib.request.Request(range_url, headers={
+                            "User-Agent": "meecp-pinned-model-acquisition/1", "Range": f"bytes={start}-{end}"})
+                        with urllib.request.urlopen(request, timeout=120) as response:
+                            if response.status != 206 or response.headers.get("Content-Range") != f"bytes {start}-{end}/{size}":
+                                raise ValueError("artifact_range_mismatch")
+                            block = response.read(end - start + 2)
                     if len(block) != end - start + 1:
                         raise ValueError("artifact_range_mismatch")
                     position = 0
                     while position < len(block):
                         position += os.pwrite(descriptor, block[position:], start + position)
-                    return len(block)
+                    return start, len(block), hashlib.sha256(block).hexdigest()
                 except Exception:
                     if attempt == 2:
                         raise ValueError("artifact_range_failed") from None
                     time.sleep(attempt + 1)
             raise ValueError("artifact_range_failed")
 
-        completed = sum(min(chunk_size, size - start) for start in recovered)
+        completed = sum(min(chunk_size, size - int(start)) for start in recovered)
         print(json.dumps({"state": "range_resume", "recovered_bytes": completed,
                           "expected_bytes": size}), flush=True)
-        with ThreadPoolExecutor(max_workers=32) as pool:
-            futures = [pool.submit(fetch, start) for start in range(0, size, chunk_size) if start not in recovered]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = [pool.submit(fetch, start) for start in range(0, size, chunk_size) if str(start) not in recovered]
             for index, future in enumerate(as_completed(futures), 1):
-                completed += future.result()
+                start, count, checksum = future.result()
+                recovered[str(start)] = checksum
+                checkpoint()
+                completed += count
                 if index % 32 == 0 or completed == size:
                     print(json.dumps({"state": "downloading", "completed_bytes": completed, "expected_bytes": size}), flush=True)
         os.fsync(descriptor)

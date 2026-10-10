@@ -411,6 +411,8 @@ Acceptance requires real setup runs against unfamiliar supported projects, exact
 
 ### Phase 4: multiple model engines
 
+The [experimental Uzu text-generation package](UZU_EXPERIMENT.md) implements a second engine through the existing model-service graph and exclusive GPU admission. Its scoped benchmark uses separately converted Qwen3.5-0.8B artifacts on the development Mac. It does not complete the broader acceptance below; JevK5 testing is outside that experiment.
+
 Add a second model package with a genuinely different engine, declared memory reservations, host GPU admission, and independent model/profile configuration. Validate cold start, resident memory, contention, queue behavior, cancellation, and unload/reload on the actual machine. Port separation alone is insufficient evidence of resource isolation.
 
 Acceptance: both models install without changing host code, report exact checkpoint/engine identity, respect the configured memory/GPU policy, and leave deterministic tools usable under load. Repeat JevK5's synthetic parity/cache checks through the slot boundary. Publish measured overhead and contention results; do not infer model quality from packaging success.

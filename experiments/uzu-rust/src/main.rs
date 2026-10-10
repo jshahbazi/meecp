@@ -1,4 +1,5 @@
 //! Experimental local worker. Only JSON protocol replies may reach stdout.
+mod scoring;
 use std::{
     fs::{self, File},
     io::{self, BufRead, Read, Write},
@@ -614,6 +615,8 @@ fn run() -> Result<(), &'static str> {
     }
     if mode == "--model-path" {
         run_lines(PathBuf::from(value))
+    } else if mode == "--score-model-path" {
+        scoring::run_lines(&PathBuf::from(value))
     } else if mode == "--meecp-config-fd" || mode == "--mcpme-config-fd" {
         run_server(
             value
@@ -645,7 +648,7 @@ fn main() {
     if let Err(code) = run() {
         if std::env::args_os()
             .nth(1)
-            .is_some_and(|mode| mode == "--model-path")
+            .is_some_and(|mode| mode == "--model-path" || mode == "--score-model-path")
         {
             let _ = write_reply(
                 &mut io::stdout().lock(),

@@ -2,7 +2,7 @@
 
 This experiment adds a second installable text-generation package using Uzu's direct Rust Metal engine. The host continues to use the existing model-service process graph: a native engine and an authenticated Python MCP adapter, both owned and reaped by Meecp. The package exposes `text_generate` and `text_status` without changing host component contracts.
 
-The implementation pins Uzu 0.6.1 at `8d01581474760bd1fc7f4a547ff1d02f7dada437` and locks the Rust and Python dependencies. The recent Python SDK release was blocked by the local dependency age policy. The direct Rust core avoids the SDK's registry/download/telemetry initialization and consumes already verified local model files. The package does not acquire models during startup.
+The implementation pins Uzu 0.6.1 at `8d01581474760bd1fc7f4a547ff1d02f7dada437` and locks the Rust and Python dependencies. The recent Python SDK release was blocked by the local dependency age policy. The direct Rust core avoids the SDK's registry/download/telemetry initialization and consumes already verified local model files. The package does not acquire models during startup. The source now also contains an isolated next-token scoring extension described in [JevK5 probability scoring](UZU_JEVK5_SCORING.md); the text-generation measurements and installed-package acceptance below retain their original executable and artifact identities.
 
 ## Scope
 
@@ -12,16 +12,24 @@ The implementation pins Uzu 0.6.1 at `8d01581474760bd1fc7f4a547ff1d02f7dada437` 
 - Greedy generation with thinking disabled, fresh model state for each request, one active request, and four waiting requests.
 - A 4096 MiB declared memory reservation, authenticated loopback routes, generation/nonce/engine identity checks, and fail-closed retirement after uncertain native outcomes.
 
-This is an opt-in experimental package. It is separate from the built-in CPU text-generation recipe. JevK5 is outside this experiment. Full Phase 4 acceptance, broader quality evaluation, additional model families, speculative decoding, concurrent resident GPU models, sleep/wake, pressure testing, and public distribution remain outside the measured scope.
+This is an opt-in experimental package. It is separate from the built-in CPU text-generation recipe. The measured package scope is Qwen3.5 text generation. The isolated JevK5 scoring follow-up has its own protocol and pending acceptance. Full Phase 4 acceptance, broader quality evaluation, additional model families, speculative decoding, concurrent resident GPU models, sleep/wake, pressure testing, and public distribution remain outside the measured scope.
 
 ## Reproduce
 
 Run from the repository root on Apple silicon with managed CPython 3.12, `uv`, Rust 1.98, and Xcode with its Metal Toolchain component. Runtime, model, package, and raw acceptance artifacts stay in ignored directories. Model source revisions, sizes, hashes, licenses, and the separate conversion caveat are recorded in [MODEL_PROVENANCE.json](../experiments/uzu-rust/MODEL_PROVENANCE.json). Rust dependency notices are in [THIRD_PARTY.md](../experiments/uzu-rust/THIRD_PARTY.md).
 
+Build the current native source with the pinned-source helper:
+
+```sh
+uv run --locked python experiments/uzu-rust/build_scoring.py --test
+```
+
+The helper exports the pinned upstream Git object, applies [uzu-next-token-scoring.patch](../experiments/uzu-rust/uzu-next-token-scoring.patch), and builds with locked dependencies. It records the upstream, patch, lockfile, license, and executable hashes in ignored `runtime/uzu-rust/SCORING_BUILD_RECEIPT.json`. Its output is `runtime/uzu-rust/scoring-target/release/meecp-uzu-worker`. The original text-generation executable remains preserved at `runtime/uzu-rust/target/release/meecp-uzu-worker`.
+
+The following package and text-generation benchmark commands use that preserved executable by default. They require it to be present; the current helper does not rebuild or replace it. A run with a newly built executable needs explicit binary selection and a new acceptance record before extending the results below.
+
 ```sh
 uv run --locked python scripts/acquire_uzu_models.py
-CARGO_TARGET_DIR="$PWD/runtime/uzu-rust/target" cargo build --release --locked --manifest-path experiments/uzu-rust/Cargo.toml
-CARGO_TARGET_DIR="$PWD/runtime/uzu-rust/target" cargo test --release --locked --manifest-path experiments/uzu-rust/Cargo.toml
 /usr/bin/clang -O2 -Wall -Wextra -o runtime/uzu-rust/meecp-reap scripts/meecp-reap.c
 uv run --locked python scripts/build_uzu_package.py
 uv run --locked --group dev python scripts/verify_uzu_package.py --output test-artifacts/uzu-package-acceptance.json
@@ -31,6 +39,14 @@ uv run --locked python scripts/benchmark_uzu.py --report test-artifacts/uzu-benc
 The acquisition helper downloads only pinned artifacts and verifies both length and SHA-256 before publishing a file. It refuses to replace an existing mismatched artifact. Use `--offline` to verify existing files. The package builder also refuses to overwrite a destination. Move or remove an earlier generated package before rebuilding.
 
 The benchmark needs the closed llama.cpp runtime at `runtime/llama-relocated/llama/llama-server`; pass `--llama-binary` to use another compatible server and retain its identity in the report. Both engines run sequentially with foreground process owners. Their processes are reaped before the next engine loads. One warmup is excluded per load, engine order is reversed in the second round, and every measured request uses fresh state with prompt caching disabled. Reports retain aggregate metrics and identity hashes without prompts, responses, token arrays, credentials, or exception dumps.
+
+## Isolated JevK5 scoring follow-up
+
+The current Rust worker adds a CLI selected by `--score-model-path MODEL_DIRECTORY`. It accepts private stdin operations for tokenization and scoring exact causal-model input token IDs. Scoring reads the final prompt position after synchronized BF16 readout, returns raw candidate logits and full-vocabulary normalized candidate log probabilities, and computes candidate probabilities as `softmax(candidate_logits / temperature)` in f64. The caller supplies the calibration temperature. Each call creates fresh state; identical repeats recompute the prompt and report `cache_hit:false`. The scoring path does not render chat prompts or sample an output token.
+
+The [JevK5 scoring protocol](../experiments/uzu-rust/jev-scoring/PROTOCOL.md) and [comparison harness](../scripts/benchmark_jev_uzu.py) require exact prompt/token/candidate identity, independent probability and typed-answer checks, sequential engine ownership, and separate fresh/repeat timing populations. The full protocol uses all 231 public JevBench v1.2 cases plus authored synthetic checks. It predeclares engineering tolerances, quality/calibration metrics, and uncertainty reporting. Private protocol streams and ignored owner-only records carry request content and scores; tracked reports retain aggregate metrics and artifact identities.
+
+JevK5 source acquisition, Uzu export conversion, and the full scoring comparison remain pending. No JevK5 probability-parity, latency, quality, or calibration result is established by the Qwen3.5 measurements below. Scoring currently has a standalone stdin CLI and harness; production Meecp scorer integration, scoring HTTP/MCP routes, and installed JevK5 package acceptance remain outstanding. Reproduction and remaining scope are recorded in [JevK5 probability scoring](UZU_JEVK5_SCORING.md).
 
 ## Interpreting the comparison
 

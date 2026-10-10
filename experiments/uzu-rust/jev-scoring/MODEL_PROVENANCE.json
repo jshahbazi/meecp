@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "source": {
+    "repository": "alibiserikbay/JevK5",
+    "revision": "c4f7fdb3aeab5582336406e78d3bef11bf98833d",
+    "license": "Apache-2.0",
+    "url": "https://huggingface.co/alibiserikbay/JevK5/tree/c4f7fdb3aeab5582336406e78d3bef11bf98833d",
+    "format": "merged BF16 safetensors, Qwen3.5-4B",
+    "files": [
+      {
+        "name": "chat_template.jinja",
+        "bytes": 7756,
+        "sha256": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715"
+      },
+      {
+        "name": "config.json",
+        "bytes": 1979,
+        "sha256": "63f47812d0f11118e4d252d2b3ad488707eb9287a11589f4fd382a1d31182724"
+      },
+      {
+        "name": "generation_config.json",
+        "bytes": 116,
+        "sha256": "62153eb6c69f2e1f426beaa8002b7186437e949c7588167085df14e10e9c0a73"
+      },
+      {
+        "name": "jevk5_config.json",
+        "bytes": 52,
+        "sha256": "0d689fd13d15dc962265e2ae10b56359706ab5d05ad24e00e6334e4c19cf83d2"
+      },
+      {
+        "name": "model.safetensors",
+        "bytes": 8411558400,
+        "sha256": "13824e47f2e40fe052f06943976cf742cb366ba305741a111e75a8ebae907a9c"
+      },
+      {
+        "name": "README.md",
+        "bytes": 14966,
+        "sha256": "ae04e164af42c70837b1e79a5d5414c3b9c5641a7651047223756404fd6a2786"
+      },
+      {
+        "name": "tokenizer_config.json",
+        "bytes": 1125,
+        "sha256": "9cf04fffe3d8c3b85e439fb35c7acad0761ab51c422a8c4256d9f887c3a0be7d"
+      },
+      {
+        "name": "tokenizer.json",
+        "bytes": 19989325,
+        "sha256": "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523"
+      }
+    ]
+  },
+  "llama_reference": {
+    "repository": "alibiserikbay/JevK5-GGUF",
+    "revision": "ec67b0bfce5119a8b11a2cdb430bb43e3fa3e82a",
+    "file": "jevk5-4b-v0.3-Q8_0.gguf",
+    "bytes": 4482402720,
+    "sha256": "aea433883bc7ed399f2fbd539e53d2eac7caf71a946fe6650995a413979d4a30",
+    "license": "Apache-2.0"
+  },
+  "calibration": {
+    "temperature": 1.22,
+    "knockout_temperature": 0.93
+  },
+  "conversion": {
+    "status": "pending"
+  }
+}

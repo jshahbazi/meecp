@@ -229,7 +229,6 @@ checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 [[package]]
 name = "bindings"
 version = "0.6.1"
-source = "git+https://github.com/trymirai/uzu.git?rev=8d01581474760bd1fc7f4a547ff1d02f7dada437#8d01581474760bd1fc7f4a547ff1d02f7dada437"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -1171,7 +1170,6 @@ dependencies = [
 [[package]]
 name = "hanashi"
 version = "0.6.1"
-source = "git+https://github.com/trymirai/uzu.git?rev=8d01581474760bd1fc7f4a547ff1d02f7dada437#8d01581474760bd1fc7f4a547ff1d02f7dada437"
 dependencies = [
  "indexmap 2.14.2",
  "libc",
@@ -1629,7 +1627,6 @@ dependencies = [
 [[package]]
 name = "json-transform"
 version = "0.6.1"
-source = "git+https://github.com/trymirai/uzu.git?rev=8d01581474760bd1fc7f4a547ff1d02f7dada437#8d01581474760bd1fc7f4a547ff1d02f7dada437"
 dependencies = [
  "fancy-regex 0.17.0",
  "indexmap 2.14.2",
@@ -2957,7 +2954,6 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 [[package]]
 name = "shoji"
 version = "0.6.1"
-source = "git+https://github.com/trymirai/uzu.git?rev=8d01581474760bd1fc7f4a547ff1d02f7dada437#8d01581474760bd1fc7f4a547ff1d02f7dada437"
 dependencies = [
  "bindings",
  "futures",
@@ -3227,7 +3223,6 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 [[package]]
 name = "token-stream-parser"
 version = "0.6.1"
-source = "git+https://github.com/trymirai/uzu.git?rev=8d01581474760bd1fc7f4a547ff1d02f7dada437#8d01581474760bd1fc7f4a547ff1d02f7dada437"
 dependencies = [
  "indexmap 2.14.2",
  "json-transform",
@@ -3468,7 +3463,6 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 [[package]]
 name = "uzu-engine"
 version = "0.6.1"
-source = "git+https://github.com/trymirai/uzu.git?rev=8d01581474760bd1fc7f4a547ff1d02f7dada437#8d01581474760bd1fc7f4a547ff1d02f7dada437"
 dependencies = [
  "anyhow",
  "bitflags 2.13.2",
@@ -3507,7 +3501,6 @@ dependencies = [
 [[package]]
 name = "uzu-engine-macros"
 version = "0.6.1"
-source = "git+https://github.com/trymirai/uzu.git?rev=8d01581474760bd1fc7f4a547ff1d02f7dada437#8d01581474760bd1fc7f4a547ff1d02f7dada437"
 dependencies = [
  "quote",
  "syn 2.0.119",

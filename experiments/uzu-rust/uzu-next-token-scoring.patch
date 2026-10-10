@@ -1,0 +1,157 @@
+diff --git a/crates/uzu-engine/src/engine/language_model/mod.rs b/crates/uzu-engine/src/engine/language_model/mod.rs
+--- a/crates/uzu-engine/src/engine/language_model/mod.rs
++++ b/crates/uzu-engine/src/engine/language_model/mod.rs
+@@ -22,6 +22,7 @@
+ 
+ pub mod state;
+ pub mod stream;
++pub mod scoring;
+ 
+ #[cfg(grammar)]
+ pub mod grammar;
+diff --git a/crates/uzu-engine/src/engine/language_model/scoring.rs b/crates/uzu-engine/src/engine/language_model/scoring.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/uzu-engine/src/engine/language_model/scoring.rs
+@@ -0,0 +1,141 @@
++//! Synchronized next-token readout without sampling or persistent prompt state.
++use std::time::Instant;
++
++use derive_more::Debug;
++use half::bf16;
++use thiserror::Error;
++
++use crate::{
++    backends::common::{
++        Backend, BufferCpuAccessible, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
++        Context, gpu_types::trie::TrieNode as GpuTrieNode,
++    },
++    encodable_block::{batch_topology::BatchTopology, decoder::DecoderError},
++    engine::language_model::{LanguageModel, state::LanguageModelCreateEmptyStateError},
++    trie::TrieNode,
++};
++
++/// Final prompt-position raw logits. No temperature, penalty, grammar, or sampler
++/// has been applied. Every call creates and destroys its own transformer state.
++pub struct LanguageModelNextTokenScores {
++    pub logits: Vec<f32>,
++    pub state_creation_seconds: f64,
++    pub prefill_seconds: f64,
++    pub readout_seconds: f64,
++}
++
++#[derive(Debug, Error)]
++pub enum LanguageModelScoreError<B: Backend> {
++    #[error("Invalid scoring input")]
++    InvalidInput,
++    #[error("Context overflow")]
++    ContextOverflow,
++    #[error("Speculative model not supported")]
++    SpeculatorNotSupported,
++    #[error("Backend scoring failure")]
++    Backend(#[source] B::Error),
++    #[error("Decoder scoring failure")]
++    Decoder(#[from] DecoderError<B>),
++    #[error("Scoring state creation failure")]
++    State(#[from] LanguageModelCreateEmptyStateError<B>),
++    #[error("Invalid scoring output")]
++    InvalidOutput,
++}
++
++impl<B: Backend> LanguageModel<B>
++where
++    B::ScratchBuffer: BufferCpuAccessible,
++{
++    /// Evaluate exact token IDs with a fresh state and read only the last prompt
++    /// position. Matches ordinary stream prefill batching and trailing-layer
++    /// splitting, but does not sample or schedule a generated-token forward pass.
++    pub fn score_next_token(
++        &self,
++        input: &[u32],
++        context_tokens: u32,
++    ) -> Result<LanguageModelNextTokenScores, LanguageModelScoreError<B>> {
++        let vocab_size = self.decoder.embedding().vocab_size() as usize;
++        if input.is_empty() || context_tokens == 0 || input.iter().any(|id| *id as usize >= vocab_size) {
++            return Err(LanguageModelScoreError::InvalidInput);
++        }
++        if input.len() > context_tokens as usize
++            || self.max_context_length().is_some_and(|maximum| context_tokens > maximum)
++        {
++            return Err(LanguageModelScoreError::ContextOverflow);
++        }
++        if self.speculator.is_some() {
++            return Err(LanguageModelScoreError::SpeculatorNotSupported);
++        }
++        let started = Instant::now();
++        let mut state = self.create_empty_state(Some(context_tokens), 0)?;
++        let state_creation_seconds = started.elapsed().as_secs_f64();
++        let prefill_started = Instant::now();
++        let allocation_pool = self.engine.context.create_allocation_pool();
++        // Ordinary stream prefill requires this batch size for attention's
++        // hardcoded 1024-token suffix; preserve the same preparation here.
++        let max_batch_size = 1024;
++        let number_of_batches = input.len().div_ceil(max_batch_size);
++        state
++            .transformer_state
++            .prepare(((number_of_batches - 1) * max_batch_size) as u32, usize::min(max_batch_size, input.len()) as u32)
++            .map_err(LanguageModelScoreError::Backend)?;
++        let mut command_buffer = self
++            .engine
++            .context
++            .create_command_buffer(Some("score prefill"), Some(allocation_pool))
++            .map_err(LanguageModelScoreError::Backend)?;
++        let mut final_logits = None;
++        for (batch_idx, batch) in input.chunks(max_batch_size).enumerate() {
++            let last_batch = batch_idx + 1 == number_of_batches;
++            let split = last_batch && self.decoder.prefill_cache_skips_trailing_layers() && batch.len() > 1;
++            let parts = if split {
++                [Some((&batch[..batch.len() - 1], false)), Some((&batch[batch.len() - 1..], true))]
++            } else {
++                [Some((batch, last_batch)), None]
++            };
++            for (input_chunk, output_last) in parts.into_iter().flatten() {
++                let input_u64: Vec<u64> = input_chunk.iter().map(|id| u64::from(*id)).collect();
++                let input_trie = TrieNode::flat(state.tokens.len(), &input_u64, &state.prng);
++                let input_flat_trie = input_trie.linearize();
++                let token_ids = command_buffer
++                    .allocate_constant_from_slice(input_chunk)
++                    .map_err(LanguageModelScoreError::Backend)?;
++                let nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
++                let batch_dim = BatchTopology::new(&nodes, true);
++                let output = self.decoder.encode(
++                    &token_ids,
++                    &batch_dim,
++                    output_last.then(|| (input_chunk.len() as u32 - 1..input_chunk.len() as u32).into()),
++                    None,
++                    &mut state.transformer_state,
++                    &mut command_buffer,
++                )?;
++                if output_last {
++                    final_logits = output.logits;
++                }
++                state
++                    .transformer_state
++                    .encode_accept(&(0..input_chunk.len() as u32).collect::<Box<[u32]>>(), &mut command_buffer)
++                    .map_err(LanguageModelScoreError::Backend)?;
++                state.tokens.extend(input_u64);
++            }
++        }
++        // Keep scratch readout and transformer state alive through GPU completion.
++        command_buffer.end_encoding().submit().wait_until_completed().map_err(LanguageModelScoreError::Backend)?;
++        let prefill_seconds = prefill_started.elapsed().as_secs_f64();
++        let readout_started = Instant::now();
++        let final_logits = final_logits.ok_or(LanguageModelScoreError::InvalidOutput)?;
++        // Engine::load_language_model fixes internal readout data type to BF16.
++        let logits: Vec<f32> = (&final_logits).as_slice::<bf16>().iter().map(|value| value.to_f32()).collect();
++        if logits.len() != vocab_size || logits.iter().any(|value| !value.is_finite()) {
++            return Err(LanguageModelScoreError::InvalidOutput);
++        }
++        let readout_seconds = readout_started.elapsed().as_secs_f64();
++        Ok(LanguageModelNextTokenScores {
++            logits,
++            state_creation_seconds,
++            prefill_seconds,
++            readout_seconds,
++        })
++    }
++}

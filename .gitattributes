@@ -1,1 +1,4 @@
 experiments/uzu-rust/licenses/** -text -whitespace
+experiments/uzu-rust/jev-scoring/licenses/** -text -whitespace
+# Unified diffs retain a leading space on blank context lines.
+experiments/uzu-rust/uzu-next-token-scoring.patch whitespace=-blank-at-eol

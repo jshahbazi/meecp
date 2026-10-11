@@ -1,0 +1,105 @@
+{
+  "created": "2026-10-10",
+  "purpose": "Uzu engine experiment model acquisition; weights are ignored and not source controlled",
+  "uzu": {
+    "repo": "trymirai/Qwen3.5-0.8B-L",
+    "revision": "506caad05799df01d53f41ec3468db383e9e84ea",
+    "files": [
+      {
+        "path": "uzu/config.json",
+        "source": "config.json",
+        "size": 58300,
+        "sha256": "95fe76fdca82d8f257ac2970ed787b760e33bb8b7a0a1bad0f42dd3132704afa",
+        "url": "https://huggingface.co/trymirai/Qwen3.5-0.8B-L/resolve/506caad05799df01d53f41ec3468db383e9e84ea/config.json"
+      },
+      {
+        "path": "uzu/model.safetensors",
+        "source": "model.safetensors",
+        "size": 803345704,
+        "sha256": "25e714aa91377729506000e373c143911f6f1315d13aef8f0dd63215ea8ed14b",
+        "url": "https://huggingface.co/trymirai/Qwen3.5-0.8B-L/resolve/506caad05799df01d53f41ec3468db383e9e84ea/model.safetensors"
+      },
+      {
+        "path": "uzu/tokenizer.json",
+        "source": "tokenizer.json",
+        "size": 19989343,
+        "sha256": "87a7830d63fcf43bf241c3c5242e96e62dd3fdc29224ca26fed8ea333db72de4",
+        "url": "https://huggingface.co/trymirai/Qwen3.5-0.8B-L/resolve/506caad05799df01d53f41ec3468db383e9e84ea/tokenizer.json"
+      }
+    ],
+    "omitted": [
+      "encoding.json",
+      "speculator/"
+    ],
+    "note": "The pinned public repository contains no encoding.json; no speculator was acquired. Model metadata was inspected without printing vocabulary/token arrays.",
+    "quantization": {
+      "name": "Mirai-L",
+      "weight_bits": 8
+    }
+  },
+  "gguf": {
+    "repo": "unsloth/Qwen3.5-0.8B-GGUF",
+    "revision": "6ab461498e2023f6e3c1baea90a8f0fe38ab64d0",
+    "files": [
+      {
+        "path": "gguf/Qwen3.5-0.8B-Q8_0.gguf",
+        "source": "Qwen3.5-0.8B-Q8_0.gguf",
+        "size": 811843840,
+        "sha256": "0ad885ffd4bb022fc4f0d33a3308fa108ef8613159d3b3a67e23abca056b7a6c",
+        "url": "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/6ab461498e2023f6e3c1baea90a8f0fe38ab64d0/Qwen3.5-0.8B-Q8_0.gguf",
+        "source_identity": {
+          "kind": "hugging-face-lfs",
+          "sha256": "0ad885ffd4bb022fc4f0d33a3308fa108ef8613159d3b3a67e23abca056b7a6c",
+          "size": 811843840
+        }
+      }
+    ],
+    "note": "Closest public Q8_0 GGUF matching the Qwen3.5-0.8B base; separate quantization, no exact parity claim.",
+    "quantization": {
+      "name": "Q8_0",
+      "weight_bits": 8
+    }
+  },
+  "schema_version": 1,
+  "engine": {
+    "name": "Uzu",
+    "tag": "0.6.1",
+    "git_revision": "8d01581474760bd1fc7f4a547ff1d02f7dada437",
+    "repository": "https://github.com/trymirai/uzu",
+    "source_url": "https://github.com/trymirai/uzu/tree/8d01581474760bd1fc7f4a547ff1d02f7dada437",
+    "license": "MIT",
+    "license_artifact": {
+      "path": "licenses/LICENSE-UZU",
+      "url": "https://raw.githubusercontent.com/trymirai/uzu/8d01581474760bd1fc7f4a547ff1d02f7dada437/LICENSE",
+      "bytes": 1072,
+      "sha256": "7621d17e34842470f59e711e3087cc4428d1dd41117fc6d3ddeb1e0fa6f56b20"
+    }
+  },
+  "base_model": {
+    "repository": "Qwen/Qwen3.5-0.8B",
+    "license": "Apache-2.0",
+    "license_revision": "23eda19ab0239bc12350efba411911b8eb89f486",
+    "license_artifact": {
+      "path": "licenses/LICENSE-MODEL",
+      "url": "https://huggingface.co/Qwen/Qwen3.5-0.8B/resolve/23eda19ab0239bc12350efba411911b8eb89f486/LICENSE",
+      "bytes": 11544,
+      "sha256": "bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a"
+    },
+    "source_weight_revision": null,
+    "source_weight_revision_status": "unverified",
+    "note": "The model family is declared by the two derivative repositories. The exact official source-weight revisions used in their conversions have not been verified; the pinned official revision here authenticates the license file only."
+  },
+  "comparison": {
+    "purpose": "Experimental text generation on this Mac",
+    "same_model_family": true,
+    "same_quantization": false,
+    "exact_weight_equivalence_verified": false,
+    "note": "Mirai-L and GGUF Q8_0 are separately converted 8-bit artifacts. This is an engine-plus-artifact comparison; timing or output differences cannot be attributed solely to the engine.",
+    "prompt_template_check": {
+      "profile": "single_system_single_user_reasoning_disabled",
+      "synthetic_cases": 5,
+      "rendered_bytes_identical": true,
+      "scope": "Offline rendering check for short, surrounding-whitespace, multiline, Unicode, and longer text. Engine tokenization and generated-output equivalence remain separate checks."
+    }
+  }
+}

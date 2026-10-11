@@ -1,0 +1,29 @@
+# Optimized Uzu versus llama.cpp full BF16 comparison
+
+Fixed before timing on 2026-10-11. Use all 243 frozen cases: 231 public JevBench v1.2 development cases and twelve separately reported synthetic checks. Preserve original order, rendered prompts, exact token IDs and option order. No case selection based on model outputs or timings.
+
+Both exports derive from JevK5 revision `c4f7fdb3aeab5582336406e78d3bef11bf98833d`. Use the unchanged Uzu BF16 export and BF16 GGUF in `BF16_CONTROL_PROVENANCE.json`; no quantized weights. The GGUF retains converter-selected F32 parameters and transformed layouts, so source identity and BF16 matrices do not imply identical arithmetic. Preserve the historical llama.cpp executable/library closure, context 8192, Metal and scoring flags, one slot, no context shifting and temperature 1.22. Keep knockout temperature 0.93 inactive for 2–16 options.
+
+The Uzu candidate is the schema-2 `all` worker already accepted against the sealed original native-scoring reference. Preserve its exact binary, ordered patch chain, features and build/source identities. Validate the old BF16 runtime with the historical Uzu worker, then add a separately verified optimized-worker binding; never weaken or mutate historical validators, source, receipts or reports. Bind this harness, monitor, independent audit source, protocol, model/converter/runtime files, reference records/seals and shared helpers before inference, and verify afterward.
+
+## Schedule and timing
+
+Run two full-population quartets: llama/Uzu/Uzu/llama then Uzu/llama/llama/Uzu. All eight resident processes run serially and are fully reaped before the next starts. Each process receives three checked fresh warmups on the first case, retained separately, then every case gets a fresh request followed by an immediate identical repeat. This yields 3,888 measured responses plus 24 checked warmups. Exclude startup/warmups from decision timings; retain startup and process peak RSS separately.
+
+llama.cpp generates one token to expose next-token log probabilities. Its cache policy permits only the complete immediately preceding identical input. Require fresh requests to evaluate every input token and repeats to evaluate a positive count smaller than full input, independently of the requested cache flag. Uzu performs prompt prefill/readout with fresh state for both conditions; do not hide its repeat cost. Wall time includes tokenization, transport, scoring validation and typed-answer formatting. Report score-request and native metrics separately.
+
+The quartet is the timing replication unit. Within each quartet average each case's two process observations for each engine; report ratio of mean case latency and median paired case ratio, fresh/repeat separately. Report pooled p50/p95, each engine block and token buckets, including empty buckets. Preserve public-only summaries alongside the complete population; synthetic cases are excluded from quality and primary public calibration. Two quartets support descriptive local comparison, with no request-level timing bootstrap or precise steady-state significance claim. This compares optimized Uzu directly with llama.cpp; incremental benefit over original Uzu requires a contemporaneous Uzu control and is not causally isolated here.
+
+## Preservation, probabilities and quality
+
+Retain Uzu's actual native-reported probabilities; the older BF16 harness recomputed them in Python and differs by up to 2.22e-16 on some rows. The exactness reference is the sealed original native-scoring comparison, not the Python-recomputed BF16 probability rows. Require binary64-bit equality of input/candidate identities, logits, full-vocabulary-normalized candidate log probabilities, native probabilities and typed decisions for every Uzu warmup and measured request. Independently recompute candidate softmax at 1.22 from logits and log probabilities with absolute tolerance 1e-12.
+
+Require both engines' rendered prompts, exact input/candidate IDs, complete option coverage and typed-answer contract to match. Reject nonfinite data, truncation, over-context cases, missing/duplicate/reordered observations and invalid evaluation counts. Compare engines' probabilities using the prior 0.001 strict/0.01 close tolerances and 99% argmax screening target; report residual differences rather than asserting cross-engine probability parity. Report within-engine stability.
+
+Only the first fresh observation per case/engine contributes to quality. Report public accuracy, multiclass Brier sum, ten-bin top-label ECE, ordinal MAE and rounded expected-score accuracy, with synthetic checks separate. Require Uzu's public quality summary to equal the native-scoring reference. These frozen public development cases do not establish universal or production calibration.
+
+## Isolation and evidence
+
+Use the versioned monitor's five-second process sampling. Reject recognized external model/compiler activity, more than one owned model, or generic Python inference/model flags. Inspect argv privately for classification and never emit or retain command text. Idle orchestration and desktop processes may remain; no continuous GPU, thermal, power or clock isolation claim. Temporarily suspend only previously authorized services if needed, with restoration; otherwise stop a contended benchmark and resolve the competing workload.
+
+Save raw records only in ignored directories mode 0700 and files 0600. Console output contains authored counts/statuses. Seal configuration, dataset and exact eight-file block population before/after inference. Public reports contain scalar quality/timing/memory results, aggregate counts, sanitized relative artifact paths and hashes. Independently audit complete records, native exactness, formulas, timing arithmetic and host receipts after inference has stopped. Never overwrite historical evidence.

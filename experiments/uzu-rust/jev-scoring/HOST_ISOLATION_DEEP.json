@@ -1,0 +1,44 @@
+{
+  "external_processes_suspended": 0,
+  "interpretation": "Smoke correctness only. A separately identified generic Python Brekko workload ran during the combined smoke. Process-name checks do not detect every workload. No clean timing, continuous GPU, thermal, clock or power claim.",
+  "runs": {
+    "all": {
+      "benchmark_exit": 0,
+      "compiler_samples": 0,
+      "controller_sha256": "29c5d1439ac289c9035b2b8a26d6ce3fb6d569407360cf36e05de251cac166e2",
+      "external_model_samples": 0,
+      "failure_type": null,
+      "final_active_models": 0,
+      "host_samples_sha256": "c4ef84a77dad0f821acd25cda6b3e13f2270b51450942192dda832ac9b242663",
+      "limits": "Sampled process metadata only; generic process names can conceal workloads. No continuous GPU or thermal measurement.",
+      "max_owned_models": 1,
+      "maximum_background_large_rss": 2,
+      "maximum_background_process_cpu": 627.1,
+      "private_receipt_sha256": "3cf66a5c944ea307a367befaa74f22a443e57a4a9659ae3908208d46bae6084c",
+      "samples": 25,
+      "sampling_interval_seconds": 5,
+      "schema_version": 1,
+      "suspended_processes": 0
+    },
+    "submission": {
+      "benchmark_exit": 0,
+      "compiler_samples": 0,
+      "controller_sha256": "29c5d1439ac289c9035b2b8a26d6ce3fb6d569407360cf36e05de251cac166e2",
+      "external_model_samples": 0,
+      "failure_type": null,
+      "final_active_models": 0,
+      "host_samples_sha256": "0ffec4a591e549814cdda3ad1bf23f5203ef16b9ff2d8d64d9716ab25066fe2c",
+      "limits": "Sampled process metadata only; generic process names can conceal workloads. No continuous GPU or thermal measurement.",
+      "max_owned_models": 1,
+      "maximum_background_large_rss": 2,
+      "maximum_background_process_cpu": 75.1,
+      "private_receipt_sha256": "b1f7f988b9e86f789e91e57a0b33f3c106c07268b2ee5e991b86e662cb60c599",
+      "samples": 20,
+      "sampling_interval_seconds": 5,
+      "schema_version": 1,
+      "suspended_processes": 0
+    }
+  },
+  "schema_version": 1,
+  "timing_status": "deferred_at_user_request"
+}

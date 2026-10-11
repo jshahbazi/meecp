@@ -1,0 +1,234 @@
+--- a/crates/uzu-engine/src/encodable_block/mixer/attention/mode.rs
++++ b/crates/uzu-engine/src/encodable_block/mixer/attention/mode.rs
+@@ -35,6 +35,44 @@
+ }
+ 
+ impl<B: Backend> Attention<B> {
++    #[cfg(feature = "scoring-last-layer-pruning")]
++    pub(crate) fn supports_scoring_cache_only(&self) -> bool {
++        self.num_kv_heads.is_some() && self.ring_capacity.is_none()
++    }
++
++    /// Preserve the ordinary full-batch QKVG projection, normalization, RoPE,
++    /// and KV writes, including their dispatch/reduction geometry. Queries are
++    /// prepared too: removing those lanes from a fused kernel is a separate
++    /// numerical experiment. Attention, gating and output projection are dead
++    /// when the last layer has no requested output rows.
++    #[cfg(feature = "scoring-last-layer-pruning")]
++    pub(crate) fn encode_scoring_cache_only(
++        &self,
++        hidden: B::ScratchBuffer,
++        precalculated_rope: Option<&PrecalculatedRoPE<B>>,
++        batch_dim: &BatchTopology,
++        state: &mut AttentionState<B>,
++        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
++    ) -> Result<(), B::Error> {
++        assert!(self.supports_scoring_cache_only(), "unsupported scoring cache-only attention");
++        assert!(batch_dim.is_flat(), "scoring cache-only requires flat topology");
++        assert_eq!(precalculated_rope.is_some(), self.max_rope_length.is_some(), "precalculated rope mismatch");
++        let qkvg = self.projection.project(hidden, batch_dim.size(), command_buffer)?;
++        let prefix_len = state.view().prefix_len();
++        self.prepare_kv_and_queries(
++            &qkvg,
++            state.keys.as_mut(),
++            state.values.as_mut(),
++            prefix_len,
++            self.num_q_heads,
++            precalculated_rope,
++            batch_dim.size(),
++            command_buffer,
++        )?;
++        // The caller still accepts every row before encoding the next batch.
++        Ok(())
++    }
++
+     pub(super) fn attend(
+         &self,
+         hidden: B::ScratchBuffer,
+--- a/crates/uzu-engine/src/encodable_block/transformer.rs
++++ b/crates/uzu-engine/src/encodable_block/transformer.rs
+@@ -27,6 +27,8 @@
+ pub struct TransformerState<B: Backend> {
+     layer_states: Box<[TransformerLayerStateType<B>]>,
+     context_length: u32,
++    #[cfg(feature = "scoring-last-layer-pruning")]
++    scoring_last_layer_pruning: bool,
+ }
+ 
+ pub struct TransformerEncodeOutput<B: Backend> {
+@@ -34,7 +36,29 @@
+     pub hidden_features: Option<Box<[B::ScratchBuffer]>>,
+ }
+ 
++#[cfg(feature = "scoring-last-layer-pruning")]
++fn scoring_cache_only_requested(
++    output_range: Option<Range<u32>>,
++    hidden_feature_layer_indices: Option<&[u32]>,
++    batch_is_flat: bool,
++    layer_index: u32,
++    layer_count: usize,
++    scoring_enabled: bool,
++) -> bool {
++    scoring_enabled
++        && output_range.is_none()
++        && hidden_feature_layer_indices.is_none()
++        && batch_is_flat
++        && layer_index as usize + 1 == layer_count
++}
++
+ impl<B: Backend> TransformerState<B> {
++    /// Only the fresh next-token scorer opts into this experimental path.
++    #[cfg(feature = "scoring-last-layer-pruning")]
++    pub(crate) fn enable_scoring_last_layer_pruning(&mut self) {
++        self.scoring_last_layer_pruning = true;
++    }
++
+     pub fn context_length(&self) -> u32 {
+         self.context_length
+     }
+@@ -222,6 +246,8 @@
+         Ok(TransformerState {
+             layer_states,
+             context_length,
++            #[cfg(feature = "scoring-last-layer-pruning")]
++            scoring_last_layer_pruning: false,
+         })
+     }
+ 
+@@ -258,6 +284,36 @@
+         for (layer, layer_rope_index) in self.layers.iter().take(layer_count) {
+             let precalculated_rope = layer_rope_index.map(|i| &precalculated_ropes[i]);
+ 
++            // Earlier layers must produce every row for the following layer's
++            // state. Only the actual last layer can stop immediately after KV
++            // preparation, and only when no output or hidden feature is read.
++            #[cfg(feature = "scoring-last-layer-pruning")]
++            if scoring_cache_only_requested(
++                output_range,
++                hidden_feature_layer_indices,
++                batch_dim.is_flat(),
++                layer.layer_index,
++                self.layers.len(),
++                state.as_ref().is_some_and(|state| state.scoring_last_layer_pruning),
++            ) && layer.supports_scoring_cache_only()
++                && let Some(state) = state.as_deref_mut()
++                && let TransformerLayerStateType::Owned(layer_state) =
++                    &mut state.layer_states[layer.layer_index as usize]
++            {
++                layer.encode_scoring_cache_only(
++                    hidden,
++                    &mut shortcut,
++                    precalculated_rope,
++                    batch_dim,
++                    layer_state.as_mut(),
++                    command_buffer,
++                )?;
++                return Ok(TransformerEncodeOutput {
++                    output: None,
++                    hidden_features: None,
++                });
++            }
++
+             let layer_state = if let Some(state) = &mut state {
+                 Some(match &mut state.layer_states[layer.layer_index as usize] {
+                     TransformerLayerStateType::Owned(layer_state) => MaybeMut::Mut(layer_state.as_mut()),
+@@ -330,3 +386,24 @@
+         })
+     }
+ }
++
++#[cfg(all(test, feature = "scoring-last-layer-pruning"))]
++mod scoring_cache_only_tests {
++    use super::scoring_cache_only_requested;
++    use uzu_engine_macros::uzu_test;
++
++    #[uzu_test]
++    fn cache_only_requires_an_unobserved_actual_final_layer() {
++        assert!(scoring_cache_only_requested(None, None, true, 31, 32, true));
++        // A final-layer output must be computed even if just one row is read.
++        assert!(!scoring_cache_only_requested(Some((1023..1024).into()), None, true, 31, 32, true));
++        assert!(!scoring_cache_only_requested(None, Some(&[31]), true, 31, 32, true));
++        // Even an explicitly empty feature request conservatively disables it.
++        assert!(!scoring_cache_only_requested(None, Some(&[]), true, 31, 32, true));
++        // A last owned cache layer followed by shared-KV layers is not eligible.
++        assert!(!scoring_cache_only_requested(None, None, true, 30, 32, true));
++        assert!(!scoring_cache_only_requested(None, None, false, 31, 32, true));
++        // Ordinary generation leaves the fresh-state opt-in flag clear.
++        assert!(!scoring_cache_only_requested(None, None, true, 31, 32, false));
++    }
++}
+--- a/crates/uzu-engine/src/encodable_block/transformer_layer.rs
++++ b/crates/uzu-engine/src/encodable_block/transformer_layer.rs
+@@ -340,6 +340,50 @@
+         })
+     }
+ 
++    /// This narrow path excludes sequence-mixing layer convolutions and shared
++    /// or ring KV caches. Other mixers continue through their ordinary encoder.
++    #[cfg(feature = "scoring-last-layer-pruning")]
++    pub(crate) fn supports_scoring_cache_only(&self) -> bool {
++        use crate::encodable_block::mixer::attention::Attention;
++        use std::any::Any;
++
++        self.mixer_conv.is_none()
++            && self.kv_source_layer_index.is_none()
++            && (self.mixer.as_ref() as &dyn Any)
++                .downcast_ref::<Attention<B>>()
++                .is_some_and(Attention::supports_scoring_cache_only)
++    }
++
++    #[cfg(feature = "scoring-last-layer-pruning")]
++    pub(crate) fn encode_scoring_cache_only(
++        &self,
++        input: B::ScratchBuffer,
++        mut shortcut: impl BufferMut<Backend = B>,
++        precalculated_rope: Option<&PrecalculatedRoPE<B>>,
++        batch_dim: &BatchTopology,
++        state: &mut dyn MixerState<B>,
++        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
++    ) -> Result<(), B::Error> {
++        use crate::encodable_block::mixer::attention::{Attention, AttentionState};
++        use std::any::Any;
++
++        assert!(self.supports_scoring_cache_only(), "unsupported scoring cache-only layer");
++        assert!(batch_dim.is_flat(), "scoring cache-only requires flat topology");
++        let attention = (self.mixer.as_ref() as &dyn Any).downcast_ref::<Attention<B>>().unwrap();
++        let state = (state as &mut dyn Any).downcast_mut::<AttentionState<B>>().unwrap();
++        command_buffer.push_debug_group("scoring final-layer KV only");
++        let hidden = if let Some(pre_mixer_norm) = &self.pre_mixer_norm {
++            pre_mixer_norm.encode(&input, 0, batch_dim.size(), Some(shortcut.reborrow()), command_buffer)?
++        } else {
++            assert_eq!(self.layer_index, 0);
++            command_buffer.encode_copy(&input, shortcut.reborrow());
++            input
++        };
++        attention.encode_scoring_cache_only(hidden, precalculated_rope, batch_dim, state, command_buffer)?;
++        command_buffer.pop_debug_group();
++        Ok(())
++    }
++
+     pub fn encode(
+         &self,
+         input: B::ScratchBuffer,
+--- a/crates/uzu-engine/src/engine/language_model/scoring.rs
++++ b/crates/uzu-engine/src/engine/language_model/scoring.rs
+@@ -81,4 +81,6 @@
+         let started = Instant::now();
+         let mut state = self.create_empty_state(Some(context_tokens), 0)?;
++        #[cfg(feature = "scoring-last-layer-pruning")]
++        state.transformer_state.enable_scoring_last_layer_pruning();
+         let state_creation_seconds = started.elapsed().as_secs_f64();
+         let prefill_started = Instant::now();
+--- a/crates/uzu-engine/Cargo.toml
++++ b/crates/uzu-engine/Cargo.toml
+@@ -18,6 +18,10 @@
+ # Experimental scoring optimization. An encoded state must be discarded if its
+ # command buffer is abandoned or fails; initialization is ordered on first encode.
+ deferred-state-init = []
++
++# Experimental exact-scoring-only pruning. Ordinary generation never enables
++# the per-state flag, even when this feature is built into the engine.
++scoring-last-layer-pruning = []
+ 
+ cpu = [] # TODO: move libm here
+ 

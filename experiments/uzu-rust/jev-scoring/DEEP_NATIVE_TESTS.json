@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "backend": "cpu-only",
+  "features": "cpu,deferred-state-init,scoring-last-layer-pruning,direct-delta-conv",
+  "test_only_environment": {
+    "RUSTC_BOOTSTRAP": "uzu_engine"
+  },
+  "tests_passed": 5,
+  "results": [
+    {
+      "filter": "submission_drain_",
+      "exit_code": 0,
+      "summary": [
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 290 filtered out; finished in 0.00s"
+      ],
+      "log_sha256": "f53b5a706b2625c2cfd701773345b352d278ed647595b440bb4967d9df7fa341"
+    },
+    {
+      "filter": "cache_only_requires_an_unobserved_actual_final_layer",
+      "exit_code": 0,
+      "summary": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 291 filtered out; finished in 0.00s"
+      ],
+      "log_sha256": "a39a44c761e43b9a185152a44684e46b240b051a2944f1b2b139e9420663c477"
+    },
+    {
+      "filter": "direct_scoring_topology_matches_legacy_flat_trie",
+      "exit_code": 0,
+      "summary": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 291 filtered out; finished in 0.00s"
+      ],
+      "log_sha256": "0b8a4651d394f0592024a97572ae2331d6976c88eb15f339bd9efb5c2003019c"
+    },
+    {
+      "filter": "direct_delta_convolution_preserves_packed_bits",
+      "exit_code": 0,
+      "summary": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 291 filtered out; finished in 0.00s"
+      ],
+      "log_sha256": "d6081b0d7924313307ba698670464865a6d952153bfa7606711fde198676a854"
+    }
+  ],
+  "scope": "Upstream library tests; no GPU inference. Production worker/probe builds do not use RUSTC_BOOTSTRAP."
+}

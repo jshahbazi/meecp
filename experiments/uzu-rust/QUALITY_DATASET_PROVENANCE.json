@@ -1,0 +1,526 @@
+{
+  "source_url": "https://huggingface.co/datasets/tatsu-lab/alpaca_eval/resolve/2edc6fad8be6b14ea7230aabfd08188da6b8b814/alpaca_eval.json",
+  "source_sha256": "d92b92c51e8f1962a21193abe74e6f727c2bc8286035f4041505ff38a7c3ae51",
+  "source_size_bytes": 620778,
+  "license": "CC-BY-NC-4.0 (dataset; evaluator code is Apache-2.0)",
+  "source_counts": {
+    "helpful_base": 129,
+    "koala": 156,
+    "oasst": 188,
+    "selfinstruct": 252,
+    "vicuna": 80
+  },
+  "eligibility_exclusion_counts": {},
+  "eligible_count": 805,
+  "selected": [
+    {
+      "id": "source-83",
+      "category": "helpful_base",
+      "prompt_sha256": "28d9cc422010c974e81d0bf20638c654a3c4d448fdae05595b3c5b63f3473233"
+    },
+    {
+      "id": "source-673",
+      "category": "selfinstruct",
+      "prompt_sha256": "c8d30eaba0740a0bc5abf7ec28f058a4258d0420a079ccfba77a2fd7a3fe6129"
+    },
+    {
+      "id": "source-731",
+      "category": "vicuna",
+      "prompt_sha256": "13118228394bc1af3381382ae5d359eb54d85655f9dcbb2e179da984f0d7d7a2"
+    },
+    {
+      "id": "source-370",
+      "category": "oasst",
+      "prompt_sha256": "bad9ea434b83cd45ad33ad73060a69c6cb4e6add9c9dc75e69258779d0ed2eab"
+    },
+    {
+      "id": "source-302",
+      "category": "oasst",
+      "prompt_sha256": "15761e0074e5ce4213956a64547ecbc1fa17ea5103a0268c44da2c21302357d0"
+    },
+    {
+      "id": "source-734",
+      "category": "vicuna",
+      "prompt_sha256": "b49b1e510fc075d834c18427c155e23f7e165543eb1c3920fda9298672046c62"
+    },
+    {
+      "id": "source-338",
+      "category": "oasst",
+      "prompt_sha256": "325097b688e6e9016bfc05478007546fbaff3116dd16b6613f03e022a2eab916"
+    },
+    {
+      "id": "source-440",
+      "category": "oasst",
+      "prompt_sha256": "649017aac66c5b515e40814e51c2963b9edcaeb5b9e9b2d75e804a576a77667d"
+    },
+    {
+      "id": "source-388",
+      "category": "oasst",
+      "prompt_sha256": "40ff1d1b80261c134a09ad9022bc0d58f235a331e4b559ddfac0610136d69264"
+    },
+    {
+      "id": "source-64",
+      "category": "helpful_base",
+      "prompt_sha256": "942026182166e104edb2aafc82876f93e12ef5185d2917ca8b6306dd702d48da"
+    },
+    {
+      "id": "source-792",
+      "category": "vicuna",
+      "prompt_sha256": "9341a2e455a6661882286bc7326b69ffb42b3996b0e955877af9e5b88be54338"
+    },
+    {
+      "id": "source-112",
+      "category": "helpful_base",
+      "prompt_sha256": "d780a2d1051da0a72e29547cb5d10b3de5ec0b185844e891a9f9e0aa4980cee1"
+    },
+    {
+      "id": "source-753",
+      "category": "vicuna",
+      "prompt_sha256": "e6069551baee9b7ca142bee13fa185d630a005199d7193c83b4a1d57782bdf2c"
+    },
+    {
+      "id": "source-439",
+      "category": "oasst",
+      "prompt_sha256": "954163cf0170b78ff3db84baadb46ade84d0faf168fa191b460885ffa68f8c1b"
+    },
+    {
+      "id": "source-418",
+      "category": "oasst",
+      "prompt_sha256": "b24f70e5cb0101a71f0d8ca839f9798936eff21fa71f4333d42ece3d1c3723f6"
+    },
+    {
+      "id": "source-659",
+      "category": "selfinstruct",
+      "prompt_sha256": "717d4257b9d1271a1de2ef5835fba754539cdd5f4541281084460dc78ded984e"
+    },
+    {
+      "id": "source-422",
+      "category": "oasst",
+      "prompt_sha256": "f07dcfd165c698e7951aade37b70033a1d5b2fb5e3b1581a1273fa32f8b73496"
+    },
+    {
+      "id": "source-205",
+      "category": "koala",
+      "prompt_sha256": "82f84b0c6866a3e942bbdeb447d001ee397f056295ff28236c6676088da9a69b"
+    },
+    {
+      "id": "source-611",
+      "category": "selfinstruct",
+      "prompt_sha256": "4501a6586be10472b3e29c96f880b429422927fa706bebcf56f4352301a8434e"
+    },
+    {
+      "id": "source-613",
+      "category": "selfinstruct",
+      "prompt_sha256": "30f7effcff608aedf0e03978af06f3f391ae2d5d8dcaf53afbb889529a714bb8"
+    },
+    {
+      "id": "source-544",
+      "category": "selfinstruct",
+      "prompt_sha256": "79ee69c7726af2696684855b99b3a001eab8f89eb65e774701ed8c323f1a3472"
+    },
+    {
+      "id": "source-637",
+      "category": "selfinstruct",
+      "prompt_sha256": "2c7714c36b5f8202da85abda5d7d688ba5aae9f0237a2a95d91a895968ed4455"
+    },
+    {
+      "id": "source-230",
+      "category": "koala",
+      "prompt_sha256": "56ca65c40bc29692562c4bcfe9b8688638b59fe3d1e5c550be22d98264359fba"
+    },
+    {
+      "id": "source-203",
+      "category": "koala",
+      "prompt_sha256": "7db24326375faba441901c653d13b3a143b4c7c899a62401d4b4c3c48903dcac"
+    },
+    {
+      "id": "source-520",
+      "category": "selfinstruct",
+      "prompt_sha256": "d9e8bb664a2a5d47f8e5d4ead4eb31213ab9ca7219317c0b1ee6eab1cde85b8b"
+    },
+    {
+      "id": "source-331",
+      "category": "oasst",
+      "prompt_sha256": "bff2923b6305e25d7876465a815475d5655f29ebc228ebf2577ac65c3c9319d2"
+    },
+    {
+      "id": "source-365",
+      "category": "oasst",
+      "prompt_sha256": "5d249a7f636087d7f5627f6e57d37277f795f726f285ea4dade39efa39b9a347"
+    },
+    {
+      "id": "source-657",
+      "category": "selfinstruct",
+      "prompt_sha256": "04f7b21c799d348a33bc69549d9337bdb6f15882155fb785642467f648ccddcc"
+    },
+    {
+      "id": "source-310",
+      "category": "oasst",
+      "prompt_sha256": "f0ec9d98f0282c0f497b7d477fc4628e1a6e9e6e132404feede0c91d80004907"
+    },
+    {
+      "id": "source-475",
+      "category": "selfinstruct",
+      "prompt_sha256": "bd68243c77131a71c79f55c07bfd1fd80d5b0f68b9ed28e85634062a1c06fb09"
+    },
+    {
+      "id": "source-100",
+      "category": "helpful_base",
+      "prompt_sha256": "4dd9df0d3d6f82a5bc85ab8cf448ee2069b460a7ba55117d7b1fb67c4757bed7"
+    },
+    {
+      "id": "source-217",
+      "category": "koala",
+      "prompt_sha256": "e0a883ffb11893e19786352e013e737c3478b4fc31e8b2839513050b24c00da1"
+    },
+    {
+      "id": "source-721",
+      "category": "selfinstruct",
+      "prompt_sha256": "1c1df3094ede14e98f9f48742c1f189fb50610afaa7409ae1d8752f255a6ff97"
+    },
+    {
+      "id": "source-528",
+      "category": "selfinstruct",
+      "prompt_sha256": "b19d222b28542c63b41748780d27d65f7baaf61d882109ae0a27213b28f6fb40"
+    },
+    {
+      "id": "source-150",
+      "category": "koala",
+      "prompt_sha256": "f65bf6fd69f2c69d4396bfd026909ac1756bca698022271a390aa44ec0807709"
+    },
+    {
+      "id": "source-581",
+      "category": "selfinstruct",
+      "prompt_sha256": "93990a160c9f4a31e3673159723715698d2cc7d910ae11bc773910ad3ed2c9ef"
+    },
+    {
+      "id": "source-116",
+      "category": "helpful_base",
+      "prompt_sha256": "db87dd8f5e00ff9299f1ef326c7b6f824142051f84f37cd8defe98d1904f7730"
+    },
+    {
+      "id": "source-272",
+      "category": "koala",
+      "prompt_sha256": "9cc0cef94ef2ead9190d9911c23a74d374dff6ee49d3c721939a19b811351ece"
+    },
+    {
+      "id": "source-163",
+      "category": "koala",
+      "prompt_sha256": "989d43e38e39d21c08c9feba3f2373ee2d0d650bde42fa904f879585032914a8"
+    },
+    {
+      "id": "source-44",
+      "category": "helpful_base",
+      "prompt_sha256": "04bf142bcfcdbcd60ebef501ddc997163573b618ebded502506bce93b7a3b059"
+    },
+    {
+      "id": "source-91",
+      "category": "helpful_base",
+      "prompt_sha256": "fb25675fecc41c7e1492354e69d9021c10aa1d10a44fc7ca5369ffbff63972c2"
+    },
+    {
+      "id": "source-156",
+      "category": "koala",
+      "prompt_sha256": "04172fbbf2a0d921397bef98eef9d80cc5230c0d43deeaff18a084318252dd45"
+    },
+    {
+      "id": "source-227",
+      "category": "koala",
+      "prompt_sha256": "67f23359c8b2f86d4cb1900a9ac174e695ea352790ec326017625e37bb176050"
+    },
+    {
+      "id": "source-623",
+      "category": "selfinstruct",
+      "prompt_sha256": "28f10b937ec842c86890d24edf54279f09f3a970401d3da9f6ee27864d7a17bf"
+    },
+    {
+      "id": "source-144",
+      "category": "koala",
+      "prompt_sha256": "201e5d0d329d3d4644bfcd7cc35e9afad3973f1fa43da9b869dc698904b13deb"
+    },
+    {
+      "id": "source-204",
+      "category": "koala",
+      "prompt_sha256": "036f4ef40a1d8cc424791abc816b939618218ac8948bdc6f130c8628dfdc8b28"
+    },
+    {
+      "id": "source-535",
+      "category": "selfinstruct",
+      "prompt_sha256": "4145b3b54830b3a8bf729df89e69b3445b7dacf85ae59ea289d0568380f63858"
+    },
+    {
+      "id": "source-295",
+      "category": "oasst",
+      "prompt_sha256": "0da42d8ead951276e85010332a4eb596ce33393c5e609e99937515089bab08e2"
+    },
+    {
+      "id": "source-143",
+      "category": "koala",
+      "prompt_sha256": "0d42a370ac4fc22476c564abd86439156d722e940a2f15256720d395416c0ef4"
+    },
+    {
+      "id": "source-541",
+      "category": "selfinstruct",
+      "prompt_sha256": "a6e940d8502cfdec0e3cffb7ebd8e192ecb7e3f5561e4219252ca61d1528b5db"
+    },
+    {
+      "id": "source-660",
+      "category": "selfinstruct",
+      "prompt_sha256": "50807af60c36f9d26c30239dc90f1749751677cf4b79d89d02941597dce1ed9b"
+    },
+    {
+      "id": "source-472",
+      "category": "oasst",
+      "prompt_sha256": "2f79fc1917d36b1443efe80e1b7ce23e0f128ef544744aa82ffabd968006ea22"
+    },
+    {
+      "id": "source-758",
+      "category": "vicuna",
+      "prompt_sha256": "e401c099587eb332a17052a3693a88741058c33139d3a0cb51475e52d4af6b0c"
+    },
+    {
+      "id": "source-392",
+      "category": "oasst",
+      "prompt_sha256": "6401e6103788cd6a51d7ddb98e4df91c52fffa13ea6da4a3f60d179f6c1400c9"
+    },
+    {
+      "id": "source-723",
+      "category": "selfinstruct",
+      "prompt_sha256": "dd7483a0f9ec73f27dce18f6503a3a6ffbc91ff3d2fe0dfd59efe936f8a9248a"
+    },
+    {
+      "id": "source-197",
+      "category": "koala",
+      "prompt_sha256": "0d500d26216346225723c879f675991055bd552bd1943378d83c6677d53366d5"
+    },
+    {
+      "id": "source-428",
+      "category": "oasst",
+      "prompt_sha256": "23c5e89056987190685c857513d29b6185bca45c97d2ad16b974fbd7d389a859"
+    },
+    {
+      "id": "source-363",
+      "category": "oasst",
+      "prompt_sha256": "a38e8d7e8232fa40337dd604e880cd02e34cb9c19e25739fcababb955ec6e397"
+    },
+    {
+      "id": "source-395",
+      "category": "oasst",
+      "prompt_sha256": "490d1df37e13ea2745a6ef45d3452052d60daae56e0fd137925e2dd8701de05a"
+    },
+    {
+      "id": "source-458",
+      "category": "oasst",
+      "prompt_sha256": "836191796888b060c3a77f91ca3031f7a00b54fcc4abc9e479832e5a286ca43e"
+    },
+    {
+      "id": "source-424",
+      "category": "oasst",
+      "prompt_sha256": "14288aab0a3820efe8aa9358b0c8d21cd607acccdc76e53c25b69f9c4f3ee6a1"
+    },
+    {
+      "id": "source-436",
+      "category": "oasst",
+      "prompt_sha256": "414a32a4dd9213f3b59c4e01760a6c34bb0d63ab9973f531dd7004073da43f54"
+    },
+    {
+      "id": "source-42",
+      "category": "helpful_base",
+      "prompt_sha256": "4430fd2227ecb2c04829b9ac26156ed42c8269292a8e01dc61e9ff828378ff4c"
+    },
+    {
+      "id": "source-744",
+      "category": "vicuna",
+      "prompt_sha256": "cec81912f43ea2a795c96293f826bd43bb61cedf92b727209fa41ae1fabcfc44"
+    },
+    {
+      "id": "source-339",
+      "category": "oasst",
+      "prompt_sha256": "a93b27ffc9384e7697c06979b22669d91d2f18daf073477cda9b509046be351f"
+    },
+    {
+      "id": "source-172",
+      "category": "koala",
+      "prompt_sha256": "9fdeee315725bfb6b910cdf97ef41b7102ad9acc814c0425fb641c0fc4ba7300"
+    },
+    {
+      "id": "source-759",
+      "category": "vicuna",
+      "prompt_sha256": "91fa4e6cff76adb34cf822bff512b21bd464da95a70cd3b13dd69b48a9e40b58"
+    },
+    {
+      "id": "source-59",
+      "category": "helpful_base",
+      "prompt_sha256": "00829ae550ec24c051ef509a7d5d4fd21d54a80a4f030635c68f479d45e0754d"
+    },
+    {
+      "id": "source-0",
+      "category": "helpful_base",
+      "prompt_sha256": "f0aa9c85c9cd3bffcb32c56162f8d5ce74e0ea2653298e41ebb9d70632ecb81e"
+    },
+    {
+      "id": "source-694",
+      "category": "selfinstruct",
+      "prompt_sha256": "e3dacd490fd946f8b65efdeab642083f83ceddcc582813bc986bdd0c2ab6955b"
+    },
+    {
+      "id": "source-391",
+      "category": "oasst",
+      "prompt_sha256": "50eb30f0cac3cad3cd6d883b55b71c656deff94f0bc7a1c3be87215261b6a4ad"
+    },
+    {
+      "id": "source-493",
+      "category": "selfinstruct",
+      "prompt_sha256": "47d4a7698c32837ec48644fab49781f52a504909717e463990de1de85fa17c56"
+    },
+    {
+      "id": "source-597",
+      "category": "selfinstruct",
+      "prompt_sha256": "a117494657f2906ec384c20f738ff9b4f1f69e2c4b02af8442473045ecc11d02"
+    },
+    {
+      "id": "source-10",
+      "category": "helpful_base",
+      "prompt_sha256": "36703d1a0df7a6cfd8839bd2b68cfca3d6df790989ad36fc30fd4f48bb442689"
+    },
+    {
+      "id": "source-801",
+      "category": "vicuna",
+      "prompt_sha256": "ae0703a93d5816aaeadc9bb86cf60a81a2f6b4b7ae3474a4969ee2829b7f3e98"
+    },
+    {
+      "id": "source-65",
+      "category": "helpful_base",
+      "prompt_sha256": "875e58cd179d5915216396d05d21a905d0989d55b348f785f5d89659bd0a9c46"
+    },
+    {
+      "id": "source-245",
+      "category": "koala",
+      "prompt_sha256": "b5ab1bbf12abd8bae8358b6307ca3e224ee09ae307c3f0321af37f1aeaed69fe"
+    },
+    {
+      "id": "source-598",
+      "category": "selfinstruct",
+      "prompt_sha256": "03e63a9a6648824ee9699174dc01ff6fb8bbac33ee5cd9a82005f2fd3683a743"
+    },
+    {
+      "id": "source-578",
+      "category": "selfinstruct",
+      "prompt_sha256": "39b1f358673ee9265c4c0b39433cf57e35b086279bb62a3572c4c1c6e2f3bee1"
+    },
+    {
+      "id": "source-728",
+      "category": "vicuna",
+      "prompt_sha256": "0302a4f06d045ef631f83989b0c2d92c90fe0a2ef45a7887d28ba03e2032b714"
+    },
+    {
+      "id": "source-608",
+      "category": "selfinstruct",
+      "prompt_sha256": "843203165be0b5039d08b3da731f0249b43fc383fe89ca38cf1fe3141d6fc6b5"
+    },
+    {
+      "id": "source-283",
+      "category": "koala",
+      "prompt_sha256": "1c1b54af9073ec6f97e8e2045a0083a285b57a937fe6612548014cf4c1a3c31b"
+    },
+    {
+      "id": "source-461",
+      "category": "oasst",
+      "prompt_sha256": "98d9a7ba6b2823f6aef23f93784b3cfc06cda04667ae0e3657bc437732dccf49"
+    },
+    {
+      "id": "source-229",
+      "category": "koala",
+      "prompt_sha256": "0691132874366a01c90c46f31d1be3349ef29dbaca585088967a54e91c1845cc"
+    },
+    {
+      "id": "source-152",
+      "category": "koala",
+      "prompt_sha256": "24b7b46243227f7a1be6584ca285d339b8bf693a18c959b3bcb7fffc758073e1"
+    },
+    {
+      "id": "source-514",
+      "category": "selfinstruct",
+      "prompt_sha256": "2b88c17d9b1850e142b6d5cd7c44ab2a79838d07be4c603040b6db541461ca0b"
+    },
+    {
+      "id": "source-84",
+      "category": "helpful_base",
+      "prompt_sha256": "c04565cdac0e29471b31489314ce07402ca6671969cece6581617d8542296f7d"
+    },
+    {
+      "id": "source-762",
+      "category": "vicuna",
+      "prompt_sha256": "6747d081a5e3b9af9795d86bf109ad1434c71616a3447874a538064a543d5135"
+    },
+    {
+      "id": "source-711",
+      "category": "selfinstruct",
+      "prompt_sha256": "c8c9efa9b8106feae8a63656af1ab3e56344285f0005142e8cf992d4d6dd8b11"
+    },
+    {
+      "id": "source-75",
+      "category": "helpful_base",
+      "prompt_sha256": "8ca91d0132d9177b6b5e59c45846c6448ec8c391f79833dd8e1ca3bcf281fa3b"
+    },
+    {
+      "id": "source-549",
+      "category": "selfinstruct",
+      "prompt_sha256": "96a8e28cffae1ea98da20b1c9d287da6a39364874eaf3eb0cfde4bf47d3970a9"
+    },
+    {
+      "id": "source-479",
+      "category": "selfinstruct",
+      "prompt_sha256": "c109fdfe27814df07a82479cdd2f0a6d0a80d1940517ea9f98bed24851f73bc9"
+    },
+    {
+      "id": "source-618",
+      "category": "selfinstruct",
+      "prompt_sha256": "eeec374fd0a2625e9dd583c545549308ef9c378049fddee1c858ab5f50027303"
+    },
+    {
+      "id": "source-512",
+      "category": "selfinstruct",
+      "prompt_sha256": "1fa498564b36e0497dc2691cca38b3330c0b86a33fcc0446737970aa306ecfb3"
+    },
+    {
+      "id": "source-561",
+      "category": "selfinstruct",
+      "prompt_sha256": "da647e9d668e4e05b9688cdcc1a6a4c0865d690d16dcb6be1c64f59023f91698"
+    },
+    {
+      "id": "source-178",
+      "category": "koala",
+      "prompt_sha256": "244088f27f9d3d8f80c787dc22665bfb4b89e1e6c59258917b79bbb7245adf1b"
+    },
+    {
+      "id": "source-210",
+      "category": "koala",
+      "prompt_sha256": "ddc7c413438ae6e0f4a6889d2a0918da8cef9d9b699936ba2b32ac15a6ad4d15"
+    },
+    {
+      "id": "source-89",
+      "category": "helpful_base",
+      "prompt_sha256": "5431a1f3f99957d340468d71e0bab5f195b8bc0dd1a2733c22c9631e6603ef8b"
+    },
+    {
+      "id": "source-102",
+      "category": "helpful_base",
+      "prompt_sha256": "756a8bfcdf9e0aee12a3cbf27189e78d0b91aec6bd9aeb8d7a5f773064e370c7"
+    },
+    {
+      "id": "source-638",
+      "category": "selfinstruct",
+      "prompt_sha256": "04dc02619f18d7f98b6677af63532069413cdfe20bdea6b4c735efbfdb19b891"
+    }
+  ],
+  "selection_seed": 20261010,
+  "normalized_dataset_sha256": "98ce86e7218e623e8fe93bd2fecc15ba6c5b73502664cce48f5b70913ad4c606",
+  "selected_category_counts": {
+    "helpful_base": 16,
+    "koala": 20,
+    "oasst": 23,
+    "selfinstruct": 31,
+    "vicuna": 10
+  }
+}

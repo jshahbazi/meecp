@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "upstream_url": "https://github.com/trymirai/uzu.git",
+  "upstream_revision": "8d01581474760bd1fc7f4a547ff1d02f7dada437",
+  "upstream_archive_sha256": "115480efb58fad67c3f478c5a2d9bc6d4218d12d373e0f147943113ca20a3142",
+  "scoring_patch_sha256": "d7dea9890315163f188183f227b00de915b0e8c38498aa8827a38bc8d0999df0",
+  "upstream_license": "MIT",
+  "upstream_license_sha256": "7621d17e34842470f59e711e3087cc4428d1dd41117fc6d3ddeb1e0fa6f56b20",
+  "cache_policy": "fresh-state",
+  "patch_file": "uzu-next-token-scoring.patch",
+  "build_recipe": "build_scoring.py",
+  "readout_dtype": "BF16",
+  "candidate_calibration": "softmax(candidate_logits / caller_supplied_temperature), f64",
+  "generation_behavior": "Existing streaming implementation unchanged"
+}

@@ -1,0 +1,43 @@
+{
+  "cancellation": {
+    "cancelled_generation_settled": true,
+    "live_ownership_samples": 76,
+    "reservation_retained_until_settlement": true,
+    "sdk_cancellation_observed": true
+  },
+  "checks": {
+    "authenticated_loopback_transport": true,
+    "context_rejection_preserves_generation": true,
+    "final_graph_reaped_and_reservation_released": true,
+    "host_close_reaps_stopped_gateway": true,
+    "installed_copy_runs_after_source_move": true,
+    "isolated_install_and_start": true,
+    "package_identity": true,
+    "public_sdk_cancellation_ownership": true,
+    "public_sdk_schema_and_generation": true,
+    "relocated_package_identity": true,
+    "restart_uses_fresh_owned_generation": true,
+    "stop_reaps_active_engine_adapter_gateway": true
+  },
+  "elapsed_seconds": 26.707405457971618,
+  "engine_binary_sha256": "2ad4e979d1bdaadc29d422a24570e7902e56a5a1902d5c20bca2069cf50f95fc",
+  "generation": {
+    "first_input_tokens": 32,
+    "first_output_tokens": 21,
+    "rejected_boundary_calls": 5,
+    "repeat_output_equal": true,
+    "second_input_tokens": 32,
+    "second_output_tokens": 21,
+    "successful_calls": 2
+  },
+  "package_digest": "0fe07a4d15927fbd4053311428c4f114928f8ba92fe14b21ba9cd4c842bc3229",
+  "passed": true,
+  "recorded_at": "2026-10-10T14:39:09.555682+00:00",
+  "schema_version": 1,
+  "stage": "completed",
+  "static_only": false,
+  "transport": {
+    "authenticated_health_routes": 2,
+    "rejected_transport_probes": 11
+  }
+}

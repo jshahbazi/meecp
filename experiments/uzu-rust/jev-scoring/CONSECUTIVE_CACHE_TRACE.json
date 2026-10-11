@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "scope": "Structural cache evidence from retained BF16 records; no new timing conclusion",
+  "source_post_run_seal_sha256": "2ae2aa7c8370cb01ae48d8a2ac1568162952651a0f404151edfaf76735c88361",
+  "source_timing_status": "Excluded because the completed run overlapped Mac sleep",
+  "llama_fresh": {
+    "responses": 972,
+    "cache_hits": 0,
+    "minimum_input_tokens": 104,
+    "maximum_input_tokens": 4033,
+    "minimum_native_prompt_tokens_evaluated": 104,
+    "maximum_native_prompt_tokens_evaluated": 4033
+  },
+  "llama_identical_repeat": {
+    "responses": 972,
+    "cache_hits": 972,
+    "minimum_input_tokens": 104,
+    "maximum_input_tokens": 4033,
+    "minimum_native_prompt_tokens_evaluated": 4,
+    "maximum_native_prompt_tokens_evaluated": 4
+  },
+  "llama_source_revision": "7fe450e19305b828c199d602c23a8337aaa1f03b",
+  "llama_source": "https://github.com/ggml-org/llama.cpp/blob/7fe450e19305b828c199d602c23a8337aaa1f03b/tools/server/server-context.cpp#L2941-L3525",
+  "mechanism": "cache_prompt enables common-prefix state reuse and checkpoint restoration; the source creates a checkpoint four tokens before the prompt end and recomputes completion probabilities",
+  "mechanism_limit": "The four evaluated tokens are observed. The exact executed checkpoint branch is inferred from matching source, without server branch instrumentation.",
+  "uzu_prior_mechanism": "Every score_next_token call creates fresh state and prefills the complete prompt",
+  "uzu_new_mechanism": "Opt-in single-entry reuse of the last full f32 vocabulary logits for exact consecutive token and context equality, followed by unchanged current-request readout",
+  "timing_deferred": true,
+  "timing_not_reported": true
+}

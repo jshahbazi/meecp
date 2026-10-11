@@ -1,0 +1,305 @@
+{
+  "audit_kind": "independent scalar audit of sealed BF16 control",
+  "bindings": {
+    "migration_ledger_sha256": "590113fe868e49dbadc3459519549955afb907ad26808ce1e00a500e06cf6e6c",
+    "original_controller_sha256": "8fd94fabdeed236618f41a3802b7ef2fe25f4f25093d5ef03ef17ce0ed74f94d",
+    "post_run_seal_sha256": "d17968e9d51b3490d4d1caf90df3c421810e224cf5f936fd6fcdd11d263dd0f5",
+    "results_bf16_sha256": "f1b7a4b26fb0f5880b1ab040cc78d05ce3e6919cfeb4053e879f47aa276253d2",
+    "resumed_controller_sha256": "f8cde5409db0ffd9bf20f89f4e087639edda9a2f49962476a238597e9fe294e0",
+    "resumed_isolation_receipt_sha256": "12742711958dd7753da935706d181e898949f2a30e314eaf83e2cffeb2e25354"
+  },
+  "fresh_p50_round2_over_round1": {
+    "llama.cpp": 1.370299265286861,
+    "uzu": 1.4435700144041343
+  },
+  "isolation": {
+    "continuous_gpu_monitoring": false,
+    "continuous_thermal_or_power_monitoring": false,
+    "cpu_metric": "ps reported average CPU per process, not instantaneous GPU utilization",
+    "final_guard": {
+      "benchmark_exit": 0,
+      "compiler_samples": 0,
+      "discarded_final_blocks": 0,
+      "external_model_samples": 0,
+      "maximum_background_process_cpu": 92.1,
+      "restored": true,
+      "samples": 19,
+      "suspended_processes": 1
+    },
+    "final_guard_scope": "Only the resumed round-2 llama.cpp block",
+    "guard_wait_seconds": 5,
+    "recorded_suspension_identity_recheck": {
+      "exited": 11,
+      "pid_reuse_or_identity_mismatch": 0,
+      "surviving_positive_identity_matches": 0,
+      "surviving_running": 0,
+      "surviving_stopped": 0,
+      "unique_recorded_identities": 11
+    },
+    "retained_three_blocks_machine_readable_monitoring_receipt_preserved": false
+  },
+  "limitations": [
+    "Three complete blocks were retained byte-for-byte, followed by a complete final block collected after an interruption and intervening aborted attempts.",
+    "The original three blocks have intact data and configuration seals; their original per-block monitoring event history was not retained in a machine-readable receipt.",
+    "The final 19 guard samples cover only the resumed final block and cannot establish isolation for all four blocks.",
+    "No matching external model or compiler was observed in the final guard samples; ordinary background CPU activity remained, including a 92.1 percent ps average CPU reading for one process.",
+    "Five-second process polling can miss shorter activity; GPU utilization, thermal state, and power were not continuously measured.",
+    "Both engines had materially slower fresh-call medians in round 2, so pooled performance ratios are approximate and per-round results should accompany them.",
+    "Artifact verification and startup are excluded; there is no explicit scoring warmup and the first fresh measurement is included.",
+    "Stable probabilities and unchanged Uzu outputs support numerical reproducibility, not universal calibration or production acceptance."
+  ],
+  "llama_cache": {
+    "fresh": {
+      "actual_prompt_tokens_equal_input_count": 486,
+      "actual_prompt_tokens_exactly_four": 0,
+      "cache_hint_true": 0,
+      "maximum_actual_prompt_tokens_evaluated": 4033,
+      "measurements": 486,
+      "minimum_actual_prompt_tokens_evaluated": 104
+    },
+    "identical_repeat": {
+      "actual_prompt_tokens_equal_input_count": 0,
+      "actual_prompt_tokens_exactly_four": 486,
+      "cache_hint_true": 486,
+      "maximum_actual_prompt_tokens_evaluated": 4,
+      "measurements": 486,
+      "minimum_actual_prompt_tokens_evaluated": 4
+    }
+  },
+  "per_round_paired_ratios": [
+    {
+      "condition": "fresh",
+      "median_llama_over_uzu_wall_ratio": 1.623296367027865,
+      "pairs": 243,
+      "round": 1
+    },
+    {
+      "condition": "identical_repeat",
+      "median_llama_over_uzu_wall_ratio": 0.3656090137133815,
+      "pairs": 243,
+      "round": 1
+    },
+    {
+      "condition": "fresh",
+      "median_llama_over_uzu_wall_ratio": 1.4507868200093903,
+      "pairs": 243,
+      "round": 2
+    },
+    {
+      "condition": "identical_repeat",
+      "median_llama_over_uzu_wall_ratio": 0.26155617725310754,
+      "pairs": 243,
+      "round": 2
+    }
+  ],
+  "per_round_timing": [
+    {
+      "condition": "fresh",
+      "engine": "llama.cpp",
+      "measurements": 243,
+      "round": 1,
+      "wall_p50_seconds": 0.10429683399888745,
+      "wall_p95_seconds": 0.9345260579995736
+    },
+    {
+      "condition": "identical_repeat",
+      "engine": "llama.cpp",
+      "measurements": 243,
+      "round": 1,
+      "wall_p50_seconds": 0.025250583999877563,
+      "wall_p95_seconds": 0.03038285899983748
+    },
+    {
+      "condition": "fresh",
+      "engine": "uzu",
+      "measurements": 243,
+      "round": 1,
+      "wall_p50_seconds": 0.0682600830004958,
+      "wall_p95_seconds": 0.6895163205002972
+    },
+    {
+      "condition": "identical_repeat",
+      "engine": "uzu",
+      "measurements": 243,
+      "round": 1,
+      "wall_p50_seconds": 0.06803837500046939,
+      "wall_p95_seconds": 0.738525412199123
+    },
+    {
+      "condition": "fresh",
+      "engine": "uzu",
+      "measurements": 243,
+      "round": 2,
+      "wall_p50_seconds": 0.09853820900025312,
+      "wall_p95_seconds": 0.9194995208992619
+    },
+    {
+      "condition": "identical_repeat",
+      "engine": "uzu",
+      "measurements": 243,
+      "round": 2,
+      "wall_p50_seconds": 0.09814712499974121,
+      "wall_p95_seconds": 0.9665726288005307
+    },
+    {
+      "condition": "fresh",
+      "engine": "llama.cpp",
+      "measurements": 243,
+      "round": 2,
+      "wall_p50_seconds": 0.1429178750004212,
+      "wall_p95_seconds": 1.0826135663997771
+    },
+    {
+      "condition": "identical_repeat",
+      "engine": "llama.cpp",
+      "measurements": 243,
+      "round": 2,
+      "wall_p50_seconds": 0.0263481670008332,
+      "wall_p95_seconds": 0.031266645800496914
+    }
+  ],
+  "quality": {
+    "llama.cpp": {
+      "argmax_accuracy": 0.8744588744588745,
+      "argmax_correct": 202,
+      "brier": 0.1836781370917067,
+      "ece_10_bins": 0.023855123271241202,
+      "mixed_typed_correct": 202,
+      "public_cases": 231
+    },
+    "uzu": {
+      "argmax_accuracy": 0.8744588744588745,
+      "argmax_correct": 202,
+      "brier": 0.18515405977818739,
+      "ece_10_bins": 0.030787072608270183,
+      "mixed_typed_correct": 203,
+      "public_cases": 231
+    }
+  },
+  "schema_version": 1,
+  "scope": {
+    "accepted_order": [
+      [
+        1,
+        "llama.cpp"
+      ],
+      [
+        1,
+        "uzu"
+      ],
+      [
+        2,
+        "uzu"
+      ],
+      [
+        2,
+        "llama.cpp"
+      ]
+    ],
+    "blocks": 4,
+    "measurements": 1944,
+    "partial_measurements_retained": 0,
+    "public_cases": 231,
+    "rerun_complete_blocks": 1,
+    "rerun_measurements": 486,
+    "retained_blocks": 3,
+    "retained_measurements": 1458,
+    "synthetic_cases": 12
+  },
+  "stability": {
+    "llama.cpp": {
+      "changed_probability_vectors": 0,
+      "comparisons": 972,
+      "maximum_probability_difference": 0.0,
+      "typed_decision_changes": 0
+    },
+    "uzu": {
+      "changed_probability_vectors": 0,
+      "comparisons": 972,
+      "maximum_probability_difference": 0.0,
+      "typed_decision_changes": 0
+    }
+  },
+  "startup_seconds_excluded_from_resident_latency": [
+    {
+      "engine": "llama.cpp",
+      "round": 1,
+      "startup_seconds": 0.9144698340005561
+    },
+    {
+      "engine": "uzu",
+      "round": 1,
+      "startup_seconds": 1.048833625000043
+    },
+    {
+      "engine": "uzu",
+      "round": 2,
+      "startup_seconds": 1.0711217080006463
+    },
+    {
+      "engine": "llama.cpp",
+      "round": 2,
+      "startup_seconds": 1.2766232909998507
+    }
+  ],
+  "status": "complete",
+  "timing_instrument": {
+    "artifact_validation_and_hashing_excluded": true,
+    "candidate_tokenization_calls_before_timing_per_block": 17,
+    "explicit_scoring_warmup_calls": 0,
+    "first_fresh_case_included": true,
+    "startup_excluded": true,
+    "timing_population_includes_synthetic_cases": true
+  },
+  "uzu_against_historical_q8_control": {
+    "changed_output_records": 0,
+    "measurements_compared": 972
+  },
+  "verification": {
+    "failures": {
+      "bf16_control_identity": 0,
+      "bf16_gguf_identity": 0,
+      "block_hashes": 0,
+      "block_metadata": 0,
+      "calibration_formula": 0,
+      "candidate_coverage": 0,
+      "complete_ordered_blocks": 0,
+      "configuration_and_dataset_seals": 0,
+      "dataset_provenance_identity": 0,
+      "duplicate_measurements": 0,
+      "finite_normalized_probabilities": 0,
+      "harness_identity": 0,
+      "llama_converter_archive": 0,
+      "llama_converter_recipe": 0,
+      "llama_converter_source": 0,
+      "llama_runtime_identity": 0,
+      "migration_byte_copy_integrity": 0,
+      "migration_retained_hashes": 0,
+      "native_dependency_identity": 0,
+      "native_runtime_identity": 0,
+      "official_typed_mapping": 0,
+      "paired_candidate_tokens": 0,
+      "paired_input_tokens": 0,
+      "paired_prompt_identity": 0,
+      "prompt_identity": 0,
+      "prompt_source_identity": 0,
+      "protocol_identity": 0,
+      "report_point_metrics": 0,
+      "same_checkpoint_binding": 0,
+      "source_artifact_identity": 0,
+      "token_count_and_digest": 0,
+      "truncation": 0,
+      "unchanged_baseline_runtime": 0,
+      "uzu_converter_lock": 0,
+      "uzu_converter_recipe": 0,
+      "uzu_export_identity": 0,
+      "uzu_logprob_calibration": 0,
+      "uzu_manifest_identity": 0
+    },
+    "maximum_calibration_formula_error": 0.0,
+    "maximum_probability_sum_error": 2.220446049250313e-16,
+    "migration_byte_copy_integrity": true,
+    "paired_token_comparisons": 972,
+    "total_failures": 0
+  }
+}

@@ -4,6 +4,8 @@ Completed on 2026-10-10 on the development Mac. Rust Uzu now supports exact-toke
 
 The [main aggregate](../experiments/uzu-rust/jev-scoring/RESULTS.json) records the repeat performed with the background Rust build idle. The [initial aggregate](../experiments/uzu-rust/jev-scoring/RESULTS_INITIAL.json) preserves the first run. Each uses all 231 public cases and 12 synthetic checks, two engine-order-reversed rounds, and fresh plus immediate-repeat requests: 1,944 scoring measurements per run, 3,888 in total.
 
+The later [same-checkpoint BF16 control](UZU_JEVK5_BF16_CONTROL.md) replaces the Q8_0 reference with a locally converted BF16 GGUF while keeping both inference runtimes and the Uzu export fixed. Its maximum option-probability gap is 2.75 percentage points, and its calibration differences remain. The measurements below retain the historical Q8_0 comparison; the BF16 report contains the controlled results and interrupted-session timing limits.
+
 ## Measured performance
 
 The machine was an Apple M5 Max with 128 GiB RAM and macOS 26.7.1. The main run's resident decision wall times include tokenization, transport, and scoring; model load is excluded. Each table row has 486 samples, including the separate synthetic checks.
@@ -38,7 +40,7 @@ Choice accuracy was 122/139 for llama.cpp and 123/139 for Uzu; true/false accura
 
 The Uzu-minus-llama paired differences and 20,000-draw bootstrap 95% intervals were: argmax accuracy 0.00 percentage points [−1.30, +1.30], Brier +0.001957 [−0.000035, +0.004096], and ECE +0.006955 [−0.011686, +0.021074]. Uzu's calibration point estimates were slightly worse. The predeclared point-estimate screening margins passed, but the accuracy and ECE intervals do not establish the corresponding noninferiority margins. Public development cases and missing gold probability distributions prevent a production-calibration claim.
 
-The calibration formula and published temperatures match the official contract. The actual decision probabilities do not meet the parity tolerances. Uzu uses BF16 weights and a BF16 readout; the existing reference is a separately converted Q8_0 GGUF. Their cards identify JevK5 v0.3 lineage, but separate artifact pins do not cryptographically prove identical pre-quantization weights. A same-source, same-precision control and a readout-precision investigation would be needed to attribute differences to the engine itself.
+The calibration formula and published temperatures match the official contract. The actual decision probabilities do not meet the parity tolerances. Uzu uses BF16 weights and a BF16 readout; this report's reference is a separately converted Q8_0 GGUF. Their cards identify JevK5 v0.3 lineage, but separate artifact pins do not cryptographically prove identical pre-quantization weights. The later [BF16 control](UZU_JEVK5_BF16_CONTROL.md) verifies shared source weights and removes Q8_0 quantization; residual probability differences persist. Export representation, engine arithmetic, and readout precision still require investigation to attribute those differences.
 
 ## Implementation
 

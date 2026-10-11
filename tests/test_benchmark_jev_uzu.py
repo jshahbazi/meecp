@@ -352,6 +352,148 @@ def test_model_binding_refuses_undeclared_export_and_unsafe_path(model_binding):
         model_binding.validate()
 
 
+@pytest.fixture
+def bf16_binding(model_binding, tmp_path, monkeypatch):
+    # Source weights and Uzu export stay fixed. Only the synthetic GGUF changes.
+    gguf = tmp_path / "bf16.gguf"
+    gguf.write_bytes(b"same-checkpoint-bf16-gguf")
+    export = tmp_path / "clean-converter"
+    export.mkdir()
+    for name in ("convert_hf_to_gguf.py", "LICENSE"):
+        (export / name).write_bytes(("pinned-" + name).encode())
+    archive = tmp_path / "converter.tar"
+    archive.write_bytes(b"clean-pinned-archive")
+    monkeypatch.setattr(evaluation, "ROOT", tmp_path)
+    monkeypatch.setattr(evaluation, "LLAMA_BF16_CONVERTER", export)
+    monkeypatch.setattr(evaluation, "LLAMA_BF16_ARCHIVE", archive)
+    recipe_paths = ("scripts/convert_jev_llama_bf16.py",
+        "experiments/uzu-rust/jev-scoring/llama-converter/uv.lock",
+        "experiments/uzu-rust/jev-scoring/llama-converter/pyproject.toml")
+    recipes = []
+    for name in recipe_paths:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(("fixed-" + name).encode())
+        recipes.append({"path": name, "sha256": evaluation.file_hash(path)})
+    source_hash = model_binding.manifest["conversion"]["source_weights_sha256"]
+    manifest = {"schema_version": 1, "profile": "bf16-same-checkpoint",
+        "source": model_binding.manifest["source"], "calibration": model_binding.manifest["calibration"],
+        "uzu_model_manifest_sha256": evaluation.file_hash(model_binding.manifest_path),
+        "llama_reference": {"file": gguf.name, "bytes": gguf.stat().st_size,
+            "sha256": evaluation.file_hash(gguf), "license": "Apache-2.0", "dtype": "bfloat16",
+            "quantization": "none", "source_weights_sha256": source_hash},
+        "llama_conversion": {"status": "complete", "repository": "https://github.com/ggml-org/llama.cpp",
+            "revision": evaluation.LLAMA_BF16_CONVERTER_REVISION, "license": "MIT",
+            "source_weights_sha256": source_hash, "dtype": "bfloat16", "quantization": "none",
+            "metadata_adaptation": "none", "script": recipes[0], "dependency_lock": recipes[1],
+            "mtp_policy": "excluded: no MTP tensors in source checkpoint",
+            "pyproject": recipes[2], "archive_sha256": evaluation.file_hash(archive),
+            "converter_script_sha256": evaluation.file_hash(export / "convert_hf_to_gguf.py"),
+            "converter_source_files": {name: evaluation.file_hash(export / name)
+                                       for name in ("convert_hf_to_gguf.py", "LICENSE")},
+            "tensor_type_counts": {"BF16": 10, "F32": 3}, "tensor_count": 13}}
+    manifest_path = tmp_path / "bf16-provenance.json"
+    baseline = tmp_path / "baseline-report.json"
+    baseline.write_bytes(evaluation.encoded({"status": "complete", "configuration": {
+        "model_provenance": {"manifest_sha256": evaluation.file_hash(model_binding.manifest_path)},
+        "artifacts": {"gguf_sha256": "historical-q8", "uzu_binary_sha256": "same-uzu",
+                      "llama_runtime_closure": {"llama-server": "same-llama"}}}}))
+    monkeypatch.setattr(evaluation, "BF16_BASELINE_REPORT", baseline)
+    def persist():
+        manifest_path.write_bytes(evaluation.encoded(manifest))
+    persist()
+    return SimpleNamespace(manifest=manifest, persist=persist, gguf=gguf, archive=archive,
+        export=export, baseline=baseline, manifest_path=manifest_path,
+        validate=lambda: evaluation.validate_model_artifacts(model_binding.model, gguf,
+            model_binding.manifest_path, model_binding.converter, model_binding.lock,
+            llama_reference="bf16", bf16_manifest_path=manifest_path))
+
+
+def test_bf16_profile_binds_same_checkpoint_and_keeps_q8_default(model_binding, bf16_binding):
+    binding = bf16_binding.validate()
+    assert binding["bf16_control"]["manifest"] == bf16_binding.manifest
+    assert "bf16_control" not in model_binding.validate()
+    assert evaluation.protocol_path("bf16").name == "PROTOCOL_BF16.md"
+    assert evaluation.protocol_path("q8").name == "PROTOCOL.md"
+
+
+@pytest.mark.parametrize("value", ["bf16-ish", "q4", None])
+def test_unknown_reference_profile_fails_closed(value):
+    with pytest.raises(evaluation.EvaluationError, match="llama_reference_profile_invalid"):
+        evaluation.validated_reference_profile(value)
+
+
+@pytest.mark.parametrize("field,value", [("source", {"repository": "different-checkpoint"}),
+    ("uzu_model_manifest_sha256", "0" * 64), ("calibration", {"temperature": 1.0}),
+    ("profile", "q8")])
+def test_bf16_control_rejects_source_or_uzu_binding_changes(bf16_binding, field, value):
+    bf16_binding.manifest[field] = value
+    bf16_binding.persist()
+    with pytest.raises(evaluation.EvaluationError, match="bf16_control_identity_mismatch"):
+        bf16_binding.validate()
+
+
+@pytest.mark.parametrize("section,field,value,code", [
+    ("llama_reference", "dtype", "float16", "bf16_reference_identity_mismatch"),
+    ("llama_reference", "quantization", "Q8_0", "bf16_reference_identity_mismatch"),
+    ("llama_reference", "source_weights_sha256", "0" * 64, "bf16_reference_identity_mismatch"),
+    ("llama_conversion", "source_weights_sha256", "0" * 64, "bf16_conversion_identity_mismatch"),
+    ("llama_conversion", "revision", "0" * 40, "bf16_conversion_identity_mismatch"),
+    ("llama_conversion", "status", "pending", "bf16_conversion_identity_mismatch"),
+    ("llama_conversion", "metadata_adaptation", "changed-weights", "bf16_conversion_identity_mismatch"),
+    ("llama_conversion", "mtp_policy", "included", "bf16_conversion_identity_mismatch"),
+    ("llama_conversion", "tensor_type_counts", {"Q8_0": 10, "F32": 3}, "bf16_weight_precision_invalid"),
+    ("llama_conversion", "tensor_count", 99, "bf16_weight_precision_invalid"),
+])
+def test_bf16_control_rejects_wrong_precision_or_conversion(bf16_binding, section, field, value, code):
+    bf16_binding.manifest[section][field] = value
+    bf16_binding.persist()
+    with pytest.raises(evaluation.EvaluationError, match=code):
+        bf16_binding.validate()
+
+
+def test_bf16_profile_refuses_historical_q8_artifact(model_binding, bf16_binding):
+    bf16_binding.gguf.write_bytes(model_binding.gguf.read_bytes())
+    with pytest.raises(evaluation.EvaluationError, match="model_llama_artifact_mismatch"):
+        bf16_binding.validate()
+
+
+@pytest.mark.parametrize("target,code", [("archive", "bf16_converter_archive_changed"),
+    ("export", "bf16_converter_source_changed"), ("script", "bf16_converter_recipe_changed")])
+def test_bf16_control_refuses_modified_converter(bf16_binding, target, code):
+    if target == "archive":
+        path = bf16_binding.archive
+    elif target == "export":
+        path = bf16_binding.export / "convert_hf_to_gguf.py"
+    else:
+        path = evaluation.ROOT / bf16_binding.manifest["llama_conversion"]["script"]["path"]
+    path.write_bytes(b"modified")
+    with pytest.raises(evaluation.EvaluationError, match=code):
+        bf16_binding.validate()
+
+
+def test_bf16_control_rejects_unsafe_recipe_and_undeclared_source(bf16_binding):
+    bf16_binding.manifest["llama_conversion"]["script"]["path"] = "../outside.py"
+    bf16_binding.persist()
+    with pytest.raises(evaluation.EvaluationError, match="bf16_converter_recipe_invalid"):
+        bf16_binding.validate()
+    bf16_binding.manifest["llama_conversion"]["script"]["path"] = "scripts/convert_jev_llama_bf16.py"
+    bf16_binding.persist()
+    (bf16_binding.export / "unsealed.py").write_bytes(b"undeclared-source")
+    with pytest.raises(evaluation.EvaluationError, match="bf16_converter_source_coverage"):
+        bf16_binding.validate()
+
+
+def test_bf16_profile_holds_existing_runtime_fixed(bf16_binding):
+    binding = bf16_binding.validate()
+    artifacts = {"gguf_sha256": "new-bf16", "uzu_binary_sha256": "same-uzu",
+                 "llama_runtime_closure": {"llama-server": "same-llama"}}
+    evaluation.verify_bf16_runtime(artifacts, binding, bf16_binding.baseline)
+    artifacts["llama_runtime_closure"]["llama-server"] = "rebuilt-llama"
+    with pytest.raises(evaluation.EvaluationError, match="bf16_runtime_changed"):
+        evaluation.verify_bf16_runtime(artifacts, binding, bf16_binding.baseline)
+
+
 def test_machine_information_captures_chip_and_physical_ram(monkeypatch):
     monkeypatch.setattr(evaluation.subprocess, "run", lambda *a, **kw: SimpleNamespace(
         stdout="Apple M5 Max\n137438953472\nMac17,7\n"))

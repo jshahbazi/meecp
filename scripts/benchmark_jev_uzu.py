@@ -47,6 +47,11 @@ KNOCKOUT_TEMPERATURE = 0.93
 FORMULA_TOLERANCE = 1e-12
 CONTEXT = 8192
 ENGINES = ("llama.cpp", "uzu")
+LLAMA_BF16_CONVERTER_REVISION = "86d86ed4396b4130922f7b9af26e3d9fc11a591b"
+LLAMA_BF16_CONVERTER = ROOT / "runtime/uzu-rust/llama-converter"
+LLAMA_BF16_ARCHIVE = ROOT / "runtime/uzu-rust/llama-converter.tar"
+BF16_CONTROL_MANIFEST = EXPERIMENT / "BF16_CONTROL_PROVENANCE.json"
+BF16_BASELINE_REPORT = EXPERIMENT / "RESULTS.json"
 TOKEN_BUCKETS = (("under_256", 0, 256), ("256_to_1023", 256, 1024),
                  ("1024_to_4095", 1024, 4096), ("4096_plus", 4096, CONTEXT))
 
@@ -269,9 +274,87 @@ def load_dataset(path):
     return value, cases
 
 
+def validated_reference_profile(value):
+    require(value in ("q8", "bf16"), "llama_reference_profile_invalid")
+    return value
+
+
+def protocol_path(profile):
+    return EXPERIMENT / ("PROTOCOL_BF16.md" if validated_reference_profile(profile) == "bf16" else "PROTOCOL.md")
+
+
+def verified_recipe_file(record, expected_path):
+    require(type(record) is dict and set(record) == {"path", "sha256"}
+            and record.get("path") == expected_path, "bf16_converter_recipe_invalid")
+    path = ROOT / expected_path
+    require(path.is_file() and not any(part.is_symlink() for part in (path, *path.parents))
+            and record.get("sha256") == file_hash(path), "bf16_converter_recipe_changed")
+
+
+def validate_bf16_control(gguf, uzu_manifest, uzu_manifest_path, pinned,
+                          control_path=BF16_CONTROL_MANIFEST):
+    control_path = Path(control_path)
+    require(control_path.is_file() and not control_path.is_symlink(), "bf16_control_manifest_unavailable")
+    control = json.loads(control_path.read_bytes())
+    require(type(control) is dict and control.get("schema_version") == 1
+            and control.get("profile") == "bf16-same-checkpoint"
+            and control.get("source") == pinned["source"]
+            and control.get("calibration") == pinned["calibration"]
+            and control.get("uzu_model_manifest_sha256") == file_hash(uzu_manifest_path),
+            "bf16_control_identity_mismatch")
+    source_weights = next(record["sha256"] for record in pinned["source"]["files"]
+                          if record["name"] == "model.safetensors")
+    reference, conversion = control.get("llama_reference"), control.get("llama_conversion")
+    require(type(reference) is dict and type(reference.get("file")) is str
+            and Path(reference["file"]).name == reference["file"]
+            and type(reference.get("bytes")) is int and reference["bytes"] > 0
+            and type(reference.get("sha256")) is str and len(reference["sha256"]) == 64
+            and reference.get("license") == "Apache-2.0"
+            and reference.get("dtype") == "bfloat16" and reference.get("quantization") == "none"
+            and reference.get("source_weights_sha256") == source_weights,
+            "bf16_reference_identity_mismatch")
+    require(type(conversion) is dict and conversion.get("status") == "complete"
+            and conversion.get("repository") == "https://github.com/ggml-org/llama.cpp"
+            and conversion.get("revision") == LLAMA_BF16_CONVERTER_REVISION
+            and conversion.get("license") == "MIT" and conversion.get("dtype") == "bfloat16"
+            and conversion.get("quantization") == "none"
+            and conversion.get("metadata_adaptation") == "none"
+            and conversion.get("mtp_policy") == "excluded: no MTP tensors in source checkpoint"
+            and conversion.get("source_weights_sha256") == source_weights
+            == uzu_manifest["conversion"]["source_weights_sha256"], "bf16_conversion_identity_mismatch")
+    verified_recipe_file(conversion.get("script"), "scripts/convert_jev_llama_bf16.py")
+    verified_recipe_file(conversion.get("dependency_lock"), "experiments/uzu-rust/jev-scoring/llama-converter/uv.lock")
+    verified_recipe_file(conversion.get("pyproject"), "experiments/uzu-rust/jev-scoring/llama-converter/pyproject.toml")
+    require(LLAMA_BF16_ARCHIVE.is_file() and not LLAMA_BF16_ARCHIVE.is_symlink()
+            and conversion.get("archive_sha256") == file_hash(LLAMA_BF16_ARCHIVE), "bf16_converter_archive_changed")
+    files = conversion.get("converter_source_files")
+    require(type(files) is dict and {"convert_hf_to_gguf.py", "LICENSE"}.issubset(files),
+            "bf16_converter_source_invalid")
+    require({path.relative_to(LLAMA_BF16_CONVERTER).as_posix()
+             for path in LLAMA_BF16_CONVERTER.rglob("*.py") if path.is_file()}
+            == set(files) - {"LICENSE"}, "bf16_converter_source_coverage")
+    for name, digest in files.items():
+        require(type(name) is str and not Path(name).is_absolute() and ".." not in Path(name).parts
+                and name not in ("", ".") and type(digest) is str and len(digest) == 64,
+                "bf16_converter_source_invalid")
+        path = LLAMA_BF16_CONVERTER / name
+        require(path.is_file() and not any(part.is_symlink() for part in (path, *path.parents))
+                and file_hash(path) == digest, "bf16_converter_source_changed")
+    require(conversion.get("converter_script_sha256") == files["convert_hf_to_gguf.py"],
+            "bf16_converter_source_invalid")
+    counts = conversion.get("tensor_type_counts")
+    require(type(counts) is dict and "BF16" in counts and set(counts).issubset({"BF16", "F32"})
+            and all(type(count) is int and count > 0 for count in counts.values())
+            and type(conversion.get("tensor_count")) is int
+            and conversion["tensor_count"] == sum(counts.values()), "bf16_weight_precision_invalid")
+    return {"manifest_sha256": file_hash(control_path), "manifest": control,
+            "baseline_report_sha256": file_hash(BF16_BASELINE_REPORT)}, reference
+
+
 def validate_model_artifacts(model, gguf, manifest_path=EXPERIMENT / "MODEL_PROVENANCE.json",
                              converter_script=ROOT / "scripts/convert_jev_uzu_model.py",
-                             converter_lock=ROOT / "runtime/uzu-rust/lalamo/uv.lock"):
+                             converter_lock=ROOT / "runtime/uzu-rust/lalamo/uv.lock", *,
+                             llama_reference="q8", bf16_manifest_path=BF16_CONTROL_MANIFEST):
     """An arbitrary model path cannot acquire the pinned JevK5 identity."""
     manifest_path = Path(manifest_path)
     require(manifest_path.is_file() and not manifest_path.is_symlink(), "model_manifest_unavailable")
@@ -297,7 +380,12 @@ def validate_model_artifacts(model, gguf, manifest_path=EXPERIMENT / "MODEL_PROV
     require(type(adaptation) is dict and adaptation.get("model_type") == "qwen3_5_text -> qwen3_5"
             and type(adaptation.get("adapted_config_sha256")) is str
             and len(adaptation["adapted_config_sha256"]) == 64, "model_metadata_adaptation_invalid")
-    reference = pinned["llama_reference"]
+    profile = validated_reference_profile(llama_reference)
+    bf16_binding = None
+    if profile == "bf16":
+        bf16_binding, reference = validate_bf16_control(gguf, manifest, manifest_path, pinned, bf16_manifest_path)
+    else:
+        reference = pinned["llama_reference"]
     require(Path(gguf).is_file() and not Path(gguf).is_symlink()
             and Path(gguf).stat().st_size == reference["bytes"]
             and file_hash(gguf) == reference["sha256"], "model_llama_artifact_mismatch")
@@ -329,8 +417,11 @@ def validate_model_artifacts(model, gguf, manifest_path=EXPERIMENT / "MODEL_PROV
             and verified["jevk5_config.json"] == source_files["jevk5_config.json"]["sha256"]
             and json.loads((model / "jevk5_config.json").read_bytes()) == pinned["calibration"],
             "model_export_tokenizer_calibration_mismatch")
-    return {"manifest_sha256": file_hash(manifest_path), "manifest": manifest,
-            "exported_files": verified, "acquirer_sha256": file_hash(model_acquirer.__file__)}
+    binding = {"manifest_sha256": file_hash(manifest_path), "manifest": manifest,
+               "exported_files": verified, "acquirer_sha256": file_hash(model_acquirer.__file__)}
+    if bf16_binding is not None:
+        binding["bf16_control"] = bf16_binding
+    return binding
 
 
 def machine_information():
@@ -372,23 +463,40 @@ def native_build_identity(binary, receipt_path=ROOT / "runtime/uzu-rust/SCORING_
             "scoring_build_recipe_sha256": file_hash(ROOT / "experiments/uzu-rust/build_scoring.py")}
 
 
+def verify_bf16_runtime(artifacts, model_binding, baseline_path=BF16_BASELINE_REPORT):
+    """Keep the already measured binaries fixed while changing GGUF precision."""
+    baseline = json.loads(Path(baseline_path).read_bytes())
+    require(baseline.get("status") == "complete"
+            and model_binding["bf16_control"]["baseline_report_sha256"] == file_hash(baseline_path),
+            "bf16_baseline_identity_changed")
+    previous = baseline["configuration"]
+    require(previous["model_provenance"]["manifest_sha256"] == model_binding["manifest_sha256"]
+            and {k: v for k, v in previous["artifacts"].items() if k != "gguf_sha256"}
+            == {k: v for k, v in artifacts.items() if k != "gguf_sha256"}, "bf16_runtime_changed")
+
+
 def configuration(args):
-    model_binding = validate_model_artifacts(args.uzu_model, args.gguf)
+    reference = validated_reference_profile(getattr(args, "llama_reference", "q8"))
+    require(reference != "bf16" or args.rounds == 2, "bf16_rounds_invalid")
+    model_binding = validate_model_artifacts(args.uzu_model, args.gguf, llama_reference=reference)
     native_binding = native_build_identity(args.uzu_binary)
     closure = {str(p.relative_to(args.llama_binary.parent)): file_hash(p)
                for p in sorted(args.llama_binary.parent.rglob("*"))
                if p.is_file() and (p == args.llama_binary or p.suffix in (".dylib", ".metallib", ".so"))}
     model_files = model_binding["exported_files"]
     require(model_files, "uzu_model_empty")
+    artifacts = {"uzu_binary_sha256": file_hash(args.uzu_binary), "uzu_model_files": model_files,
+        "gguf_sha256": file_hash(args.gguf), "llama_runtime_closure": closure, "reaper_sha256": file_hash(args.reaper),
+        **native_binding}
+    if reference == "bf16":
+        verify_bf16_runtime(artifacts, model_binding)
     return {"schema_version": 1, "dataset_sha256": file_hash(args.dataset),
         "dataset_provenance_sha256": file_hash(EXPERIMENT / "DATASET_PROVENANCE.json"),
-        "protocol_sha256": file_hash(EXPERIMENT / "PROTOCOL.md"), "harness_sha256": file_hash(__file__),
+        "protocol_sha256": file_hash(protocol_path(reference)), "harness_sha256": file_hash(__file__),
         "vendored_prompt_sha256": file_hash(ROOT / "vendor/jevk5/prompt.py"),
         "model_provenance": model_binding,
-        "artifacts": {"uzu_binary_sha256": file_hash(args.uzu_binary), "uzu_model_files": model_files,
-            "gguf_sha256": file_hash(args.gguf), "llama_runtime_closure": closure, "reaper_sha256": file_hash(args.reaper),
-            **native_binding},
-        "profile": {"temperature": TEMPERATURE, "knockout_temperature": KNOCKOUT_TEMPERATURE,
+        "artifacts": artifacts,
+        "profile": {"llama_reference": reference, "temperature": TEMPERATURE, "knockout_temperature": KNOCKOUT_TEMPERATURE,
             "context_tokens": CONTEXT, "rounds": args.rounds, "llama_n_probs": args.n_probs,
             "candidate_count": "2..16", "order": [["llama.cpp", "uzu"], ["uzu", "llama.cpp"]],
             "fresh_then_identical_repeat": True, "uzu_reuse": False, "llama_reuse": "consecutive identical tokens only",
@@ -777,8 +885,9 @@ def aggregate(args):
     seal = read_private(run_dir / "post-run-seal.json")
     require(seal["configuration_sha256"] == sha(encoded(config)) and seal["dataset_sha256"] == file_hash(run_dir / "dataset.json")
             and seal["ownership_settled"] is True, "aggregate_seal_invalid")
+    reference = validated_reference_profile(config["profile"].get("llama_reference", "q8"))
     require(config["harness_sha256"] == file_hash(__file__)
-            and config["protocol_sha256"] == file_hash(EXPERIMENT / "PROTOCOL.md")
+            and config["protocol_sha256"] == file_hash(protocol_path(reference))
             and config["dataset_provenance_sha256"] == file_hash(EXPERIMENT / "DATASET_PROVENANCE.json")
             and config["model_provenance"]["manifest_sha256"] == file_hash(EXPERIMENT / "MODEL_PROVENANCE.json")
             and config["model_provenance"]["acquirer_sha256"] == file_hash(model_acquirer.__file__)
@@ -790,6 +899,13 @@ def aggregate(args):
             and config["artifacts"]["rust_scoring_source_sha256"] == file_hash(ROOT / "experiments/uzu-rust/src/scoring.rs")
             and config["artifacts"]["scoring_build_recipe_sha256"] == file_hash(ROOT / "experiments/uzu-rust/build_scoring.py"),
             "aggregate_source_identity_changed")
+    if reference == "bf16":
+        require(config["profile"]["rounds"] == 2, "bf16_rounds_invalid")
+        bf16_binding, _ = validate_bf16_control(None, config["model_provenance"]["manifest"],
+            EXPERIMENT / "MODEL_PROVENANCE.json", model_acquirer.provenance())
+        require(config["model_provenance"].get("bf16_control") == bf16_binding,
+                "aggregate_bf16_control_changed")
+        verify_bf16_runtime(config["artifacts"], config["model_provenance"])
     _, cases = load_dataset(run_dir / "dataset.json")
     require(config["dataset_sha256"] == seal["dataset_sha256"], "aggregate_dataset_identity_changed")
     for case in cases:
@@ -918,7 +1034,8 @@ def aggregate(args):
         "bootstrap": {"draws": 20000, "seed": 20261010}, "timing": timing, "paired_wall_ratios": ratios,
         "stability": stability, "loads": [{k: b[k] for k in ("engine", "round", "startup_seconds", "peak_rss_bytes", "ownership_settled")} for b in blocks],
         "limitations": ["Public development items; no universal or production calibration claim.",
-            "Separately converted exports can differ; compare recorded artifact provenance.",
+            ("Both BF16 exports derive from the same verified source checkpoint; engine arithmetic and tensor layouts can differ."
+             if reference == "bf16" else "Separately converted exports can differ; compare recorded artifact provenance."),
             "llama.cpp computes one sampled token for logprobs; Uzu is prefill/readout only.",
             "No exact gold distributions are provided in this dataset."]}
     destination = Path(args.report)
@@ -942,6 +1059,7 @@ def main():
     run_parser.add_argument("--output", type=Path, required=True)
     run_parser.add_argument("--uzu-model", type=Path, required=True)
     run_parser.add_argument("--gguf", type=Path, default=ROOT / "models/jevk5-4b-v0.3-Q8_0.gguf")
+    run_parser.add_argument("--llama-reference", choices=("q8", "bf16"), default="q8")
     run_parser.add_argument("--uzu-binary", type=Path, default=ROOT / "runtime/uzu-rust/scoring-target/release/meecp-uzu-worker")
     run_parser.add_argument("--llama-binary", type=Path, default=ROOT / "runtime/llama-relocated/llama/llama-server")
     run_parser.add_argument("--reaper", type=Path, default=ROOT / "runtime/uzu-rust/meecp-reap")

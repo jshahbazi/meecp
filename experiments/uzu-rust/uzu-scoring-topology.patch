@@ -1,0 +1,97 @@
+diff --git a/crates/uzu-engine/src/engine/language_model/scoring.rs b/crates/uzu-engine/src/engine/language_model/scoring.rs
+--- a/crates/uzu-engine/src/engine/language_model/scoring.rs
++++ b/crates/uzu-engine/src/engine/language_model/scoring.rs
+@@ -12,8 +12,20 @@
+     },
+     encodable_block::{batch_topology::BatchTopology, decoder::DecoderError},
+     engine::language_model::{LanguageModel, state::LanguageModelCreateEmptyStateError},
+-    trie::TrieNode,
+ };
++
++// Exact scoring always prefills a linear sequence. Its topology depends only on
++// chunk length; neither token identities nor sampling seeds affect these nodes.
++fn flat_scoring_topology(length: u32) -> Box<[GpuTrieNode]> {
++    assert!(length > 0, "scoring chunk must be nonempty");
++    (0..length)
++        .map(|index| GpuTrieNode {
++            trie_start: index,
++            trie_end: length - 1,
++            height: index,
++        })
++        .collect()
++}
+ 
+ /// Final prompt-position raw logits. No temperature, penalty, grammar, or sampler
+ /// has been applied. Every call creates and destroys its own transformer state.
+@@ -94,13 +106,10 @@
+                 [Some((batch, last_batch)), None]
+             };
+             for (input_chunk, output_last) in parts.into_iter().flatten() {
+-                let input_u64: Vec<u64> = input_chunk.iter().map(|id| u64::from(*id)).collect();
+-                let input_trie = TrieNode::flat(state.tokens.len(), &input_u64, &state.prng);
+-                let input_flat_trie = input_trie.linearize();
+                 let token_ids = command_buffer
+                     .allocate_constant_from_slice(input_chunk)
+                     .map_err(LanguageModelScoreError::Backend)?;
+-                let nodes = input_flat_trie.token_subtrie_ranges().collect::<Box<[GpuTrieNode]>>();
++                let nodes = flat_scoring_topology(input_chunk.len() as u32);
+                 let batch_dim = BatchTopology::new(&nodes, true);
+                 let output = self.decoder.encode(
+                     &token_ids,
+@@ -113,11 +122,14 @@
+                 if output_last {
+                     final_logits = output.logits;
+                 }
+-                state
+-                    .transformer_state
+-                    .encode_accept(&(0..input_chunk.len() as u32).collect::<Box<[u32]>>(), &mut command_buffer)
+-                    .map_err(LanguageModelScoreError::Backend)?;
+-                state.tokens.extend(input_u64);
++                // Only subsequent chunks need the accepted state. Final logits
++                // are already encoded, and this fresh state is dropped below.
++                if !output_last {
++                    state
++                        .transformer_state
++                        .encode_accept(&(0..input_chunk.len() as u32).collect::<Box<[u32]>>(), &mut command_buffer)
++                        .map_err(LanguageModelScoreError::Backend)?;
++                }
+             }
+         }
+         // Keep scratch readout and transformer state alive through GPU completion.
+@@ -139,3 +151,36 @@
+         })
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::{encodable_block::sampling::PRng, trie::TrieNode};
++    use uzu_engine_macros::uzu_test;
++
++    #[uzu_test]
++    fn direct_scoring_topology_matches_legacy_flat_trie() {
++        let prng = PRng::new(0);
++        for length in [1, 2, 1023, 1024] {
++            let tokens = vec![1_u64; length];
++            for prefix_length in [0, 1024, 7168] {
++                let trie = TrieNode::flat(prefix_length, &tokens, &prng);
++                let flat = trie.linearize();
++                let legacy: Box<[GpuTrieNode]> = flat.token_subtrie_ranges().collect();
++                let direct = flat_scoring_topology(length as u32);
++                assert_eq!(direct.len(), legacy.len());
++                for (actual, expected) in direct.iter().zip(legacy.iter()) {
++                    assert_eq!(actual.trie_start, expected.trie_start);
++                    assert_eq!(actual.trie_end, expected.trie_end);
++                    assert_eq!(actual.height, expected.height);
++                }
++                let actual = BatchTopology::new(&direct, true);
++                let expected = BatchTopology::new(&legacy, true);
++                assert_eq!(actual.size(), expected.size());
++                assert_eq!(actual.is_flat(), expected.is_flat());
++                assert_eq!(actual.full_accept(), expected.full_accept());
++                assert!(actual.parents() == expected.parents());
++            }
++        }
++    }
++}

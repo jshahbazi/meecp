@@ -6,6 +6,8 @@ The [main aggregate](../experiments/uzu-rust/jev-scoring/RESULTS.json) records t
 
 The later [same-checkpoint BF16 control](UZU_JEVK5_BF16_CONTROL.md) replaces the Q8_0 reference with a locally converted BF16 GGUF while keeping both inference runtimes and the Uzu export fixed. Its maximum option-probability gap is 2.75 percentage points, and its calibration differences remain. The measurements below retain the historical Q8_0 comparison; the BF16 report contains the controlled results and interrupted-session timing limits.
 
+The subsequent [Rust scoring hotspot experiment](UZU_RUST_SCORING_OPTIMIZATION.md) implements isolated topology and initialization optimizations. Current Uzu probabilities and decisions match exactly, including full-vocabulary equality between rebuilt probes. A balanced 12-case timing control favors the combined candidate modestly; full-population timing remains inconclusive. The prior llama.cpp probability/calibration differences remain, and the candidates stay opt-in.
+
 ## Measured performance
 
 The machine was an Apple M5 Max with 128 GiB RAM and macOS 26.7.1. The main run's resident decision wall times include tokenization, transport, and scoring; model load is excluded. Each table row has 486 samples, including the separate synthetic checks.

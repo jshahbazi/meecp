@@ -1,0 +1,105 @@
+diff --git a/crates/uzu-engine/Cargo.toml b/crates/uzu-engine/Cargo.toml
+--- a/crates/uzu-engine/Cargo.toml
++++ b/crates/uzu-engine/Cargo.toml
+@@ -14,6 +14,10 @@
+ 
+ [features]
+ default = ["cpu", "metal", "grammar"]
++
++# Experimental scoring optimization. An encoded state must be discarded if its
++# command buffer is abandoned or fails; initialization is ordered on first encode.
++deferred-state-init = []
+ 
+ cpu = [] # TODO: move libm here
+ 
+diff --git a/crates/uzu-engine/src/encodable_block/mixer/delta_net.rs b/crates/uzu-engine/src/encodable_block/mixer/delta_net.rs
+--- a/crates/uzu-engine/src/encodable_block/mixer/delta_net.rs
++++ b/crates/uzu-engine/src/encodable_block/mixer/delta_net.rs
+@@ -4,8 +4,7 @@
+ use crate::{
+     array::size_for_shape,
+     backends::common::{
+-        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable,
+-        CommandBufferPending, Context, Kernels,
++        Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
+         kernel::{
+             Conv1dPackKernel, ConvTreeScanKernel, DeltaNetConvScanKernel, DeltaNetConvUpdateKernel,
+             DeltaNetNormGateKernel, DeltaNetPrefillKernel, DeltaNetPrefillPrepKernel, DeltaNetUpdateKernel,
+@@ -29,6 +28,9 @@
+     utils::maybe_mut::MaybeMut,
+ };
+ 
++#[cfg(not(feature = "deferred-state-init"))]
++use crate::backends::common::{CommandBufferExecutable, CommandBufferPending};
++
+ pub(crate) mod tree_verify;
+ 
+ const INNER_DATA_TYPE: DataType = DataType::F32;
+@@ -51,6 +53,8 @@
+     conv_state: B::GlobalBuffer,
+     ssm_state: B::GlobalBuffer,
+     suffix_status: Option<DeltaNetSuffixStatus<B>>,
++    #[cfg(feature = "deferred-state-init")]
++    needs_zero_initialization: bool,
+     state_advance: <B::Kernels as Kernels>::StateAdvanceKernel,
+ }
+ 
+@@ -435,16 +439,22 @@
+         _max_context_length: Option<u32>,
+         context: &B::Context,
+     ) -> Result<Box<dyn MixerState<B>>, B::Error> {
+-        let mut conv_state =
++        let conv_state =
+             context.create_buffer(size_for_shape(&[self.conv_dim, self.kernel_size - 1], INNER_DATA_TYPE))?;
+ 
+-        let mut ssm_state = context
++        let ssm_state = context
+             .create_buffer(size_for_shape(&[self.num_heads, self.value_head_dim, self.head_dim], INNER_DATA_TYPE))?;
+ 
+-        let mut zero_command_buffer = context.create_command_buffer(None, None)?;
+-        zero_command_buffer.encode_fill(&mut conv_state, 0);
+-        zero_command_buffer.encode_fill(&mut ssm_state, 0);
+-        zero_command_buffer.end_encoding().submit().wait_until_completed()?;
++        #[cfg(not(feature = "deferred-state-init"))]
++        let (conv_state, ssm_state) = {
++            let mut conv_state = conv_state;
++            let mut ssm_state = ssm_state;
++            let mut zero_command_buffer = context.create_command_buffer(None, None)?;
++            zero_command_buffer.encode_fill(&mut conv_state, 0);
++            zero_command_buffer.encode_fill(&mut ssm_state, 0);
++            zero_command_buffer.end_encoding().submit().wait_until_completed()?;
++            (conv_state, ssm_state)
++        };
+ 
+         let state_advance = <B::Kernels as Kernels>::StateAdvanceKernel::new(
+             context,
+@@ -458,6 +468,8 @@
+             conv_state,
+             ssm_state,
+             suffix_status: None,
++            #[cfg(feature = "deferred-state-init")]
++            needs_zero_initialization: true,
+             state_advance,
+         }))
+     }
+@@ -481,6 +493,20 @@
+         };
+ 
+         assert!(state.suffix_status.is_none(), "delta net called with state with an unaccepted suffix");
++
++        #[cfg(feature = "deferred-state-init")]
++        if state.needs_zero_initialization {
++            // Order initialization before every state consumer, including tree
++            // verification. Later chunks in this command buffer must preserve
++            // accumulated state, so clear the flag after encoding both fills.
++            // This flag records encoding, not GPU completion. Discard this state
++            // if encoding/submission fails or the command buffer is abandoned.
++            // The isolated scorer owns fresh state until completion and drops
++            // it on every error; this feature does not enable state reuse.
++            command_buffer.encode_fill(&mut state.conv_state, 0);
++            command_buffer.encode_fill(&mut state.ssm_state, 0);
++            state.needs_zero_initialization = false;
++        }
+ 
+         let mut in_projected = self.in_projection.encode(hidden, batch_dim.size(), command_buffer)?;
+ 

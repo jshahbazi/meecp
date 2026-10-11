@@ -1,0 +1,57 @@
+{
+  "large_background_rss_followup": "The two processes above 1GiB were Codex and Codex Renderer; names and paths of other processes are not retained.",
+  "limitations": "Five-second sampling can miss shorter activity. CPU readings are process averages, not instantaneous system/GPU load. No continuous GPU, thermal, clock or power measurements.",
+  "runs": {
+    "full": {
+      "benchmark_exit": 0,
+      "compiler_samples": 0,
+      "controller_sha256": "7288874baa776232b4e95a5be45a03844ee8deb656328f9b120c3702096e01fe",
+      "external_model_samples": 0,
+      "failure_type": null,
+      "final_active_models": 0,
+      "limits": "Sampled process metadata only; no continuous GPU or thermal measurement.",
+      "max_owned_models": 1,
+      "maximum_background_large_rss": 2,
+      "maximum_background_process_cpu": 342.5,
+      "samples": 136,
+      "sampling_interval_seconds": 5,
+      "schema_version": 1,
+      "suspended_processes": 0
+    },
+    "latency_control": {
+      "benchmark_exit": 0,
+      "compiler_samples": 0,
+      "controller_sha256": "d5b21611f57770a65f2f20bc6c50de435a2bdf523c1e4bfd2cd1f6a8b67e6b68",
+      "external_model_samples": 0,
+      "failure_type": null,
+      "final_active_models": 0,
+      "host_samples_sha256": "760a06f72fd95a4c761b5e15e00306a94bb43991a6f19637b83eadd2fe5e2841",
+      "limits": "Sampled process metadata only; no continuous GPU or thermal measurement.",
+      "max_owned_models": 1,
+      "maximum_background_large_rss": 2,
+      "maximum_background_process_cpu": 72.9,
+      "samples": 31,
+      "sampling_interval_seconds": 5,
+      "schema_version": 1,
+      "suspended_processes": 0
+    },
+    "smoke": {
+      "benchmark_exit": 0,
+      "compiler_samples": 0,
+      "controller_sha256": "7288874baa776232b4e95a5be45a03844ee8deb656328f9b120c3702096e01fe",
+      "external_model_samples": 0,
+      "failure_type": null,
+      "final_active_models": 0,
+      "limits": "Sampled process metadata only; no continuous GPU or thermal measurement.",
+      "max_owned_models": 1,
+      "maximum_background_large_rss": 2,
+      "maximum_background_process_cpu": 47.7,
+      "samples": 20,
+      "sampling_interval_seconds": 5,
+      "schema_version": 1,
+      "suspended_processes": 0
+    }
+  },
+  "schema_version": 1,
+  "scope": "Full scoring optimization and separate smoke; sampled process metadata"
+}

@@ -186,7 +186,7 @@ def test_public_metadata_exception_is_exact_value_and_path_for_one_rule_only():
     assert len(config["rules"]) == 1
     rule = config["rules"][0]
     assert set(rule) == {"id", "allowlists"} and rule["id"] == "generic-api-key"
-    assert len(rule["allowlists"]) == 1
+    assert len(rule["allowlists"]) == 2
     exception = rule["allowlists"][0]
     assert set(exception) == {"description", "condition", "regexTarget", "paths", "regexes"}
     assert exception["condition"] == "AND" and exception["regexTarget"] == "secret"
@@ -199,6 +199,10 @@ def test_public_metadata_exception_is_exact_value_and_path_for_one_rule_only():
     assert re.fullmatch(exception["regexes"][0], scanner.PUBLIC_GGUF_METADATA_DIGEST)
     assert not re.fullmatch(exception["regexes"][0], scanner.PUBLIC_GGUF_METADATA_DIGEST + "0")
     assert not re.fullmatch(exception["regexes"][0], "0" + scanner.PUBLIC_GGUF_METADATA_DIGEST)
+    stark = rule["allowlists"][1]
+    assert stark["condition"] == "AND" and stark["regexTarget"] == "secret"
+    assert stark["paths"] == [r"^engines/STARK_VALIDATION\.json$"]
+    assert stark["regexes"] == [r"^(?:06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523|9cf04fffe3d8c3b85e439fb35c7acad0761ab51c422a8c4256d9f887c3a0be7d)$"]
 
 
 @pytest.fixture(scope="module")
@@ -236,6 +240,35 @@ def test_actual_pinned_scanner_preserves_detection_at_excepted_paths(actual_scan
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if case == "reviewed":
         scanner.run_scanner(binary, mode, tmp_path, config, ignore)
+    else:
+        with pytest.raises(scanner.ScanFailure, match="secret_scan_detected_credentials"):
+            scanner.run_scanner(binary, mode, tmp_path, config, ignore)
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize("case", ["reviewed", "different_value", "same_value_other_path", "extra_value_same_file"])
+@pytest.mark.parametrize("mode", ["dir", "git"])
+@pytest.mark.parametrize("metadata_index", [0, 1])
+def test_actual_pinned_scanner_preserves_detection_at_stark_tokenizer_paths(actual_scanner, tmp_path, case, mode, metadata_index, capsys):
+    binary, config, ignore = actual_scanner
+    path = scanner.PUBLIC_STARK_MODEL_FILES_PATH
+    value = scanner.PUBLIC_STARK_MODEL_FILES_SHA256[metadata_index]
+    synthetic = hashlib.sha256(b"stark non-credential scanner negative fixture").hexdigest()
+    if case == "different_value": value = synthetic
+    if case == "same_value_other_path": path = "unreviewed/STARK_VALIDATION.json"
+    target = tmp_path / path
+    target.parent.mkdir(parents=True)
+    key = ("tokenizer.json", "tokenizer_config.json")[metadata_index]
+    content = '"' + key + '": "' + value + '"\n'
+    if case == "extra_value_same_file": content += 'API_KEY = "' + synthetic + '"\n'
+    target.write_text(content)
+    if mode == "git":
+        for arguments in (("init", "--quiet"), ("add", "."),
+                          ("-c", "user.name=Scanner test", "-c", "user.email=scanner@example.invalid",
+                           "commit", "--quiet", "-m", "test: synthetic scanner fixture")):
+            subprocess.run(["git", "-C", str(tmp_path), *arguments], check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if case == "reviewed": scanner.run_scanner(binary, mode, tmp_path, config, ignore)
     else:
         with pytest.raises(scanner.ScanFailure, match="secret_scan_detected_credentials"):
             scanner.run_scanner(binary, mode, tmp_path, config, ignore)

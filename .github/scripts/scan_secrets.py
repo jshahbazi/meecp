@@ -63,10 +63,19 @@ PUBLIC_GGUF_METADATA_PATHS = (
     "templates/builtin-recipes/text-generation-v1-0-21/model-provenance.json",
     "templates/builtin-recipes/text-generation-v1-0-22/model-provenance.json",
 )
+# Public SHA-256 file identities, independently recomputed from the accepted
+# BF16 model's tokenizer.json and tokenizer_config.json. The native acceptance
+# configurations bind these same files. Restrict this exception to those two
+# exact values at the reviewed public acceptance-record path.
+PUBLIC_STARK_MODEL_FILES_PATH = "engines/STARK_VALIDATION.json"
+PUBLIC_STARK_MODEL_FILES_SHA256 = (
+    "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523",
+    "9cf04fffe3d8c3b85e439fb35c7acad0761ab51c422a8c4256d9f887c3a0be7d",
+)
 
 
 def trusted_config() -> str:
-    """Extend built-in rules with one reviewed, content-and-path-bound finding.
+    """Extend built-in rules with reviewed, content-and-path-bound findings.
 
     Pinned upstream schema and inheritance semantics:
     https://github.com/gitleaks/gitleaks/blob/v8.30.1/README.md#configuration
@@ -82,7 +91,12 @@ def trusted_config() -> str:
             'description = "Reviewed public pinned GGUF metadata SHA-256 at exact source paths"\n'
             'condition = "AND"\nregexTarget = "secret"\n'
             "paths = ['''^(?:" + paths + ")$''']\n"
-            "regexes = ['''^" + PUBLIC_GGUF_METADATA_DIGEST + "$''']\n")
+            "regexes = ['''^" + PUBLIC_GGUF_METADATA_DIGEST + "$''']\n"
+            '[[rules.allowlists]]\n'
+            'description = "Reviewed public STARK BF16 tokenizer metadata SHA-256 at exact source path"\n'
+            'condition = "AND"\nregexTarget = "secret"\n'
+            "paths = ['''^" + re.escape(PUBLIC_STARK_MODEL_FILES_PATH) + "$''']\n"
+            "regexes = ['''^(?:" + "|".join(PUBLIC_STARK_MODEL_FILES_SHA256) + ")$''']\n")
 
 
 class ScanFailure(Exception):

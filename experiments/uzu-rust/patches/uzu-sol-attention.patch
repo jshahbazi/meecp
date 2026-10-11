@@ -1,0 +1,486 @@
+--- a/crates/uzu-engine/Cargo.toml
++++ b/crates/uzu-engine/Cargo.toml
+@@ -22,6 +22,9 @@
+ # Experimental exact-scoring-only pruning. Ordinary generation never enables
+ # the per-state flag, even when this feature is built into the engine.
+ scoring-last-layer-pruning = []
++
++# Experimental packed-layout KV-only work in eligible cache-only final layers.
++sol-attention-kv-only = ["scoring-last-layer-pruning"]
+ 
+ cpu = [] # TODO: move libm here
+ 
+--- a/crates/uzu-engine/src/encodable_block/mixer/attention/mod.rs
++++ b/crates/uzu-engine/src/encodable_block/mixer/attention/mod.rs
+@@ -1,5 +1,8 @@
+ use derive_more::Debug;
+ use thiserror::Error;
++
++#[cfg(feature = "sol-attention-kv-only")]
++use crate::backends::common::kernel::AttentionPrepareKVOnlyKernel;
+ 
+ use crate::{
+     backends::common::{
+@@ -42,6 +45,8 @@
+     projection_dim: u32,
+     projection: LinearProjection<B>,
+     prepare: <B::Kernels as Kernels>::AttentionPrepareKernel,
++    #[cfg(feature = "sol-attention-kv-only")]
++    prepare_kv_only: Option<<B::Kernels as Kernels>::AttentionPrepareKVOnlyKernel>,
+     sinks: Option<B::GlobalBuffer>,
+     kernel: <B::Kernels as Kernels>::AttentionKernel,
+     gate_kernel: Option<<B::Kernels as Kernels>::SigmoidGateKernel>,
+@@ -141,6 +146,19 @@
+         let ring_capacity = sliding_window_size;
+         let is_kv_cache_ring = ring_capacity.is_some();
+ 
++        #[cfg(feature = "sol-attention-kv-only")]
++        let prepare_kv_only = (!is_kv_sharing && !is_kv_cache_ring)
++            .then(|| {
++                <B::Kernels as Kernels>::AttentionPrepareKVOnlyKernel::new(
++                    context,
++                    data_type,
++                    DataType::F32,
++                    rope_config.is_some(),
++                )
++            })
++            .transpose()
++            .map_err(AttentionNewError::Backend)?;
++
+         let kernel = <B::Kernels as Kernels>::AttentionKernel::new(
+             context,
+             AttentionKernelConfig {
+@@ -186,6 +204,8 @@
+                     norm: qkv_norm,
+                 },
+                 prepare,
++                #[cfg(feature = "sol-attention-kv-only")]
++                prepare_kv_only,
+                 sinks,
+                 kernel,
+                 gate_kernel,
+--- a/crates/uzu-engine/src/encodable_block/mixer/attention/mode.rs
++++ b/crates/uzu-engine/src/encodable_block/mixer/attention/mode.rs
+@@ -14,6 +14,9 @@
+     utils::maybe_mut::MaybeMut,
+ };
+ 
++#[cfg(feature = "sol-attention-kv-only")]
++use crate::backends::common::kernel::AttentionPrepareKVOnlyKernel;
++
+ pub(super) struct LinearProjection<B: Backend> {
+     pub(super) lin: Box<dyn Linear<B>>,
+     pub(super) norm: Option<QKVNorm<B>>,
+@@ -40,11 +43,9 @@
+         self.num_kv_heads.is_some() && self.ring_capacity.is_none()
+     }
+ 
+-    /// Preserve the ordinary full-batch QKVG projection, normalization, RoPE,
+-    /// and KV writes, including their dispatch/reduction geometry. Queries are
+-    /// prepared too: removing those lanes from a fused kernel is a separate
+-    /// numerical experiment. Attention, gating and output projection are dead
+-    /// when the last layer has no requested output rows.
++    /// Preserve full-batch projection and all KV arithmetic/storage. The optional
++    /// KV-only candidate omits dead query normalization and preparation while
++    /// retaining the original packed offsets and prepare dispatch coordinates.
+     #[cfg(feature = "scoring-last-layer-pruning")]
+     pub(crate) fn encode_scoring_cache_only(
+         &self,
+@@ -57,8 +58,34 @@
+         assert!(self.supports_scoring_cache_only(), "unsupported scoring cache-only attention");
+         assert!(batch_dim.is_flat(), "scoring cache-only requires flat topology");
+         assert_eq!(precalculated_rope.is_some(), self.max_rope_length.is_some(), "precalculated rope mismatch");
++        #[cfg(feature = "sol-attention-kv-only")]
++        let qkvg = {
++            let mut projected = self.projection.lin.encode(hidden, batch_dim.size(), command_buffer)?;
++            if let Some(norm) = &self.projection.norm {
++                norm.encode_projected_key_value(&mut projected, batch_dim.size(), command_buffer)?;
++            }
++            projected
++        };
++        #[cfg(not(feature = "sol-attention-kv-only"))]
+         let qkvg = self.projection.project(hidden, batch_dim.size(), command_buffer)?;
+         let prefix_len = state.view().prefix_len();
++        #[cfg(feature = "sol-attention-kv-only")]
++        self.prepare_kv_only.as_ref().expect("KV-only prepare requires owned full attention").encode(
++            &qkvg,
++            state.keys.as_mut(),
++            state.values.as_mut(),
++            precalculated_rope.map(|rope| &rope.cosines),
++            precalculated_rope.map(|rope| &rope.sines),
++            self.num_q_heads,
++            self.num_kv_heads.expect("KV-only prepare requires KV heads"),
++            self.head_dim,
++            precalculated_rope.map(|rope| rope.dim),
++            prefix_len,
++            self.projection_dim,
++            batch_dim.size(),
++            command_buffer,
++        );
++        #[cfg(not(feature = "sol-attention-kv-only"))]
+         self.prepare_kv_and_queries(
+             &qkvg,
+             state.keys.as_mut(),
+--- a/crates/uzu-engine/src/encodable_block/mixer/attention/qkv_norm.rs
++++ b/crates/uzu-engine/src/encodable_block/mixer/attention/qkv_norm.rs
+@@ -126,7 +126,7 @@
+         batch_dim: u32,
+         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+     ) -> Result<(), B::Error> {
+-        self.encode_packed(qkvg, batch_dim, self.num_q_heads, self.projection_row_stride, command_buffer)
++        self.encode_packed(qkvg, batch_dim, self.num_q_heads, self.projection_row_stride, false, command_buffer)
+     }
+ 
+     pub fn encode_key_value(
+@@ -135,7 +135,18 @@
+         batch_dim: u32,
+         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+     ) -> Result<(), B::Error> {
+-        self.encode_packed(key_value, batch_dim, 0, 2 * self.num_kv_heads * self.head_dim, command_buffer)
++        self.encode_packed(key_value, batch_dim, 0, 2 * self.num_kv_heads * self.head_dim, false, command_buffer)
++    }
++
++    /// Normalize K/V in the original full QKVG layout, retaining query offsets.
++    #[cfg(feature = "sol-attention-kv-only")]
++    pub(super) fn encode_projected_key_value(
++        &self,
++        qkvg: impl BufferMut<Backend = B>,
++        batch_dim: u32,
++        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
++    ) -> Result<(), B::Error> {
++        self.encode_packed(qkvg, batch_dim, self.num_q_heads, self.projection_row_stride, true, command_buffer)
+     }
+ 
+     fn encode_packed(
+@@ -144,6 +155,7 @@
+         batch_dim: u32,
+         q_heads: u32,
+         input_row_stride: u32,
++        skip_queries: bool,
+         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+     ) -> Result<(), B::Error> {
+         let packed_row_width = (q_heads + 2 * self.num_kv_heads) * self.head_dim;
+@@ -155,7 +167,12 @@
+         command_buffer.push_debug_group("qkv norm");
+ 
+         let kv = self.num_kv_heads;
+-        let heads = [(&self.query, 0, q_heads), (&self.key, q_heads, kv), (&self.value, q_heads + kv, kv)];
++        let query = if skip_queries {
++            &None
++        } else {
++            &self.query
++        };
++        let heads = [(query, 0, q_heads), (&self.key, q_heads, kv), (&self.value, q_heads + kv, kv)];
+         for (head, head_offset, head_count) in heads {
+             let Some(head) = head else {
+                 continue;
+--- a/crates/uzu-engine/src/backends/cpu/kernel/attention/attention_prepare.rs
++++ b/crates/uzu-engine/src/backends/cpu/kernel/attention/attention_prepare.rs
+@@ -29,6 +29,74 @@
+     let sin_val = unsafe { (*sines.add(batch_idx * rope_dim + head_dim_idx)).to_f32().unwrap() };
+ 
+     ElementT::from(input * cos_val + signed_paired * sin_val).unwrap()
++}
++
++/// KV-only preparation of full packed QKVG, never tightly packed appended KV.
++#[kernel(AttentionPrepareKVOnly)]
++#[variants(ElementT, bf16)]
++#[variants(RopeT, f32)]
++pub fn attention_prepare_kv_only<ElementT: ArrayElement + Float, RopeT: ArrayElement + Float>(
++    qkvg: *const ElementT,
++    keys: *mut ElementT,
++    values: *mut ElementT,
++    #[optional(has_rope)] cosines: Option<*const RopeT>,
++    #[optional(has_rope)] sines: Option<*const RopeT>,
++    num_q_heads: u32,
++    num_kv_heads: u32,
++    head_dim: u32,
++    #[optional(has_rope)] rope_dim: Option<u32>,
++    kv_token_offset: u32,
++    input_row_stride: u32,
++    batch_dim: u32,
++    #[specialize] has_rope: bool,
++) {
++    assert!(num_kv_heads > 0, "KV-only prepare requires nonzero KV heads");
++    assert!(head_dim > 0, "KV-only prepare requires nonzero head_dim");
++    assert_eq!(cosines.is_some(), has_rope, "KV-only prepare cosines presence mismatch");
++    assert_eq!(sines.is_some(), has_rope, "KV-only prepare sines presence mismatch");
++    assert_eq!(rope_dim.is_some(), has_rope, "KV-only prepare rope_dim presence mismatch");
++    let (cosines, sines, rope_dim) = if let (Some(cosines), Some(sines), Some(rope_dim)) = (cosines, sines, rope_dim) {
++        assert!(rope_dim > 0 && rope_dim <= head_dim && rope_dim.is_multiple_of(2), "invalid KV-only RoPE dimension");
++        (cosines, sines, rope_dim as usize)
++    } else {
++        (std::ptr::null(), std::ptr::null(), 0)
++    };
++    let num_q_heads = num_q_heads as usize;
++    let num_kv_heads = num_kv_heads as usize;
++    let head_dim = head_dim as usize;
++    let batch_dim = batch_dim as usize;
++    let input_row_stride = input_row_stride as usize;
++    let kv_token_offset = kv_token_offset as usize;
++    let total_heads = num_q_heads + 2 * num_kv_heads;
++    assert!(input_row_stride >= total_heads * head_dim, "KV-only prepare row stride is too small");
++
++    for batch_idx in 0..batch_dim {
++        for head_idx in num_q_heads..total_heads {
++            let qkvg_head = unsafe { qkvg.add(batch_idx * input_row_stride + head_idx * head_dim) };
++            let is_key = head_idx < num_q_heads + num_kv_heads;
++            for head_dim_idx in 0..head_dim {
++                let mut element = unsafe { *qkvg_head.add(head_dim_idx) };
++                if has_rope && head_dim_idx < rope_dim && is_key {
++                    element = apply_rope(qkvg_head, cosines, sines, batch_idx, head_dim_idx, rope_dim);
++                }
++                if is_key {
++                    let key_offset = (kv_token_offset + batch_idx) * num_kv_heads * head_dim
++                        + (head_idx - num_q_heads) * head_dim
++                        + head_dim_idx;
++                    unsafe {
++                        *keys.add(key_offset) = element;
++                    }
++                } else {
++                    let value_offset = (kv_token_offset + batch_idx) * num_kv_heads * head_dim
++                        + (head_idx - num_q_heads - num_kv_heads) * head_dim
++                        + head_dim_idx;
++                    unsafe {
++                        *values.add(value_offset) = element;
++                    }
++                }
++            }
++        }
++    }
+ }
+ 
+ #[kernel(AttentionPrepare)]
+--- a/crates/uzu-engine/src/backends/metal/kernel/attention/attention_prepare.metal
++++ b/crates/uzu-engine/src/backends/metal/kernel/attention/attention_prepare.metal
+@@ -21,6 +21,52 @@
+   const float sin_val = float(sines[batch_idx * rope_dim + head_dim_idx]);
+ 
+   return static_cast<ElementT>(input * cos_val + signed_paired * sin_val);
++}
++
++// Cache-only final-layer preparation keeps the original QKVG row stride and
++// head coordinates. Query lanes return before loading, RoPE or storing. K/V
++// expressions and the original exact dispatch extents are retained.
++template <typename ElementT, typename RopeT>
++VARIANTS(ElementT, bfloat)
++VARIANTS(RopeT, float)
++PUBLIC KERNEL(AttentionPrepareKVOnly) (
++  const device ElementT* qkvg,
++  device ElementT* keys,
++  device ElementT* values,
++  const device RopeT* cosines OPTIONAL(has_rope),
++  const device RopeT* sines OPTIONAL(has_rope),
++  const constant uint32_t& num_q_heads,
++  const constant uint32_t& num_kv_heads,
++  const constant uint32_t& head_dim,
++  const constant uint32_t& rope_dim OPTIONAL(has_rope),
++  const constant uint32_t& kv_token_offset,
++  const constant uint32_t& input_row_stride,
++  const constant uint32_t& batch_dim,
++  const bool has_rope SPECIALIZE,
++  const uint32_t head_dim_idx AXIS(head_dim, 128),
++  const uint32_t head_idx AXIS(num_q_heads + num_kv_heads * 2, 1),
++  const uint32_t batch_idx AXIS(batch_dim, 1)
++) {
++  if (head_idx < num_q_heads) {
++    return;
++  }
++  const uint32_t qkvg_head_idx = batch_idx * input_row_stride + head_idx * head_dim;
++  const device ElementT* qkvg_head = qkvg + qkvg_head_idx;
++  const bool is_key = head_idx < num_q_heads + num_kv_heads;
++
++  ElementT element = qkvg_head[head_dim_idx];
++  if (has_rope && head_dim_idx < rope_dim && is_key) {
++    element = apply_rope(qkvg_head, cosines, sines, batch_idx, head_dim_idx, rope_dim);
++  }
++  if (is_key) {
++    const uint32_t k_idx =
++        (kv_token_offset + batch_idx) * num_kv_heads * head_dim + (head_idx - num_q_heads) * head_dim + head_dim_idx;
++    keys[k_idx] = element;
++  } else {
++    const uint32_t v_idx = (kv_token_offset + batch_idx) * num_kv_heads * head_dim +
++                           (head_idx - num_q_heads - num_kv_heads) * head_dim + head_dim_idx;
++    values[v_idx] = element;
++  }
+ }
+ 
+ template <typename ElementT, typename RopeT>
+--- a/crates/uzu-engine/unit/backends/common/kernel/attention/attention_prepare_test.rs
++++ b/crates/uzu-engine/unit/backends/common/kernel/attention/attention_prepare_test.rs
+@@ -5,7 +5,7 @@
+     backends::{
+         common::{
+             Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
+-            kernel::AttentionPrepareKernel,
++            kernel::{AttentionPrepareKVOnlyKernel, AttentionPrepareKernel},
+         },
+         cpu::Cpu,
+     },
+@@ -131,3 +131,101 @@
+         assert_eq!(run_query_only::<B>(), expected, "query mismatch on {}", std::any::type_name::<B>());
+     });
+ }
++
++fn run_kv_only_exact<B: Backend>() {
++    let context = B::Context::new().expect("failed to create context");
++    // Include dispatch-family and preserved scorer-batch boundaries. Preparation
++    // never changes the suffix size presented to subsequent attention consumers.
++    for (q_heads, kv_heads, head_dim, batch_dim) in
++        [(2, 1, 4, 2), (3, 2, 128, 9), (4, 1, 128, 65), (4, 1, 128, 1023), (4, 1, 128, 1024), (4, 1, 128, 1025)]
++    {
++        for rope_dim in [None, Some(head_dim / 2), Some(head_dim)] {
++            let ordinary = <<B as Backend>::Kernels as Kernels>::AttentionPrepareKernel::new(
++                &context,
++                DataType::BF16,
++                DataType::F32,
++                true,
++                rope_dim.is_some(),
++            )
++            .expect("failed to create ordinary prepare");
++            let kv_only = <<B as Backend>::Kernels as Kernels>::AttentionPrepareKVOnlyKernel::new(
++                &context,
++                DataType::BF16,
++                DataType::F32,
++                rope_dim.is_some(),
++            )
++            .expect("failed to create KV-only prepare");
++            let prefix = 3;
++            let stride = (2 * q_heads + 2 * kv_heads) * head_dim;
++            let input = (0..batch_dim * stride)
++                .map(|i| {
++                    // Poison dead Q/gate channels to detect incorrect packed offsets.
++                    let channel = i % stride;
++                    if channel < q_heads * head_dim || channel >= (q_heads + 2 * kv_heads) * head_dim {
++                        bf16::from_bits(0x7fc1)
++                    } else {
++                        bf16::from_f32((i % 101) as f32 * 0.0625 - 3.0)
++                    }
++                })
++                .collect::<Vec<_>>();
++            let qkvg = create_buffer_with_data::<B, bf16>(&context, &input);
++            let cos = (0..batch_dim * rope_dim.unwrap_or(0)).map(|i| (i as f32 * 0.013).cos()).collect::<Vec<_>>();
++            let sin = (0..batch_dim * rope_dim.unwrap_or(0)).map(|i| (i as f32 * 0.013).sin()).collect::<Vec<_>>();
++            let cos = rope_dim.map(|_| create_buffer_with_data::<B, f32>(&context, &cos));
++            let sin = rope_dim.map(|_| create_buffer_with_data::<B, f32>(&context, &sin));
++            let initial = vec![bf16::from_bits(0x7fc2); ((prefix + batch_dim) * kv_heads * head_dim) as usize];
++            let mut keys = create_buffer_with_data::<B, bf16>(&context, &initial);
++            let mut values = create_buffer_with_data::<B, bf16>(&context, &initial);
++            let mut actual_keys = create_buffer_with_data::<B, bf16>(&context, &initial);
++            let mut actual_values = create_buffer_with_data::<B, bf16>(&context, &initial);
++            let mut queries = create_buffer::<B, bf16>(&context, (q_heads * batch_dim * head_dim) as usize);
++            let mut command = context.create_command_buffer(None, None).expect("failed to create command buffer");
++            ordinary.encode(
++                &qkvg,
++                &mut queries,
++                Some(&mut keys),
++                Some(&mut values),
++                cos.as_ref(),
++                sin.as_ref(),
++                q_heads,
++                Some(kv_heads),
++                head_dim,
++                rope_dim,
++                Some(prefix),
++                stride,
++                batch_dim,
++                &mut command,
++            );
++            kv_only.encode(
++                &qkvg,
++                &mut actual_keys,
++                &mut actual_values,
++                cos.as_ref(),
++                sin.as_ref(),
++                q_heads,
++                kv_heads,
++                head_dim,
++                rope_dim,
++                prefix,
++                stride,
++                batch_dim,
++                &mut command,
++            );
++            command.end_encoding().submit().wait_until_completed().expect("failed to execute prepare comparison");
++            let bits = |buffer: &B::GlobalBuffer| {
++                buffer_to_vec::<B, bf16>(buffer).into_iter().map(bf16::to_bits).collect::<Vec<_>>()
++            };
++            assert_eq!(bits(&keys), bits(&actual_keys), "KV-only key bit mismatch");
++            assert_eq!(bits(&values), bits(&actual_values), "KV-only value bit mismatch");
++            let prefix_len = (prefix * kv_heads * head_dim) as usize;
++            assert!(bits(&actual_keys)[..prefix_len].iter().all(|bits| *bits == 0x7fc2), "key prefix overwritten");
++            assert!(bits(&actual_values)[..prefix_len].iter().all(|bits| *bits == 0x7fc2), "value prefix overwritten");
++        }
++    }
++}
++
++#[uzu_test]
++fn test_kv_only_prepare_preserves_packed_rope_bits_and_prefix() {
++    run_kv_only_exact::<Cpu>();
++    for_each_non_cpu_backend!(|B| run_kv_only_exact::<B>());
++}
+--- a/crates/uzu-engine/unit/encodable_block/attention/qkv_norm_test.rs
++++ b/crates/uzu-engine/unit/encodable_block/attention/qkv_norm_test.rs
+@@ -68,3 +68,62 @@
+ fn test_key_value_norm_uses_element_row_stride() {
+     for_each_backend!(|B| run_key_value_row_stride_test::<B>());
+ }
++
++#[cfg(feature = "sol-attention-kv-only")]
++fn run_projected_key_value_exact<B: Backend>() {
++    use half::bf16;
++    const Q_HEADS: u32 = 3;
++    const KV_HEADS: u32 = 2;
++    const DIM: u32 = 128;
++    const STRIDE: u32 = (2 * Q_HEADS + 2 * KV_HEADS) * DIM;
++    const BATCH: u32 = 9;
++    let context = create_context::<B>();
++    for upcast_mode in [UpcastMode::OnlyNormalization, UpcastMode::FullLayer] {
++        let config = NormalizationConfig {
++            epsilon: 1e-6,
++            scale_offset: None,
++            upcast_mode,
++            subtract_mean: false,
++            has_scale: false,
++            has_biases: false,
++        };
++        let make_head = || {
++            QKVNorm::<B>::build_head(&context, DataType::BF16, config.clone(), None, DIM)
++                .expect("failed to create norm head")
++        };
++        let norm = QKVNorm {
++            query: Some(make_head()),
++            key: Some(make_head()),
++            value: Some(make_head()),
++            num_q_heads: Q_HEADS,
++            num_kv_heads: KV_HEADS,
++            projection_row_stride: STRIDE,
++            head_dim: DIM,
++        };
++        let input = (0..BATCH * STRIDE).map(|i| bf16::from_f32((i % 127) as f32 * 0.0625 - 4.0)).collect::<Vec<_>>();
++        let mut ordinary = create_buffer_with_data::<B, bf16>(&context, &input);
++        let mut kv_only = create_buffer_with_data::<B, bf16>(&context, &input);
++        let mut command = context.create_command_buffer(None, None).expect("failed to create command buffer");
++        norm.encode(&mut ordinary, BATCH, &mut command).expect("failed to encode ordinary norm");
++        norm.encode_projected_key_value(&mut kv_only, BATCH, &mut command).expect("failed to encode projected KV norm");
++        command.end_encoding().submit().wait_until_completed().expect("failed to execute projected KV norm");
++        let ordinary = buffer_to_vec::<B, bf16>(&ordinary);
++        let kv_only = buffer_to_vec::<B, bf16>(&kv_only);
++        for i in 0..input.len() {
++            let channel = i as u32 % STRIDE;
++            let is_kv = channel >= Q_HEADS * DIM && channel < (Q_HEADS + 2 * KV_HEADS) * DIM;
++            let expected = if is_kv {
++                ordinary[i]
++            } else {
++                input[i]
++            };
++            assert_eq!(kv_only[i].to_bits(), expected.to_bits(), "projected KV norm bit mismatch");
++        }
++    }
++}
++
++#[cfg(feature = "sol-attention-kv-only")]
++#[uzu_test]
++fn test_projected_key_value_norm_retains_offsets_and_dead_channels() {
++    for_each_backend!(|B| run_projected_key_value_exact::<B>());
++}

@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "backend": "CPU and Metal",
+  "features": "cpu,metal,deferred-state-init,scoring-last-layer-pruning,direct-delta-conv,sol-rope-cache,compact-delta-conv,sol-attention-kv-only",
+  "test_only_environment": {
+    "RUSTC_BOOTSTRAP": "uzu_engine"
+  },
+  "tests_passed": 12,
+  "results": [
+    {
+      "filter": "rope_cache_",
+      "exit_code": 0,
+      "passed": 2,
+      "output_sha256": "3ea284a19b227e9cbe919db26a36d8374b3ec430c78dec91efda9d792c05bdf3"
+    },
+    {
+      "filter": "compact_delta_prefill_preserves_",
+      "exit_code": 0,
+      "passed": 2,
+      "output_sha256": "1230fd8e437ee3f1f69d36994443ab448ed431bea48c3ab81612b9c5bfd2285e"
+    },
+    {
+      "filter": "compact_projection_preserves_prefill_bits",
+      "exit_code": 0,
+      "passed": 1,
+      "output_sha256": "86b04cdc6014a66cc21c28a59d3debf204d20ad69fa6c242b66f4e9d5b788d9e"
+    },
+    {
+      "filter": "direct_delta_convolution_preserves_packed_bits",
+      "exit_code": 0,
+      "passed": 1,
+      "output_sha256": "4564c0b6281ccc195b10178830f4ee5597b704726121b486ab3cad8dbe9a404d"
+    },
+    {
+      "filter": "test_kv_only_prepare_preserves_packed_rope_bits_and_prefix",
+      "exit_code": 0,
+      "passed": 1,
+      "output_sha256": "5154face2702849df1e37875abcbab5c1a07d229fb9508d0361dad008deecb7f"
+    },
+    {
+      "filter": "test_projected_key_value_norm_retains_offsets_and_dead_channels",
+      "exit_code": 0,
+      "passed": 1,
+      "output_sha256": "3026754f3b13a4675686bf882bb527c64fac506a3306de753a0762414cc5a37f"
+    },
+    {
+      "filter": "submission_drain_",
+      "exit_code": 0,
+      "passed": 2,
+      "output_sha256": "659311ae972d77f19a13fa87795320e3daa2ebc6418d3de2c0be5f6b81012abd"
+    },
+    {
+      "filter": "cache_only_requires_an_unobserved_actual_final_layer",
+      "exit_code": 0,
+      "passed": 1,
+      "output_sha256": "49df838d616740a39ae19f40941b89ee5ffdbb42140b0797939e513567509cb6"
+    },
+    {
+      "filter": "direct_scoring_topology_matches_legacy_flat_trie",
+      "exit_code": 0,
+      "passed": 1,
+      "output_sha256": "7822408187375185e120abb12d1d4842c364f346a7fd9a440a2f9e69e7c0e0ec"
+    }
+  ],
+  "candidate_receipt_sha256": "bea9821bd91baff7482ea041684b70ba5ca792bc8da7e377e85a075233c86f28",
+  "test_recipe_sha256": "bab97ac3da8de96c2424ea29b8cbdf0a4dd65d67c1be8c70cc802554fdbc1f5b",
+  "scope": "Focused upstream library tests; production worker/probe builds use ordinary stable Rust."
+}

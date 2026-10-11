@@ -1,0 +1,437 @@
+--- a/crates/uzu-engine/Cargo.toml
++++ b/crates/uzu-engine/Cargo.toml
+@@ -42,6 +42,9 @@
+ 
+ # Experimental exact-arithmetic removal of padded DeltaNet convolution tokens.
+ direct-delta-conv = []
++
++# Experimental bounded immutable CPU RoPE reuse; GPU arithmetic is unchanged.
++sol-rope-cache = []
+ 
+ [build-dependencies]
+ anyhow.workspace = true
+--- a/crates/uzu-engine/src/encodable_block/mixer/attention/rope.rs
++++ b/crates/uzu-engine/src/encodable_block/mixer/attention/rope.rs
+@@ -7,6 +7,101 @@
+     pub cosines: B::ConstantBuffer,
+     pub sines: B::ConstantBuffer,
+     pub dim: u32,
++}
++
++/// Model-owned CPU constants only: no tokens, sequence identity or GPU storage.
++/// Each instance is bound to a clone of one complete immutable RoPE config.
++#[cfg(feature = "sol-rope-cache")]
++pub struct RoPETableCache {
++    config: AnyRoPEConfig,
++    max_cached_positions: usize,
++    tables: parking_lot::Mutex<(Vec<f32>, Vec<f32>)>,
++}
++
++#[cfg(feature = "sol-rope-cache")]
++impl RoPETableCache {
++    pub fn new(config: &AnyRoPEConfig) -> Self {
++        let head_dim = *config.head_dim() as usize;
++        assert!(head_dim > 0 && head_dim.is_multiple_of(2), "RoPE head_dim must be positive and even");
++        // At most 8 MiB of retained f32 values per distinct configuration.
++        // Dense rows represent mathematical absolute positions, not requests.
++        let max_cached_positions = (*config.max_sequence_length() as usize).min(8192).min(1_048_576 / head_dim);
++        Self {
++            config: config.clone(),
++            max_cached_positions,
++            tables: parking_lot::Mutex::new((Vec::new(), Vec::new())),
++        }
++    }
++
++    pub fn precalculate<B: Backend>(
++        &self,
++        token_positions: &[u32],
++        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
++    ) -> Result<PrecalculatedRoPE<B>, B::Error> {
++        self.with_tables(token_positions, |cosines, sines| {
++            Ok(PrecalculatedRoPE {
++                cosines: command_buffer.allocate_constant_from_slice(cosines)?,
++                sines: command_buffer.allocate_constant_from_slice(sines)?,
++                dim: *self.config.head_dim(),
++            })
++        })
++    }
++
++    fn with_tables<R>(
++        &self,
++        token_positions: &[u32],
++        use_tables: impl FnOnce(&[f32], &[f32]) -> R,
++    ) -> R {
++        let head_dim = *self.config.head_dim() as usize;
++        let required_positions = token_positions
++            .iter()
++            .map(|position| *position as usize)
++            .filter(|position| *position < self.max_cached_positions)
++            .max()
++            .map_or(0, |position| position + 1);
++        let mut tables = self.tables.lock();
++        let cached_positions = tables.0.len() / head_dim;
++        if required_positions > cached_positions {
++            let positions = (cached_positions as u32..required_positions as u32).collect::<Vec<_>>();
++            let (cosines, sines) = precalculate_cpu_tables(&self.config, &positions);
++            // Rebuild into exact-length vectors so the retained allocation stays
++            // within the configured cap instead of Vec's geometric spare capacity.
++            let mut new_cosines = Vec::with_capacity(required_positions * head_dim);
++            let mut new_sines = Vec::with_capacity(required_positions * head_dim);
++            new_cosines.extend_from_slice(&tables.0);
++            new_sines.extend_from_slice(&tables.1);
++            new_cosines.extend_from_slice(&cosines);
++            new_sines.extend_from_slice(&sines);
++            *tables = (new_cosines, new_sines);
++        }
++
++        // Flat scoring chunks can upload the retained rows without temporary
++        // gather vectors. Tree/reordered/out-of-cap positions keep caller order.
++        if let (Some(first), Some(last)) = (token_positions.first(), token_positions.last()) {
++            let contiguous = token_positions.windows(2).all(|pair| pair[0].checked_add(1) == Some(pair[1]));
++            if contiguous && (*last as usize) < required_positions {
++                let start = *first as usize * head_dim;
++                let end = (*last as usize + 1) * head_dim;
++                return use_tables(&tables.0[start..end], &tables.1[start..end]);
++            }
++        }
++
++        let mut cosines = Vec::with_capacity(token_positions.len() * head_dim);
++        let mut sines = Vec::with_capacity(token_positions.len() * head_dim);
++        for position in token_positions {
++            let position_index = *position as usize;
++            if position_index < required_positions {
++                let start = position_index * head_dim;
++                cosines.extend_from_slice(&tables.0[start..start + head_dim]);
++                sines.extend_from_slice(&tables.1[start..start + head_dim]);
++            } else {
++                let (row_cosines, row_sines) = precalculate_cpu_tables(&self.config, &[*position]);
++                cosines.extend_from_slice(&row_cosines);
++                sines.extend_from_slice(&row_sines);
++            }
++        }
++        use_tables(&cosines, &sines)
++    }
+ }
+ 
+ impl<B: Backend> PrecalculatedRoPE<B> {
+@@ -15,91 +110,7 @@
+         token_positions: &[u32],
+         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+     ) -> Result<Self, B::Error> {
+-        let head_dim = *rope_config.head_dim();
+-        assert!(head_dim > 0 && head_dim.is_multiple_of(2), "RoPE head_dim must be positive and even");
+-        let half_dim = head_dim / 2;
+-        let attention_scaling_factor = match rope_config {
+-            AnyRoPEConfig::YARNRoPEConfig(config) => 0.1 * config.scaling_factor.ln() + 1.0,
+-            AnyRoPEConfig::LongRoPEConfig(config) if config.scaling_factor > 1.0 => {
+-                (1.0 + config.scaling_factor.ln() / (config.original_context_length as f32).ln()).sqrt()
+-            },
+-            _ => 1.0,
+-        };
+-
+-        let element_count = token_positions.len() * head_dim as usize;
+-        let half_offset = half_dim as usize;
+-        let mut sines = vec![0.0; element_count];
+-        let mut cosines = vec![0.0; element_count];
+-        for pair_index in 0..half_dim {
+-            let channel_index = pair_index * 2;
+-            let inverse_frequency = 1.0 / rope_config.base().powf(channel_index as f32 / head_dim as f32);
+-            let inverse_frequency = match rope_config {
+-                AnyRoPEConfig::UnscaledRoPEConfig(_) => inverse_frequency,
+-                AnyRoPEConfig::LinearScalingRoPEConfig(config) => inverse_frequency / config.scaling_factor,
+-                AnyRoPEConfig::LlamaRoPEConfig(config) => {
+-                    let low_frequency_wavelength = config.original_context_length as f32 / config.low_frequency_factor;
+-                    let high_frequency_wavelength =
+-                        config.original_context_length as f32 / config.high_frequency_factor;
+-                    let wavelength = 2.0 * std::f32::consts::PI / inverse_frequency;
+-                    let scaled_frequency = inverse_frequency / config.scaling_factor;
+-
+-                    if wavelength < high_frequency_wavelength {
+-                        inverse_frequency
+-                    } else if wavelength > low_frequency_wavelength {
+-                        scaled_frequency
+-                    } else {
+-                        let smoothing_factor =
+-                            config.original_context_length as f32 / wavelength - config.low_frequency_factor;
+-                        let smoothing_factor =
+-                            smoothing_factor / (config.high_frequency_factor - config.low_frequency_factor);
+-                        smoothing_factor * inverse_frequency + (1.0 - smoothing_factor) * scaled_frequency
+-                    }
+-                },
+-                AnyRoPEConfig::YARNRoPEConfig(config) => {
+-                    let dim = config.head_dim as f64;
+-                    let base = config.base as f64;
+-                    let original_context_length = config.original_context_length as f64;
+-                    let beta_fast = config.beta_fast as f64;
+-                    let beta_slow = config.beta_slow as f64;
+-                    let mut low = dim * (original_context_length / (beta_fast * 2.0 * std::f64::consts::PI)).ln()
+-                        / (2.0 * base.ln());
+-                    let mut high = dim * (original_context_length / (beta_slow * 2.0 * std::f64::consts::PI)).ln()
+-                        / (2.0 * base.ln());
+-                    if config.truncate {
+-                        low = low.floor();
+-                        high = high.ceil();
+-                    }
+-                    let low = low.max(0.0) as f32;
+-                    let mut high = high.min((config.head_dim - 1) as f64) as f32;
+-                    if low == high {
+-                        high += 0.001;
+-                    }
+-                    let ramp = ((pair_index as f32 - low) / (high - low)).clamp(0.0, 1.0);
+-                    let smoothing_factor = 1.0 - ramp;
+-                    let scaled_frequency = inverse_frequency / config.scaling_factor;
+-                    scaled_frequency * (1.0 - smoothing_factor) + inverse_frequency * smoothing_factor
+-                },
+-                AnyRoPEConfig::LongRoPEConfig(config) => {
+-                    let factors = if config.max_sequence_length > config.original_context_length {
+-                        &config.long_factor
+-                    } else {
+-                        &config.short_factor
+-                    };
+-                    inverse_frequency / factors[pair_index as usize]
+-                },
+-            };
+-
+-            for (token_index, token_position) in token_positions.iter().enumerate() {
+-                let embedding = *token_position as f32 * inverse_frequency;
+-                let sine = embedding.sin() * attention_scaling_factor;
+-                let cosine = embedding.cos() * attention_scaling_factor;
+-                let pair_offset = token_index * head_dim as usize + pair_index as usize;
+-                sines[pair_offset] = sine;
+-                sines[pair_offset + half_offset] = sine;
+-                cosines[pair_offset] = cosine;
+-                cosines[pair_offset + half_offset] = cosine;
+-            }
+-        }
++        let (cosines, sines) = precalculate_cpu_tables(rope_config, token_positions);
+ 
+         Ok(Self {
+             cosines: command_buffer.allocate_constant_from_slice(&cosines)?,
+@@ -108,3 +119,185 @@
+         })
+     }
+ }
++
++// Keep every formula, cast and operation order identical to the uncached path.
++fn precalculate_cpu_tables(
++    rope_config: &AnyRoPEConfig,
++    token_positions: &[u32],
++) -> (Vec<f32>, Vec<f32>) {
++    let head_dim = *rope_config.head_dim();
++    assert!(head_dim > 0 && head_dim.is_multiple_of(2), "RoPE head_dim must be positive and even");
++    let half_dim = head_dim / 2;
++    let attention_scaling_factor = match rope_config {
++        AnyRoPEConfig::YARNRoPEConfig(config) => 0.1 * config.scaling_factor.ln() + 1.0,
++        AnyRoPEConfig::LongRoPEConfig(config) if config.scaling_factor > 1.0 => {
++            (1.0 + config.scaling_factor.ln() / (config.original_context_length as f32).ln()).sqrt()
++        },
++        _ => 1.0,
++    };
++
++    let element_count = token_positions.len() * head_dim as usize;
++    let half_offset = half_dim as usize;
++    let mut sines = vec![0.0; element_count];
++    let mut cosines = vec![0.0; element_count];
++    for pair_index in 0..half_dim {
++        let channel_index = pair_index * 2;
++        let inverse_frequency = 1.0 / rope_config.base().powf(channel_index as f32 / head_dim as f32);
++        let inverse_frequency = match rope_config {
++            AnyRoPEConfig::UnscaledRoPEConfig(_) => inverse_frequency,
++            AnyRoPEConfig::LinearScalingRoPEConfig(config) => inverse_frequency / config.scaling_factor,
++            AnyRoPEConfig::LlamaRoPEConfig(config) => {
++                let low_frequency_wavelength = config.original_context_length as f32 / config.low_frequency_factor;
++                let high_frequency_wavelength = config.original_context_length as f32 / config.high_frequency_factor;
++                let wavelength = 2.0 * std::f32::consts::PI / inverse_frequency;
++                let scaled_frequency = inverse_frequency / config.scaling_factor;
++
++                if wavelength < high_frequency_wavelength {
++                    inverse_frequency
++                } else if wavelength > low_frequency_wavelength {
++                    scaled_frequency
++                } else {
++                    let smoothing_factor =
++                        config.original_context_length as f32 / wavelength - config.low_frequency_factor;
++                    let smoothing_factor =
++                        smoothing_factor / (config.high_frequency_factor - config.low_frequency_factor);
++                    smoothing_factor * inverse_frequency + (1.0 - smoothing_factor) * scaled_frequency
++                }
++            },
++            AnyRoPEConfig::YARNRoPEConfig(config) => {
++                let dim = config.head_dim as f64;
++                let base = config.base as f64;
++                let original_context_length = config.original_context_length as f64;
++                let beta_fast = config.beta_fast as f64;
++                let beta_slow = config.beta_slow as f64;
++                let mut low =
++                    dim * (original_context_length / (beta_fast * 2.0 * std::f64::consts::PI)).ln() / (2.0 * base.ln());
++                let mut high =
++                    dim * (original_context_length / (beta_slow * 2.0 * std::f64::consts::PI)).ln() / (2.0 * base.ln());
++                if config.truncate {
++                    low = low.floor();
++                    high = high.ceil();
++                }
++                let low = low.max(0.0) as f32;
++                let mut high = high.min((config.head_dim - 1) as f64) as f32;
++                if low == high {
++                    high += 0.001;
++                }
++                let ramp = ((pair_index as f32 - low) / (high - low)).clamp(0.0, 1.0);
++                let smoothing_factor = 1.0 - ramp;
++                let scaled_frequency = inverse_frequency / config.scaling_factor;
++                scaled_frequency * (1.0 - smoothing_factor) + inverse_frequency * smoothing_factor
++            },
++            AnyRoPEConfig::LongRoPEConfig(config) => {
++                let factors = if config.max_sequence_length > config.original_context_length {
++                    &config.long_factor
++                } else {
++                    &config.short_factor
++                };
++                inverse_frequency / factors[pair_index as usize]
++            },
++        };
++
++        for (token_index, token_position) in token_positions.iter().enumerate() {
++            let embedding = *token_position as f32 * inverse_frequency;
++            let sine = embedding.sin() * attention_scaling_factor;
++            let cosine = embedding.cos() * attention_scaling_factor;
++            let pair_offset = token_index * head_dim as usize + pair_index as usize;
++            sines[pair_offset] = sine;
++            sines[pair_offset + half_offset] = sine;
++            cosines[pair_offset] = cosine;
++            cosines[pair_offset + half_offset] = cosine;
++        }
++    }
++
++    (cosines, sines)
++}
++
++#[cfg(all(test, feature = "sol-rope-cache"))]
++mod tests {
++    use super::*;
++    use serde_json::json;
++    use uzu_engine_macros::uzu_test;
++
++    fn configs() -> Vec<AnyRoPEConfig> {
++        let variants = [
++            json!({"type": "UnscaledRoPEConfig"}),
++            json!({"type": "LinearScalingRoPEConfig", "scaling_factor": 4.0}),
++            json!({"type": "LlamaRoPEConfig", "scaling_factor": 8.0, "original_context_length": 2048,
++                "low_frequency_factor": 1.0, "high_frequency_factor": 4.0}),
++            json!({"type": "YARNRoPEConfig", "scaling_factor": 4.0, "original_context_length": 2048,
++                "beta_fast": 32.0, "beta_slow": 1.0, "truncate": true}),
++            json!({"type": "YARNRoPEConfig", "scaling_factor": 2.0, "original_context_length": 2048,
++                "beta_fast": 32.0, "beta_slow": 1.0, "truncate": false}),
++            json!({"type": "LongRoPEConfig", "scaling_factor": 4.0, "original_context_length": 2048,
++                "short_factor": [1.0, 1.25, 1.5, 2.0], "long_factor": [2.0, 4.0, 6.0, 8.0]}),
++            json!({"type": "LongRoPEConfig", "scaling_factor": 1.0, "original_context_length": 16384,
++                "short_factor": [1.0, 1.25, 1.5, 2.0], "long_factor": [2.0, 4.0, 6.0, 8.0]}),
++        ];
++        variants
++            .into_iter()
++            .map(|mut variant| {
++                let fields = variant.as_object_mut().unwrap();
++                fields.insert("base".into(), json!(10000.0));
++                fields.insert("max_sequence_length".into(), json!(8192));
++                fields.insert("head_dim".into(), json!(8));
++                serde_json::from_value(variant).unwrap()
++            })
++            .collect()
++    }
++
++    fn assert_bit_equal(
++        cache: &RoPETableCache,
++        positions: &[u32],
++    ) {
++        let (expected_cosines, expected_sines) = precalculate_cpu_tables(&cache.config, positions);
++        cache.with_tables(positions, |cosines, sines| {
++            assert_eq!(cosines.len(), expected_cosines.len());
++            assert_eq!(sines.len(), expected_sines.len());
++            for (actual, expected) in cosines.iter().zip(&expected_cosines).chain(sines.iter().zip(&expected_sines)) {
++                assert_eq!(actual.to_bits(), expected.to_bits());
++            }
++        });
++    }
++
++    #[uzu_test]
++    fn rope_cache_preserves_bits_for_growth_reorder_duplicates_and_fallback() {
++        for config in configs() {
++            let cache = RoPETableCache::new(&config);
++            assert_bit_equal(&cache, &[]);
++            for length in [1, 1023, 1024, 1025, 2048] {
++                assert_bit_equal(&cache, &(0..length).collect::<Vec<_>>());
++            }
++            assert_bit_equal(&cache, &(1024..2048).collect::<Vec<_>>());
++            assert_bit_equal(&cache, &[8, 0, 1024, 8, 1023, 1]);
++            assert_bit_equal(&cache, &[8191, 8192, 8193, 0, 16_777_217, u32::MAX]);
++            assert_bit_equal(&cache, &(0..1024).collect::<Vec<_>>());
++            let tables = cache.tables.lock();
++            assert_eq!(tables.0.len(), cache.max_cached_positions * *config.head_dim() as usize);
++            assert_eq!(tables.1.len(), tables.0.len());
++            assert!(tables.0.capacity() <= 1_048_576);
++            assert!(tables.1.capacity() <= 1_048_576);
++        }
++    }
++
++    #[uzu_test]
++    fn rope_cache_is_bound_to_complete_config_and_respects_small_caps() {
++        let configs = configs();
++        let first = RoPETableCache::new(&configs[0]);
++        let mut changed = serde_json::to_value(&configs[0]).unwrap();
++        changed["base"] = json!(500000.0);
++        changed["max_sequence_length"] = json!(4);
++        let changed: AnyRoPEConfig = serde_json::from_value(changed).unwrap();
++        let second = RoPETableCache::new(&changed);
++        for positions in [&[0, 1, 2, 3][..], &[3, 4, 5, 2][..]] {
++            assert_bit_equal(&first, positions);
++            assert_bit_equal(&second, positions);
++        }
++        assert_eq!(second.tables.lock().0.len(), 4 * *changed.head_dim() as usize);
++        let first_bits =
++            first.with_tables(&[3], |cosines, _| cosines.iter().map(|value| value.to_bits()).collect::<Vec<_>>());
++        let second_bits =
++            second.with_tables(&[3], |cosines, _| cosines.iter().map(|value| value.to_bits()).collect::<Vec<_>>());
++        assert_ne!(first_bits, second_bits);
++    }
++}
+--- a/crates/uzu-engine/src/encodable_block/transformer.rs
++++ b/crates/uzu-engine/src/encodable_block/transformer.rs
+@@ -113,7 +113,10 @@
+ }
+ 
+ pub struct Transformer<B: Backend> {
++    #[cfg(not(feature = "sol-rope-cache"))]
+     ropes: Box<[AnyRoPEConfig]>,
++    #[cfg(feature = "sol-rope-cache")]
++    rope_tables: Box<[super::mixer::attention::rope::RoPETableCache]>,
+     layers: Box<[(TransformerLayer<B>, Option<usize>)]>,
+     output_norm: Normalization<B>,
+     model_dim: u32,
+@@ -175,6 +178,9 @@
+             .map_err(TransformerNewError::Backend)?;
+ 
+         Ok(Self {
++            #[cfg(feature = "sol-rope-cache")]
++            rope_tables: ropes.iter().map(super::mixer::attention::rope::RoPETableCache::new).collect(),
++            #[cfg(not(feature = "sol-rope-cache"))]
+             ropes: ropes.into_boxed_slice(),
+             layers,
+             output_norm,
+@@ -275,10 +281,18 @@
+         let context_length = state.as_ref().map(|state| state.context_length).unwrap_or(0);
+         let token_positions = batch_dim.heights().map(|rel_pos| context_length + rel_pos).collect::<Box<[u32]>>();
+ 
++        #[cfg(not(feature = "sol-rope-cache"))]
+         let precalculated_ropes = self
+             .ropes
+             .iter()
+             .map(|rope_config| PrecalculatedRoPE::precalculate(rope_config, &token_positions, command_buffer))
++            .collect::<Result<Box<[_]>, B::Error>>()?;
++
++        #[cfg(feature = "sol-rope-cache")]
++        let precalculated_ropes = self
++            .rope_tables
++            .iter()
++            .map(|cache| cache.precalculate::<B>(&token_positions, command_buffer))
+             .collect::<Result<Box<[_]>, B::Error>>()?;
+ 
+         for (layer, layer_rope_index) in self.layers.iter().take(layer_count) {

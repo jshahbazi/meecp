@@ -1,0 +1,353 @@
+diff --git a/crates/uzu-engine/Cargo.toml b/crates/uzu-engine/Cargo.toml
+--- a/crates/uzu-engine/Cargo.toml
++++ b/crates/uzu-engine/Cargo.toml
+@@ -35,6 +35,9 @@
+ ]
+ 
+ grammar = ["dep:xgrammar", "dep:schemars"]
++
++# Experimental exact-arithmetic removal of padded DeltaNet convolution tokens.
++direct-delta-conv = []
+ 
+ [build-dependencies]
+ anyhow.workspace = true
+diff --git a/crates/uzu-engine/src/encodable_block/mixer/delta_net.rs b/crates/uzu-engine/src/encodable_block/mixer/delta_net.rs
+--- a/crates/uzu-engine/src/encodable_block/mixer/delta_net.rs
++++ b/crates/uzu-engine/src/encodable_block/mixer/delta_net.rs
+@@ -1,5 +1,8 @@
+ use derive_more::Debug;
+ use thiserror::Error;
++
++#[cfg(feature = "direct-delta-conv")]
++use crate::backends::common::kernel::DeltaNetConvDirectKernel;
+ 
+ use crate::{
+     array::size_for_shape,
+@@ -134,6 +137,8 @@
+     conv_update: <B::Kernels as Kernels>::DeltaNetConvUpdateKernel,
+     conv_pack: <B::Kernels as Kernels>::Conv1dPackKernel,
+     conv_scan: <B::Kernels as Kernels>::DeltaNetConvScanKernel,
++    #[cfg(feature = "direct-delta-conv")]
++    conv_direct: <B::Kernels as Kernels>::DeltaNetConvDirectKernel,
+     conv_tree_scan: <B::Kernels as Kernels>::ConvTreeScanKernel,
+     a_log: B::GlobalBuffer,
+     dt_bias: B::GlobalBuffer,
+@@ -222,6 +227,10 @@
+             .map_err(DeltaNetNewError::Backend)?;
+         let conv_scan =
+             <B::Kernels as Kernels>::DeltaNetConvScanKernel::new(context, outer_data_type, conv_config.has_biases)
++                .map_err(DeltaNetNewError::Backend)?;
++        #[cfg(feature = "direct-delta-conv")]
++        let conv_direct =
++            <B::Kernels as Kernels>::DeltaNetConvDirectKernel::new(context, outer_data_type, conv_config.has_biases)
+                 .map_err(DeltaNetNewError::Backend)?;
+         let conv_tree_scan = <B::Kernels as Kernels>::ConvTreeScanKernel::new(
+             context,
+@@ -313,6 +322,8 @@
+                 conv_update,
+                 conv_pack,
+                 conv_scan,
++                #[cfg(feature = "direct-delta-conv")]
++                conv_direct,
+                 conv_tree_scan,
+                 a_log,
+                 dt_bias,
+@@ -548,34 +559,61 @@
+                 command_buffer,
+             );
+         } else {
+-            let mut padded = command_buffer.allocate_scratch_for_shape(
+-                &[batch_dim.size() + self.kernel_size - 1, self.total_proj_dim],
+-                INNER_DATA_TYPE,
+-            )?;
+-            self.conv_pack.encode(
+-                &state.conv_state,
+-                &in_projected,
+-                &mut padded,
+-                self.kernel_size - 1,
+-                self.total_proj_dim,
+-                batch_dim.size(),
+-                self.conv_dim,
+-                command_buffer,
+-            );
+-            self.conv_scan.encode(
+-                &padded,
+-                &self.conv_weight,
+-                self.conv_bias.as_ref(),
+-                &mut in_projected,
+-                &mut state.conv_state,
+-                batch_dim.size(),
+-                self.kernel_size,
+-                self.total_proj_dim,
+-                self.kernel_size - 1,
+-                self.conv_dim,
+-                self.total_proj_dim,
+-                command_buffer,
+-            );
++            #[cfg(feature = "direct-delta-conv")]
++            {
++                // Preserve immutable original samples until every output has
++                // been encoded. A history snapshot prevents cross-thread races
++                // between early-token reads and next-state writes.
++                let mut history = command_buffer.allocate_scratch(state.conv_state.size())?;
++                command_buffer.encode_copy(&state.conv_state, &mut history);
++                let mut convolved = command_buffer.allocate_scratch(in_projected.size())?;
++                self.conv_direct.encode(
++                    &in_projected,
++                    &history,
++                    &self.conv_weight,
++                    self.conv_bias.as_ref(),
++                    &mut convolved,
++                    &mut state.conv_state,
++                    batch_dim.size(),
++                    self.kernel_size,
++                    self.total_proj_dim,
++                    self.kernel_size - 1,
++                    self.conv_dim,
++                    command_buffer,
++                );
++                in_projected = convolved;
++            }
++            #[cfg(not(feature = "direct-delta-conv"))]
++            {
++                let mut padded = command_buffer.allocate_scratch_for_shape(
++                    &[batch_dim.size() + self.kernel_size - 1, self.total_proj_dim],
++                    INNER_DATA_TYPE,
++                )?;
++                self.conv_pack.encode(
++                    &state.conv_state,
++                    &in_projected,
++                    &mut padded,
++                    self.kernel_size - 1,
++                    self.total_proj_dim,
++                    batch_dim.size(),
++                    self.conv_dim,
++                    command_buffer,
++                );
++                self.conv_scan.encode(
++                    &padded,
++                    &self.conv_weight,
++                    self.conv_bias.as_ref(),
++                    &mut in_projected,
++                    &mut state.conv_state,
++                    batch_dim.size(),
++                    self.kernel_size,
++                    self.total_proj_dim,
++                    self.kernel_size - 1,
++                    self.conv_dim,
++                    self.total_proj_dim,
++                    command_buffer,
++                );
++            }
+             if let Some(chunked) = self.chunked.as_ref().filter(|chunked| chunked.should_use(batch_dim.size())) {
+                 chunked.encode(
+                     DeltaNetChunkedPrefillArgs {
+diff --git a/crates/uzu-engine/src/backends/cpu/kernel/gdn/mod.rs b/crates/uzu-engine/src/backends/cpu/kernel/gdn/mod.rs
+--- a/crates/uzu-engine/src/backends/cpu/kernel/gdn/mod.rs
++++ b/crates/uzu-engine/src/backends/cpu/kernel/gdn/mod.rs
+@@ -1,3 +1,4 @@
++pub mod conv_direct;
+ pub mod conv_scan;
+ pub mod conv_update;
+ pub mod norm_gate;
+diff --git a/crates/uzu-engine/src/backends/cpu/kernel/gdn/conv_direct.rs b/crates/uzu-engine/src/backends/cpu/kernel/gdn/conv_direct.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/uzu-engine/src/backends/cpu/kernel/gdn/conv_direct.rs
+@@ -0,0 +1,62 @@
++use half::bf16;
++use num_traits::Float;
++use uzu_engine_macros::kernel;
++
++use crate::{array::ArrayElement, backends::common::gpu_types::ActivationType};
++
++// CPU reference for the direct scan. Match Conv1dPack + DeltaNetConvScan,
++// including retained history when the suffix is shorter than the state.
++#[kernel(DeltaNetConvDirect)]
++#[variants(T, f32, bf16)]
++pub fn delta_net_conv_direct<T: ArrayElement + Float>(
++    input: *const T,
++    state_in: *const f32,
++    conv_weight: *const f32,
++    #[optional(has_bias)] bias: Option<*const f32>,
++    output: *mut T,
++    state_out: *mut f32,
++    suffix_len: u32,
++    kernel_size: u32,
++    row_stride: u32,
++    state_stride: u32,
++    conv_dim: u32,
++    #[specialize] has_bias: bool,
++) {
++    let suffix_len = suffix_len as usize;
++    let kernel_size = kernel_size as usize;
++    let row_stride = row_stride as usize;
++    let state_stride = state_stride as usize;
++    let conv_dim = conv_dim as usize;
++    for token in 0..suffix_len {
++        for channel in 0..row_stride {
++            if channel >= conv_dim {
++                unsafe { *output.add(token * row_stride + channel) = *input.add(token * row_stride + channel) };
++                continue;
++            }
++            let mut acc = if has_bias { unsafe { *bias.unwrap().add(channel) } } else { 0.0f32 };
++            for tap in 0..kernel_size {
++                let padded_row = token + tap;
++                let sample = if padded_row < state_stride {
++                    unsafe { *state_in.add(channel * state_stride + padded_row) }
++                } else {
++                    unsafe { (*input.add((padded_row - state_stride) * row_stride + channel)).to_f32().unwrap() }
++                };
++                acc += unsafe { *conv_weight.add(channel * kernel_size + tap) } * sample;
++            }
++            unsafe {
++                *output.add(token * row_stride + channel) = T::from(ActivationType::SILU.activate(acc)).unwrap();
++            }
++        }
++    }
++    for channel in 0..conv_dim {
++        for tap in 0..state_stride {
++            let padded_row = suffix_len + tap;
++            let sample = if padded_row < state_stride {
++                unsafe { *state_in.add(channel * state_stride + padded_row) }
++            } else {
++                unsafe { (*input.add((padded_row - state_stride) * row_stride + channel)).to_f32().unwrap() }
++            };
++            unsafe { *state_out.add(channel * state_stride + tap) = sample };
++        }
++    }
++}
+diff --git a/crates/uzu-engine/src/backends/metal/kernel/gdn/conv_direct.metal b/crates/uzu-engine/src/backends/metal/kernel/gdn/conv_direct.metal
+new file mode 100644
+--- /dev/null
++++ b/crates/uzu-engine/src/backends/metal/kernel/gdn/conv_direct.metal
+@@ -0,0 +1,52 @@
++#include <metal_stdlib>
++#include "../activation/activations.h"
++#include "../common/dsl.h"
++
++using namespace metal;
++
++// The original projection and history snapshot are immutable and disjoint from
++// the output projection and next state. Preserve the packed scan's tap order,
++// F32 accumulation, SiLU, and final cast without materializing F32 token rows.
++template <typename T>
++VARIANTS(T, float, bfloat)
++PUBLIC KERNEL(DeltaNetConvDirect)(
++    device const T* input,
++    device const float* state_in,
++    device const float* conv_weight,
++    device const float* bias OPTIONAL(has_bias),
++    device T* output,
++    device float* state_out,
++    constant const uint& suffix_len,
++    constant const uint& kernel_size,
++    constant const uint& row_stride,
++    constant const uint& state_stride,
++    constant const uint& conv_dim,
++    const bool has_bias SPECIALIZE,
++    const uint token_idx AXIS(suffix_len + kernel_size - 1, 1),
++    const uint channel_idx AXIS(row_stride, 32)
++) {
++  if (token_idx < suffix_len) {
++    const size_t dst = size_t(token_idx) * row_stride + channel_idx;
++    if (channel_idx >= conv_dim) {
++      output[dst] = input[dst];
++      return;
++    }
++    const device float* weight_row = conv_weight + channel_idx * kernel_size;
++    float acc = has_bias ? float(bias[channel_idx]) : 0.0f;
++    for (uint tap = 0; tap < kernel_size; ++tap) {
++      const uint padded_row = token_idx + tap;
++      const float sample = padded_row < state_stride
++          ? state_in[channel_idx * state_stride + padded_row]
++          : float(input[(padded_row - state_stride) * row_stride + channel_idx]);
++      acc += float(weight_row[tap]) * sample;
++    }
++    output[dst] = static_cast<T>(activate_silu(acc));
++  } else if (channel_idx < conv_dim) {
++    const uint tap = token_idx - suffix_len;
++    // Small suffixes can retain history samples in their next state.
++    const float sample = token_idx < state_stride
++        ? state_in[channel_idx * state_stride + token_idx]
++        : float(input[(token_idx - state_stride) * row_stride + channel_idx]);
++    state_out[channel_idx * state_stride + tap] = sample;
++  }
++}
+diff --git a/crates/uzu-engine/unit/backends/common/kernel/gdn/mod.rs b/crates/uzu-engine/unit/backends/common/kernel/gdn/mod.rs
+--- a/crates/uzu-engine/unit/backends/common/kernel/gdn/mod.rs
++++ b/crates/uzu-engine/unit/backends/common/kernel/gdn/mod.rs
+@@ -1,2 +1,3 @@
++mod conv_direct_test;
+ mod delta_net_test;
+ mod tree_verify;
+diff --git a/crates/uzu-engine/unit/backends/common/kernel/gdn/conv_direct_test.rs b/crates/uzu-engine/unit/backends/common/kernel/gdn/conv_direct_test.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/uzu-engine/unit/backends/common/kernel/gdn/conv_direct_test.rs
+@@ -0,0 +1,65 @@
++use half::bf16;
++use uzu_engine_macros::uzu_test;
++
++use crate::{
++    backends::common::{
++        Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
++        kernel::{Conv1dPackKernel, DeltaNetConvDirectKernel, DeltaNetConvScanKernel},
++    },
++    data_type::DataType,
++    tests::helpers::{buffer_to_vec, create_buffer, create_buffer_with_data, for_each_backend},
++};
++
++fn compare<B: Backend>(suffix: usize, has_bias: bool) {
++    let context = B::Context::new().expect("context");
++    let channels = 64;
++    let stride = 96;
++    let taps = 4;
++    let history = taps - 1;
++    let input: Vec<bf16> = (0..suffix * stride)
++        .map(|i| if i % 37 == 0 { bf16::NEG_ZERO } else { bf16::from_f32((i % 29) as f32 / 16.0 - 0.75) })
++        .collect();
++    let state: Vec<f32> = (0..channels * history).map(|i| (i % 17) as f32 / 16.0 - 0.5).collect();
++    let weights: Vec<f32> = (0..channels * taps).map(|i| (i % 11) as f32 / 16.0 - 0.25).collect();
++    let bias: Vec<f32> = (0..channels).map(|i| (i % 7) as f32 / 16.0 - 0.125).collect();
++    let original = create_buffer_with_data::<B, bf16>(&context, &input);
++    let mut legacy = create_buffer_with_data::<B, bf16>(&context, &input);
++    let mut direct = create_buffer::<B, bf16>(&context, input.len());
++    let state_in = create_buffer_with_data::<B, f32>(&context, &state);
++    let mut legacy_state = create_buffer::<B, f32>(&context, state.len());
++    let mut direct_state = create_buffer_with_data::<B, f32>(&context, &state);
++    let mut snapshot = create_buffer::<B, f32>(&context, state.len());
++    let w = create_buffer_with_data::<B, f32>(&context, &weights);
++    let b = create_buffer_with_data::<B, f32>(&context, &bias);
++    let mut padded = create_buffer::<B, f32>(&context, (suffix + history) * stride);
++    let pack = <B::Kernels as Kernels>::Conv1dPackKernel::new(&context, DataType::F32, DataType::BF16).expect("pack");
++    let scan = <B::Kernels as Kernels>::DeltaNetConvScanKernel::new(&context, DataType::BF16, has_bias).expect("scan");
++    let direct_scan = <B::Kernels as Kernels>::DeltaNetConvDirectKernel::new(&context, DataType::BF16, has_bias)
++        .expect("direct scan");
++    let mut command = context.create_command_buffer(None, None).expect("command");
++    pack.encode(&state_in, &legacy, &mut padded, history as u32, stride as u32, suffix as u32, channels as u32, &mut command);
++    scan.encode(&padded, &w, has_bias.then_some(&b), &mut legacy, &mut legacy_state,
++        suffix as u32, taps as u32, stride as u32, history as u32, channels as u32, stride as u32, &mut command);
++    // Match the production snapshot path, including write-after-read tracking.
++    command.encode_copy(&direct_state, &mut snapshot);
++    direct_scan.encode(&original, &snapshot, &w, has_bias.then_some(&b), &mut direct, &mut direct_state,
++        suffix as u32, taps as u32, stride as u32, history as u32, channels as u32, &mut command);
++    command.end_encoding().submit().wait_until_completed().expect("complete");
++    let legacy: Vec<bf16> = buffer_to_vec(&legacy);
++    let direct: Vec<bf16> = buffer_to_vec(&direct);
++    let legacy_state: Vec<f32> = buffer_to_vec(&legacy_state);
++    let direct_state: Vec<f32> = buffer_to_vec(&direct_state);
++    assert!(legacy.iter().zip(&direct).all(|(a, b)| a.to_bits() == b.to_bits()), "projection bits differ");
++    assert!(legacy_state.iter().zip(&direct_state).all(|(a, b)| a.to_bits() == b.to_bits()), "state bits differ");
++}
++
++#[uzu_test]
++fn direct_delta_convolution_preserves_packed_bits() {
++    for_each_backend!(|B| {
++        for suffix in [1, 2, 3, 4, 63, 64, 255, 256, 257, 1024] {
++            for has_bias in [false, true] {
++                compare::<B>(suffix, has_bias);
++            }
++        }
++    });
++}

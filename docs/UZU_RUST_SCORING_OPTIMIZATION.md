@@ -2,6 +2,8 @@
 
 Three Astra agents inspected the pinned Rust and Metal scoring path and implemented two isolated candidates. The complete population retained exact decision outputs, but its timing did **not establish an overall speedup**. A separate balanced control favored the combined candidate in all four quartets, with a median ratio corresponding to about **2.58% lower mean latency on 12 selected cases**. These changes remain experimental and opt-in.
 
+The [deeper Rust and Metal follow-up](UZU_RUST_DEEP_OPTIMIZATION.md) implements earlier batch submission, final-layer cache-only execution and direct DeltaNet convolution. Its combined BF16 candidate preserves exact probabilities, calibration, decisions and whole-vocabulary hashes across the complete 243-case population and boundary checks. Clean performance measurements are explicitly deferred at the user's request.
+
 ## Implementation and provenance
 
 The [hotspot inspection](UZU_RUST_HOTSPOTS.md) records the source findings and deferred work. Both candidates preserve the JevK5 BF16 export, tokenization, temperature 1.22, full-vocabulary normalization, context limit 8192, and fresh state for every request.

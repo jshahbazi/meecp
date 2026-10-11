@@ -1,0 +1,65 @@
+{
+  "candidate_equality_scope": "Decoded candidate logits, log probabilities, reported probabilities, and typed-decision floating values compared by IEEE-754 binary64 bits against the sealed historical reference. Exact input/candidate identities and ordered coverage checked privately.",
+  "candidate_float_bits_equal": true,
+  "configuration_sha256": "95306d2f0a6bfccfe41b9b3c0455d802e975210192a5e2c147889fa2b2747536",
+  "digest_warmups": 3,
+  "independently_rehashed_artifacts": 66,
+  "limitations": [
+    "This audit inspected sealed records and file identities; it launched no inference.",
+    "Output equality preserves the measured reference behavior and establishes no new calibration or generalization evidence.",
+    "Process settlement is recorded in both validated process records; the audit did not continuously monitor background processes."
+  ],
+  "maximum_calibration_formula_error": 2.220446049250313e-16,
+  "method": {
+    "artifact_hashing": "SHA-256 of all 66 bound files, including model and binaries; all 42 prior reference bindings compared unchanged",
+    "calibration": "Temperature-1.22 stable softmax independently recomputed from candidate logits and normalized log probabilities",
+    "implementation": "Independent Python standard-library recalculation",
+    "quality": "First fresh response per case; public and synthetic populations independently recomputed",
+    "seals": "Configuration, artifact snapshot, pre-run seal, post-run seal, worker and probe record hashes independently checked",
+    "timing_analysis_performed": false,
+    "validation_or_aggregation_helpers_invoked": false
+  },
+  "ownership_settled_in_both_records": true,
+  "post_run_seal_sha256": "23bf0420e1cba107f6814f4b47ccf51312995076651309369300e2b7cbee4488",
+  "prior_reference_artifacts_unchanged": 42,
+  "public_artifact_binding_matches_private_configuration": true,
+  "public_report_contains_no_raw_response_fields": true,
+  "public_report_matches_independent_recalculation": true,
+  "quality": {
+    "public": {
+      "argmax_accuracy": 0.8744588744588745,
+      "argmax_correct": 202,
+      "brier": 0.18515405977818739,
+      "cases": 231,
+      "ece_10_bins": 0.030787072608270183,
+      "mean_confidence": 0.8671501549473883,
+      "ordinal_cases": 18,
+      "ordinal_mae": 0.16875954742751598,
+      "rounded_ev_accuracy": 0.8888888888888888
+    },
+    "synthetic": {
+      "argmax_accuracy": 1,
+      "argmax_correct": 12,
+      "brier": 0.00940658317180819,
+      "cases": 12,
+      "ece_10_bins": 0.0400332894546923,
+      "mean_confidence": 0.9599667105453077,
+      "ordinal_cases": 2,
+      "ordinal_mae": 0.10965341954465235,
+      "rounded_ev_accuracy": 1
+    }
+  },
+  "report": {
+    "path": "experiments/uzu-rust/jev-scoring/DEEP_VALIDATION_RESULTS.json",
+    "sha256": "920e56929c359132c9d438c17d4479b303899bb5923ee141316afcfd6c03ae60"
+  },
+  "schema_version": 1,
+  "status": "passed",
+  "timing_status": "Deferred; no timing analysis or speed claim. Background Brekko was left running.",
+  "whole_vocabulary_logits_exactly_equal": true,
+  "whole_vocabulary_responses": 534,
+  "whole_vocabulary_scope": "All 534 candidate-probe whole-vocabulary little-endian-f32 digests, plus three probe warmups, equal the preserved original-core probe. Historical-worker equality covers exposed candidate outputs only.",
+  "worker_boundary_responses": 48,
+  "worker_case_responses": 486,
+  "worker_warmups": 3
+}

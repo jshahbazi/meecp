@@ -4,3 +4,6 @@ experiments/uzu-rust/jev-scoring/licenses/** -text -whitespace
 experiments/uzu-rust/uzu-next-token-scoring.patch whitespace=-blank-at-eol
 experiments/uzu-rust/uzu-scoring-topology.patch whitespace=-blank-at-eol
 experiments/uzu-rust/uzu-scoring-state-init.patch whitespace=-blank-at-eol,-blank-at-eof
+experiments/uzu-rust/uzu-deep-submission.patch whitespace=-blank-at-eol
+experiments/uzu-rust/uzu-deep-last-layer.patch whitespace=-blank-at-eol,-blank-at-eof
+experiments/uzu-rust/uzu-deep-metal.patch whitespace=-blank-at-eol

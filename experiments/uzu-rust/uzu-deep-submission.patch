@@ -1,0 +1,144 @@
+diff --git a/crates/uzu-engine/src/engine/language_model/scoring.rs b/crates/uzu-engine/src/engine/language_model/scoring.rs
+--- a/crates/uzu-engine/src/engine/language_model/scoring.rs
++++ b/crates/uzu-engine/src/engine/language_model/scoring.rs
+@@ -7,7 +7,7 @@
+ 
+ use crate::{
+     backends::common::{
+-        Backend, BufferCpuAccessible, BufferRef, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
++        Backend, BufferCpuAccessible, BufferRef, CommandBuffer, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
+         Context, gpu_types::trie::TrieNode as GpuTrieNode,
+     },
+     encodable_block::{batch_topology::BatchTopology, decoder::DecoderError},
+@@ -25,6 +25,41 @@
+             height: index,
+         })
+         .collect()
++}
++
++// Drain every submitted buffer even when an earlier completion failed. GPU work
++// must stop using transformer state before that state is freed on any exit.
++fn drain_submissions<T, E>(
++    pending: &mut Vec<T>,
++    mut wait: impl FnMut(T) -> Result<(), E>,
++) -> Result<(), E> {
++    let mut first_error = None;
++    for item in pending.drain(..) {
++        if let Err(error) = wait(item) {
++            if first_error.is_none() {
++                first_error = Some(error);
++            }
++        }
++    }
++    first_error.map_or(Ok(()), Err)
++}
++
++struct ScoringSubmissions<B: Backend> {
++    pending: Vec<<B::CommandBuffer as CommandBuffer>::Pending>,
++}
++
++impl<B: Backend> ScoringSubmissions<B> {
++    fn wait_all(&mut self) -> Result<(), B::Error> {
++        drain_submissions(&mut self.pending, |pending| pending.wait_until_completed().map(|_| ()))
++    }
++}
++
++impl<B: Backend> Drop for ScoringSubmissions<B> {
++    fn drop(&mut self) {
++        // Also runs on later encode/allocation failure or panic. The caller
++        // discards this fresh state after an error; never reuse partial state.
++        let _ = self.wait_all();
++    }
+ }
+ 
+ /// Final prompt-position raw logits. No temperature, penalty, grammar, or sampler
+@@ -82,7 +117,6 @@
+         let mut state = self.create_empty_state(Some(context_tokens), 0)?;
+         let state_creation_seconds = started.elapsed().as_secs_f64();
+         let prefill_started = Instant::now();
+-        let allocation_pool = self.engine.context.create_allocation_pool();
+         // Ordinary stream prefill requires this batch size for attention's
+         // hardcoded 1024-token suffix; preserve the same preparation here.
+         let max_batch_size = 1024;
+@@ -91,13 +125,21 @@
+             .transformer_state
+             .prepare(((number_of_batches - 1) * max_batch_size) as u32, usize::min(max_batch_size, input.len()) as u32)
+             .map_err(LanguageModelScoreError::Backend)?;
+-        let mut command_buffer = self
+-            .engine
+-            .context
+-            .create_command_buffer(Some("score prefill"), Some(allocation_pool))
+-            .map_err(LanguageModelScoreError::Backend)?;
+         let mut final_logits = None;
++        // Declared after state/readout so this guard drains queued GPU work
++        // before either resource can be dropped during an error unwind.
++        let mut submissions = ScoringSubmissions::<B> {
++            pending: Vec::with_capacity(number_of_batches),
++        };
+         for (batch_idx, batch) in input.chunks(max_batch_size).enumerate() {
++            // Independent pools prevent host encoding of the next batch from
++            // recycling scratch storage still used by an in-flight batch.
++            let allocation_pool = self.engine.context.create_allocation_pool();
++            let mut command_buffer = self
++                .engine
++                .context
++                .create_command_buffer(Some("score prefill batch"), Some(allocation_pool))
++                .map_err(LanguageModelScoreError::Backend)?;
+             let last_batch = batch_idx + 1 == number_of_batches;
+             let split = last_batch && self.decoder.prefill_cache_skips_trailing_layers() && batch.len() > 1;
+             let parts = if split {
+@@ -131,9 +173,12 @@
+                         .map_err(LanguageModelScoreError::Backend)?;
+                 }
+             }
+-        }
+-        // Keep scratch readout and transformer state alive through GPU completion.
+-        command_buffer.end_encoding().submit().wait_until_completed().map_err(LanguageModelScoreError::Backend)?;
++            // Preserve the complete 1024-token batch and final split geometry.
++            // Metal's command-buffer queue barriers order state writes before
++            // the next batch while CPU encoding overlaps earlier GPU execution.
++            submissions.pending.push(command_buffer.end_encoding().submit());
++        }
++        submissions.wait_all().map_err(LanguageModelScoreError::Backend)?;
+         let prefill_seconds = prefill_started.elapsed().as_secs_f64();
+         let readout_started = Instant::now();
+         let final_logits = final_logits.ok_or(LanguageModelScoreError::InvalidOutput)?;
+@@ -157,6 +202,38 @@
+     use super::*;
+     use crate::{encodable_block::sampling::PRng, trie::TrieNode};
+     use uzu_engine_macros::uzu_test;
++
++    #[uzu_test]
++    fn submission_drain_waits_every_buffer_after_failures() {
++        let mut pending = vec![0, 1, 2, 3];
++        let mut visited = Vec::new();
++        let result = drain_submissions(&mut pending, |index| {
++            visited.push(index);
++            if index == 1 || index == 2 {
++                Err(index)
++            } else {
++                Ok(())
++            }
++        });
++        assert_eq!(result, Err(1));
++        assert_eq!(visited, vec![0, 1, 2, 3]);
++        assert!(pending.is_empty());
++        let second: Result<(), usize> = drain_submissions(&mut pending, |_| panic!("already drained"));
++        assert_eq!(second, Ok(()));
++    }
++
++    #[uzu_test]
++    fn submission_drain_handles_success_and_empty_queues() {
++        let mut pending = vec![0, 1];
++        let mut completions = 0;
++        let result: Result<(), usize> = drain_submissions(&mut pending, |_| {
++            completions += 1;
++            Ok(())
++        });
++        assert_eq!(result, Ok(()));
++        assert_eq!(completions, 2);
++        assert!(pending.is_empty());
++    }
+ 
+     #[uzu_test]
+     fn direct_scoring_topology_matches_legacy_flat_trie() {

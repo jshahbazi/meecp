@@ -186,7 +186,7 @@ def test_public_metadata_exception_is_exact_value_and_path_for_one_rule_only():
     assert len(config["rules"]) == 1
     rule = config["rules"][0]
     assert set(rule) == {"id", "allowlists"} and rule["id"] == "generic-api-key"
-    assert len(rule["allowlists"]) == 2
+    assert len(rule["allowlists"]) == 6
     exception = rule["allowlists"][0]
     assert set(exception) == {"description", "condition", "regexTarget", "paths", "regexes"}
     assert exception["condition"] == "AND" and exception["regexTarget"] == "secret"
@@ -203,6 +203,65 @@ def test_public_metadata_exception_is_exact_value_and_path_for_one_rule_only():
     assert stark["condition"] == "AND" and stark["regexTarget"] == "secret"
     assert stark["paths"] == [r"^engines/STARK_VALIDATION\.json$"]
     assert stark["regexes"] == [r"^(?:06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523|9cf04fffe3d8c3b85e439fb35c7acad0761ab51c422a8c4256d9f887c3a0be7d)$"]
+
+
+def test_historical_metadata_exceptions_are_only_the_verified_value_path_pairs():
+    # Fingerprints of the independently verified public digests prevent this
+    # test from silently following a changed exception value.
+    expected = (
+        (
+            ("experiments/uzu-rust/jev-scoring/RESULTS.json",
+             "experiments/uzu-rust/jev-scoring/RESULTS_BF16.json",
+             "experiments/uzu-rust/jev-scoring/RESULTS_INITIAL.json"),
+            ("eea2847a2ab2cf5f3cfd567a72bbbbd6d451d943e74cf18e20e8c1231e813325",
+             "fb65dde9dceafaaf8287bf5a7032a03fe4672b760a4174f18a38e6281a51412a"),
+        ),
+        (
+            ("experiments/uzu-rust/jev-scoring/BF16_CONTROL_PROVENANCE.json",
+             "experiments/uzu-rust/jev-scoring/RESULTS_BF16.json"),
+            ("6c81ed19c5cd927b777125c0b0d035e84a4c597047a5f44f270c04b26275daad",
+             "6f734ae48e4317a19204d817316d0df8cd24617915aac9f7f058062d41eb35a0",
+             "cf5cb5f3cff8a4cc098b9d93ffea397e3b25c9ee8dbbf526c2b8da71b05ba0da",
+             "08ae7b3c605653a13a166d952e265332eee0581349c2f5819d79370e2171202d",
+             "bb1f03103c06beb1194511d0389c9ef25fd17c025736f1a5659b2f195c12b038",
+             "d637ee2f3d3e6df209a76ad564ae957023bdd4940c852e90ca03292f5981827b"),
+        ),
+        (
+            ("experiments/uzu-rust/BENCHMARK_RESULTS.json",),
+            ("db8c2ba0ae12ae7151b5cbdf944ab3a56c892d3f60305167e6b1c5513b82e728",
+             "8fa8b6249fef02b1cc47431b140cd3f0e7f36674d9996b99d41df096f5857136",
+             "92d903bc6c1aec571973e96cff99e09635a324da3a09942c7d591d5ba5a39bf5"),
+        ),
+        (
+            ("experiments/uzu-rust/QUALITY_RESULTS.json",),
+            ("0bdde2f133baaddc549a055b3382ac4a23be0d9889c05fd0067f8024f1041da7",),
+        ),
+    )
+    groups = scanner.PUBLIC_UZU_METADATA_EXCEPTIONS
+    config = tomllib.loads(scanner.trusted_config())
+    rule = config["rules"][0]
+    assert rule["id"] == "generic-api-key"
+    assert len(groups) == len(expected) == 4
+    assert len(rule["allowlists"]) == 6
+    assert sum(len(paths) * len(digests) for _, paths, digests in groups) == 22
+    for (description, paths, digests), (expected_paths, fingerprints), exception in zip(
+            groups, expected, rule["allowlists"][2:], strict=True):
+        assert paths == expected_paths
+        assert tuple(hashlib.sha256(value.encode()).hexdigest() for value in digests) == fingerprints
+        assert all(re.fullmatch("[0-9a-f]{64}", value) for value in digests)
+        assert exception == {
+            "description": description, "condition": "AND", "regexTarget": "secret",
+            "paths": [r"^(?:" + "|".join(re.escape(path) for path in paths) + r")$"],
+            "regexes": [r"^(?:" + "|".join(re.escape(value) for value in digests) + r")$"],
+        }
+        for path in paths:
+            assert re.fullmatch(exception["paths"][0], path)
+            assert not re.fullmatch(exception["paths"][0], "unreviewed/" + path)
+            assert not re.fullmatch(exception["paths"][0], path + ".backup")
+        for value in digests:
+            assert re.fullmatch(exception["regexes"][0], value)
+            assert not re.fullmatch(exception["regexes"][0], value + "0")
+            assert not re.fullmatch(exception["regexes"][0], "0" + value)
 
 
 @pytest.fixture(scope="module")
@@ -269,6 +328,55 @@ def test_actual_pinned_scanner_preserves_detection_at_stark_tokenizer_paths(actu
             subprocess.run(["git", "-C", str(tmp_path), *arguments], check=True,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if case == "reviewed": scanner.run_scanner(binary, mode, tmp_path, config, ignore)
+    else:
+        with pytest.raises(scanner.ScanFailure, match="secret_scan_detected_credentials"):
+            scanner.run_scanner(binary, mode, tmp_path, config, ignore)
+    assert capsys.readouterr() == ("", "")
+
+
+HISTORICAL_METADATA_PAIRS = [
+    pytest.param((path, value), id=f"group-{group_index}-path-{path_index}-value-{value_index}")
+    for group_index, (_, paths, digests) in enumerate(scanner.PUBLIC_UZU_METADATA_EXCEPTIONS)
+    for path_index, path in enumerate(paths)
+    for value_index, value in enumerate(digests)
+]
+
+
+@pytest.mark.parametrize("pair", HISTORICAL_METADATA_PAIRS)
+@pytest.mark.parametrize("mode", ["dir", "git"])
+@pytest.mark.parametrize("case", [
+    "reviewed", "different_value", "other_group_value", "same_value_other_path", "extra_value_same_file",
+])
+def test_actual_pinned_scanner_preserves_detection_for_historical_metadata(
+        actual_scanner, tmp_path, pair, mode, case, capsys):
+    binary, config, ignore = actual_scanner
+    path, value = pair
+    synthetic = hashlib.sha256(b"historical metadata scanner negative fixture").hexdigest()
+    if case == "different_value":
+        value = synthetic
+    elif case == "other_group_value":
+        admitted = {digest for _, paths, digests in scanner.PUBLIC_UZU_METADATA_EXCEPTIONS
+                    if path in paths for digest in digests}
+        value = next(digest for _, _, digests in scanner.PUBLIC_UZU_METADATA_EXCEPTIONS
+                     for digest in digests if digest not in admitted)
+    elif case == "same_value_other_path":
+        path = "unreviewed/" + path
+    target = tmp_path / path
+    target.parent.mkdir(parents=True)
+    # Use a scanner-triggering declaration so a passing reviewed fixture cannot
+    # be explained by a source line that never matched the built-in rule.
+    content = 'API_KEY = "' + value + '"\n'
+    if case == "extra_value_same_file":
+        content += 'API_KEY = "' + synthetic + '"\n'
+    target.write_text(content)
+    if mode == "git":
+        for arguments in (("init", "--quiet"), ("add", "."),
+                          ("-c", "user.name=Scanner test", "-c", "user.email=scanner@example.invalid",
+                           "commit", "--quiet", "-m", "test: synthetic scanner fixture")):
+            subprocess.run(["git", "-C", str(tmp_path), *arguments], check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if case == "reviewed":
+        scanner.run_scanner(binary, mode, tmp_path, config, ignore)
     else:
         with pytest.raises(scanner.ScanFailure, match="secret_scan_detected_credentials"):
             scanner.run_scanner(binary, mode, tmp_path, config, ignore)

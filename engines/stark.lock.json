@@ -1,0 +1,59 @@
+{
+  "build": {
+    "binaries": [
+      "stark-score",
+      "stark-score-digest"
+    ],
+    "default_features": true,
+    "features": [
+      "optimized"
+    ],
+    "package": "stark-score",
+    "target": "aarch64-apple-darwin"
+  },
+  "build_config_sha256": {
+    ".cargo/config.toml": "cedc054c049e1cf794ede631a842b5a82e59dd3ef8e535e3264d8d253d372209",
+    "Cargo.toml": "83d78ae9f6963bd4ac2882cc3bfae96b8218b2396b1087abb840d46d1b0f2979",
+    "crates/stark-score/Cargo.toml": "83a7cc514274f4d1eab198e8ad8f74aca60bee2ef393bb879fa549f0b1a7e4f7"
+  },
+  "cargo_lock_sha256": "303fc55ff149bada00ee751cac1b869b982b61fc50e1fc8bdd56e892be41d7dd",
+  "engine": "stark",
+  "protocol": {
+    "cache_default_enabled": false,
+    "cache_key": "exact-token-ids+context-tokens+model-instance",
+    "cache_policy_disabled": "fresh-state",
+    "cache_policy_enabled": "consecutive-full-vocabulary-logits-v1",
+    "probe_mode": "exact-token-digest-cache-v1",
+    "ready_engine": "stark",
+    "ready_version": "0.1.0",
+    "scoring_patch_sha256": "d7dea9890315163f188183f227b00de915b0e8c38498aa8827a38bc8d0999df0",
+    "source_sha256": {
+      "crates/stark-score/Cargo.toml": "83a7cc514274f4d1eab198e8ad8f74aca60bee2ef393bb879fa549f0b1a7e4f7",
+      "crates/stark-score/build.rs": "bf934e901e0622b5acaa5b8f5a50f9c323d231e9db3d7fecd251c15eca07ddd3",
+      "crates/stark-score/probes/score_digest.rs": "e5ae326cfbb6d0faff8989c9e633d7ea780d8a524fec1d93590e4584f70c0883",
+      "crates/stark-score/src/cache.rs": "4f51c7469f59c1e66a7350855eb060016d88fdbc085102a8ce89d06c88ad8925",
+      "crates/stark-score/src/main.rs": "397812193b4fb77cc02a48fafc2150de4432654a3c61dfa6944efba704ba89f1",
+      "crates/stark-score/src/protocol.rs": "aba211026168e55b14c2b558958fb4a7d4679236a5733aaea5e6c4952543b68c",
+      "crates/stark-score/src/scoring.rs": "a7f26cf3346b06fc673cfed5704666e99bfccb64334b7dc16a1b4786566dd7e6"
+    },
+    "upstream_revision": "8d01581474760bd1fc7f4a547ff1d02f7dada437",
+    "version": 1,
+    "worker_mode": "exact-token-scoring-cache-v1"
+  },
+  "repository": "https://github.com/jshahbazi/stark.git",
+  "revision": "aa0c959d097803f5e322dea7bbd4b0301f4c7cea",
+  "schema_version": 1,
+  "toolchain": {
+    "channel": "1.98.1",
+    "manifest_sha256": "72da9f9e503464ba7393560f6f51a69fb06be72633d52ae7725fa0ba59dfda22"
+  },
+  "tree": "996dc62b9bb2672c23285378467c1e1f268d1ee8",
+  "validation_tools_sha256": {
+    "scripts/export_scoring_reference.py": "b7972011999bcac7e578628ec79c42e73994308752d460866d87d2632a151a5a",
+    "scripts/scoring_fixture.py": "b6f3f954cceaaaba24e47d43e15bd6cff8c1cded39f83f61101789e5a71ab96d",
+    "scripts/scoring_process.py": "09caf67822b4f24ab03ae84df4b26ee340a75032e137971fe8975d8869a9f3be",
+    "scripts/stark-validation-reap.c": "cad6e7cde34da33463b53b7defdfc9c195d2450abc4df96207571eb7a2b27a67",
+    "scripts/test_scoring_process.py": "92759a57600593042ae5a1a4473b175a747b64c079e0190159e54010c89ac751",
+    "scripts/validate_scoring_rename.py": "a5066a943e350921f6107c6568329896672e02908ff685c8aaece7d74de588b7"
+  }
+}

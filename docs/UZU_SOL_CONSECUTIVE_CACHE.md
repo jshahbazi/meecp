@@ -50,6 +50,8 @@ The worker retains `cache_hit` alongside original score response fields. A hit r
 
 ## Immutable build and verification
 
+Current experimental scoring development uses the [standalone Stark dependency lock and helper](STARK_DEPENDENCY.md). The patch-based commands and acceptance records below retain their historical source identities for reproduction.
+
 `experiments/uzu-rust/build_consecutive_cache_scoring.py` creates a fresh destination, reconstructs the pinned upstream Git archive and applies the existing original/deep/Sol patch chain. It uses copied versioned worker sources and the unchanged locked dependency graph. The old worker, probe, source tree, manifests, recipes, patches, binaries and reports are untouched.
 
 ```sh

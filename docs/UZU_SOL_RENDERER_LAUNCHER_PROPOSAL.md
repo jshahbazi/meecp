@@ -1,6 +1,6 @@
 # Bounded renderer pause proposal
 
-This is reviewable code for a proposed authorized retry. No renderer has been paused by this workstream. Another benchmark window must wait for coordinated local model/build work to drain.
+This records the reviewed launcher used for an explicitly authorized retry. That run completed twelve blocks, the matching renderer was independently observed stopped and then running afterward, and all coordinated holds were released. System sleep overlapped the run; its timing is excluded. This legacy launcher remains immutable and is not suitable for enforcing a wall-time limit across Mac sleep.
 
 `scripts/launch_jev_sol_retry.py` invokes the existing `monitor_jev_sol_retry.py`, `benchmark_jev_sol_retry.py`, acceptance result and acceptance audit unchanged. The 200% CPU guard remains unchanged. It requires a fresh benchmark directory and creates an adjacent private `-launcher` directory containing content-free progress and scalar receipts. The existing monitor reports its own zero suspensions; the launcher receipt separately records the requested external renderer pause.
 
@@ -31,4 +31,6 @@ After explicit authorization, remove only `--dry-run` from the reviewed command.
 - A launcher killed abruptly can leave the owned benchmark monitor running. The watchdog restores only the renderer. Normal termination and timeout use the existing monitor cleanup; a stuck monitor is reported as unsettled.
 - Process sampling still does not establish continuous GPU/thermal isolation. This proposal supplies no new performance result or production acceptance.
 
-All 38 focused tests passed with process observation, subprocesses, signals and timing mocked. A live CLI dry run verified the proposed renderer's identity and fresh output destination without sending signals or creating children. Independent Sol re-review found no remaining blocker to presenting this proposal. Actual suspension and restoration remain untested; human authorization is pending.
+All 38 focused tests passed with process observation, subprocesses, signals and timing mocked. A live CLI dry run verified the proposed renderer's identity and fresh output destination without sending signals or creating children. Independent Sol re-review preceded human authorization. Actual suspension and restoration were observed in the completed run. Its scoring and artifact audits passed, but the power check found sleep inside the run window; see the [attempt disposition](../experiments/uzu-rust/jev-scoring/SOL_BF16_RENDERER_WINDOW_STATUS.json).
+
+Python's macOS monotonic clock uses `mach_absolute_time`, which excludes sleep. This implementation's deadlines therefore bound active elapsed time and can exceed twenty minutes of wall time when the Mac sleeps. Use a versioned launcher with `mach_continuous_time`, short deadline polls, an owned `caffeinate` assertion and explicit sleep-gap exclusion for a future attempt. A keep-awake assertion cannot guarantee prevention of lid-triggered or explicit sleep.

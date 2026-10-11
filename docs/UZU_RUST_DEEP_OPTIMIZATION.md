@@ -1,6 +1,6 @@
 # Deeper Uzu Rust and Metal scoring experiment
 
-Three Astra workstreams implemented additive candidates after the [previous scoring optimizations](UZU_RUST_SCORING_OPTIMIZATION.md). The combined candidate preserves exact JevK5 BF16 outputs across all 243 evaluation cases and 48 boundary requests. Full-vocabulary hashes, calibrated probabilities and typed decisions match the sealed original Uzu reference. Clean timing is deferred at the user's request, so no larger speed gain has been established. The checkpoint, exact token sequences, temperature 1.22, context 8192, full-vocabulary normalization and fresh state remain fixed.
+Three Astra workstreams implemented additive candidates after the [previous scoring optimizations](UZU_RUST_SCORING_OPTIMIZATION.md). The combined candidate preserves exact JevK5 BF16 outputs across all 243 evaluation cases and 48 boundary requests. Full-vocabulary hashes, calibrated probabilities and typed decisions match the sealed original Uzu reference. After Brekko finished, two balanced twelve-case comparisons measured a modest local gain: about **3.12% lower fresh latency against the earlier optimized worker** and **3.94% against original Uzu**. Full-population improvement remains unestablished. The checkpoint, exact token sequences, temperature 1.22, context 8192, full-vocabulary normalization and fresh state remain fixed.
 
 ## Candidates
 
@@ -53,7 +53,32 @@ A new Brekko Jev process started during the combined smoke run. Process sampling
 
 The optional `--baseline-receipt` supports incremental balanced timing against the previously accepted `combined` worker. Use the historical worker and original-core probe for the full/digest harness: its retained report scope labels assume that baseline. Run the four-quartet timing protocol for primary timing results; its two-quartet smoke summary retains a generic four-control wording despite containing only two controls. These limits do not affect the completed smoke exactness checks.
 
-Untimed complete-population acceptance passed for the combined BF16 scorer. Clean balanced timing and speed conclusions are explicitly deferred at the user's request. The isolated variants still need complete-population acceptance before individual performance conclusions. The installed JevK5 add-on and production scorer are outside this experiment. Earlier [llama.cpp probability and calibration differences](UZU_JEVK5_BF16_CONTROL.md) remain; preserving Uzu outputs does not resolve those differences.
+Untimed complete-population acceptance passed for the combined BF16 scorer. The isolated variants still need complete-population acceptance before individual performance conclusions. The installed JevK5 add-on and production scorer are outside this experiment. Earlier [llama.cpp probability and calibration differences](UZU_JEVK5_BF16_CONTROL.md) remain; preserving Uzu outputs does not resolve those differences.
+
+## Resumed timing
+
+The user reported that Brekko finished on 2026-10-11. Read-only inspection confirmed its former process was absent and found no active model engines, compilers or residual Brekko workload. The [resumed protocol](../experiments/uzu-rust/jev-scoring/DEEP_TIMING_RESUMED_PROTOCOL.md) fixed two separate comparisons before timing. Each used the existing four-quartet ABBA/BAAB schedule, four independent baseline-only controls, three warmups per process and twelve public cases selected by input length. The two runs totaled 40 serial resident processes, 960 measured requests and 120 checked warmups. Startup and warmups are excluded from request timings.
+
+| Baseline | Fresh median quartet ratio, baseline/candidate | Fresh lower latency | Repeat median ratio | Repeat lower latency |
+| --- | --- | --- | --- | --- |
+| Earlier optimized `combined` | 1.032182 | 3.12% | 1.021936 | 2.15% |
+| Original Uzu historical worker | 1.040987 | 3.94% | 1.042926 | 4.12% |
+
+For each quartet and condition, average the two process observations of each case, then divide the baseline's mean case latency by the candidate's mean. The table takes the median of the four quartet ratios; lower latency is `1 - 1 / median_ratio`. Fresh ratios ranged from 1.022670 to 1.087153 versus `combined`, and 1.039175 to 1.047726 versus historical. All four quartets favored the candidate in both conditions and both comparisons. The raw timing aggregates are [versus combined](../experiments/uzu-rust/jev-scoring/DEEP_LATENCY_VS_COMBINED.json) and [versus historical](../experiments/uzu-rust/jev-scoring/DEEP_LATENCY_VS_HISTORICAL.json).
+
+| Fixed bucket | Public input lengths | Fresh lower latency vs combined | Fresh lower latency vs historical |
+| --- | --- | --- | --- |
+| Short | 137, 156, 177, 207 | 0.51% | 8.46% |
+| Medium | 290, 360, 518, 793 | 1.09% | 5.00% |
+| Long | 1275, 2406, 2635, 3387 | 3.68% | 3.16% |
+
+The longer cases show the larger incremental gain. Bucket results cannot attribute it to an individual patch. Native component directions also differ: state creation and readout were slightly slower versus `combined`, while prefill improved. Against historical, short-case prefill was slightly slower despite lower whole-request latency. Earlier deferred initialization removes independent waits and moves initialization into prefill; its roughly 25.9x state-creation ratio is not an inference speedup.
+
+The median per-case baseline-control range divided by its mean was **10.69% fresh / 12.83% repeat** versus `combined`, and **7.16% fresh / 8.67% repeat** versus historical. These describe variation across four processes, with some cases varying more; they are not significance thresholds or confidence bounds. The twelve-case selection and ratio of means favor the influence of slower cases. This establishes a small local directional gain, with no precise steady-state or population-wide claim. The direct historical result is measured separately; do not multiply it by the earlier optimization ratio or the historical llama.cpp 1.73x result.
+
+Both runs sampled zero recognized external engines or compilers, at most one owned engine and none afterward, with no suspended processes. Each had 31 host samples; maximum background process-average CPU was 78.9% and 39.7%, respectively. A separate metadata check identified ordinary desktop/tooling activity and no residual Brekko workload. Sampling remains limited to process metadata and does not continuously establish GPU or thermal isolation. Resident process peak RSS was similar, approximately 8.12–8.14 GiB across comparison medians; it is a process high-water estimate rather than model-only or GPU allocation.
+
+Every measured output remained exactly equal to the sealed reference, with maximum independent calibration formula error `2.220446049250313e-16`. The [independent analyzer](../scripts/analyze_uzu_deep_timing.py) reproduces the entire original aggregate using standard-library calculations, verifies source/reference/record/seal identities and host receipts, and reports every bucket, condition and native component. Its [combined audit](../experiments/uzu-rust/jev-scoring/DEEP_TIMING_AUDIT_VS_COMBINED.json) and [historical audit](../experiments/uzu-rust/jev-scoring/DEEP_TIMING_AUDIT_VS_HISTORICAL.json) both passed. Warmups were checked during acquisition; their response bodies are not retained by the timing harness. Existing full-vocabulary acceptance covers these unchanged binaries; timing did not rerun the probes. All **196 focused Python tests** passed, including nine tests of independent timing arithmetic and rejection checks.
 
 ## Reproduction and remaining work
 
@@ -65,4 +90,14 @@ uv run --locked --group dev --python 3.12.13 python scripts/validate_uzu_scoring
 uv run --locked --group dev --python 3.12.13 python scripts/validate_uzu_scoring_deep.py aggregate --output test-artifacts/uzu-deep-validation-new --report experiments/uzu-rust/jev-scoring/DEEP_VALIDATION_NEW.json
 ```
 
-Once timing resumes, measure the isolated candidates and combined candidate with the four-quartet protocol, using both the accepted earlier combined worker and historical worker as separate controls. Compare long-context cases separately because submission and final-layer pruning activate only beyond one batch. Report memory pressure and the sampled workload limitations alongside latency; reject any probability, calibration, decision or vocabulary difference. Kernel profiling should identify whether reduced allocation/traffic or CPU/GPU overlap actually saves time before pursuing further changes.
+For a new balanced comparison against the earlier optimized worker, complete builds and host preflight first, then use fresh paths:
+
+```sh
+uv run --locked --group dev --python 3.12.13 python scripts/monitor_uzu_experiment.py --output test-artifacts/uzu-deep-latency-new --harness benchmark_uzu_scoring_deep_latency.py -- --candidate-binary runtime/uzu-rust/deep-optimization/all/bin/meecp-uzu-worker --candidate-receipt runtime/uzu-rust/deep-optimization/all/BUILD_RECEIPT.json --baseline-binary runtime/uzu-rust/optimization/combined/bin/meecp-uzu-worker --baseline-receipt runtime/uzu-rust/optimization/combined/BUILD_RECEIPT.json --quartets 4
+uv run --locked --group dev --python 3.12.13 python scripts/benchmark_uzu_scoring_deep_latency.py aggregate --output test-artifacts/uzu-deep-latency-new --report experiments/uzu-rust/jev-scoring/DEEP_LATENCY_NEW.json
+uv run --locked --group dev --python 3.12.13 python scripts/analyze_uzu_deep_timing.py --output test-artifacts/uzu-deep-latency-new --source-report experiments/uzu-rust/jev-scoring/DEEP_LATENCY_NEW.json --report experiments/uzu-rust/jev-scoring/DEEP_TIMING_AUDIT_NEW.json
+```
+
+Use separate new paths and omit both baseline arguments to compare directly against historical Uzu. The monitor does not suspend external processes and rejects recognized competing engines or compilers.
+
+The combined timing comparisons are complete. Remaining work includes separate acceptance and timing for isolated candidates, broader population controls, and kernel profiling to identify whether reduced traffic or CPU/GPU overlap provides the measured benefit. Larger gains have not been demonstrated. Any further optimization must preserve probabilities, calibration, decisions and vocabulary output. Keep production integration and broader generation/tree acceptance separate.

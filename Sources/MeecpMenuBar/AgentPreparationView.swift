@@ -344,7 +344,8 @@ extension AgentPreparationView {
                 }
         }
         view.loadOptions()
-        guard exactItems(), selectedRecipe(builtin), view.recipePicker.itemTitles.dropFirst().allSatisfy({ $0.contains("meecp.") }),
+        let expectedRecipeTitles = recipes.map { "Python app needing dependency resolution · 1.0.0 · " + ($0["id"] as! String) }
+        guard exactItems(), selectedRecipe(builtin), Array(view.recipePicker.itemTitles.dropFirst()) == expectedRecipeTitles,
               view.providerPicker.numberOfItems == 5, Set(view.providerPicker.itemTitles).count == 5,
               Set(view.providerPicker.itemArray.compactMap { $0.representedObject as? String }) == Set(providerIDs),
               view.providerPicker.itemTitles[4] == "Choose a provider… · " + providerIDs[3], view.modelPicker.selectedItem?.representedObject == nil else { return false }

@@ -1,0 +1,177 @@
+{
+  "bit_exact_calibrated_probabilities": true,
+  "bit_exact_typed_decisions": true,
+  "builds": {
+    "local_checkout_override": {
+      "build": {
+        "binaries": [
+          "stark-score",
+          "stark-score-digest"
+        ],
+        "default_features": true,
+        "features": [
+          "optimized"
+        ],
+        "package": "stark-score",
+        "target": "aarch64-apple-darwin"
+      },
+      "compiler": "rustc 1.98.1 (48a229cea 2026-09-01)",
+      "source_files_count": 1537,
+      "target": "aarch64-apple-darwin",
+      "unit_tests": {
+        "binary_suites": 2,
+        "failures": 0,
+        "passed": 38
+      },
+      "validation_tools_match_lock": true
+    },
+    "pinned": {
+      "build": {
+        "binaries": [
+          "stark-score",
+          "stark-score-digest"
+        ],
+        "default_features": true,
+        "features": [
+          "optimized"
+        ],
+        "package": "stark-score",
+        "target": "aarch64-apple-darwin"
+      },
+      "compiler": "rustc 1.98.1 (48a229cea 2026-09-01)",
+      "source_files_count": 1537,
+      "target": "aarch64-apple-darwin",
+      "unit_tests": {
+        "binary_suites": 2,
+        "failures": 0,
+        "passed": 38
+      },
+      "validation_tools_match_lock": true
+    }
+  },
+  "date": "2026-10-11",
+  "dependency_helper_sha256": "aaeee3f7687815c0106f3584aa11223f209eb22a6ff127458c35cad50f5dbe60",
+  "dependency_lock_sha256": "a17844903138ac567097160b5a272c1e1dbee20fa840442e071f3df82a7507d5",
+  "engine": "stark",
+  "explicit_update_smoke": {
+    "disposable_lock_only": true,
+    "failed_update_preserved_previous_lock": true,
+    "rust_tests_passed": 38,
+    "same_commit_build_and_test_passed": true,
+    "unknown_commit_rejected": true
+  },
+  "local_override_probe": {
+    "changed_files": [
+      "crates/stark-engine/src/engine/language_model/scoring.rs"
+    ],
+    "original_checkout_matches_snapshot": true,
+    "source_change": "one authored comment; numerical implementation unchanged"
+  },
+  "model_files_sha256": {
+    "chat_template.jinja": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715",
+    "config.json": "7cd671fd90e9513487f8c6f14e62af6af638add926f55531d19073a381b66561",
+    "generation_config.json": "62153eb6c69f2e1f426beaa8002b7186437e949c7588167085df14e10e9c0a73",
+    "jevk5_config.json": "0d689fd13d15dc962265e2ae10b56359706ab5d05ad24e00e6334e4c19cf83d2",
+    "model.safetensors": "7165b96777823061753fa96b247d687d591596b20cf24fa518a5b87a96b1be8a",
+    "tokenizer.json": "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523",
+    "tokenizer_config.json": "9cf04fffe3d8c3b85e439fb35c7acad0761ab51c422a8c4256d9f887c3a0be7d"
+  },
+  "model_format": "same-converted-BF16-JevK5-checkpoint",
+  "model_free_checks": {
+    "process_owner_checks_passed": 8,
+    "selected_python_tests_passed": 144
+  },
+  "native_acceptance": {
+    "local_checkout_override": {
+      "bit_exact_raw_outputs": true,
+      "bit_exact_vocabulary_digests": true,
+      "boundary_requests": 48,
+      "boundary_responses": 96,
+      "candidate_tokens": 16,
+      "case_responses": 486,
+      "cases": 243,
+      "clean_eof_valid": true,
+      "default_off_responses": 2,
+      "dependency_build_receipt_sha256": "5ec208931c6f0d422607549ea8c57bde7590210e784fdfd53f08cc2cedfbe165",
+      "dependency_helper_sha256": "aaeee3f7687815c0106f3584aa11223f209eb22a6ff127458c35cad50f5dbe60",
+      "dependency_lock_sha256": "a17844903138ac567097160b5a272c1e1dbee20fa840442e071f3df82a7507d5",
+      "development_only": true,
+      "digest_requests": 534,
+      "digest_responses": 1068,
+      "mode": "untimed-stark-dependency-acceptance",
+      "native_configuration_sha256": "107192ee1fbb7d7277f63c5bcd113f67de56630926fc507e16af4eba9752b432",
+      "native_post_run_seal_sha256": "ef5079461df9646ddc56c881b443384d8c8c9407eff569f2796d04c5ebf7e40d",
+      "native_report_sha256": "2632aa4d6bc3c68282e0e1efc3dee3f4165cf796b3d154466b7c9ed7c859b832",
+      "numerical_acceptance_passed": true,
+      "ownership_settled": true,
+      "probe_cache_hits": 534,
+      "probe_native_score_calls": 534,
+      "probe_sha256": "f556719ff38b4a2e74e75713683157b2b867ddbf091ee09c9cb71736dbdaa384",
+      "readiness_identity_valid": true,
+      "reference_configuration_sha256": "70001de82eb6cdfa018e63bfcfe1968ca68a6fd669508cd6c08be70cd1d6e9bd",
+      "restart_cache_cold": true,
+      "schema_version": 1,
+      "sequence_steps": 20,
+      "source_dirty": true,
+      "source_revision": "aa0c959d097803f5e322dea7bbd4b0301f4c7cea",
+      "source_tree": "996dc62b9bb2672c23285378467c1e1f268d1ee8",
+      "status": "passed",
+      "timing_not_reported": true,
+      "tokenization_cases": 243,
+      "validator_wrapper_sha256": "78c189b30e920d7e58a88934fa9de8ba5b25c8727d0f8933dae6208d9993319f",
+      "worker_cache_hits": 291,
+      "worker_native_score_calls": 291,
+      "worker_sha256": "09fe3192c1bf32ea31cc034aaf6699b7e2d8c4b11f929013568ed5f9ba9f23c4"
+    },
+    "pinned": {
+      "bit_exact_raw_outputs": true,
+      "bit_exact_vocabulary_digests": true,
+      "boundary_requests": 48,
+      "boundary_responses": 96,
+      "candidate_tokens": 16,
+      "case_responses": 486,
+      "cases": 243,
+      "clean_eof_valid": true,
+      "default_off_responses": 2,
+      "dependency_build_receipt_sha256": "b67c25c32e5a08fef5eeda906c2c01dffdfe3231457a4ff7d9cf124dff42ea18",
+      "dependency_helper_sha256": "aaeee3f7687815c0106f3584aa11223f209eb22a6ff127458c35cad50f5dbe60",
+      "dependency_lock_sha256": "a17844903138ac567097160b5a272c1e1dbee20fa840442e071f3df82a7507d5",
+      "development_only": false,
+      "digest_requests": 534,
+      "digest_responses": 1068,
+      "mode": "untimed-stark-dependency-acceptance",
+      "native_configuration_sha256": "a09a99551353636ed8b355e97c9de8f1979c88e9f86c0f5eafc5315223589351",
+      "native_post_run_seal_sha256": "6841fc63477f2a9d479f064792e968b9d8d210fb47e12a841dcc7ebd5d24d500",
+      "native_report_sha256": "a1ce7cb8324853d7c76aebb923077d207c558647803a1210768e347a6b6bfd11",
+      "numerical_acceptance_passed": true,
+      "ownership_settled": true,
+      "probe_cache_hits": 534,
+      "probe_native_score_calls": 534,
+      "probe_sha256": "63d6c99f22be98ebba5b7c568585edaeb23b3642052a1998b68c312bf7bd9146",
+      "readiness_identity_valid": true,
+      "reference_configuration_sha256": "70001de82eb6cdfa018e63bfcfe1968ca68a6fd669508cd6c08be70cd1d6e9bd",
+      "restart_cache_cold": true,
+      "schema_version": 1,
+      "sequence_steps": 20,
+      "source_dirty": false,
+      "source_revision": "aa0c959d097803f5e322dea7bbd4b0301f4c7cea",
+      "source_tree": "996dc62b9bb2672c23285378467c1e1f268d1ee8",
+      "status": "passed",
+      "timing_not_reported": true,
+      "tokenization_cases": 243,
+      "validator_wrapper_sha256": "78c189b30e920d7e58a88934fa9de8ba5b25c8727d0f8933dae6208d9993319f",
+      "worker_cache_hits": 291,
+      "worker_native_score_calls": 291,
+      "worker_sha256": "3c1967bd562924d9a83db8b721100dc4c788f29e9860fa97173ed8bf1ad32edd"
+    }
+  },
+  "reference_manifest_sha256": "78516ac7e49eca5df5e24d7b687fdede53aa4eb31013cb3194921b4202c5518e",
+  "reference_sha256": "ce76fb6d44686f8abd05d8fbeb3883b84cb350fc9ba8986db87bfe1e7cee9d2a",
+  "repository": "https://github.com/jshahbazi/stark.git",
+  "schema_version": 1,
+  "scope": "experimental-scoring-dependency-build-and-update",
+  "source_revision": "aa0c959d097803f5e322dea7bbd4b0301f4c7cea",
+  "source_tree": "996dc62b9bb2672c23285378467c1e1f268d1ee8",
+  "timing_not_reported": true,
+  "validator_wrapper_sha256": "78c189b30e920d7e58a88934fa9de8ba5b25c8727d0f8933dae6208d9993319f"
+}

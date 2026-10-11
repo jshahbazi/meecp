@@ -33,8 +33,9 @@ SENTINEL = "synthetic-private-request-must-not-appear-in-error"
 
 @asynccontextmanager
 async def sdk(state, credential, errors):
+    # Keep the shared dependency bytes stable after a preparation plan binds them.
     parameters = StdioServerParameters(command=sys.executable, args=["-P", "-m", "meecp", "--state-dir", str(state),
-        "--credential-file", str(credential), "management", "connect"], env={"PYTHONPATH": str(ROOT / "backend")})
+        "--credential-file", str(credential), "management", "connect"], env={"PYTHONPATH": str(ROOT / "backend"), "PYTHONDONTWRITEBYTECODE": "1"})
     with errors.open("w") as stderr:
         async with stdio_client(parameters, errlog=stderr) as (read, write):
             async with ClientSession(read, write) as client:

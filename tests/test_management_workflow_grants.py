@@ -621,6 +621,7 @@ async def test_real_sdk_bound_attempt_and_owner_revocation_joins_actual_child(tm
     The only executed workload is a synthetic sleeping Python child. It does
     not build/probe a package or contact a provider/model service.
     """
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
     from meecp.preparation_runner import PreparationRunner
     _,reaper=prepared
     folder=tmp_path/"sdk-source";folder.mkdir()

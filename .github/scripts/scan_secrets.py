@@ -63,10 +63,69 @@ PUBLIC_GGUF_METADATA_PATHS = (
     "templates/builtin-recipes/text-generation-v1-0-21/model-provenance.json",
     "templates/builtin-recipes/text-generation-v1-0-22/model-provenance.json",
 )
+# Public SHA-256 file identities, independently recomputed from the accepted
+# BF16 model's tokenizer.json and tokenizer_config.json. The native acceptance
+# configurations bind these same files. Restrict this exception to those two
+# exact values at the reviewed public acceptance-record path.
+PUBLIC_STARK_MODEL_FILES_PATH = "engines/STARK_VALIDATION.json"
+PUBLIC_STARK_MODEL_FILES_SHA256 = (
+    "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523",
+    "9cf04fffe3d8c3b85e439fb35c7acad0761ab51c422a8c4256d9f887c3a0be7d",
+)
+
+
+# These exact values were independently recomputed from the admitted model
+# files, the llama.cpp converter source at 86d86ed4396b4130922f7b9af26e3d9fc11a591b,
+# and the hash-bound benchmark harness plus its admitted Qwen tokenizer.
+# The groups admit exactly the 22 value/path pairs reported in fetched history.
+# They do not admit the same digest at another path or any other digest.
+PUBLIC_UZU_METADATA_EXCEPTIONS = (
+    (
+        "Reviewed public JevK5 file SHA-256 in scoring results",
+        (
+            "experiments/uzu-rust/jev-scoring/RESULTS.json",
+            "experiments/uzu-rust/jev-scoring/RESULTS_BF16.json",
+            "experiments/uzu-rust/jev-scoring/RESULTS_INITIAL.json",
+        ),
+        (
+            "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523",
+            "9cf04fffe3d8c3b85e439fb35c7acad0761ab51c422a8c4256d9f887c3a0be7d",
+        ),
+    ),
+    (
+        "Reviewed public llama.cpp converter source SHA-256 in BF16 provenance",
+        (
+            "experiments/uzu-rust/jev-scoring/BF16_CONTROL_PROVENANCE.json",
+            "experiments/uzu-rust/jev-scoring/RESULTS_BF16.json",
+        ),
+        (
+            "7da3038029f302deac90772ddc23cf948e0dcc3e4246102fe014d68ce0fa9e3d",
+            "33727fdd917fe116312a6649d3daea81b8ee0476d19b8875051aa30c5e1146e5",
+            "6c225af1d7a2dce88fdc1b885ca4b525de588067508c72b15eef62cf6112c788",
+            "34e3b5edcb16a019faa2d7f17f88d82419cf821e964f921db8b53484037d7929",
+            "8e88be28468d4282d2b7fd0d62a3adfe7bddcb186e703a380d81d82455401c60",
+            "df7be064f695ea6be5f82b15f0d3f5338340b052ada727b4ebf57e95a9b64e7b",
+        ),
+    ),
+    (
+        "Reviewed deterministic benchmark sequence SHA-256",
+        ("experiments/uzu-rust/BENCHMARK_RESULTS.json",),
+        (
+            "240f65e053c09140d315105e6665f5fe205c31436fc2edae38f5fd76185fdf84",
+            "cd889e2ef5f44f3de1008001869c72c22377be224be1cdad5935865efb851d6e",
+            "5b73d78e97cfd7ae3d2fa567f315e58678363cf4f6c4f69c7a1dfe02d1840c7c",
+        ),
+    ),
+    (
+        "Reviewed public Qwen file SHA-256 in quality provenance",
+        ("experiments/uzu-rust/QUALITY_RESULTS.json",),
+        ("87a7830d63fcf43bf241c3c5242e96e62dd3fdc29224ca26fed8ea333db72de4",),
+    ),
+)
 
 
 def trusted_config() -> str:
-    """Extend built-in rules with one reviewed, content-and-path-bound finding.
+    """Extend built-in rules with reviewed, content-and-path-bound findings.
 
     Pinned upstream schema and inheritance semantics:
     https://github.com/gitleaks/gitleaks/blob/v8.30.1/README.md#configuration
@@ -76,13 +135,29 @@ def trusted_config() -> str:
     """
     import re
     paths = "|".join(re.escape(path) for path in PUBLIC_GGUF_METADATA_PATHS)
-    return ("[extend]\nuseDefault = true\n"
+    config = ("[extend]\nuseDefault = true\n"
             '[[rules]]\nid = "generic-api-key"\n'
             '[[rules.allowlists]]\n'
             'description = "Reviewed public pinned GGUF metadata SHA-256 at exact source paths"\n'
             'condition = "AND"\nregexTarget = "secret"\n'
             "paths = ['''^(?:" + paths + ")$''']\n"
-            "regexes = ['''^" + PUBLIC_GGUF_METADATA_DIGEST + "$''']\n")
+            "regexes = ['''^" + PUBLIC_GGUF_METADATA_DIGEST + "$''']\n"
+            '[[rules.allowlists]]\n'
+            'description = "Reviewed public STARK BF16 tokenizer metadata SHA-256 at exact source path"\n'
+            'condition = "AND"\nregexTarget = "secret"\n'
+            "paths = ['''^" + re.escape(PUBLIC_STARK_MODEL_FILES_PATH) + "$''']\n"
+            "regexes = ['''^(?:" + "|".join(PUBLIC_STARK_MODEL_FILES_SHA256) + ")$''']\n")
+    for description, paths, digests in PUBLIC_UZU_METADATA_EXCEPTIONS:
+        exact_paths = "|".join(re.escape(path) for path in paths)
+        exact_values = "|".join(re.escape(value) for value in digests)
+        config += (
+            '[[rules.allowlists]]\n'
+            f'description = "{description}"\n'
+            'condition = "AND"\nregexTarget = "secret"\n'
+            "paths = ['''^(?:" + exact_paths + ")$''']\n"
+            "regexes = ['''^(?:" + exact_values + ")$''']\n"
+        )
+    return config
 
 
 class ScanFailure(Exception):

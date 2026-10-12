@@ -201,7 +201,7 @@ def test_public_metadata_exception_is_exact_value_and_path_for_one_rule_only():
     assert not re.fullmatch(exception["regexes"][0], "0" + scanner.PUBLIC_GGUF_METADATA_DIGEST)
     stark = rule["allowlists"][1]
     assert stark["condition"] == "AND" and stark["regexTarget"] == "secret"
-    assert stark["paths"] == [r"^engines/STARK_VALIDATION\.json$"]
+    assert stark["paths"] == [r"^(?:engines/STARK_VALIDATION\.json|engines/STARK_JEVK5_VALIDATION\.json)$"]
     assert stark["regexes"] == [r"^(?:06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523|9cf04fffe3d8c3b85e439fb35c7acad0761ab51c422a8c4256d9f887c3a0be7d)$"]
 
 
@@ -308,9 +308,11 @@ def test_actual_pinned_scanner_preserves_detection_at_excepted_paths(actual_scan
 @pytest.mark.parametrize("case", ["reviewed", "different_value", "same_value_other_path", "extra_value_same_file"])
 @pytest.mark.parametrize("mode", ["dir", "git"])
 @pytest.mark.parametrize("metadata_index", [0, 1])
-def test_actual_pinned_scanner_preserves_detection_at_stark_tokenizer_paths(actual_scanner, tmp_path, case, mode, metadata_index, capsys):
+@pytest.mark.parametrize("reviewed_path", [scanner.PUBLIC_STARK_MODEL_FILES_PATH,
+                                        scanner.PUBLIC_STARK_INTEGRATION_MODEL_FILES_PATH])
+def test_actual_pinned_scanner_preserves_detection_at_stark_tokenizer_paths(actual_scanner, tmp_path, case, mode, metadata_index, reviewed_path, capsys):
     binary, config, ignore = actual_scanner
-    path = scanner.PUBLIC_STARK_MODEL_FILES_PATH
+    path = reviewed_path
     value = scanner.PUBLIC_STARK_MODEL_FILES_SHA256[metadata_index]
     synthetic = hashlib.sha256(b"stark non-credential scanner negative fixture").hexdigest()
     if case == "different_value": value = synthetic

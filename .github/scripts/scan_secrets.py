@@ -66,8 +66,11 @@ PUBLIC_GGUF_METADATA_PATHS = (
 # Public SHA-256 file identities, independently recomputed from the accepted
 # BF16 model's tokenizer.json and tokenizer_config.json. The native acceptance
 # configurations bind these same files. Restrict this exception to those two
-# exact values at the reviewed public acceptance-record path.
+# exact values at the two reviewed public acceptance-record paths. The installed
+# record repeats the same accepted tokenizer identities; no other digest or
+# repository path is exempted.
 PUBLIC_STARK_MODEL_FILES_PATH = "engines/STARK_VALIDATION.json"
+PUBLIC_STARK_INTEGRATION_MODEL_FILES_PATH = "engines/STARK_JEVK5_VALIDATION.json"
 PUBLIC_STARK_MODEL_FILES_SHA256 = (
     "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523",
     "9cf04fffe3d8c3b85e439fb35c7acad0761ab51c422a8c4256d9f887c3a0be7d",
@@ -145,7 +148,8 @@ def trusted_config() -> str:
             '[[rules.allowlists]]\n'
             'description = "Reviewed public STARK BF16 tokenizer metadata SHA-256 at exact source path"\n'
             'condition = "AND"\nregexTarget = "secret"\n'
-            "paths = ['''^" + re.escape(PUBLIC_STARK_MODEL_FILES_PATH) + "$''']\n"
+            "paths = ['''^(?:" + re.escape(PUBLIC_STARK_MODEL_FILES_PATH) + "|"
+            + re.escape(PUBLIC_STARK_INTEGRATION_MODEL_FILES_PATH) + ")$''']\n"
             "regexes = ['''^(?:" + "|".join(PUBLIC_STARK_MODEL_FILES_SHA256) + ")$''']\n")
     for description, paths, digests in PUBLIC_UZU_METADATA_EXCEPTIONS:
         exact_paths = "|".join(re.escape(path) for path in paths)

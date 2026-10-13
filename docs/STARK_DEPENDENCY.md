@@ -1,10 +1,10 @@
 # Stark engine dependency
 
-Meecp consumes the standalone [Stark repository](https://github.com/jshahbazi/stark) through [engines/stark.lock.json](../engines/stark.lock.json). Stark owns the engine and scoring implementation. Meecp owns its dependency selection, consumer checks and eventual package integration.
+Meecp consumes the standalone [Stark repository](https://github.com/jshahbazi/stark) through [engines/stark.lock.json](../engines/stark.lock.json). Stark owns the engine and scoring implementation. Meecp owns its dependency selection, consumer checks and [experimental JevK5 package integration](STARK_JEVK5.md).
 
 The lock records the Git commit and tree, Cargo lockfile hash, Rust toolchain, build target and features, readiness/protocol and cache contract, upstream/scoring provenance, and hashes of build configuration, scoring and validation-tool sources. The initial profile enables `optimized` with default features on `aarch64-apple-darwin`. Consecutive caching remains disabled unless the worker is launched with `--consecutive-cache`. Actual binary hashes belong to each build receipt and its acceptance record.
 
-This is the current experimental probability-scoring build path. The historical [Uzu patch builds](UZU_SOL_CONSECUTIVE_CACHE.md#immutable-build-and-verification), accepted binaries and reports remain available for reproduction. Production scorer, HTTP/MCP and installed JevK5 package integration remain unfinished. This dependency work does not establish a new timing result or broader model compatibility.
+This is the current experimental probability-scoring build path. The historical [Uzu patch builds](UZU_SOL_CONSECUTIVE_CACHE.md#immutable-build-and-verification), accepted binaries and reports remain available for reproduction. The separate Stark JevK5 package adds an authenticated scoring bridge and the existing JevK5 MCP adapter. Its installed acceptance and timing evidence are documented separately in [STARK_JEVK5.md](STARK_JEVK5.md). The dependency gate does not establish broader model compatibility.
 
 ## Build the committed pin
 
@@ -37,7 +37,7 @@ uv run --locked --group dev --python 3.12.13 python scripts/stark_dependency.py 
 
 The helper derives a candidate lock from that commit, builds it and runs focused tests before atomically replacing the selected lock. It checks that the previous lock has not changed concurrently. Failed preparation leaves the previous lock intact. A successful update marks full native acceptance as required; build tests alone do not establish probability or calibration preservation.
 
-Run the native acceptance check described below, review the resulting scalar report and dependency-lock diff, then commit the lock and accepted report with the consumer change. Branch names and moving `main` are not valid revision selectors. Updates are explicit development actions; the installed app does not discover or apply them automatically.
+Run the native acceptance check described below, rebuild the Stark JevK5 package and replay its installed integration checks, then review the scalar reports and dependency-lock diff. Commit the lock and accepted reports with the consumer change. Branch names and moving `main` are not valid revision selectors. Updates are explicit development actions; the installed app does not discover or apply them automatically.
 
 ## Test a local Stark checkout
 

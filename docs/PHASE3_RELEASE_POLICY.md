@@ -4,10 +4,13 @@
 
 The tracked source uses TextGen engine/task 1.0.22 and recipe 1.0.23. Their
 component identity includes the complete host Python source closure. A signed
-1.1.0 installation inspected on 2026-10-13 retained stale engine/task policy
-digests and exited with `invalid_release_policy` before acquiring the host lock,
+1.1.0 installation inspected on 2026-10-13 had different packaged engine/task
+implementation digests and exited with `invalid_release_policy` before acquiring the host lock,
 including with empty temporary state. Its signature and complete artifact proof
-passed. The native UI reported an ownership conflict for every backend exit.
+passed. The builder copied `meecp_textgen` modules over the distinct tracked
+`mcpme_textgen` compatibility shims, changing two files in the hashed source
+closure. The bundler now copies each namespace's own source files. The native UI
+previously reported an ownership conflict for every backend exit.
 
 The app build now checks every selected policy implementation and dependency
 closure using its packaged interpreter and backend before signing. This check

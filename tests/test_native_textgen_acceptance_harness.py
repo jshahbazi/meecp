@@ -82,7 +82,7 @@ def test_model_residents_are_distinguished_from_owned_host_gateway(module):
 @pytest.mark.parametrize("version", ["1.0.2", "7.2.1"])
 async def test_recipe_lifecycle_uses_selected_host_version(module, monkeypatch, tmp_path, version):
     selected = ModuleType("meecp.preparation_textgen")
-    selected.VERSION = "1.0.21"
+    selected.VERSION = "1.0.22"
     selected.RECIPE_VERSION = version
     monkeypatch.setitem(sys.modules, selected.__name__, selected)
     harness = module.Harness(tmp_path, tmp_path, tmp_path, {"safe_to_remove": True}, tmp_path)

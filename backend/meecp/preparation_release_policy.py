@@ -159,30 +159,17 @@ class ReleasePolicy(StrictModel):
         return preparation, agent, command
 
 
-def _load_policy(host_root):
-    """Private test seam; production caller has one fixed distribution root."""
-    from .recipes import _read, builtin_components
+def validate_policy_implementations(policy: ReleasePolicy):
+    """Check static implementation pins without granting execution authority.
+
+    Producers use this check before signing. Runtime admission still requires
+    the separate signed artifact proof and its held identity fences.
+    """
+    from .recipes import builtin_components
     try:
-        path = host_root / POLICY_PATH
-        data = _read(path, MAX_POLICY_BYTES)
-        policy = ReleasePolicy.model_validate(load_contract(data))
         preparation, agent, command = policy.admissions()
         if preparation is None and agent is None and command is None:
-            return None, None, (None, None)
-        from .preparation_release_artifact import verify_release_artifact, load_artifact_json, ReleaseArtifactProof
-        artifact = verify_release_artifact(host_root, POLICY_PATH, data)
-        if type(artifact) is not ReleaseArtifactProof:
-            raise ValueError()
-        # This is an artifact identity check within the signed-distribution /
-        # same-user boundary, not a publisher signature inferred from JSON.
-        build = load_artifact_json(_read(host_root / "build.json", 8 * 1024**2))
-        if (build.get("source_tree_dirty") is not False
-                or not isinstance(build.get("source_commit"), str)
-                or not re.fullmatch(r"[0-9a-f]{40}", build["source_commit"])
-                or not isinstance(build.get("artifact_sha256"), dict)
-                or len(build["artifact_sha256"]) > 20000
-                or build["artifact_sha256"].get(POLICY_PATH) != hashlib.sha256(data).hexdigest()):
-            raise ValueError()
+            return preparation, agent, command
         catalog = builtin_components()
         selected = preparation.families | frozenset(key for group in preparation.recipe_component_sets for key in group)
         for identifier, version, digest in selected:
@@ -204,6 +191,36 @@ def _load_policy(host_root):
             for adapter_id, digest, _ in agent.providers:
                 if adapter_id not in adapters or adapters[adapter_id].digest != digest:
                     raise ValueError()
+        return preparation, agent, command
+    except (OSError, ValueError, TypeError, KeyError):
+        raise PreparationError("invalid_release_policy") from None
+
+
+def _load_policy(host_root):
+    """Private test seam; production caller has one fixed distribution root."""
+    from .recipes import _read
+    try:
+        path = host_root / POLICY_PATH
+        data = _read(path, MAX_POLICY_BYTES)
+        policy = ReleasePolicy.model_validate(load_contract(data))
+        preparation, agent, command = policy.admissions()
+        if preparation is None and agent is None and command is None:
+            return None, None, (None, None)
+        from .preparation_release_artifact import verify_release_artifact, load_artifact_json, ReleaseArtifactProof
+        artifact = verify_release_artifact(host_root, POLICY_PATH, data)
+        if type(artifact) is not ReleaseArtifactProof:
+            raise ValueError()
+        # This is an artifact identity check within the signed-distribution /
+        # same-user boundary, not a publisher signature inferred from JSON.
+        build = load_artifact_json(_read(host_root / "build.json", 8 * 1024**2))
+        if (build.get("source_tree_dirty") is not False
+                or not isinstance(build.get("source_commit"), str)
+                or not re.fullmatch(r"[0-9a-f]{40}", build["source_commit"])
+                or not isinstance(build.get("artifact_sha256"), dict)
+                or len(build["artifact_sha256"]) > 20000
+                or build["artifact_sha256"].get(POLICY_PATH) != hashlib.sha256(data).hexdigest()):
+            raise ValueError()
+        preparation, agent, command = validate_policy_implementations(policy)
         if command is not None:
             from .preparation_release_command_admission import command_release_admission
             try:

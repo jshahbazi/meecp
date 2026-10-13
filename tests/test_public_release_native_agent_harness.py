@@ -194,7 +194,7 @@ def test_textgen_keys_bind_actual_current_producer_to_literal_policy(driver, mon
     from meecp import preparation_textgen
     assert ENGINE[0] == preparation_textgen.ENGINE_ID == "llamacpp-cpu-v1"
     assert TASK[0] == preparation_textgen.TASK_ID == "text-generate-v1"
-    assert preparation_textgen.VERSION == "1.0.21"
+    assert preparation_textgen.VERSION == "1.0.22"
     if previous_version is None:
         with pytest.raises(driver.common.AcceptanceError, match="combined_textgen_version_changed"):
             driver.textgen_keys()
@@ -234,24 +234,24 @@ def test_historical13_policy_changes_only_textgen_references():
     assert json.loads(historical13_fixture_bytes()) == expected
 
 
-def test_current21_policy_binds_textgen_and_agent_implementations():
+def test_current22_policy_binds_textgen_and_agent_implementations():
     from meecp.preparation_release_policy import POLICY_PATH
     expected = json.loads(historical13_fixture_bytes())
-    expected["preparation"]["families"][3] = {"id": "text-generate-v1", "version": "1.0.21",
-        "digest": "248d72f37779f22d57ab3d64b5fc1e706db9092df79da27a762693ce3df81e07"}
+    expected["preparation"]["families"][3] = {"id": "text-generate-v1", "version": "1.0.22",
+        "digest": "64c38210e90aa326ec4f9723415f5e490bc51773d85de728e488349e30239f1a"}
     expected["preparation"]["recipe_component_sets"][4] = [
-        {"id": "llamacpp-cpu-v1", "version": "1.0.21",
-         "digest": "b60b073b403824ab742cdb0a5df7b2008ff5d8b19323b976d510e097f2abbc04"},
-        {"id": "text-generate-v1", "version": "1.0.21",
-         "digest": "248d72f37779f22d57ab3d64b5fc1e706db9092df79da27a762693ce3df81e07"}]
+        {"id": "llamacpp-cpu-v1", "version": "1.0.22",
+         "digest": "ef48caeaf24bebefb4326f9217763c93e161d1e8ee1404cc98647de8826e6f94"},
+        {"id": "text-generate-v1", "version": "1.0.22",
+         "digest": "64c38210e90aa326ec4f9723415f5e490bc51773d85de728e488349e30239f1a"}]
     current_digests = {
         "python-function-v1": "a633c70b645b143d89d25584f4b61a69d490eda01fc986b7e46b54f0bce71561",
         "resolved-python-v1": "e5b174b7626e3bb89cd4a8727099662d111608e1465b01218342bb68f10a6b90",
         "onnxruntime-cpu-v1": "08f524978bf50f0ff1c9aa1f2db57393868076282c3aa879686a22cdff2afd30",
         "yolo11-coco-detect-v1": "869a91491f8772054988d4df367ba53706dbb88a6e3c8dbfcc7f8d0bc39b5888",
         "host-command-json-v1": "339cbe6ebad51b2a0e4e73228e3f7d119d81ac784908fffd93363340bc91684b",
-        "llamacpp-cpu-v1": "b60b073b403824ab742cdb0a5df7b2008ff5d8b19323b976d510e097f2abbc04",
-        "text-generate-v1": "248d72f37779f22d57ab3d64b5fc1e706db9092df79da27a762693ce3df81e07",
+        "llamacpp-cpu-v1": "ef48caeaf24bebefb4326f9217763c93e161d1e8ee1404cc98647de8826e6f94",
+        "text-generate-v1": "64c38210e90aa326ec4f9723415f5e490bc51773d85de728e488349e30239f1a",
         "openai-chat-completions-v1": "532b386405bc2f780cab626ea10d355d3f5602a7ac9be1622cd7f2f85990f46e",
         "loopback-http-bearer-v1": "7c7cd180ec08f8401c23c338464ae60e65f7428ef5a3f3f9e026f2cca246f62b",
         "service-text-generate-v1": "7894f9c2e54b1d40bb62a6e2e7cee4aeff3b02d5920fb966284d655739638fb5",
@@ -266,11 +266,11 @@ def test_current21_policy_binds_textgen_and_agent_implementations():
     policy_path = Path(__file__).resolve().parents[1] / POLICY_PATH
     assert json.loads(policy_path.read_bytes()) == expected
     assert hashlib.sha256(policy_path.read_bytes()).hexdigest() == (
-        "ca7d40f1dd0075e757597caea0b5437c87fc63437818e54f815666471bf242b2")
+        "75b7b219d5f3d71a9470026738555b7dc95b8938395e4ff9c53cb678ace3023f")
     from meecp import preparation_textgen
     assert {item.key for item in preparation_textgen.references()} == {
-        ("llamacpp-cpu-v1", "1.0.21", "b60b073b403824ab742cdb0a5df7b2008ff5d8b19323b976d510e097f2abbc04"),
-        ("text-generate-v1", "1.0.21", "248d72f37779f22d57ab3d64b5fc1e706db9092df79da27a762693ce3df81e07")}
+        ("llamacpp-cpu-v1", "1.0.22", "ef48caeaf24bebefb4326f9217763c93e161d1e8ee1404cc98647de8826e6f94"),
+        ("text-generate-v1", "1.0.22", "64c38210e90aa326ec4f9723415f5e490bc51773d85de728e488349e30239f1a")}
 
 
 def historical14_fixture_bytes():
@@ -310,11 +310,11 @@ def test_lifecycle_policy_guard_accepts_historical_and_current_bytes(tmp_path, m
                           (selected12_fixture_bytes(), "selected_model_accepted", "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375"),
                           (historical13_fixture_bytes(), "selected_model_accepted", "8a9a8fd69217352b49e0e338d4d652df8cebcac86609edae1190a88cd2d9a592"),
                           (historical14_fixture_bytes(), "selected_model_accepted", "5bb20b7a8cde39368a5cc3d03a92a4ed3f69d92ac56c317b6f696432863925ea"),
-                          ((Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes(), "selected_model_accepted", "ca7d40f1dd0075e757597caea0b5437c87fc63437818e54f815666471bf242b2")):
+                          ((Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes(), "selected_model_accepted", "75b7b219d5f3d71a9470026738555b7dc95b8938395e4ff9c53cb678ace3023f")):
         policy_path.write_bytes(raw)
         # Frozen policies are checked with their original agent producer.
         with monkeypatch.context() as producer:
-            if expected != "ca7d40f1dd0075e757597caea0b5437c87fc63437818e54f815666471bf242b2":
+            if expected != "75b7b219d5f3d71a9470026738555b7dc95b8938395e4ff9c53cb678ace3023f":
                 historical = json.loads(raw)
                 keys = {item["id"]: (item["id"], item["version"], item["digest"])
                         for group in historical["preparation"]["recipe_component_sets"] for item in group}

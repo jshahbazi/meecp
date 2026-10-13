@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#17332d">
+  <title>meecp — A home for your local tools</title>
+  <meta name="description" content="Give your local MCP tools and models a home on your Mac. meecp is a standalone menu-bar host for Apple silicon, with native controls and clear connection setup.">
+  <link rel="canonical" href="https://meecp.app/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="meecp — A home for your local tools">
+  <meta property="og:description" content="Local MCP tools and models, managed from your Mac’s menu bar.">
+  <meta property="og:url" content="https://meecp.app/">
+  <meta property="og:image" content="https://meecp.app/assets/share.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" href="/assets/icon.png">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="wordmark" href="#" aria-label="meecp home"><img src="/assets/icon.png" alt="" width="36" height="36"><span>meecp<span class="wordmark-dot">.</span></span></a>
+    <nav aria-label="Main navigation">
+      <a class="nav-detail" href="#how-it-works">How it works</a>
+      <a class="nav-detail" href="#your-mac">Your Mac, your tools</a>
+      <a class="nav-github" href="https://github.com/jshahbazi/meecp">GitHub <span aria-hidden="true">↗</span></a>
+      <a class="button button-small" href="#get-meecp">Get meecp <span aria-hidden="true">↓</span></a>
+    </nav>
+  </header>
+  <main id="main">
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="hero-art"><img src="/assets/hero.jpg" alt="A green m on a pedestal, connected to small tools by cables" width="1900" height="826" fetchpriority="high"></div>
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> AT HOME ON YOUR MAC</p>
+        <h1 id="hero-title">A home for<br>your local tools<span class="accent-dot">.</span></h1>
+        <p class="hero-description">Keep your MCP tools and local models close. Meecp gives them a place in your menu bar, with the controls to make them useful.</p>
+        <div class="hero-actions"><a class="button" href="#get-meecp">Get meecp for Mac <span aria-hidden="true">↓</span></a><a class="text-link" href="#how-it-works">Take a look <span aria-hidden="true">↗</span></a></div>
+        <p class="requirements">Apple silicon <span aria-hidden="true">·</span> macOS 26+ <span aria-hidden="true">·</span> Open source</p>
+      </div>
+      <div class="hero-footnote"><span class="line" aria-hidden="true"></span> Small home. Useful connections.</div>
+    </section>
+
+    <div class="facts-strip wrap" aria-label="Product essentials"><span><span class="mini-symbol" aria-hidden="true">⌘</span> Native macOS app</span><span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 5v4m8-4v4M7 9h10v3a5 5 0 0 1-10 0Zm5 8v4"/></svg> Built for MCP clients</span><span><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg> Local by design</span><span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 7-5 5 5 5m6-10 5 5-5 5"/></svg> Source on GitHub</span></div>
+
+    <section id="how-it-works" class="section wrap workflow" aria-labelledby="workflow-title">
+      <div class="section-heading"><p class="eyebrow">A LITTLE LESS SETUP</p><h2 id="workflow-title">From a local tool<br>to a useful connection.</h2><p>Meecp handles the home base: installed packages, running services, and the connection details your MCP client needs.</p></div>
+      <div class="steps">
+        <article class="step"><span class="step-number">01</span><h3>Give a tool a home</h3><p>Add a prepared app package. The included JSON Utilities starter gives you a first tool to try without downloading a model.</p></article>
+        <article class="step"><span class="step-number">02</span><h3>Connect your client</h3><p>Use the app’s connection setup to add its tools to an MCP client. The client chooses when to call them.</p></article>
+        <article class="step"><span class="step-number">03</span><h3>Keep an eye on things</h3><p>See what’s running, inspect tool availability, and start, stop, or restart an app from one native window.</p></article>
+      </div>
+    </section>
+
+    <section id="your-mac" class="control-section" aria-labelledby="control-title">
+      <div class="wrap control-grid">
+        <div class="control-copy"><p class="eyebrow">QUIETLY IN THE MENU BAR</p><h2 id="control-title">Your tools.<br>Your Mac.<br>You’re in control.</h2><p>A small menu-bar app, with an Apps window when you need the details. Live status, request counts, failures, and latency help you see how each app is doing.</p><a class="text-link" href="https://github.com/jshahbazi/meecp/blob/main/docs/MEECP_STATUS.md">Explore the current capabilities <span aria-hidden="true">↗</span></a></div>
+        <div class="interface-scene">
+          <div class="menu-bar-demo" aria-hidden="true"><span>Finder &nbsp; File &nbsp; Edit &nbsp; View</span><span>◒ &nbsp; <b>m</b> &nbsp; 9:41</span></div>
+          <div class="app-window" aria-label="Illustration of the meecp Apps window">
+            <div class="window-top"><span class="window-buttons" aria-hidden="true"><i></i><i></i><i></i></span><span>meecp</span><span class="window-top-spacer"></span></div>
+            <div class="window-body"><aside aria-hidden="true"><div class="sidebar-brand"><img src="/assets/icon.png" width="28" height="28" alt="">meecp</div><div class="sidebar-selected">Apps <span>2</span></div><div class="sidebar-item">Settings</div><div class="sidebar-bottom">LOCAL HOST</div></aside><div class="apps-panel"><div class="panel-heading"><h3>Apps</h3><span class="add-app-label">+ Add App</span></div><p class="panel-description">A place for your local tools.</p><div class="app-row"><span class="package-icon json-icon" aria-hidden="true">{ }</span><div><strong>JSON Utilities</strong><small>One tool · No model required</small></div><span class="app-state"><i></i>Running</span></div><div class="app-row"><span class="package-icon model-icon" aria-hidden="true">m</span><div><strong>JevK5</strong><small>Local decision model</small></div><span class="app-state"><i></i>Running</span></div><div class="connection-preview"><span class="connected-indicator" aria-hidden="true"></span><div><strong>Ready for your MCP client</strong><small>Connection setup lives with each app.</small></div><span aria-hidden="true">↗</span></div></div></div>
+          </div>
+          <p class="illustration-label">Illustrative interface · Features vary by package</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section wrap tool-section" aria-labelledby="tools-title">
+      <div class="section-heading horizontal"><div><p class="eyebrow">START SMALL. MAKE IT USEFUL.</p><h2 id="tools-title">Different tools.<br>One place to manage them.</h2></div><p>Run lightweight CPU tools and prepared local model packages through the same host. Pick a starting point to see what belongs here.</p></div>
+      <div class="tool-explorer">
+        <div class="tool-tabs" role="tablist" aria-label="Explore supported tool types"><button id="tab-json" type="button" role="tab" aria-selected="true" aria-controls="panel-json" tabindex="0" data-tab="json"><span aria-hidden="true">{ }</span> JSON Utilities</button><button id="tab-model" type="button" role="tab" aria-selected="false" aria-controls="panel-model" tabindex="-1" data-tab="model"><span aria-hidden="true">m</span> Local decisions</button><button id="tab-package" type="button" role="tab" aria-selected="false" aria-controls="panel-package" tabindex="-1" data-tab="package"><span aria-hidden="true">⊞</span> Your packages</button></div>
+        <div class="tool-panel" id="panel-json" role="tabpanel" aria-labelledby="tab-json" tabindex="0"><div class="tool-panel-copy"><span class="tag">INCLUDED STARTER</span><h3>Your first local tool,<br>ready to try.</h3><p>JSON Utilities exposes a <code>validate_json</code> tool to your MCP client. It’s a small, practical way to try the host and make your first connection.</p><a class="text-link" href="https://github.com/jshahbazi/meecp#build-from-source-and-try-json-utilities">Read the setup guide <span aria-hidden="true">↗</span></a></div><div class="tool-diagram" aria-label="MCP client connects through meecp to JSON Utilities"><span class="diagram-client">MCP client</span><span class="diagram-line" aria-hidden="true"></span><span class="diagram-host"><img src="/assets/icon.png" width="68" height="68" alt="">meecp</span><span class="diagram-line" aria-hidden="true"></span><span class="diagram-tool"><b aria-hidden="true">{ }</b>JSON Utilities</span></div></div>
+        <div class="tool-panel" id="panel-model" role="tabpanel" aria-labelledby="tab-model" tabindex="0" hidden><div class="tool-panel-copy"><span class="tag">PREPARED MODEL PACKAGE</span><h3>A local model<br>for typed decisions.</h3><p>The JevK5-4B package scores the evidence supplied by your client for choices, boolean probabilities, and expected scores. Meecp manages its local runtime and serializes decisions.</p><a class="text-link" href="https://github.com/jshahbazi/meecp/blob/main/docs/DESIGN.md">Read the model contract <span aria-hidden="true">↗</span></a></div><div class="model-detail"><span class="large-model-mark" aria-hidden="true">m</span><strong>JevK5-4B</strong><span>Local inference on Apple silicon</span><div><code>jevk5_decide</code><code>jevk5_status</code></div></div></div>
+        <div class="tool-panel" id="panel-package" role="tabpanel" aria-labelledby="tab-package" tabindex="0" hidden><div class="tool-panel-copy"><span class="tag">TOOLS THAT FIT YOUR WORK</span><h3>A home for<br>prepared app packages.</h3><p>Add a prepared package from a folder or a pinned publisher download. Meecp supports local stdio tools and authenticated model services, with package review and native lifecycle controls.</p><a class="text-link" href="https://github.com/jshahbazi/meecp/blob/main/docs/PACKAGE_AUTHORING.md">Explore package requirements <span aria-hidden="true">↗</span></a></div><div class="package-detail"><span class="package-shape" aria-hidden="true">⊞</span><strong>Bring a prepared package</strong><span>Review → Install → Connect</span><p>Install packages from publishers you trust. They run with your account’s permissions.</p></div></div>
+      </div>
+    </section>
+
+    <section class="principles wrap" aria-labelledby="principles-title"><div class="principles-heading"><p class="eyebrow">A THOUGHTFUL HOME BASE</p><h2 id="principles-title">Local is a useful<br>place to start.</h2></div><div class="principle-list"><article><span aria-hidden="true">01</span><div><h3>Runs on your machine</h3><p>Meecp hosts local tools and model runtimes on your Mac. Individual packages may connect to external services; review what you install.</p></div></article><article><span aria-hidden="true">02</span><div><h3>Private transport, clear boundaries</h3><p>Local services use authenticated connections, loopback binding, and Host and Origin checks. The host avoids logging tool inputs and outputs.</p></div></article><article><span aria-hidden="true">03</span><div><h3>Open source, visible progress</h3><p>Explore the code, read the verification records, and follow development on GitHub. Current support is focused on MCP tools and prepared packages.</p></div></article></div></section>
+
+    <section class="section wrap faq" aria-labelledby="faq-title"><div><p class="eyebrow">A FEW GOOD QUESTIONS</p><h2 id="faq-title">Before you<br>move in.</h2></div><div class="faq-list"><details><summary>What is MCP?<span aria-hidden="true">+</span></summary><p>The Model Context Protocol gives AI clients a standard way to discover and call tools. Meecp hosts local tool packages and provides connection setup for clients that support MCP.</p></details><details><summary>Which Macs can run meecp?<span aria-hidden="true">+</span></summary><p>The current project targets Apple silicon Macs running macOS 26 or later. Runtime and memory requirements depend on the packages you install. Intel Macs are outside the current scope.</p></details><details><summary>Does it include a chat app?<span aria-hidden="true">+</span></summary><p>Meecp is a host for tools and local models. Connect it to an MCP client to use those tools in your workflow. The JevK5 package handles typed decisions from supplied evidence.</p></details><details><summary>What’s available to download today?<span aria-hidden="true">+</span></summary><p>The latest public installer is v1.0.0, published under the former <strong>mcpme</strong> name. This site describes the current meecp development project; newer features may require a source build. Review the release notes and project status before installing.</p></details><details><summary>What should I know about app packages?<span aria-hidden="true">+</span></summary><p>Installed packages run with your account’s permissions. Hash verification checks downloaded bytes; you still need to trust the publisher. Support for arbitrary generated projects is evolving, and the current package integration focuses on MCP tools.</p></details></div></section>
+
+    <section id="get-meecp" class="download-section wrap" aria-labelledby="download-title"><div class="download-copy"><p class="eyebrow">MAKE YOURSELF AT HOME</p><h2 id="download-title">A little place.<br>A lot of possibility.</h2><p>Try the public release, or build the latest meecp from source. Everything starts on your Mac.</p><div class="download-actions"><a class="button button-light" href="https://github.com/jshahbazi/meecp/releases/latest">View Mac releases <span aria-hidden="true">↗</span></a><a class="text-link" href="https://github.com/jshahbazi/meecp#build-from-source-and-try-json-utilities">Build from source <span aria-hidden="true">↗</span></a></div><p class="release-note">Latest public installer: v1.0.0, named mcpme.<br>Current meecp features are documented in the repository.</p></div><div class="download-mark" aria-hidden="true">m<span></span></div></section>
+  </main>
+  <footer class="wrap"><div><a class="wordmark" href="#"><span>meecp<span class="wordmark-dot">.</span></span></a><p>Local tools, at home on your Mac.</p></div><nav aria-label="Footer"><a href="https://github.com/jshahbazi/meecp">GitHub <span aria-hidden="true">↗</span></a><a href="https://github.com/jshahbazi/meecp/blob/main/README.md">Documentation <span aria-hidden="true">↗</span></a><a href="https://github.com/jshahbazi/meecp/issues">Feedback <span aria-hidden="true">↗</span></a></nav><span class="footer-note">Built for Apple silicon.</span></footer>
+</body>
+</html>

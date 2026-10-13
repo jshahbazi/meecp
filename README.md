@@ -4,6 +4,8 @@
 
 **Give your AI tools a home on your Mac.**
 
+[Website](https://meecp.app) · [Website source and publishing](website/README.md)
+
 meecp runs local MCP tools and models from your macOS menu bar. Add an app, connect it to your AI assistant, and keep an eye on it while you work. MCP (Model Context Protocol) lets assistants call those tools; meecp takes care of keeping them running. An app is a configured local tool or model service with its own controls and connection settings.
 
 Run a JSON validator alongside a local decision model. Connect several clients to the same model. Stop an app when you're done with it. Manage them all in one place.

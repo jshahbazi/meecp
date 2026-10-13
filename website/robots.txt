@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://meecp.app/sitemap.xml

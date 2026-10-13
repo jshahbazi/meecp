@@ -19,7 +19,8 @@ POLICY_FILES = ("__init__.py", "server.py", "contracts.py", "state.py")
 def bundle_backend(destination: Path):
     """Copy the static family implementation even without an admitted engine."""
     textgen_files = tuple(sorted((ROOT / "backend/meecp_textgen").glob("*.py")))
-    for name, files in (("meecp_textgen", textgen_files), ("mcpme_textgen", textgen_files),
+    legacy_files = tuple(sorted((ROOT / "backend/mcpme_textgen").glob("*.py")))
+    for name, files in (("meecp_textgen", textgen_files), ("mcpme_textgen", legacy_files),
                         ("jevk5_app", tuple(ROOT / "backend/jevk5_app" / name for name in POLICY_FILES))):
         target = destination / name
         target.mkdir(parents=True, exist_ok=True)

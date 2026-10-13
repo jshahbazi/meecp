@@ -539,8 +539,10 @@ class Supervisor(UpgradeHost):
                 raise HostError("host_closing", 409)
             if job["state"] != "queued" and not job["reservation_retained"]:
                 raise PreparationError("resolution_authority_mismatch")
+            probes = list(getattr(getattr(self, "pi_setup", None), "probe_reservations", {}).values())
             memory = sum(value["memory_mb"] for value in [*self.reservations.values(),
-                *self.preparation_reservations.values(), *self.capture_reservations.values(), *self.resolution_reservations.values()])
+                *self.preparation_reservations.values(), *self.capture_reservations.values(), *self.resolution_reservations.values(),
+                *probes])
             disk = sum(value["disk_bytes"] for value in [*self.preparation_reservations.values(),
                 *self.capture_reservations.values(), *self.resolution_reservations.values()])
             if (memory + (0 if previous is not None else reservation["memory_mb"]) > self.resource_policy["memory_budget_mb"]
@@ -644,8 +646,10 @@ class Supervisor(UpgradeHost):
                     raise ArtifactError("artifact_capture_scope_mismatch")
             if self.closing:
                 raise HostError("host_closing", 409)
+            probes = list(getattr(getattr(self, "pi_setup", None), "probe_reservations", {}).values())
             memory = sum(value["memory_mb"] for value in [*self.reservations.values(),
-                *self.preparation_reservations.values(), *self.capture_reservations.values(), *self.resolution_reservations.values()])
+                *self.preparation_reservations.values(), *self.capture_reservations.values(), *self.resolution_reservations.values(),
+                *probes])
             disk = sum(value["disk_bytes"] for value in [*self.preparation_reservations.values(),
                 *self.capture_reservations.values(), *self.resolution_reservations.values()])
             if memory > self.resource_policy["memory_budget_mb"] or disk + 256 * 1024**2 > shutil.disk_usage(self.root).free:
@@ -1049,8 +1053,9 @@ class Supervisor(UpgradeHost):
                 return
             if self.closing:
                 raise HostError("host_closing", 409)
+            probes = list(getattr(getattr(self, "pi_setup", None), "probe_reservations", {}).values())
             memory = sum(value["memory_mb"] for value in [*self.reservations.values(), *self.preparation_reservations.values(),
-                *self.capture_reservations.values(), *self.resolution_reservations.values()])
+                *self.capture_reservations.values(), *self.resolution_reservations.values(), *probes])
             disk = sum(value["disk_bytes"] for value in [*self.preparation_reservations.values(),
                 *self.capture_reservations.values(), *self.resolution_reservations.values()])
             if (memory + reservation["memory_mb"] > self.resource_policy["memory_budget_mb"]

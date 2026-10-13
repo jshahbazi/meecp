@@ -600,13 +600,13 @@ class PiToolBroker:
             if size > MAX_ARG_BYTES or total > MAX_COMMAND_BYTES:
                 raise PiToolError("command_size_limit")
 
-    def launch_spec(self, argv: list[str], cwd: str = ".", *, network=False, env=None):
-        """Confined launch tuple; a read-only package root may be the cwd."""
+    def launch_spec(self, argv: list[str], cwd: str = ".", *, network=False, gpu=False, env=None):
+        """Confined launch tuple; GPU access is a host-selected probe capability."""
         if (platform.system() != "Darwin" or platform.machine() != "arm64" or
                 not platform.mac_ver()[0].startswith("26.")):
             raise PiToolError("unsupported_platform")
         self._argv(argv)
-        if type(network) is not bool:
+        if type(network) is not bool or type(gpu) is not bool:
             raise PiToolError("invalid_arguments")
         cwd_path = self._path(str(cwd), directory=True)
         self._check_roots()
@@ -629,6 +629,11 @@ class PiToolBroker:
             # native owned process group so timeout and cancellation reap them.
             "(deny syscall-unix (syscall-number 82 147) (with no-log))",
         ])
+        if gpu:
+            # Selected only for an admitted independent GPU package probe.
+            # IOSurface access is required by native Metal residency sets.
+            profile += '\n(allow iokit-open (iokit-user-client-class "AGXDeviceUserClient") (iokit-user-client-class "IOSurfaceRootUserClient"))'
+            profile += '\n(allow mach-lookup (global-name "com.apple.MTLCompilerService"))'
         if network:
             profile += '\n(allow network-outbound)\n(allow network-bind (local tcp4 "localhost:*"))\n(allow network-inbound (local tcp4 "localhost:*"))'
             profile += '\n(allow file-read* (literal "/private/etc/resolv.conf") (literal "/private/var/run/resolv.conf") (literal "/private/etc/hosts") (literal "/private/etc/services") (subpath "/private/etc/ssl"))'

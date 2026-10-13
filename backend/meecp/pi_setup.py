@@ -630,7 +630,7 @@ class PiSetup:
                 inherited = (receiver.fileno(),)
             async with asyncio.timeout(package.manifest.lifecycle.startup_timeout_seconds + 300):
                 launch = broker.launch_spec([str(package.root / entry.executable), *entry.args], str(package.root / entry.cwd),
-                    network=bool(package.manifest.access.network), env=environment)
+                    network=bool(package.manifest.access.network), gpu=package.manifest.resources.gpu, env=environment)
                 process = await owner.launch(*launch, owned_group=True, startup_timeout=15, stop_grace=0.2, inherited_fds=inherited)
                 if settings_payload is not None:
                     async with asyncio.timeout(10):

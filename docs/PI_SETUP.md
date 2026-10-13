@@ -210,6 +210,22 @@ executes the fixtures, and compares the expected results and assertions. Package
 checked again after the probe. A model's statement that setup succeeded is
 insufficient to reach package review.
 
+A validated `mcp-stdio` package declaring `resources.gpu: true` can use native
+Metal during this independent probe on macOS 26 Apple silicon. It must declare
+one session and fit the host's memory budget and exclusive GPU admission before
+launch. The host selects narrow AGX device, IOSurface residency and Metal compiler
+permissions; package and system reads, private probe writes, network declarations
+and owned process cleanup retain their existing restrictions. GPU reservations
+remain held until the probe's owned processes are stopped and reaped, including
+on cancellation or failure. Generic Pi `run_command` and `start_process` tools
+retain their existing GPU-denied sandbox and cannot request this capability.
+
+This is scoped support for the independent native Metal probe. Compatibility and
+model/tool correctness still require the package's actual fixtures and named
+runtime validation; broader GPU preparation recipes and scheduling remain open.
+The [native validation receipt](PI_SETUP_METAL_VALIDATION.md) records the checked
+Metal, Stark, and ColGrep artifacts and the remaining package acceptance scope.
+
 Successful verification attaches an immutable package snapshot to the saved
 draft revision. The existing plan/apply installer handles review, authorization,
 candidate readiness, startup choice, and transactional installation. A changed

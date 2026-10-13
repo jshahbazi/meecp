@@ -80,5 +80,7 @@ def test_existing_destination_rejected_before_native_work(tmp_path, monkeypatch)
 
 
 def test_original_published_sol_stack_still_matches_receipt():
+    if not build.SOL_CONTROL.exists() and not build.SOL_CONTROL.is_symlink():
+        pytest.skip("published SOL control artifact unavailable")
     result = build.verify_sol_control()
     assert result["binary_sha256"] == "384310c592ef1f217e148dea51f8182cc95d5c14e724cb38afde2bc22b0840d1"

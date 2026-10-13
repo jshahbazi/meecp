@@ -1,0 +1,325 @@
+{
+  "boundaries": {
+    "general_generation_or_pi_integration": false,
+    "llama_probability_parity": false,
+    "new_full_vocabulary_native_gate": false,
+    "precise_or_isolated_timing": false,
+    "sdk_wait_cancelled_engine_operation": false
+  },
+  "date": "2026-10-11",
+  "default_off_and_native_loss": {
+    "report_sha256": "e790b0488cbd860c2cc04fd0ba051b04fb16d78f9aaaffd6533dc9fbd51a0284",
+    "result": {
+      "accepted": true,
+      "decisions": 2,
+      "facade_exited": true,
+      "gpu_reservation_released": true,
+      "host_error_code": "runtime_crashed",
+      "host_observed_state": "failed",
+      "mode": "untimed-installed-stark-native-loss-smoke",
+      "native_and_resident_descendants_reaped": 4,
+      "native_cache_hits": 0,
+      "native_loss_injected": true,
+      "owned_residents_reaped": 2,
+      "ownership_settled": true,
+      "package_digest": "946dbba891035a3a1a5b68e84ae654ea1f6dde1dddb5464b1981571e7e4dda38",
+      "raw_records_persisted": false,
+      "schema_version": 1,
+      "sdk_initialized": true,
+      "source_sha256": {
+        "backend/jevk5_app/stark_scorer.py": "4043c5b95ad8d3484d2daa4042c01d428a0f0ea2b4fc378d930ef77a7961c825",
+        "backend/meecp_jevk5/runtime.py": "95ffb7fec3ddd1aa2e68d6141a148ea548e5228f441981b6a880fcb6225226b9",
+        "backend/meecp_stark/__main__.py": "d1750968fe3dd0fbe3dfc05c7e74b87d0890278f89d8e7c130874a5677b25b02",
+        "backend/meecp_stark/engine.py": "9073cdb99863ae7c5488aae569543c96cf340f1dd0167a4dbc9e1497b5ce9ec3",
+        "backend/meecp_stark/worker.py": "948ec7470c208d382401c7835a50ff2cef293b5a5a32e63eb16538ffff8de33d"
+      },
+      "timing_reported": false,
+      "tools": 2,
+      "typed_answers_bit_exact": true
+    }
+  },
+  "integration": {
+    "accepted": true,
+    "api": {
+      "cache_hits": 243,
+      "case_responses": 486,
+      "typed_answers_bit_exact": true
+    },
+    "cache_enabled": true,
+    "context_tokens": 8192,
+    "engine": "stark",
+    "frozen_native_reference_configuration_sha256": "70001de82eb6cdfa018e63bfcfe1968ca68a6fd669508cd6c08be70cd1d6e9bd",
+    "http_mcp": {
+      "decisions": 12,
+      "initialized": true,
+      "prompts_advertised": false,
+      "resources_advertised": false,
+      "tools": 2,
+      "typed_answers_bit_exact": true
+    },
+    "knockout_temperature": 0.93,
+    "lifecycle": {
+      "owned_residents_reaped": 4,
+      "reservations_released_after_stop": true,
+      "resident_and_native_descendants_reaped": 8,
+      "restart_cache_cold": true,
+      "restarts": 1,
+      "starts_after_stop": 1,
+      "stops": 1
+    },
+    "llama_control": {
+      "cases": 12,
+      "identity": {
+        "bf16_control_manifest_sha256": "e2023af0c9b3c66aac76b272dd35125b231acaa43a27e2d36c63dfd56d54f040",
+        "gguf_sha256": "9fb252465834f2113eb74dd4fc4240ebf3cfab17ab48c0a23a615bbc81b07dc4",
+        "harness_sha256": "68627712cc6fec3c4a7cd39f6c9da4bc0ff458f745ab2324bf3cd835583342a9",
+        "launch_helpers_sha256": "7f208a168ae08ef50970376abc649026fea955a2d95fcd12a2ee6fc420cf23b9",
+        "model_manifest_sha256": "0663de1dc38b14c8b33160d2cdda8fa18ee6949e4dfd5db8bc57d65d6e1697fe",
+        "n_probs": 40,
+        "runtime_closure_sha256": {
+          "lib/libcrypto.3.dylib": "f9563883fdbb4f2b367c708a6abd786119c935d3f9cd01fa8e11c34666775d1b",
+          "lib/libggml-base.0.dylib": "045e9778c75a3790ae1f5d02d19c85e966b277216578d226d776d85cd7d97333",
+          "lib/libggml.0.dylib": "7b262216670ab6bcc198b486777fe3b723b045660b369d8123e785e8594d9a4d",
+          "lib/libllama-common.0.dylib": "ea16c90d3fc4087309df244a11ac4b7e041ae9029d3749c3aded51ebdf19f200",
+          "lib/libllama-server-impl.dylib": "5175db0f6e7e501b0bf3b779342e0ac3f177ff706be9e0589ecc4743df9c5c1b",
+          "lib/libllama.0.dylib": "555ad4924da7fdd6e8567cea75bfb8bc92642b219ad72fab5af5f2a036544e3c",
+          "lib/libmtmd.0.dylib": "42c27b4bcbebd7e13e80c155a41397e2104a0d1d0d5ae30f70c52d3bbc2ade05",
+          "lib/libomp.dylib": "7fd28cb0ea6020f4d7c90339a046296c6a3f9955bdafb6ec4f8dc1d93de787eb",
+          "lib/libssl.3.dylib": "7e89651576fc4dfe9461f65de448fc99990dc5c32c06c413d86bdbbfc11e9774",
+          "llama-server": "f88d172551ef370aca9a38a9284ba8d6d35b287212b80080461f15f5074c550c",
+          "plugins/libggml-blas.so": "0571889bbc32bae0648fe8efd2d39a6f42a171aa786e672736f181114fe751cb",
+          "plugins/libggml-cpu-apple_m1.so": "6072198ba5851ce0870f28f5042ea6a79afbcfff99375a9f73984d6e878f872a",
+          "plugins/libggml-cpu-apple_m2_m3.so": "28a7104df79f5082ba94dbf643a62ead476c70370cf644b73863685ac901a75e",
+          "plugins/libggml-cpu-apple_m4.so": "cc7a568c84ecdda5a7408776f467f149a4c06807ab0429ac2e10e81faa028921",
+          "plugins/libggml-metal.so": "80bff4685cb0feb395a8a3ebdd6507506535f5400cd5e391f3e2a3799b3e4432"
+        },
+        "source_weights_sha256": "13824e47f2e40fe052f06943976cf742cb366ba305741a111e75a8ebae907a9c"
+      },
+      "maximum_probability_difference_from_native_stark": 0.01163773223713066,
+      "native_stark_equality_required": false,
+      "own_repeats_bit_exact": true,
+      "responses": 24,
+      "same_input_and_candidate_tokens": true,
+      "startup_ms": 960.3251249936875,
+      "typed_answers_different_from_native_stark": 12
+    },
+    "llama_equivalence_claim": false,
+    "mode": "installed-stark-jevk5-integration",
+    "ownership_settled": true,
+    "package_digest": "3f17a3226dd5c2d7b79f7d7b0de63e828f4fdc03e093a79a3012388c3425d67e",
+    "package_id": "local.jevk5.stark",
+    "private_native": {
+      "boundary_responses": 96,
+      "cache_hits": 243,
+      "candidate_outputs_bit_exact": true,
+      "case_responses": 486,
+      "full_vocabulary_digest_revalidated": false,
+      "maximum_calibration_formula_error": 2.220446049250313e-16,
+      "rejected_requests": 5,
+      "tokenizations": 243
+    },
+    "profile": "jevk5-stark-bf16-v1",
+    "quality_claim": false,
+    "queue": {
+      "completed": 8,
+      "completed_server_decisions": 2,
+      "concurrent_requests": 16,
+      "engine_execution_preserved": true,
+      "pending_drained": true,
+      "queue_rejections": 8,
+      "recovery_answer_bit_exact": true,
+      "recovery_cache_hit": true,
+      "sdk_client_wait_cancellations": 1,
+      "server_operation_cancelled": false,
+      "shared_engine_unchanged": true
+    },
+    "raw_records_persisted": false,
+    "schema_version": 1,
+    "source_bindings_sha256": {
+      "consumer_source": {
+        "backend/jevk5_app/__init__.py": "f213eccc1ae9b034e58098b9722d07d43584e2e5e7a668f70cf531bde2208171",
+        "backend/jevk5_app/__main__.py": "42aaeff05dcad9ba7d6f1e0a5ec467f6a0a2259cddc77a7ba6b546cffd316b1a",
+        "backend/jevk5_app/bridge.py": "e4fda23b64998c8ed3e63d654cb355166f3f3e8af19e26f0fe6b46f8072a7129",
+        "backend/jevk5_app/contracts.py": "06a57d1ed0ad36ab6006cd202274088a5a2e30474e7f8147d82a1b78f4d211b8",
+        "backend/jevk5_app/runtime.py": "33570cbd6ec58510c0f9538923b2b9e01e6f94aed4de7fcd6fd67e986a9b6d37",
+        "backend/jevk5_app/scorer.py": "1239ed75f705bede56530c0943d090ec7c0df09229aa9e37dd3af596cba3bac5",
+        "backend/jevk5_app/server.py": "b4ec77c5bad085c1b6ae1a99f9baa358cd95f41a7484a718eb64814ef3753e62",
+        "backend/jevk5_app/stark_scorer.py": "4043c5b95ad8d3484d2daa4042c01d428a0f0ea2b4fc378d930ef77a7961c825",
+        "backend/jevk5_app/state.py": "37c6b50102daa04841835c9689a72111b5f884006daa5dae4ba03c76c552cafd",
+        "backend/meecp/bridge.py": "13b253adc2633cdfec86eb7b4cae8be8bb30e99f666d5a8dfe926f7add0f7136",
+        "backend/meecp/gateway.py": "0741c88d537fc5b4e47c56e6dab2e84021d9b4c3cbee615424622fcdf3198a20",
+        "backend/meecp/http_gateway.py": "347b03c42884eff2c9fe6c5c8dd1cccfcfb85278da1fac0728874b57051503c5",
+        "backend/meecp/http_service.py": "0770730587c25e9715e0a19c4c0784f3190de6848edadcf7d58cfd8d58591b19",
+        "backend/meecp/processes.py": "c14b58f513dced78a1ef9fb15135e5b63483d6059db91044fa34a87c88ed50f0",
+        "backend/meecp/supervisor.py": "239ad2e749dba459de6f72061104d738800a12c8d45f43a9ac5df36779270811",
+        "backend/meecp/worker.py": "b0f98e2327e8f61d2c612fdc0f009497bbf370714d9ee2699b63ae1a76060fa4",
+        "backend/meecp_jevk5/__init__.py": "f4385405fde47f9f4ff306081856e50c5d8f6b60817ae3a473219297d28fbcb5",
+        "backend/meecp_jevk5/__main__.py": "de2697652e9c572dbc97259021f98d3e0432c44a5d6d54eccbdb9cfb936f1682",
+        "backend/meecp_jevk5/runtime.py": "95ffb7fec3ddd1aa2e68d6141a148ea548e5228f441981b6a880fcb6225226b9",
+        "backend/meecp_stark/__init__.py": "7b718e0fc3d7788b3da1520b5f2080554f9524e1bf0d9668bcc29f78383b2a65",
+        "backend/meecp_stark/__main__.py": "d1750968fe3dd0fbe3dfc05c7e74b87d0890278f89d8e7c130874a5677b25b02",
+        "backend/meecp_stark/engine.py": "9073cdb99863ae7c5488aae569543c96cf340f1dd0167a4dbc9e1497b5ce9ec3",
+        "backend/meecp_stark/worker.py": "948ec7470c208d382401c7835a50ff2cef293b5a5a32e63eb16538ffff8de33d",
+        "experiments/uzu-rust/jev-scoring/BF16_CONTROL_PROVENANCE.json": "e2023af0c9b3c66aac76b272dd35125b231acaa43a27e2d36c63dfd56d54f040",
+        "experiments/uzu-rust/jev-scoring/MODEL_PROVENANCE.json": "0663de1dc38b14c8b33160d2cdda8fa18ee6949e4dfd5db8bc57d65d6e1697fe",
+        "scripts/prepare_stark_jevk5_package.py": "cba436e127fe79be2404df96f9a69b2c9206b1be47cd1d7137876d8538211883",
+        "templates/jevk5-stark-v1/THIRD_PARTY_NOTICES.md": "2fb9ce4cd985deba3ee76442199e9cbfb902421af689c26f50e22705aebfd655",
+        "templates/jevk5-stark-v1/launcher.c": "4a6904d7b6b9a1cc4d1b409c80aaf00739388eeab9c7a465021580ded88b7843",
+        "templates/jevk5-stark-v1/prepare.py": "a3cef77c2ac58808ced10311dbf482c9f224a59eaf945d8c80c5866bdb53a974",
+        "tests/test_stark_jevk5_integration_harness.py": "1a94fac31b3d78eda815bfce0ded0bc84def3aff4690d4f658d36c3b1d4c8fcb",
+        "vendor/jevk5/prompt.py": "322d69ba6abea83602f27b7a5aa0d3e6ab00847fd03ddccd35a28ae5b23acc1a"
+      },
+      "dependency_helper": "aaeee3f7687815c0106f3584aa11223f209eb22a6ff127458c35cad50f5dbe60",
+      "dependency_lock": "a17844903138ac567097160b5a272c1e1dbee20fa840442e071f3df82a7507d5",
+      "harness": "b6436a2db028337d04032bb866f78bbb18129f9bef70e782813617da94517d6d",
+      "host_python": "42316b15940fd9267eeef605ce3e3cc9b9c90c0846ec6f6abf55a348b674ac02",
+      "host_reaper": "32bcd84e9484a3e7a3f0b3828020d72261d4c6d4246cf52a574e1ead3935e862",
+      "model_files": {
+        "models/jevk5-bf16/chat_template.jinja": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715",
+        "models/jevk5-bf16/config.json": "7cd671fd90e9513487f8c6f14e62af6af638add926f55531d19073a381b66561",
+        "models/jevk5-bf16/generation_config.json": "62153eb6c69f2e1f426beaa8002b7186437e949c7588167085df14e10e9c0a73",
+        "models/jevk5-bf16/jevk5_config.json": "0d689fd13d15dc962265e2ae10b56359706ab5d05ad24e00e6334e4c19cf83d2",
+        "models/jevk5-bf16/model.safetensors": "7165b96777823061753fa96b247d687d591596b20cf24fa518a5b87a96b1be8a",
+        "models/jevk5-bf16/tokenizer.json": "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523",
+        "models/jevk5-bf16/tokenizer_config.json": "9cf04fffe3d8c3b85e439fb35c7acad0761ab51c422a8c4256d9f887c3a0be7d"
+      },
+      "native_build_receipt": "b67c25c32e5a08fef5eeda906c2c01dffdfe3231457a4ff7d9cf124dff42ea18",
+      "native_probe": "63d6c99f22be98ebba5b7c568585edaeb23b3642052a1998b68c312bf7bd9146",
+      "native_reaper": "8e63f82daf12a20109ba2685b0170b0b497553b12fd8c01912b1f76aa3118591",
+      "native_worker": "3c1967bd562924d9a83db8b721100dc4c788f29e9860fa97173ed8bf1ad32edd",
+      "package_lock": "d495700b5c5f624f22e0d506d23d7c3a9514f270316cfaf83997611b91ce9f01",
+      "package_manifest": "13e3d2f544ea221d019fd4e74fa73b9d147268c12b53daad574f73f8f4e9769e",
+      "reference": "ce76fb6d44686f8abd05d8fbeb3883b84cb350fc9ba8986db87bfe1e7cee9d2a",
+      "reference_manifest": "78516ac7e49eca5df5e24d7b687fdede53aa4eb31013cb3194921b4202c5518e"
+    },
+    "source_bindings_unchanged": true,
+    "stdio_mcp": {
+      "decisions": 12,
+      "initialized": true,
+      "prompts_advertised": false,
+      "resources_advertised": false,
+      "tools": 2,
+      "typed_answers_bit_exact": true
+    },
+    "temperature": 1.22,
+    "timing": {
+      "background_activity_controlled": false,
+      "install_startup_ms": 45544.291666999925,
+      "measurement_scope": {
+        "api_after": "Prepared package rendering, tokenization, native scoring, typed answer and authenticated HTTP.",
+        "llama_before": "Vendored rendering, tokenization, native one-token letter readout and typed answer.",
+        "mcp_after": "API-equivalent decision through an initialized official SDK HTTP MCP session.",
+        "native_before": "Exact-token native scoring IPC; excludes rendering/tokenization."
+      },
+      "mode": "short-sequential-before-after-snapshot",
+      "native_startup_ms": 1171.314874998643,
+      "order": [
+        "native_before",
+        "llama_before",
+        "api_after",
+        "mcp_after"
+      ],
+      "precise_performance_claim": false,
+      "results": {
+        "fresh": {
+          "api_after": {
+            "after_over_llama_before_ratio_of_means": 0.856313640320829,
+            "after_over_native_before_ratio_of_means": 1.709637902552772,
+            "maximum_ms": 809.6349999977974,
+            "mean_ms": 297.7876980827811,
+            "minimum_ms": 65.56058400019538,
+            "p50_ms": 174.73966650140937,
+            "p95_ms": 809.6349999977974,
+            "samples": 12
+          },
+          "llama_before": {
+            "maximum_ms": 1109.8929589934414,
+            "mean_ms": 347.7554065017709,
+            "minimum_ms": 92.87787499488331,
+            "p50_ms": 154.7711045059259,
+            "p95_ms": 1109.8929589934414,
+            "samples": 12
+          },
+          "mcp_after": {
+            "after_over_llama_before_ratio_of_means": 0.777883285269379,
+            "after_over_native_before_ratio_of_means": 1.553050991644296,
+            "maximum_ms": 815.4242079908727,
+            "mean_ms": 270.5131180797859,
+            "minimum_ms": 53.620749997207895,
+            "p50_ms": 131.94720849423902,
+            "p95_ms": 815.4242079908727,
+            "samples": 12
+          },
+          "native_before": {
+            "maximum_ms": 545.2345840021735,
+            "mean_ms": 174.18173616655017,
+            "minimum_ms": 36.95229199365713,
+            "p50_ms": 89.94989550410537,
+            "p95_ms": 545.2345840021735,
+            "samples": 12
+          }
+        },
+        "identical_repeat": {
+          "api_after": {
+            "after_over_llama_before_ratio_of_means": 0.27113944461753386,
+            "after_over_native_before_ratio_of_means": 10.339972994749688,
+            "maximum_ms": 8.269333993666805,
+            "mean_ms": 7.3035382508048015,
+            "minimum_ms": 5.858332995558158,
+            "p50_ms": 7.416333501168992,
+            "p95_ms": 8.269333993666805,
+            "samples": 12
+          },
+          "llama_before": {
+            "maximum_ms": 34.79249999509193,
+            "mean_ms": 26.936465334680786,
+            "minimum_ms": 24.636290996568277,
+            "p50_ms": 25.709313005791046,
+            "p95_ms": 34.79249999509193,
+            "samples": 12
+          },
+          "mcp_after": {
+            "after_over_llama_before_ratio_of_means": 0.3126268541341407,
+            "after_over_native_before_ratio_of_means": 11.922106109424126,
+            "maximum_ms": 15.158334004809149,
+            "mean_ms": 8.421062419074588,
+            "minimum_ms": 6.246875011129305,
+            "p50_ms": 7.512354000937194,
+            "p95_ms": 15.158334004809149,
+            "samples": 12
+          },
+          "native_before": {
+            "maximum_ms": 0.8023749978747219,
+            "mean_ms": 0.7063401668953398,
+            "minimum_ms": 0.6384579901350662,
+            "p50_ms": 0.6929790033609606,
+            "p95_ms": 0.8023749978747219,
+            "samples": 12
+          }
+        }
+      },
+      "selected_cases": 12,
+      "warmups_per_block": 3
+    },
+    "transport": {
+      "content_free_errors": true,
+      "invalid_question_cache_cleared": true,
+      "rejected_requests": 13
+    }
+  },
+  "integration_report_sha256": "a8823d689c7e7163a3e95e7cf71b79d6419282a0ccda33aa64dd14927e3fbdaf",
+  "model_free_validation": {
+    "complete_repository_suite_run": false,
+    "focused_tests_passed": 182,
+    "initial_timing_sensitive_failures": 3,
+    "interrupted_broad_run_passed": 1505,
+    "interrupted_broad_run_skipped": 1,
+    "isolated_retry_passed": 3,
+    "secret_scan_passed": true,
+    "secret_scanner_exact_pair_tests_passed": 32,
+    "secret_scanner_model_free_tests_passed": 16
+  },
+  "schema_version": 1,
+  "scope": "experimental-jevk5-stark-bf16-installed-integration",
+  "status": "passed"
+}

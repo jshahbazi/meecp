@@ -27,7 +27,7 @@ New management exports use the `meecp-management` connection key and `meecp_*` t
 
 Current renamed builtin recipe contents are published under new patch versions, with their artifact locks recomputed. Existing recipe-version directories retain their original bytes and spelling so a saved immutable version never resolves to different content.
 
-The active recipe versions are Python callable 1.0.1, resolved Python 1.0.2, ONNX hotdog 1.0.1, text generation 1.0.22, native command 1.0.2, agent Python adapter 1.0.1, unlocked agent adapter 1.0.2, and local OpenAI text 1.0.1. Current release-policy and analysis-guide references bind the renamed source hashes; their supported components, providers, and permission scopes remain the same.
+The active recipe versions are Python callable 1.0.1, resolved Python 1.0.2, ONNX hotdog 1.0.1, text generation 1.0.23, native command 1.0.2, agent Python adapter 1.0.1, unlocked agent adapter 1.0.2, and local OpenAI text 1.0.1. Current release-policy and analysis-guide references bind the source hashes; their supported components, providers, and permission scopes remain the same. The [host startup repair](PHASE3_RELEASE_POLICY.md#current-source-after-the-host-startup-repair) refreshes TextGen's complete host source binding.
 
 The JevK5 model, `jevk5_decide` and `jevk5_status` tools, and separately buildable legacy `JevK5.app` keep their names.
 

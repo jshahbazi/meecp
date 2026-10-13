@@ -616,13 +616,13 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                                "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8", "TMPDIR": NSTemporaryDirectory()]
         service.currentDirectoryURL = host
         service.standardInput = FileHandle.nullDevice; service.standardOutput = FileHandle.nullDevice; service.standardError = FileHandle.nullDevice
-        service.terminationHandler = { [weak self, weak service] _ in
+        service.terminationHandler = { [weak self, weak service] process in
             DispatchQueue.main.async {
                 guard let self = self, let service = service, self.process === service else { return }
                 self.process = nil; self.generation &+= 1; self.resetHostRequestState()
                 self.hostAvailable = false; self.projects = []; self.operations = []
                 let completion = self.stopCompletion; self.stopCompletion = nil; self.stopping = false
-                self.hostMessage = "Host stopped. Another host may own this installation."
+                self.hostMessage = appHostExitMessage(process.terminationReason, process.terminationStatus)
                 self.rebuildMenu(); self.refreshWindow(); completion?()
             }
         }

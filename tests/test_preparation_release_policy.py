@@ -10,7 +10,8 @@ import threading
 import pytest
 
 from meecp.preparation_contracts import PreparationError
-from meecp.preparation_release_policy import AgentExecutionAdmission, ReleasePolicy, POLICY_PATH, _load_policy, release_admissions
+from meecp.preparation_release_policy import (AgentExecutionAdmission, ReleasePolicy, POLICY_PATH, _load_policy,
+                                            release_admissions, validate_policy_implementations)
 from meecp.preparation_agent_providers import AgentProviderRegistry, OpenAIResponsesAdapter
 from test_preparation_agent_providers import choices, update, SYNTHETIC
 
@@ -56,6 +57,30 @@ def test_shipped_agent_policy_tuples_match_registered_implementations():
     assert agent.components <= frozenset(
         (guide.component.id, guide.component.version, guide.component.digest)
         for guide in builtin_analysis_guides())
+
+
+def test_all_shipped_policy_implementations_match_current_source():
+    root = Path(__file__).parents[1]
+    policy = ReleasePolicy.model_validate(json.loads((root / POLICY_PATH).read_bytes()))
+    preparation, agent, command = validate_policy_implementations(policy)
+    assert preparation is not None and agent is not None and command is not None
+    assert preparation.artifact is None and agent.artifact is None
+
+
+@pytest.mark.parametrize("damage", ["family", "dependency", "provider"])
+def test_static_preflight_rejects_stale_non_agent_pins_and_closures(damage):
+    root = Path(__file__).parents[1]
+    value = json.loads((root / POLICY_PATH).read_bytes())
+    if damage == "family":
+        next(item for item in value["preparation"]["families"] if item["id"] == "text-generate-v1")["digest"] = "0" * 64
+    elif damage == "dependency":
+        group = next(group for group in value["preparation"]["recipe_component_sets"]
+                     if any(item["id"] == "text-generate-v1" for item in group))
+        group[:] = [item for item in group if item["id"] != "llamacpp-cpu-v1"]
+    else:
+        value["agent"]["providers"][0]["adapter_digest"] = "0" * 64
+    with pytest.raises(PreparationError, match="^invalid_release_policy$"):
+        validate_policy_implementations(ReleasePolicy.model_validate(value))
 
 
 def test_whole_external_policy_changes_reviewed_producer_identity():

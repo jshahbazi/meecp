@@ -22,7 +22,7 @@ import verify_phase3_public_native_command as command
 import verify_phase3_public_textgen as textgen
 
 common = agent.common
-TEXTGEN_VERSION = "1.0.21"
+TEXTGEN_VERSION = "1.0.22"
 
 
 def closed_agent_record(value):

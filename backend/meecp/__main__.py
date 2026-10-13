@@ -22,6 +22,24 @@ from .grants import GrantError
 from .private import PrivateStateError, check_private_file, read_private_json
 
 DEFAULT_STATE = Path.home() / "Library/Application Support/mcpme"
+SERVE_EXIT_HOST_OWNED = 73
+SERVE_EXIT_INVALID_POLICY = 78
+SERVE_EXIT_FAILURE = 70
+
+
+def serve_exit_status(error: BaseException) -> int:
+    """Return a bounded, non-sensitive status for native host startup."""
+    try:
+        from .supervisor import HostError
+    except Exception:
+        # A missing/broken supervisor dependency is itself a startup failure.
+        return SERVE_EXIT_FAILURE
+    from .preparation_contracts import PreparationError
+    if isinstance(error, HostError) and error.code == "host_already_running":
+        return SERVE_EXIT_HOST_OWNED
+    if isinstance(error, PreparationError) and error.code in {"invalid_release_policy", "invalid_release_artifact"}:
+        return SERVE_EXIT_INVALID_POLICY
+    return SERVE_EXIT_FAILURE
 
 
 class OwnerArgumentParser(argparse.ArgumentParser):
@@ -766,6 +784,8 @@ def main(argv=None) -> int:
         if args.command != "connect" and not (args.command == "management" and args.action == "connect"):
             from .preparation_contracts import PreparationError
             emit({"error": {"code": error.code if isinstance(error, (PackageError, GrantError, PreparationError)) else "host_unavailable"}})
+        if args.command == "serve":
+            return serve_exit_status(error)
         return 2
     return 0
 

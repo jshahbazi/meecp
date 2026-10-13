@@ -1,28 +1,42 @@
 # Phase 3 release authority
 
-## Current source after the CI repair
+## Current source after the host startup repair
 
-The tracked source uses TextGen engine/task/recipe 1.0.21. Pi changes the complete
-backend source closure, so the old 1.0.14 recipe no longer matches the registered
-component identities. A fresh immutable recipe binds the current closure. The
-current release policy also binds the updated unlocked Python adapter; each
-family and recipe remains pinned to an exact version and digest.
+The tracked source uses TextGen engine/task 1.0.22 and recipe 1.0.23. Their
+component identity includes the complete host Python source closure. A signed
+1.1.0 installation inspected on 2026-10-13 retained stale engine/task policy
+digests and exited with `invalid_release_policy` before acquiring the host lock,
+including with empty temporary state. Its signature and complete artifact proof
+passed. The native UI reported an ownership conflict for every backend exit.
+
+The app build now checks every selected policy implementation and dependency
+closure using its packaged interpreter and backend before signing. This check
+does not initialize owner state, modify policy, or grant execution authority.
+Stale pins stop the build with `release_policy_implementation_mismatch`.
+Runtime signature, artifact and authority checks remain required. Policy pins
+are updated explicitly in source; the build never derives replacement authority.
+
+The native UI uses bounded backend exit statuses: 73 identifies host ownership,
+78 identifies invalid bundled preparation authority, and 70 identifies another
+host failure. Signals and unknown exits report unexpected stoppage. Raw process
+output remains discarded. A new immutable recipe preserves historical bundles
+and owner choices while binding the changed source.
 
 | Current source binding | SHA-256 |
 | --- | --- |
-| Release policy | 29d0359e9846afff79061c0fd0d0bf265f88fd78deb6c62193af1ba614ca9dcc |
-| TextGen engine | 438e6822bfc22187f91b51f496a6575db5a1bfeb55e7ddf3216d60a98883554d |
-| TextGen task | ad814ce4186bd3474fe9759991208d80eca0f491d449a00c38aee44b23c5b1d2 |
-| TextGen recipe | 492417b5993266c3c8d1cc3c8f37c5f8282349d4956ba36272f68221018e4cf7 |
+| Release policy | 75b7b219d5f3d71a9470026738555b7dc95b8938395e4ff9c53cb678ace3023f |
+| TextGen engine | ef48caeaf24bebefb4326f9217763c93e161d1e8ee1404cc98647de8826e6f94 |
+| TextGen task | 64c38210e90aa326ec4f9723415f5e490bc51773d85de728e488349e30239f1a |
+| TextGen recipe | dcc88a9f53006fcc0c0eb3b82aba3238bbe10222ca91f426893b00d4d68a9bb9 |
 
 The recipe was generated with `write_textgen_recipe` using `uv run --locked` and
 contains nine files. Focused cold-host, capture, recipe upgrade, policy, and
-lifecycle controls pass. Upgrade coverage includes 1.0.14, retained enabled
+lifecycle controls pass. Upgrade coverage includes 1.0.21 and 1.0.22, retained enabled
 snapshots, owner opt-outs, and collected tombstones. Versions 1.0.15 through
 1.0.20 already exist in repository history, so their identities are not reused.
 
 The signed v10 runtime/live acceptance below retains its original source and
-TextGen 1.0.13. It has not been rerun for 1.0.21. Frozen selected13 and selected14
+TextGen 1.0.13. It has not been rerun for component 1.0.22/recipe 1.0.23. Frozen selected13 and selected14
 policy bytes are retained in `tests/fixtures/phase3-selected-textgen-1-0-13-policy.json`
 and `tests/fixtures/phase3-selected-textgen-1-0-14-policy.json`, respectively.
 

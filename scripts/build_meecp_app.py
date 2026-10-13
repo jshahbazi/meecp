@@ -214,6 +214,31 @@ def require_command_asset(source: Path, *, signed: bool, asset: Path | None):
         raise SystemExit("signed_command_asset_required")
 
 
+def validate_packaged_release_policy(host: Path) -> None:
+    """Reject stale authority pins using the actual packaged implementation.
+
+    This read-only preflight neither initializes owner state nor rewrites policy.
+    Signature and complete artifact verification remain runtime requirements.
+    """
+    code = (
+        "from pathlib import Path; "
+        "from meecp.preparation_release_policy import ReleasePolicy, POLICY_PATH, validate_policy_implementations; "
+        "from meecp.preparation_contracts import load_contract; "
+        "from meecp.recipes import _read; "
+        "validate_policy_implementations(ReleasePolicy.model_validate(load_contract(_read(Path.cwd()/POLICY_PATH, 65536))))"
+    )
+    try:
+        result = subprocess.run([str(host / "python/bin/python3.12"), "-P", "-B", "-c", code],
+            cwd=host, env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C",
+                "PYTHONPATH": str(host / "backend") + ":" + str(host / "python/site-packages"),
+                "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1"},
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+        if result.returncode:
+            raise SystemExit("release_policy_implementation_mismatch")
+    except (OSError, subprocess.TimeoutExpired):
+        raise SystemExit("release_policy_preflight_failed") from None
+
+
 def build(destination: Path, legacy_recovery_app: Path | None = None,
           sign_identity: str | None = None, keychain: Path | None = None,
           version: str | None = None, textgen_engine: Path | None = None,
@@ -272,6 +297,7 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
             "preparation": {"families": [], "recipe_component_sets": [], "resolution_candidate_kinds": []},
             "agent": {"components": [], "providers": [], "unlocked_resolution": False},
             "command": None}, sort_keys=True) + "\n")
+    validate_packaged_release_policy(host)
     command_signing = {}
     if command_signed_asset is not None:
         from signed_command_helpers import bundle as bundle_commands, verify_host as verify_signed_commands

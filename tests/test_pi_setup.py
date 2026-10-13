@@ -202,6 +202,15 @@ async def test_pi_routes_require_owner_host_and_origin(host):
         result = await client.put("/v1/pi/settings", headers={"Authorization": "Bearer " + owner},
                                  json={"provider": "openai", "model": "gpt-5.4-mini", "api_key": "synthetic-provider-secret"})
         assert result.status_code == 200 and "synthetic-provider-secret" not in result.text
+        credential = host.pi_setup._settings()["credential"]
+        changed = await client.put("/v1/pi/settings", headers={"Authorization": "Bearer " + owner},
+                                  json={"provider": "openai", "model": "gpt-6.1-sol", "base_url": None})
+        assert changed.status_code == 200 and changed.json()["configured"]
+        assert changed.json()["model"] == "gpt-6.1-sol"
+        assert host.pi_setup._settings()["credential"] == credential
+        assert host.pi_setup.secrets.resolve({"key": credential}) == {"key": "synthetic-provider-secret"}
+        assert "synthetic-provider-secret" not in changed.text and credential not in changed.text
+        assert (await client.get("/v1/pi/settings", headers={"Authorization": "Bearer " + owner})).json()["model"] == "gpt-6.1-sol"
     await host.pi_setup.close()
 
 

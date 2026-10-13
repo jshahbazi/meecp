@@ -48,12 +48,25 @@ final class PrivateHTTPTests: XCTestCase {
     }
 
     func testOwnerOnlyUnixHTTPServerReceivesBoundedRequest() throws {
+        try assertOwnerOnlyRequest(method: "POST", path: "/api/status", body: Data("synthetic body".utf8))
+    }
+
+    func testPiSettingsPUTPreservesModelOnlyPayload() throws {
+        let body = try JSONSerialization.data(withJSONObject: [
+            "provider": "openai", "model": "gpt-6.1-sol", "base_url": NSNull()
+        ])
+        try assertOwnerOnlyRequest(method: "PUT", path: "/v1/pi/settings", body: body)
+    }
+
+    private func assertOwnerOnlyRequest(method: String, path: String, body: Data) throws {
         let state = try state()
         let (_, fd) = try prepareSocket(state)
-        defer { close(fd) }
         let queue = DispatchQueue(label: "private-http-fixture")
+        defer { queue.sync {}; close(fd) }
         var received = Data()
         queue.async {
+            var readable = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            guard poll(&readable, 1, 2_000) > 0 else { return }
             let client = accept(fd, nil, nil)
             guard client >= 0 else { return }
             defer { close(client) }
@@ -79,9 +92,9 @@ final class PrivateHTTPTests: XCTestCase {
             let response = Data("HTTP/1.1 207 Multi-Status\r\nContent-Length: \(body.count)\r\n\r\n".utf8) + body
             response.withUnsafeBytes { _ = write(client, $0.baseAddress!, response.count) }
         }
-        var request = URLRequest(url: URL(string: "http://127.0.0.1:19385/api/status")!)
-        request.httpMethod = "POST"
-        request.httpBody = Data("synthetic body".utf8)
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:19385" + path)!)
+        request.httpMethod = method
+        request.httpBody = body
         request.timeoutInterval = 2
         request.setValue("Bearer synthetic-token", forHTTPHeaderField: "Authorization")
         let result = try call(request, state: state)
@@ -89,10 +102,11 @@ final class PrivateHTTPTests: XCTestCase {
         XCTAssertEqual(result.1.statusCode, 207)
         queue.sync {}
         let text = String(decoding: received, as: UTF8.self)
-        XCTAssertTrue(text.contains("POST /api/status HTTP/1.1"))
+        XCTAssertTrue(text.hasPrefix(method + " " + path + " HTTP/1.1\r\n"))
         XCTAssertTrue(text.contains("Host: 127.0.0.1:19385"))
         XCTAssertTrue(text.contains("Authorization: Bearer synthetic-token"))
-        XCTAssertTrue(text.contains("synthetic body"))
+        let separator = try XCTUnwrap(received.range(of: Data("\r\n\r\n".utf8)))
+        XCTAssertEqual(Data(received[separator.upperBound...]), body)
     }
 
     func testSocketPathMatchesPythonIdentityAlgorithm() throws {

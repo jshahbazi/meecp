@@ -6,6 +6,9 @@ This records implementation and scoped platform acceptance. It does not
 establish unfamiliar-project success rates, general model quality, performance,
 or the commercial two-Mac benchmark.
 
+The [independent review and corrective checks](AUTOMATED_APP_ONBOARDING_REVIEW.md)
+record defects found after the initial acceptance and their regression coverage.
+
 ## Checked behavior
 
 | Contract | Acceptance |
@@ -48,6 +51,11 @@ These are scoped runs, with overlap; counts are not added together.
 - All 33 toolchain/onboarding recovery checks passed after the cold Xcode continuation fix, including actual confined shader compilation. The controlled cases covered incomplete first launch, newly installed Xcode, automatic component acquisition, identity changes and explicit retry after acquisition failure.
 - Nine real Pi SDK worker checks passed, including tool dispatch, bounded package repair, context compaction, cancellation and error redaction.
 - New production modules passed scoped Ruff checks, Swift release compilation and native setup/resource UI self-tests.
+
+The follow-up review passed 321 integrated backend checks before its final
+compiler-probe cleanup fix, then all 95 affected toolchain/native/recovery checks
+after that fix. Redirect/port checks passed 61 tests and the nine real Pi SDK
+worker checks passed again. These runs overlap the earlier campaign.
 
 ## Provisioning and quality boundaries
 

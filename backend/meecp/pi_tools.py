@@ -141,7 +141,7 @@ class PiToolBroker:
                 raise PiToolError("unsafe_root") from None
             raise
 
-    def _check_roots(self):
+    def _check_roots(self, *, validate_toolchain=True):
         if self._closed:
             raise PiToolError("broker_closed")
         for root in self._roots:
@@ -156,7 +156,7 @@ class PiToolBroker:
                 raise PiToolError("root_changed") from None
         if any(process.ownership_lost for process in self.owner.instances.values()):
             raise OwnershipLost()
-        if hasattr(self, "toolchain_manager"):
+        if validate_toolchain and hasattr(self, "toolchain_manager"):
             self.toolchain_manager.validate()
 
     def _select(self, value: str, *, write=False):
@@ -339,7 +339,10 @@ class PiToolBroker:
     async def invoke(self, name: str, args: dict) -> dict:
         try:
             async with self._busy:
-                self._check_roots()
+                # Fixed host discovery can inspect a replacement Apple
+                # installation before repinning its read-only toolchain roots.
+                # Every ordinary command still validates the selected roots.
+                self._check_roots(validate_toolchain=name not in {"preflight", "ensure_metal_toolchain"})
                 if name == "read_file":
                     self._arguments(args, ("path",), ("offset", "limit"))
                     return {"success": True, "output": self._read(args["path"], offset=args.get("offset"), limit=args.get("limit"))}
@@ -461,6 +464,7 @@ class PiToolBroker:
                 result.update(self.credential_resolver(references))
             except Exception:
                 raise PiToolError("credentials_unavailable") from None
+        result["PATH"] = self.toolchain_manager.command_path(result["PATH"])
         return result, bool(references)
 
     def _trust_environment(self):
@@ -504,8 +508,9 @@ class PiToolBroker:
                 "max_file_bytes": MAX_FETCH, "max_collection_bytes": MAX_FETCH_TOTAL},
             "runtimes": {"bundled": ["python", "node"], "other": "fetch and extract a runtime or build one in the workspace"},
             "dependency_managers": "Python uv and npm helpers; any staged manager can run custom commands",
-            "system_tools": [str(Path("/usr/bin") / name) for name in ("clang", "clang++", "make", "git", "xcrun", "swift", "tar", "unzip")
-                if (Path("/usr/bin") / name).is_file()],
+            "developer_tools": self.toolchain_manager.command_tools,
+            "system_tools": [*self.toolchain_manager.command_tools.values(),
+                *(str(Path("/usr/bin") / name) for name in ("tar", "unzip") if (Path("/usr/bin") / name).is_file())],
             "package": {"entrypoint": "relocatable MCP stdio launcher; may own child services",
                 "schemas": ["package.schema.json", "lock.schema.json"], "recipe_required": False}}
 
@@ -545,7 +550,7 @@ class PiToolBroker:
         env, hidden = self._command_environment(args)
         executable, sandbox_args, cwd, env = self.launch_spec(args["argv"], str(cwd), network=args.get("network", False), env=env)
         process = await self.owner.launch(executable, [*sandbox_args[:2], "/bin/sh", "-c", 'exec "$@" 2>&1',
-            "meecp-command", *args["argv"]], cwd, env, owned_group=True,
+            "meecp-command", *sandbox_args[2:]], cwd, env, owned_group=True,
             expected_reaper=self.owner.reaper, startup_timeout=15, stop_grace=0.2, admit=self._launch_admitted)
         assert process.stdin is not None and process.stdout is not None
         process.stdin.close()
@@ -639,6 +644,7 @@ class PiToolBroker:
             raise PiToolError("invalid_arguments")
         cwd_path = self._path(str(cwd), directory=True)
         self._check_roots()
+        argv = self.toolchain_manager.command_argv(argv)
         quote = lambda value: json.dumps(str(value), ensure_ascii=True)
         toolchain_roots = self.toolchain_manager.read_roots
         reads = (*_SYSTEM_READS, self.workspace, *self.read_roots, *toolchain_roots)
@@ -692,7 +698,7 @@ class PiToolBroker:
         # This fixed wrapper merges command diagnostics into the same bounded
         # in-memory result. Argument forwarding evaluates no selected shell text.
         launch = (executable, [*sandbox_args[:2], "/bin/sh", "-c", 'exec "$@" 2>&1',
-            "meecp-command", *args["argv"]], cwd, env)
+            "meecp-command", *sandbox_args[2:]], cwd, env)
         process = None
         previous_instances = set(self.owner.instances)
         previous_pending = set(self.owner._pending_ids)
@@ -765,6 +771,13 @@ class PiToolBroker:
 
     def _launch_admitted(self):
         self._check_roots()
+        return True
+
+    def _toolchain_discovery_admitted(self):
+        # This callback is only for the host's fixed system-tool commands.
+        # Workspace/runtime roots and native ownership remain mandatory; old
+        # compiler/SDK/asset pins must not prevent their own rediscovery.
+        self._check_roots(validate_toolchain=False)
         return True
 
     async def _fetch(self, args):

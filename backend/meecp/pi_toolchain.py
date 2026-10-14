@@ -27,6 +27,7 @@ _METAL_SOURCE = (
 )
 _VERSION = re.compile(r"^Xcode ([0-9]+(?:\.[0-9]+){0,2})\nBuild version ([A-Za-z0-9]+)\s*$")
 _MAX_HOST_OUTPUT = 256 * 1024
+_COMMAND_TOOLS = ("clang", "clang++", "git", "make", "swift")
 
 
 def _error(code):
@@ -115,7 +116,7 @@ async def owned_host_command(broker, argv, environment, *, timeout=15):
                     expected_reaper=broker.owner.reaper,
                     startup_timeout=min(timeout, 10),
                     stop_grace=0.2,
-                    admit=broker._launch_admitted,
+                    admit=broker._toolchain_discovery_admitted,
                 )
                 assert process.stdin is not None and process.stdout is not None
                 process.stdin.close()
@@ -145,6 +146,8 @@ class ToolchainManager:
         self._lock = asyncio.Lock()
         self._selected = None
         self._reads = ()
+        self._tools = {}
+        self._base_path = self.broker.env.get("PATH", "/usr/bin:/bin")
         self.snapshot = {"status": "unchecked", "available": False, "required": False}
 
     @property
@@ -155,6 +158,27 @@ class ToolchainManager:
     def validate(self):
         for root in self._reads:
             root.validate()
+
+    @property
+    def command_tools(self):
+        self.validate()
+        return {name: str(path) for name, path in self._tools.items()}
+
+    def command_argv(self, argv):
+        command = list(argv)
+        name = command[0].removeprefix("/usr/bin/")
+        if command[0] in (name, "/usr/bin/" + name) and name in self._tools:
+            command[0] = str(self._tools[name])
+        return command
+
+    def command_path(self, value):
+        # Runtime/venv directories retain their precedence. Insert selected
+        # Apple tools only before the system shims and never retain an old
+        # developer directory across selection changes.
+        additions = list(dict.fromkeys(str(path.parent) for path in self._tools.values()))
+        entries = [entry for entry in value.split(":") if entry not in additions]
+        index = next((index for index, entry in enumerate(entries) if entry in {"/usr/bin", "/bin"}), len(entries))
+        return ":".join([*entries[:index], *additions, *entries[index:]])
 
     def _environment(self, developer=None, *, acquisition=False):
         environment = {
@@ -175,12 +199,16 @@ class ToolchainManager:
     async def _run(self, argv, developer=None, *, acquisition=False, timeout=15):
         return await self._runner(argv, self._environment(developer, acquisition=acquisition), timeout=timeout)
 
-    async def _find(self, name, developer):
+    async def _find(self, name, developer, *, preserve_spelling=False):
         code, data = await self._run(["/usr/bin/xcrun", "--find", name], developer)
         if code != 0:
             return None
         try:
-            return _trusted_path(data.decode("utf-8").strip())
+            value = data.decode("utf-8").strip()
+            trusted = _trusted_path(value)
+            # clang++ is an Apple symlink whose spelling selects C++ driver
+            # behavior. Validate its resolved target, but preserve that alias.
+            return Path(value) if preserve_spelling else trusted
         except (UnicodeError, ValueError):
             return None
 
@@ -261,6 +289,17 @@ class ToolchainManager:
                     if path.parent == Path("/private/var/run/com.apple.security.cryptexd/mnt")
                     and path.name.startswith("com.apple.MobileAsset.MetalToolchain-")
                 )
+        tools = {}
+        if first_launch_ready:
+            for name in _COMMAND_TOOLS:
+                tool = await self._find(name, developer, preserve_spelling=True)
+                if tool is None or not any(tool.is_relative_to(root) and tool.resolve().is_relative_to(root) for root in roots):
+                    continue
+                code, _ = await self._run(
+                    ["/usr/bin/codesign", "--verify", "--strict", "-R", "=anchor apple", str(tool)], timeout=60
+                )
+                if code == 0:
+                    tools[name] = tool
         return {
             "developer": developer,
             "clang": clang,
@@ -272,18 +311,31 @@ class ToolchainManager:
             "xcode_version": version,
             "xcode_build": build,
             "roots": tuple(dict.fromkeys(roots)),
+            "tools": tools,
         }
 
     def _select(self, selected):
         self._reads = tuple(_Directory.pin(path) for path in selected["roots"])
         self._selected = selected
+        self._tools = dict(selected.get("tools", {}))
+        self.broker.env["PATH"] = self.command_path(self._base_path)
         self.broker.env["DEVELOPER_DIR"] = str(selected["developer"])
         if selected["sdk"] is not None:
             self.broker.env["SDKROOT"] = str(selected["sdk"])
         else:
             self.broker.env.pop("SDKROOT", None)
 
+    def _clear_selection(self):
+        self._reads = ()
+        self._selected = None
+        self._tools = {}
+        self.broker.env["PATH"] = self._base_path
+        self.broker.env.pop("DEVELOPER_DIR", None)
+        self.broker.env.pop("SDKROOT", None)
+
     async def _compiler_usable(self, selected):
+        from .pi_tools import PiToolError
+
         if not selected["first_launch_ready"] or selected["metal"] is None:
             return False
         self._select(selected)
@@ -292,27 +344,44 @@ class ToolchainManager:
         self.broker._write(".toolchain/probe.metal", _METAL_SOURCE)
         source = self.broker.workspace / ".toolchain/probe.metal"
         target = self.broker.workspace / ".toolchain/probe.air"
+        # Pin the private synthetic directory before a command can mutate it.
+        # Result inspection and cleanup never follow a replacement symlink.
+        descriptor, _, _ = self.broker._parent(str(source), write=True)
         try:
-            result = await self.broker._run(
-                {
-                    "argv": [str(selected["metal"]), "-c", str(source), "-o", str(target)],
-                    "timeout_seconds": 30,
-                    "credentials": {},
-                }
-            )
+            try:
+                result = await self.broker._run(
+                    {
+                        "argv": [str(selected["metal"]), "-c", str(source), "-o", str(target)],
+                        "timeout_seconds": 30,
+                        "credentials": {},
+                    }
+                )
+            except PiToolError as error:
+                # _run raises these only after its owned command has settled.
+                # Cancellation, ownership loss, reaper failures and root
+                # validation errors must still abort the setup.
+                if error.code not in {"command_timeout", "output_limit"}:
+                    raise
+                return False
             if not result["success"]:
                 return False
-            details = target.stat(follow_symlinks=False)
+            try:
+                details = os.stat(target.name, dir_fd=descriptor, follow_symlinks=False)
+            except FileNotFoundError:
+                return False
             return stat.S_ISREG(details.st_mode) and 0 < details.st_size <= 1024 * 1024
         finally:
             # These are fixed public synthetic bytes, never selected model data.
-            for path in (source, target):
-                try:
-                    path.unlink()
-                except FileNotFoundError:
-                    pass
+            try:
+                for path in (source, target):
+                    try:
+                        os.unlink(path.name, dir_fd=descriptor)
+                    except FileNotFoundError:
+                        pass
+            finally:
+                os.close(descriptor)
 
-    async def _facts(self, selected, *, available, required, status=None, acquired=False, action=None):
+    async def _facts(self, selected, *, available, required, status=None, acquired=False, action=None, failure=None):
         value = {
             "status": status or ("ready" if available else "missing"),
             "available": available,
@@ -344,6 +413,10 @@ class ToolchainManager:
                 value.update(
                     metal_path=str(selected["metal"]), metal_sha256=await asyncio.to_thread(_digest, selected["metal"])
                 )
+            value["command_tools"] = {
+                name: {"path": str(path), "sha256": await asyncio.to_thread(_digest, path)}
+                for name, path in selected.get("tools", {}).items()
+            }
             readiness = {
                 key: item
                 for key, item in value.items()
@@ -356,10 +429,14 @@ class ToolchainManager:
         if action:
             value["action_required"] = action
             value["continuation"] = "ensure_metal_toolchain"
+        if failure:
+            value["acquisition_failure"] = failure
         self.snapshot = value
         return dict(value)
 
     async def ensure(self, args):
+        from .pi_tools import PiToolError
+
         self.broker._arguments(args, (), ("required",))
         required = args.get("required", True)
         if type(required) is not bool:
@@ -384,6 +461,10 @@ class ToolchainManager:
             selected = acquisition or installed_xcode or selected
             if selected is not None:
                 self._select(selected)
+            else:
+                # Removal or replacement by an untrusted installation revokes
+                # the old grants instead of leaving stale roots on the broker.
+                self._clear_selection()
             open_xcode = (
                 {
                     "code": "xcode_components_or_license_required",
@@ -415,23 +496,50 @@ class ToolchainManager:
                 )
             # Fixed, documented Apple command. Never select globally or accept a
             # license on the user's behalf. Failure supports a fresh recheck.
-            code, _ = await self._run(
-                ["/usr/bin/xcodebuild", "-downloadComponent", "MetalToolchain"],
-                acquisition["developer"],
-                acquisition=True,
-                timeout=1800,
-            )
+            failure = None
+            try:
+                code, _ = await self._run(
+                    ["/usr/bin/xcodebuild", "-downloadComponent", "MetalToolchain"],
+                    acquisition["developer"],
+                    acquisition=True,
+                    timeout=1800,
+                )
+            except PiToolError as error:
+                # The fixed host runner joins cleanup before these bounded
+                # errors escape. Reinspect and offer continuation as for a
+                # failed download; unknown native ownership still propagates.
+                if error.code not in {"developer_tools_timeout", "developer_tools_output_limit"}:
+                    raise
+                code, failure = 1, error.code
             refreshed = await self._inspect(acquisition["developer"])
-            if refreshed is not None and await self._compiler_usable(refreshed):
+            if refreshed is None:
+                # An update/removal can invalidate the selected Apple control
+                # identity while acquisition is running. Never repin the old
+                # grants or label a replacement with stale signature facts.
+                self._clear_selection()
+                return await self._facts(
+                    None,
+                    available=False,
+                    required=True,
+                    status="action_required",
+                    failure=failure,
+                    action={
+                        "code": "full_xcode_required",
+                        "kind": "install_xcode",
+                        "url": "https://developer.apple.com/xcode/",
+                    },
+                )
+            if await self._compiler_usable(refreshed):
                 self._select(refreshed)
                 return await self._facts(refreshed, available=True, required=True, acquired=code == 0)
-            acquisition = refreshed or acquisition
+            acquisition = refreshed
             self._select(acquisition)
             return await self._facts(
                 acquisition,
                 available=False,
                 required=True,
                 status="action_required",
+                failure=failure,
                 action={
                     "code": "xcode_components_or_license_required",
                     "kind": "open_xcode",

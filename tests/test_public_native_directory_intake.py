@@ -15,6 +15,7 @@ from test_recipe_native_management_acceptance import file_identity, private_json
 @pytest.mark.parametrize("public,kind,accepted", [
     (True, "callable", True), (True, "dynamic_mcp", True), (True, "mixed", True),
     (True, "prepared_package", False), (True, "document", False),
+    (True, "invalid_draft", False),
     (False, "callable", False), (False, "mixed", True),
 ])
 async def test_actual_intake_selection_preserves_closed_directory_kinds(native_recipe_driver, tmp_path, public, kind, accepted):
@@ -38,16 +39,33 @@ async def test_actual_intake_selection_preserves_closed_directory_kinds(native_r
         if scope["type"] != "http":
             return await owner(scope, receive, send)
         routes.append((scope["method"], scope["path"]))
+        rewrite_import = (kind in {"prepared_package", "document", "invalid_draft"}
+            and scope["method"] == "POST" and scope["path"] == "/v1/imports")
+        response_start = None
+        response_body = bytearray()
         async def observe(message):
-            # Two adversarial wire controls retain the real owner envelope and
-            # import identity, substituting only an unsupported source kind.
-            if (kind in {"prepared_package", "document"} and scope["method"] == "POST"
-                    and scope["path"] == "/v1/imports" and message["type"] == "http.response.body"):
-                value = json.loads(message["body"])
-                value["source"]["kind"] = kind
-                message = {**message, "body": json.dumps(value).encode()}
-            if kind in {"prepared_package", "document"} and message["type"] == "http.response.start":
-                message = {**message, "headers": [(k, v) for k, v in message["headers"] if k.lower() != b"content-length"]}
+            nonlocal response_start
+            # Preserve HTTP framing so these controls exercise source-kind and
+            # draft-envelope rejection rather than a transport parsing failure.
+            if rewrite_import:
+                if message["type"] == "http.response.start":
+                    response_start = message
+                    return
+                if message["type"] == "http.response.body":
+                    response_body.extend(message["body"])
+                    if message.get("more_body", False):
+                        return
+                    value = json.loads(response_body)
+                    if kind == "invalid_draft":
+                        value.pop("draft_id")
+                    else:
+                        value["source"]["kind"] = kind
+                    body = json.dumps(value).encode()
+                    assert response_start is not None
+                    headers = [(k, v) for k, v in response_start["headers"] if k.lower() != b"content-length"]
+                    headers.append((b"content-length", str(len(body)).encode()))
+                    await send({**response_start, "headers": headers})
+                    message = {**message, "body": body}
             await send(message)
         await owner(scope, receive, observe)
     listener = bind_private_listener(state, "manager"); socket = socket_path(state, "manager")
@@ -61,7 +79,9 @@ async def test_actual_intake_selection_preserves_closed_directory_kinds(native_r
         child = await asyncio.create_subprocess_exec(str(native_recipe_driver), flag, str(fixture),
             env={"HOME": str(home), "PATH": "/usr/bin:/bin", "TMPDIR": str(temporary), "MCPME_STATE_DIR": str(state)},
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
-        await asyncio.wait_for(child.wait(), 50)
+        # Rejection must settle promptly; the native stage's 30-second deadline
+        # must not substitute for a completed callback with no usable draft.
+        await asyncio.wait_for(child.wait(), 50 if accepted else 10)
         assert child.returncode == 1  # Source-only host keeps all execution closed.
         receipt = json.loads(output.read_bytes())
         assert receipt.get("native_directory_selection", False) is accepted

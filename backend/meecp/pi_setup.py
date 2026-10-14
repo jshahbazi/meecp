@@ -29,6 +29,7 @@ from .private import ensure_private_directory, read_private_json, snapshot_packa
 from .processes import OwnershipLost, ProcessOwner, _await_ownership, _watch_ownership
 from .settings import SecretStore
 from .pi_questions import PiQuestions, PiQuestionError
+from .pi_conversation import PiConversation, PiConversationError
 from .pi_verification import validate_fixtures, verify_result
 from .pi_listeners import ListenerError, assert_loopback, watch_listeners
 from .settings import normalize_settings, SettingsError
@@ -91,6 +92,7 @@ class PiSetup:
         self.settings_path = self.root / "settings.json"
         self.secrets = SecretStore(self.root)
         self.questions = PiQuestions(host.secrets)
+        self.conversation = PiConversation()
         from .pi_resources import PiResourceStore
         self.resources = PiResourceStore(self.root / "resources")
         self.credential_root = ensure_private_directory(self.root / "credential-bindings")
@@ -218,6 +220,8 @@ class PiSetup:
             record["interruption_reason"] = reason
         record.update(changes, updated_at=time.time())
         write_private_json(self.jobs_root / (record["id"] + ".json"), record)
+        if record["status"] in TERMINAL:
+            self.conversation.finish(record["id"], clear=record["status"] in {"canceled", "interrupted"})
         return dict(record)
 
     def list(self):
@@ -236,12 +240,48 @@ class PiSetup:
         spec = self.host.imports.export(record["import_id"], record["revision"])
         if spec["state"] not in {"needs_information", "waiting_for_agent"} or record["status"] != "running":
             raise PiQuestionError("pi_question_changed")
+        question = self.questions.public(job_id, record["import_id"], record["revision"])
         self.questions.answer(job_id, payload["question_id"], payload["import_id"], payload["revision"], payload["value"])
+        if question is not None and question["kind"] == "text":
+            self.conversation.append(job_id, "user", payload["value"], message_id=question["id"])
         references = self.questions.credentials(job_id)
         if references:
             write_private_json(self.credential_root / (job_id + ".json"), {
                 "import_id": record["import_id"], "source_revision": record["source_revision"], "references": references})
         return self.public_job(record)
+
+    def _conversation_binding(self, job_id, payload, extra):
+        if (not isinstance(payload, dict) or set(payload) != {"import_id", "revision", "source_revision"} | extra
+                or type(payload.get("revision")) is not int or payload["revision"] < 1):
+            raise PiConversationError("pi_message_invalid")
+        record = self.get(job_id)
+        if any(payload[key] != record[key] for key in ("import_id", "revision", "source_revision")):
+            raise PiSetupError("pi_source_changed")
+        spec = self.host.imports.export(record["import_id"], record["revision"])
+        if spec["source"]["revision"] != record["source_revision"]:
+            raise PiSetupError("pi_source_changed")
+        return record, spec
+
+    async def messages(self, job_id, payload):
+        record, spec = self._conversation_binding(job_id, payload, {"message_id", "text"})
+        if self.closed or record["status"] != "running" or spec["state"] not in {"needs_information", "waiting_for_agent"}:
+            raise PiConversationError("pi_message_unavailable")
+        # Credentials and exact question replies have their own private route.
+        session = self.conversation.active(job_id)
+        duplicate_id = (session is not None and isinstance(payload["message_id"], str)
+                        and payload["message_id"] in session.identities)
+        if (not duplicate_id
+                and self.questions.public(job_id, record["import_id"], record["revision"]) is not None):
+            raise PiConversationError("pi_question_pending")
+        acknowledged, duplicate = self.conversation.enqueue(job_id, payload["message_id"], payload["text"])
+        await asyncio.shield(acknowledged)
+        return {"accepted": True, "message_id": payload["message_id"], "duplicate": duplicate}
+
+    def conversation_events(self, job_id, payload):
+        record, _ = self._conversation_binding(job_id, payload, {"after"})
+        question = self.questions.public(job_id, record["import_id"], record["revision"])
+        return self.conversation.read(job_id, payload["after"],
+            can_message=not self.closed and record["status"] == "running" and question is None)
 
     async def _ask(self, record, payload):
         self.host.imports.export(record["import_id"], record["revision"])
@@ -731,6 +771,7 @@ class PiSetup:
             settings = self._settings()
             key = self.secrets.resolve({"key": settings["credential"]})["key"] if settings["credential"] else ""
             self._update(record)
+            self.conversation.begin(job_id)
             self.cancel_flags[job_id] = threading.Event()
             self.tasks[job_id] = asyncio.create_task(self._run(record, spec, settings, runtime, key))
             return dict(record)
@@ -909,6 +950,7 @@ class PiSetup:
         node, worker = runtime
         owner = ProcessOwner(self.host.reaper)
         process = None
+        send_lock = asyncio.Lock()
         prompt = (
             "Implement the user's app described in setup.json. Discover requirements from the intent, source, documentation and experiments. "
             "Read setup.json and call capabilities first. Choose any appropriate language, libraries, tools or service design; no app families or recipes are required. "
@@ -959,11 +1001,43 @@ class PiSetup:
                 data = json.dumps(message, ensure_ascii=True, allow_nan=False).encode() + b"\n"
                 if len(data) > MAX_MESSAGE:
                     raise PiSetupError("pi_protocol_invalid")
-                process.stdin.write(data)
-                await process.stdin.drain()
+                async with send_lock:
+                    process.stdin.write(data)
+                    await process.stdin.drain()
             await send({"type": "start", "provider": settings["provider"], "model": settings["model"],
                         "base_url": settings["base_url"], "api_key": key, "prompt": prompt})
             calls, seen = 0, set()
+            tool_queue = asyncio.Queue(maxsize=8)
+            tool_active = False
+
+            async def execute_tools():
+                nonlocal tool_active
+                while True:
+                    event = await tool_queue.get()
+                    tool_active = True
+                    try:
+                        identity = event["id"]
+                        if event.get("name") == "check_package":
+                            if event.get("arguments") != {}:
+                                result = {"success": False, "output": "invalid_arguments"}
+                            else:
+                                result = await self._check_stage(record, workspace)
+                        else:
+                            name, arguments = event.get("name"), event.get("arguments")
+                            if name == "ask_user":
+                                result = await self._ask(record, arguments)
+                            elif name == "retain_resource":
+                                result = await self._retain_resource(record, broker, arguments)
+                            elif name == "fetch_url":
+                                result = await self._fetch_url(record, broker, arguments)
+                            else:
+                                result = await broker.invoke(name, arguments)
+                                if name in {"ensure_metal_toolchain", "native_command"}:
+                                    result = await self._continue_system(record, broker, name, arguments, result)
+                        await send({"type": "tool_result", "id": identity, **result})
+                    finally:
+                        tool_active = False
+
             async def consume():
                 nonlocal calls
                 buffered = bytearray()
@@ -986,6 +1060,9 @@ class PiSetup:
                     if not isinstance(event, dict):
                         raise PiSetupError("pi_protocol_invalid")
                     if event.get("type") == "done" and event.get("success") is True:
+                        if tool_active or not tool_queue.empty():
+                            raise PiSetupError("pi_protocol_invalid")
+                        self.conversation.stop_input(record["id"])
                         return
                     if event.get("type") == "failed":
                         code = {"provider_failed": "pi_provider_failed", "model_unsupported": "pi_model_unsupported",
@@ -997,6 +1074,21 @@ class PiSetup:
                     if event.get("type") == "progress":
                         if event.get("stage") in STAGES - {"ready", "verifying"}:
                             self._update(record, stage=event["stage"])
+                    elif event.get("type") == "assistant_text":
+                        if set(event) != {"type", "text"}:
+                            raise PiSetupError("pi_protocol_invalid")
+                        try:
+                            self.conversation.append(record["id"], "assistant", event["text"])
+                        except PiConversationError:
+                            raise PiSetupError("pi_protocol_invalid") from None
+                    elif event.get("type") == "message_accepted":
+                        if set(event) != {"type", "id"} or not isinstance(event.get("id"), str):
+                            raise PiSetupError("pi_protocol_invalid")
+                        self.host.imports.export(record["import_id"], record["revision"])
+                        try:
+                            self.conversation.acknowledge(record["id"], event["id"])
+                        except PiConversationError:
+                            raise PiSetupError("pi_protocol_invalid") from None
                     elif event.get("type") == "tool_call":
                         calls += 1
                         identity = event.get("id")
@@ -1004,29 +1096,39 @@ class PiSetup:
                                 or identity in seen):
                             raise PiSetupError("pi_tool_limit")
                         seen.add(identity)
-                        if event.get("name") == "check_package":
-                            if event.get("arguments") != {}:
-                                result = {"success": False, "output": "invalid_arguments"}
-                            else:
-                                result = await self._check_stage(record, workspace)
-                        else:
-                            name, arguments = event.get("name"), event.get("arguments")
-                            if name == "ask_user":
-                                result = await self._ask(record, arguments)
-                            elif name == "retain_resource":
-                                result = await self._retain_resource(record, broker, arguments)
-                            elif name == "fetch_url":
-                                result = await self._fetch_url(record, broker, arguments)
-                            else:
-                                result = await broker.invoke(name, arguments)
-                                if name in {"ensure_metal_toolchain", "native_command"}:
-                                    result = await self._continue_system(record, broker, name, arguments, result)
-                        await send({"type": "tool_result", "id": identity, **result})
+                        try:
+                            tool_queue.put_nowait(event)
+                        except asyncio.QueueFull:
+                            raise PiSetupError("pi_protocol_invalid") from None
                     else:
                         raise PiSetupError("pi_protocol_invalid")
                 raise PiSetupError("pi_tool_limit")
-            await _watch_ownership(process, consume())
+            async def deliver():
+                session = self.conversation.active(record["id"])
+                if session is None:
+                    raise PiSetupError("pi_protocol_invalid")
+                while True:
+                    message = await session.inbox.get()
+                    self.host.imports.export(record["import_id"], record["revision"])
+                    self.conversation.sent(record["id"], message["id"])
+                    await send(message)
+
+            async def communicate():
+                consumer = asyncio.create_task(consume())
+                delivery = asyncio.create_task(deliver())
+                execution = asyncio.create_task(execute_tools())
+                tasks = {consumer, delivery, execution}
+                try:
+                    done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                    for completed in done:
+                        await completed
+                finally:
+                    for task in tasks:
+                        task.cancel()
+                    await _await_ownership(asyncio.gather(*tasks, return_exceptions=True))
+            await _watch_ownership(process, communicate())
         finally:
+            self.conversation.stop_input(record["id"])
             if process is not None:
                 await _await_ownership(process.stop())
             await _await_ownership(owner.close())
@@ -1260,6 +1362,7 @@ class PiSetup:
                     self._update(record, interruption_reason="host_restart")
                 task.cancel()
         outcomes = await _await_ownership(asyncio.gather(*pending, return_exceptions=True))
+        self.conversation.close()
         for job_id, task in self.tasks.items():
             record = self.get(job_id)
             if task.cancelled() and record["status"] == "running":
@@ -1311,6 +1414,21 @@ def pi_setup_routes(local_policy, manager):
                 result = manager.public_job(await manager.resume(request.path_params["job_id"], payload))
             elif request.url.path.endswith("/continue-system") and payload == {}:
                 result = manager.continue_system(request.path_params["job_id"])
+            elif request.url.path.endswith("/messages"):
+                result = await manager.messages(request.path_params["job_id"], payload)
+            elif request.url.path.endswith("/conversation"):
+                binding = payload
+                if request.method == "GET":
+                    try:
+                        binding = {"import_id": request.query_params.get("import_id"),
+                            "revision": int(request.query_params.get("revision", "0")),
+                            "source_revision": request.query_params.get("source_revision"),
+                            "after": int(request.query_params.get("after", "0"))}
+                    except ValueError:
+                        raise PiConversationError("pi_message_invalid") from None
+                    if set(request.query_params) != set(binding):
+                        raise PiConversationError("pi_message_invalid")
+                result = manager.conversation_events(request.path_params["job_id"], binding)
             elif request.method == "GET":
                 result = manager.public_job(request.path_params["job_id"])
             elif request.url.path.endswith("/answer"):
@@ -1323,6 +1441,8 @@ def pi_setup_routes(local_policy, manager):
         except PiSetupError as error:
             return JSONResponse({"api_version": 1, "error": {"code": error.code}}, status_code=400)
         except PiQuestionError as error:
+            return JSONResponse({"api_version": 1, "error": {"code": error.code}}, status_code=400)
+        except PiConversationError as error:
             return JSONResponse({"api_version": 1, "error": {"code": error.code}}, status_code=400)
         except PiResourceError as error:
             return JSONResponse({"api_version": 1, "error": {"code": error.code}}, status_code=400)
@@ -1344,5 +1464,7 @@ def pi_setup_routes(local_policy, manager):
         Route("/v1/pi/jobs/{job_id}/answer", dispatch, methods=["POST"]),
         Route("/v1/pi/jobs/{job_id}/resume", dispatch, methods=["POST"]),
         Route("/v1/pi/jobs/{job_id}/continue-system", dispatch, methods=["POST"]),
+        Route("/v1/pi/jobs/{job_id}/messages", dispatch, methods=["POST"]),
+        Route("/v1/pi/jobs/{job_id}/conversation", dispatch, methods=["GET", "POST"]),
     ])
     return local_policy

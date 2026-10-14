@@ -104,8 +104,7 @@ struct PiSetupQuestion {
     }
 }
 
-/// This editor handles provider credentials only. Source transfer begins from
-/// the separate Set Up App action after the draft is saved.
+/// Provider credentials stay in this secure inline card and never enter messages.
 final class PiSettingsView: NSStackView {
     var request: PreparationRequest?
     var available: (() -> Bool)?
@@ -130,9 +129,9 @@ final class PiSettingsView: NSStackView {
         baseURL.placeholderString = "Default provider endpoint"; baseURL.setAccessibilityLabel("Custom provider base URL")
         apiKey.placeholderString = "Leave blank to keep the saved key"; apiKey.setAccessibilityLabel("Setup provider API key")
         apiKey.isAutomaticTextCompletionEnabled = false
-        saveButton = NSButton(title: "Save Settings", target: self, action: #selector(save))
-        closeButton = NSButton(title: "Close", target: self, action: #selector(close))
-        let notice = workspaceLabel("Choose the model Pi uses to set up apps. The API key is stored privately on this Mac and is never displayed. Saving settings sends no source files.", size: 12, secondary: true)
+        saveButton = NSButton(title: "Continue", target: self, action: #selector(save))
+        closeButton = NSButton(title: "Cancel", target: self, action: #selector(close))
+        let notice = workspaceLabel("Which model should prepare your apps? Choose a provider, enter its model ID, and add your API key. The key stays private on this Mac. Saving these settings sends no source files.", size: 12, secondary: true)
         for view in [notice, workspaceLabel("Provider", size: 12, weight: .medium), provider,
                      workspaceLabel("Model", size: 12, weight: .medium), model,
                      workspaceLabel("API key", size: 12, weight: .medium), apiKey,
@@ -160,9 +159,9 @@ final class PiSettingsView: NSStackView {
             provider.menu?.addItem(item)
         }
         if let item = provider.itemArray.first(where: { $0.representedObject as? String == value.provider }) { provider.select(item) }
-        model.stringValue = value.model.isEmpty && value.provider == "openai" ? "gpt-5.4" : value.model
+        model.stringValue = value.model
         baseURL.stringValue = value.baseURL ?? ""
-        status.stringValue = value.runtimeAvailable ? "" : "The bundled Pi runtime is unavailable. Settings can be saved; app setup needs a complete runtime."
+        status.stringValue = value.runtimeAvailable ? "" : "The bundled setup runtime is unavailable. Settings can be saved; app setup needs a complete runtime."
         refreshAvailability()
     }
 
@@ -173,6 +172,10 @@ final class PiSettingsView: NSStackView {
 
     func connectionReset() {
         epoch &+= 1; busy = false; metadata = nil; clearCredentialEntry(); refreshAvailability()
+    }
+
+    func dismiss() {
+        epoch &+= 1; busy = false; clearCredentialEntry(); refreshAvailability()
     }
 
     private func refreshAvailability() {
@@ -207,6 +210,12 @@ final class PiSettingsView: NSStackView {
             self.onSaved?(value)
         }
     }
+
+    /// Only used with a fake request closure by the native contract self-test.
+    static func submitSelfTest(_ view: PiSettingsView, model: String, key: String) -> Bool {
+        view.model.stringValue = model; view.apiKey.stringValue = key; view.save()
+        return view.apiKey.stringValue.isEmpty
+    }
 }
 
 /// Progress is host metadata; questions and answers remain in the live view.
@@ -218,6 +227,9 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     var onReady: ((PiSetupJob) -> Void)?
     var onStateChange: (() -> Void)?
     var onJobChange: ((String?) -> Void)?
+    var onConversationChange: (() -> Void)?
+    var onSuggestedAnswer: ((String) -> Void)?
+    let technicalDetailsView = NSStackView()
     private(set) var job: PiSetupJob?
     private(set) var errorCode: String?
     private var context: PreparationContext?
@@ -230,7 +242,7 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     private var deliveredReady: String?
     private var restoredJobID: String?
     private let modelLabel = workspaceLabel("Loading setup model…", size: 12, secondary: true)
-    private let status = workspaceLabel("Describe the tools you want, then choose Set Up App.", size: 13)
+    private let status = workspaceLabel("Describe the tools you want, then choose Create app.", size: 13, weight: .medium)
     private let errorDetail = workspaceLabel("", size: 11, secondary: true)
     private let notice = workspaceLabel("Set Up App sends your description, selected source, and any answers to your configured model, then builds the app in a temporary workspace.", size: 12, secondary: true)
     private let progress = NSProgressIndicator()
@@ -247,13 +259,48 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     private var settingsButton: NSButton!
     private var systemButton: NSButton!
     private let settingsView = PiSettingsView()
-    private var settingsWindow: NSWindow?
+    private var inlineSettingsVisible = false
+    private var pendingConfiguredStart: PreparationContext?
+    private var conversationMode = false
+    private let eventStack = NSStackView()
+    private let conversationNotice = workspaceLabel("", size: 11, secondary: true)
+    private var conversationJobID: String?
+    private var conversationCursor = 0
+    private var conversationPolling = false
+    private var conversationAvailable = false
+    private var conversationCanMessage = false
+    private var conversationEvents: [PiConversationEvent] = []
+    private var unacknowledgedMessage: (id: String, text: String, jobID: String, context: PreparationContext)?
+    private let optionsStack = NSStackView()
+    private var optionButtons: [NSButton] = []
     private var modelRow: NSView!
     private var actionRow: NSView!
+    private var taskCard: NSView!
 
     var blocksNavigation: Bool { busy || job?.active == true || restoredJobID != nil }
     var authorizationPresentationBlocked: Bool {
-        settingsWindow?.isVisible == true || (job?.question?.kind == "secret" && !questionView.isHidden)
+        inlineSettingsVisible || (job?.question?.kind == "secret" && !questionView.isHidden)
+    }
+
+    var needsConfiguration: Bool { settings?.configured != true }
+    var currentQuestionKind: String? { currentQuestion?.kind }
+    var canSendMessage: Bool { !busy && available?() == true && job?.active == true && currentQuestion == nil && conversationCanMessage }
+    var composerActionTitle: String {
+        if inlineSettingsVisible { return "Complete agent settings" }
+        if let question = currentQuestion { return question.kind == "secret" ? "Enter credential above" : "Continue" }
+        if job?.active == true { return "Send" }
+        return job?.status == "interrupted" ? "Resume setup" : ["failed", "canceled"].contains(job?.status ?? "") ? "Try again" : "Create app"
+    }
+    var composerPlaceholder: String {
+        if inlineSettingsVisible { return "Complete the agent settings above…" }
+        if let question = currentQuestion { return question.kind == "secret" ? "Use the secure credential field above…" : "Answer here, or choose an option above…" }
+        return job?.active == true ? "Add a requirement or ask about this setup…" : "Describe an app, paste a link, or add files…"
+    }
+    var composerEnabled: Bool {
+        guard available?() == true, !busy, !inlineSettingsVisible else { return false }
+        if let question = currentQuestion { return question.kind == "text" }
+        if job?.active == true { return canSendMessage }
+        return startButton.isEnabled
     }
 
     override init(frame: NSRect) {
@@ -269,12 +316,14 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         answerButton = NSButton(title: "Continue", target: self, action: #selector(answerQuestion))
         answerField.isAutomaticTextCompletionEnabled = false; answerField.completes = false
         answerField.hasVerticalScroller = true; answerField.numberOfVisibleItems = 6
-        answerField.setAccessibilityLabel("Answer Pi's setup question")
+        answerField.setAccessibilityLabel("Answer the MeeCP agent's setup question")
         credentialField.isAutomaticTextCompletionEnabled = false
         credentialField.placeholderString = "Enter credential"; credentialField.setAccessibilityLabel("Requested app credential")
-        questionText.setAccessibilityLabel("Pi setup question")
+        questionText.setAccessibilityLabel("MeeCP agent setup question")
+        questionText.isSelectable = true
         questionView.orientation = .vertical; questionView.alignment = .leading; questionView.spacing = 8
-        for view in [questionText, answerField, credentialField, questionNotice, answerButton!] {
+        optionsStack.orientation = .vertical; optionsStack.alignment = .leading; optionsStack.spacing = 6
+        for view in [questionText, optionsStack, answerField, credentialField, questionNotice, answerButton!] {
             questionView.addArrangedSubview(view); workspaceFill(view, in: questionView)
         }
         questionView.isHidden = true
@@ -282,32 +331,62 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         modelRow = workspaceStack([modelLabel, settingsButton!], horizontal: true)
         let statusRow = workspaceStack([progress, status], horizontal: true)
         actionRow = workspaceStack([startButton!, cancelButton!, retryButton!, systemButton!], horizontal: true)
-        for view in [modelRow!, notice, actionRow!, statusRow, errorDetail, questionView] {
+        eventStack.orientation = .vertical; eventStack.alignment = .leading; eventStack.spacing = 10
+        eventStack.setAccessibilityLabel("Live setup conversation")
+        settingsView.isHidden = true; conversationNotice.isHidden = true
+        taskCard = piConversationTask([statusRow, errorDetail, questionView, actionRow!])
+        for view in [eventStack, conversationNotice, modelRow!, notice, taskCard!, settingsView] {
             addArrangedSubview(view); workspaceFill(view, in: self)
         }
         status.setAccessibilityLabel("App setup progress")
         settingsView.request = { [weak self] path, method, body, completion in self?.request?(path, method, body, completion) }
         settingsView.available = { [weak self] in self?.available?() == true && self?.blocksNavigation == false }
-        settingsView.onSaved = { [weak self] value in self?.settings = value; self?.refreshAvailability(); self?.onStateChange?() }
-        settingsView.onClose = { [weak self] in self?.settingsWindow?.close() }
+        settingsView.onSaved = { [weak self] value in
+            guard let self else { return }
+            self.settings = value; self.inlineSettingsVisible = false; self.settingsView.isHidden = true
+            let authorized = self.pendingConfiguredStart; self.pendingConfiguredStart = nil
+            self.refreshAvailability(); self.onStateChange?(); self.onConversationChange?()
+            if let authorized, self.context == authorized, self.eligible, !self.blocksNavigation {
+                if value.ready { self.beginSetup(authorized) }
+                else { self.fail("pi_runtime_unavailable") }
+            }
+        }
+        settingsView.onClose = { [weak self] in
+            guard let self else { return }
+            self.pendingConfiguredStart = nil; self.inlineSettingsVisible = false; self.settingsView.isHidden = true
+            self.clearCredentialEntry(); self.refreshAvailability(); self.onConversationChange?()
+        }
         refreshAvailability()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func useConversationPresentation() {
+        if !conversationMode {
+            technicalDetailsView.orientation = .vertical; technicalDetailsView.alignment = .leading
+            if let stack = errorDetail.superview as? NSStackView { stack.removeArrangedSubview(errorDetail) }
+            errorDetail.removeFromSuperview(); technicalDetailsView.addArrangedSubview(errorDetail)
+            workspaceFill(errorDetail, in: technicalDetailsView)
+        }
+        conversationMode = true; refreshAvailability()
+    }
 
     func bind(_ context: PreparationContext?, eligible: Bool) {
         if self.context != nil, self.context?.importID != context?.importID {
             guard !blocksNavigation else { return }
             job = nil; deliveredReady = nil; errorCode = nil
             errorDetail.stringValue = ""
-            status.stringValue = "Describe the tools you want, then choose Set Up App."
+            status.stringValue = "Describe the tools you want, then choose Create app."
             clearQuestion()
+            clearConversation()
             onJobChange?(nil)
         }
         if self.context != context {
             // A save can advance this import while its previous status request
             // is still outstanding. Invalidate that reply and release its latch
             // so the new exact binding can be reconciled immediately.
-            epoch &+= 1; polling = false; settingsLoading = false
+            epoch &+= 1; polling = false; settingsLoading = false; conversationPolling = false
+            pendingConfiguredStart = nil; inlineSettingsVisible = false; settingsView.isHidden = true
+            settingsView.dismiss(); clearConversation()
         }
         self.context = context; self.eligible = eligible
         refreshAvailability()
@@ -323,16 +402,17 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         if let object {
             guard let next = PiSetupJob(object), next.importID == context.importID,
                   next.revision == context.revision, next.sourceRevision == context.sourceRevision else { return }
-            epoch &+= 1; busy = false; polling = false; restoredJobID = nil
+            epoch &+= 1; busy = false; polling = false; conversationPolling = false; restoredJobID = nil
             self.context = context; job = next; onJobChange?(next.id); showJob()
         } else {
-            epoch &+= 1; busy = false; polling = false; restoredJobID = nil
-            self.context = context; job = nil; deliveredReady = nil; clearQuestion(); onJobChange?(nil); refreshAvailability()
+            epoch &+= 1; busy = false; polling = false; conversationPolling = false; restoredJobID = nil
+            self.context = context; job = nil; deliveredReady = nil; clearQuestion(); clearConversation(); onJobChange?(nil); refreshAvailability()
         }
     }
 
     func connectionReset() {
-        epoch &+= 1; settings = nil; settingsLoading = false; busy = false; polling = false
+        epoch &+= 1; settings = nil; settingsLoading = false; busy = false; polling = false; conversationPolling = false
+        pendingConfiguredStart = nil; inlineSettingsVisible = false; settingsView.isHidden = true; clearConversation()
         errorCode = nil; errorDetail.stringValue = ""
         clearQuestion()
         settingsView.connectionReset(); refreshAvailability()
@@ -344,27 +424,29 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         let configured = settings?.configured == true
         let retryState = ["failed", "canceled", "interrupted"].contains(job?.status ?? "")
         startButton.title = configured && job?.status == "interrupted" ? "Resume Setup" : configured && retryState ? "Try Again" : configured ? "Set Up App" : "Configure Model"
-        startButton.action = configured ? #selector(startSetup) : #selector(showSettings)
+        startButton.action = #selector(startSetup)
         startButton.isEnabled = enabled && !active && (configured ? eligible && settings?.ready == true : settings != nil)
         cancelButton.isHidden = job?.active != true
         cancelButton.isEnabled = enabled && !busy && job?.active == true
         retryButton.isEnabled = enabled && !busy && !polling && !settingsLoading
         settingsButton.isEnabled = enabled && !active && !settingsLoading && settings != nil
         settingsButton.isHidden = settings?.configured != true
-        modelRow.isHidden = active
-        notice.isHidden = active
-        startButton.isHidden = active
+        modelRow.isHidden = active || conversationMode
+        notice.isHidden = active || conversationMode
+        startButton.isHidden = active || conversationMode
         retryButton.isHidden = active || (errorCode == nil && restoredJobID == nil)
         systemButton.isHidden = job?.active != true || job?.systemAction == nil
         systemButton.isEnabled = enabled && !busy && !systemButton.isHidden
         actionRow.isHidden = startButton.isHidden && cancelButton.isHidden && retryButton.isHidden && systemButton.isHidden
         errorDetail.isHidden = errorDetail.stringValue.isEmpty
+        taskCard.isHidden = conversationMode && job == nil && !busy && errorCode == nil
         if let settings {
             modelLabel.stringValue = settings.configured ? "Setup model: " + settings.provider + " / " + settings.model : "Choose a model to set up your apps."
             if !settings.runtimeAvailable { modelLabel.stringValue += " Pi runtime unavailable." }
         } else { modelLabel.stringValue = enabled ? "Loading setup model…" : "Setup model unavailable while the host is disconnected." }
         updateQuestion()
         if busy || job?.active == true && job?.question == nil { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
+        onConversationChange?()
     }
 
     private var currentQuestion: PiSetupQuestion? {
@@ -392,18 +474,35 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
             clearAnswerEntry(); shownQuestionID = question.id
             questionText.stringValue = question.text
             answerField.removeAllItems(); answerField.addItems(withObjectValues: question.options)
+            for button in optionButtons { optionsStack.removeArrangedSubview(button); button.removeFromSuperview() }
+            optionButtons = question.options.map { option in
+                let button = NSButton(radioButtonWithTitle: option, target: self, action: #selector(selectQuestionOption(_:)))
+                button.setAccessibilityLabel("Answer option: " + option)
+                button.lineBreakMode = .byWordWrapping; optionsStack.addArrangedSubview(button)
+                workspaceFill(button, in: optionsStack); return button
+            }
             answerField.placeholderString = question.options.isEmpty ? "Your answer" : "Type an answer or choose a suggestion"
             questionNotice.stringValue = question.kind == "secret"
-                ? "Stored privately for your app. Pi receives a credential reference."
+                ? "Stored privately for your app. The agent receives a credential reference."
                 : "Your answer is sent to the setup model for this run."
         }
-        questionView.isHidden = false; answerField.isHidden = question.kind == "secret"; credentialField.isHidden = question.kind != "secret"
+        questionView.isHidden = false; answerField.isHidden = question.kind == "secret" || conversationMode; credentialField.isHidden = question.kind != "secret"
+        optionsStack.isHidden = question.kind == "secret" || !conversationMode || question.options.isEmpty
+        answerButton.isHidden = conversationMode && question.kind == "text"
         answerField.isEnabled = !busy; credentialField.isEnabled = !busy; answerButton.isEnabled = !busy
+        for button in optionButtons { button.isEnabled = !busy }
+    }
+
+    @objc private func selectQuestionOption(_ sender: NSButton) {
+        guard !busy, currentQuestion?.kind == "text", optionButtons.contains(where: { $0 === sender }) else { return }
+        for button in optionButtons { button.state = button === sender ? .on : .off }
+        answerField.stringValue = sender.title
+        if conversationMode { onSuggestedAnswer?(sender.title) }
     }
 
     private func fail(_ code: String) {
         errorCode = preparationCode(code) ?? "pi_setup_failed"
-        status.stringValue = Self.userMessage(for: errorCode!)
+        status.stringValue = presentationMessage(for: errorCode!)
         errorDetail.stringValue = "Details: " + errorCode!
         refreshAvailability(); onStateChange?()
     }
@@ -431,6 +530,13 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         }
     }
 
+    private func presentationMessage(for code: String) -> String {
+        let text = Self.userMessage(for: code)
+        return conversationMode ? text.replacingOccurrences(of: "Model Settings", with: "Agent settings")
+            .replacingOccurrences(of: "Model settings", with: "Agent settings")
+            .replacingOccurrences(of: "Pi runtime", with: "setup runtime") : text
+    }
+
     private func loadSettings() {
         guard available?() == true, !settingsLoading, !busy, let request else { return }
         settingsLoading = true; let expected = epoch
@@ -443,23 +549,17 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         }
     }
 
+    func showInlineSettings() { showSettings() }
+
+    func dismissInlineSettings() {
+        pendingConfiguredStart = nil; inlineSettingsVisible = false; settingsView.isHidden = true
+        settingsView.dismiss(); refreshAvailability()
+    }
+
     @objc private func showSettings() {
         guard !blocksNavigation, available?() == true, let settings else { return }
-        if settingsWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 440),
-                                  styleMask: [.titled, .closable], backing: .buffered, defer: false)
-            window.title = "App Setup Model"; window.isReleasedWhenClosed = false; window.delegate = self; window.center()
-            let container = NSView(); window.contentView = container
-            settingsView.translatesAutoresizingMaskIntoConstraints = false; container.addSubview(settingsView)
-            NSLayoutConstraint.activate([
-                settingsView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
-                settingsView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
-                settingsView.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
-                settingsView.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -24),
-            ])
-            settingsWindow = window
-        }
-        settingsView.configure(settings); settingsWindow?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        inlineSettingsVisible = true; settingsView.configure(settings); settingsView.isHidden = false
+        refreshAvailability(); onStateChange?(); onConversationChange?()
     }
 
     func clearCredentialEntry() { settingsView.clearCredentialEntry(); clearAnswerEntry() }
@@ -469,8 +569,19 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         guard startButton.isEnabled, !blocksNavigation, let beforeStart else { return }
         beforeStart { [weak self] context in
             guard let self, let context, self.available?() == true, !self.blocksNavigation,
-                  self.context == context, self.eligible, self.settings?.ready == true, let request = self.request else { return }
+                  self.context == context, self.eligible else { return }
+            if self.settings?.configured != true {
+                self.pendingConfiguredStart = context; self.showSettings(); return
+            }
+            self.beginSetup(context)
+        }
+    }
+
+    private func beginSetup(_ context: PreparationContext) {
+            guard self.context == context, self.available?() == true, !self.blocksNavigation,
+                  self.eligible, self.settings?.ready == true, let request = self.request else { return }
             self.epoch &+= 1; self.busy = true; self.polling = false
+            self.conversationPolling = false
             self.errorCode = nil; self.errorDetail.stringValue = ""; self.deliveredReady = nil
             self.clearQuestion()
             self.status.stringValue = "Starting app setup…"; self.refreshAvailability(); self.onStateChange?()
@@ -486,11 +597,11 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
                 }
                 self.job = job; self.onJobChange?(job.id); self.showJob()
             }
-        }
     }
 
     private func showJob() {
         guard let job else { return }
+        if conversationJobID != job.id { clearConversation(); conversationJobID = job.id }
         errorCode = job.errorCode
         errorDetail.stringValue = errorCode.map { "Details: " + $0 } ?? ""
         switch job.status {
@@ -503,13 +614,15 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
                           "waiting_for_resources": "Waiting for available GPU and memory. Setup will continue automatically.",
                           "building": "Building your app…", "verifying": "Verifying the prepared app…", "attaching": "Preparing installation review…"]
             status.stringValue = stages[job.stage] ?? "Setting up your app: " + job.stage.replacingOccurrences(of: "_", with: " ") + "…"
+            if conversationMode { status.stringValue = status.stringValue.replacingOccurrences(of: "Pi", with: "MeeCP agent") }
         case "ready": status.stringValue = "App prepared. Review its tools and access before adding it."
         case "canceled": status.stringValue = "App setup canceled. Your source and draft are kept."
         case "interrupted": status.stringValue = "Setup interrupted by a restart. Your files and resources are saved. Resume Setup to continue."
-        default: status.stringValue = Self.userMessage(for: job.errorCode ?? "pi_setup_failed")
+        default: status.stringValue = presentationMessage(for: job.errorCode ?? "pi_setup_failed")
         }
         refreshAvailability(); onStateChange?()
         deliverReady()
+        pollConversation()
     }
 
     private func deliverReady() {
@@ -535,7 +648,7 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
                    next.importID == context.importID, next.revision == context.revision, next.sourceRevision == context.sourceRevision {
                     self.restoredJobID = nil; self.job = next; self.onJobChange?(next.id); self.showJob()
                 } else if object["job"] is NSNull {
-                    self.restoredJobID = nil; self.job = nil; self.onJobChange?(nil); self.refreshAvailability()
+                    self.restoredJobID = nil; self.job = nil; self.clearConversation(); self.onJobChange?(nil); self.refreshAvailability()
                 } else { self.fail("pi_job_invalid") }
             }
             return
@@ -569,7 +682,7 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
 
     @objc func cancelSetup() {
         guard available?() == true, !busy, let job, job.active, let request else { return }
-        epoch &+= 1; busy = true; polling = false; clearAnswerEntry(); refreshAvailability(); onStateChange?(); let expected = epoch
+        epoch &+= 1; busy = true; polling = false; conversationPolling = false; clearAnswerEntry(); refreshAvailability(); onStateChange?(); let expected = epoch
         request("v1/pi/jobs/" + job.id + "/cancel", "POST", [:]) { [weak self] object, code in
             guard let self, expected == self.epoch else { return }
             self.busy = false
@@ -581,24 +694,216 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     }
 
     @objc func answerQuestion() {
-        guard !busy, let job, let question = currentQuestion, let request else { return }
+        guard let question = currentQuestion else { return }
         let value = question.kind == "secret" ? credentialField.stringValue : answerField.stringValue
+        submitAnswer(value)
+    }
+
+    private func submitAnswer(_ value: String, completion: ((Bool) -> Void)? = nil) {
+        guard !busy, let job, let question = currentQuestion, let request else { completion?(false); return }
         guard !value.isEmpty, value.utf8.count <= (question.kind == "secret" ? 4096 : 8192),
+              question.kind == "secret" || !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               preparationText(value, maximum: 8192) != nil else {
-            status.stringValue = "Enter an answer to continue."; return
+            status.stringValue = "Enter an answer to continue."; completion?(false); return
         }
-        epoch &+= 1; busy = true; polling = false; errorCode = nil; clearAnswerEntry()
+        epoch &+= 1; busy = true; polling = false; conversationPolling = false; errorCode = nil; clearAnswerEntry()
         refreshAvailability(); onStateChange?(); let expected = epoch
         request("v1/pi/jobs/" + job.id + "/answer", "POST", ["question_id": question.id, "import_id": question.importID,
                 "revision": question.revision, "value": value]) { [weak self] object, code in
-            guard let self, expected == self.epoch else { return }
+            guard let self, expected == self.epoch else { completion?(false); return }
             self.busy = false
             guard let object, let next = PiSetupJob(object), next.id == job.id, next.importID == job.importID,
                   next.revision == job.revision, next.sourceRevision == job.sourceRevision else {
-                self.fail(code ?? "pi_question_changed"); return
+                self.fail(code ?? "pi_question_changed"); completion?(false); return
             }
-            self.job = next; self.showJob()
+            self.job = next; self.showJob(); completion?(true)
         }
+    }
+
+    /// Text questions stay on their exact /answer contract. Credentials are
+    /// accepted only by the secure card, never by this freeform composer.
+    func submitText(_ text: String, completion: @escaping (Bool) -> Void) {
+        guard preparationText(text, maximum: 8192) != nil, text.utf8.count <= 8192,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { completion(false); return }
+        if let question = currentQuestion {
+            guard question.kind == "text" else { completion(false); return }
+            submitAnswer(text, completion: completion); return
+        }
+        guard canSendMessage, let job, let context, let request,
+              job.importID == context.importID, job.revision == context.revision,
+              job.sourceRevision == context.sourceRevision else { completion(false); return }
+        let messageID: String
+        if let pending = unacknowledgedMessage, pending.text == text, pending.jobID == job.id, pending.context == context {
+            messageID = pending.id
+        } else {
+            messageID = UUID().uuidString.lowercased()
+            unacknowledgedMessage = (messageID, text, job.id, context)
+        }
+        epoch &+= 1; polling = false; conversationPolling = false; busy = true
+        let expected = epoch; refreshAvailability()
+        request("v1/pi/jobs/" + job.id + "/messages", "POST", ["import_id": context.importID, "revision": context.revision,
+            "source_revision": context.sourceRevision, "message_id": messageID, "text": text]) { [weak self] object, code in
+            guard let self, self.epoch == expected, self.context == context, self.job?.id == job.id else { completion(false); return }
+            self.busy = false
+            guard preparationBoolean(object?["accepted"]) == true, preparationBoolean(object?["duplicate"]) != nil,
+                  preparationUUID(object?["message_id"]) == messageID else {
+                self.conversationNotice.stringValue = "Your message could not be accepted. Check the current setup and try again."
+                self.conversationNotice.isHidden = false; self.refreshAvailability(); self.poll(force: true); completion(false); return
+            }
+            self.unacknowledgedMessage = nil; self.refreshAvailability(); self.poll(force: true); completion(true)
+        }
+    }
+
+    private func clearConversation() {
+        conversationJobID = nil; conversationCursor = 0; conversationPolling = false
+        conversationAvailable = false; conversationCanMessage = false; conversationEvents = []; unacknowledgedMessage = nil
+        for view in eventStack.arrangedSubviews { eventStack.removeArrangedSubview(view); view.removeFromSuperview() }
+        conversationNotice.stringValue = ""; conversationNotice.isHidden = true
+    }
+
+    private func pollConversation() {
+        guard conversationMode, !conversationPolling, !busy, available?() == true, let context, let job, let request,
+              job.importID == context.importID, job.revision == context.revision,
+              job.sourceRevision == context.sourceRevision else { return }
+        conversationPolling = true; let expected = epoch
+        request("v1/pi/jobs/" + job.id + "/conversation", "POST", ["import_id": context.importID, "revision": context.revision,
+            "source_revision": context.sourceRevision, "after": conversationCursor]) { [weak self] object, _ in
+            guard let self, self.epoch == expected, self.context == context, self.job?.id == job.id else { return }
+            self.conversationPolling = false
+            guard let object, let batch = PiConversationBatch(object), batch.jobID == job.id else {
+                self.conversationCanMessage = false; self.onConversationChange?(); return
+            }
+            if batch.reset || !batch.available { self.conversationEvents = [] }
+            let previous = self.conversationEvents.last?.sequence ?? 0
+            guard batch.reset || batch.events.allSatisfy({ $0.sequence > previous }) else { return }
+            self.conversationEvents.append(contentsOf: batch.events)
+            self.conversationEvents.removeAll { $0.sequence < batch.firstSequence }
+            while self.conversationEvents.count > 128 || self.conversationEvents.reduce(0, { $0 + $1.text.utf8.count }) > 262144 {
+                self.conversationEvents.removeFirst()
+            }
+            self.conversationCursor = batch.cursor; self.conversationAvailable = batch.available
+            self.conversationCanMessage = batch.canMessage
+            self.renderConversation(); self.onConversationChange?()
+        }
+    }
+
+    private func renderConversation() {
+        for view in eventStack.arrangedSubviews { eventStack.removeArrangedSubview(view); view.removeFromSuperview() }
+        for event in conversationEvents {
+            let bubble = piConversationBubble(role: event.role, text: event.text)
+            eventStack.addArrangedSubview(bubble); workspaceFill(bubble, in: eventStack)
+        }
+        conversationNotice.stringValue = conversationAvailable ? "Messages stay in memory for this setup. Credentials use the secure fields below."
+            : "The earlier conversation is unavailable. Your draft and saved resources remain available."
+        conversationNotice.isHidden = !conversationMode
+    }
+
+    static func conversationSelfTest() -> Bool {
+        let importID = "11111111-2222-4333-8444-555555555555", jobID = "99999999-2222-4333-8444-555555555555"
+        let source = "sha256:" + String(repeating: "a", count: 64)
+        guard let context = PreparationContext(importID: importID, revision: 1, sourceRevision: source),
+              let changed = PreparationContext(importID: importID, revision: 2, sourceRevision: source) else { return false }
+        let configured: [String: Any] = ["configured": true, "provider": "openai", "model": "test-model", "base_url": NSNull(),
+            "runtime_available": true, "available_providers": ["openai", "anthropic"]]
+        var row: [String: Any] = ["id": jobID, "import_id": importID, "revision": 1, "source_revision": source,
+            "status": "running", "stage": "thinking", "code": NSNull()]
+        func batch(_ events: [[String: Any]], cursor: Int, first: Int = 1, reset: Bool = false, available: Bool = true) -> [String: Any] {
+            ["api_version": 1, "job_id": jobID, "events": events, "cursor": cursor, "first_sequence": first,
+             "reset": reset, "available": available, "can_message": available]
+        }
+        let assistant: [String: Any] = ["sequence": 1, "role": "assistant", "text": "I will inspect the supplied source.", "message_id": NSNull()]
+        var invalid = assistant; invalid["role"] = "tool"
+        guard PiConversationEvent(invalid) == nil,
+              PiConversationBatch(batch([assistant, assistant], cursor: 1)) == nil,
+              PiConversationBatch(batch([assistant], cursor: 0)) == nil else { return false }
+        let view = PiSetupView(); view.available = { true }; view.settings = PiSettingsMetadata(configured)
+        view.useConversationPresentation(); view.bind(context, eligible: true)
+        var pendingConversation: (([String: Any]?, String?) -> Void)?
+        var pendingMessage: (([String: Any]?, String?) -> Void)?
+        var messageBodies: [[String: Any]] = []
+        var validQuery = true, accepted = false
+        view.request = { path, method, body, completion in
+            if path.hasSuffix("/conversation") {
+                validQuery = validQuery && method == "POST" && Set(body?.keys.map { $0 } ?? []) == ["import_id", "revision", "source_revision", "after"] &&
+                    body?["import_id"] as? String == importID && preparationInteger(body?["revision"]) == view.context?.revision && body?["source_revision"] as? String == source && preparationInteger(body?["after"]) != nil
+                pendingConversation = completion
+            } else if path.hasSuffix("/messages"), let body {
+                messageBodies.append(body); pendingMessage = completion
+            } else if path == "v1/pi/current" { completion(["job": row], nil) }
+        }
+        view.adopt(row, context: context)
+        pendingConversation?(batch([assistant], cursor: 1), nil)
+        guard validQuery, view.canSendMessage, view.eventStack.arrangedSubviews.count == 1 else { return false }
+        var whitespaceAccepted = true
+        view.submitText(" \n\t ") { whitespaceAccepted = $0 }
+        guard !whitespaceAccepted, messageBodies.isEmpty else { return false }
+        view.submitText("Keep the requested engine.") { accepted = $0 }
+        guard messageBodies.count == 1, let id = preparationUUID(messageBodies[0]["message_id"]),
+              messageBodies[0]["source_revision"] as? String == source, messageBodies[0]["import_id"] as? String == importID,
+              preparationInteger(messageBodies[0]["revision"]) == 1, !view.canSendMessage else { return false }
+        pendingMessage?(nil, "manager_request_failed")
+        pendingConversation?(batch([], cursor: 1), nil)
+        view.submitText("Keep the requested engine.") { accepted = $0 }
+        guard messageBodies.count == 2, messageBodies[1]["message_id"] as? String == id else { return false }
+        pendingMessage?(["accepted": true, "duplicate": true, "message_id": id], nil)
+        guard accepted, view.conversationEvents.count == 1 else { return false }
+        let user: [String: Any] = ["sequence": 2, "role": "user", "text": "Keep the requested engine.", "message_id": id]
+        pendingConversation?(batch([user], cursor: 2), nil)
+        guard view.conversationEvents.count == 2, view.eventStack.arrangedSubviews.count == 2 else { return false }
+        view.pollConversation(); let stale = pendingConversation
+        view.bind(changed, eligible: true)
+        stale?(batch([user], cursor: 2), nil)
+        guard view.conversationEvents.isEmpty, !view.canSendMessage else { return false }
+        row["revision"] = 2; view.adopt(row, context: changed)
+        pendingConversation?(batch([], cursor: 0, first: 0, reset: true, available: false), nil)
+        guard !view.canSendMessage, view.conversationEvents.isEmpty,
+              view.conversationNotice.stringValue.contains("unavailable") else { return false }
+
+        let choosing = PiSetupView(); choosing.available = { true }; choosing.settings = PiSettingsMetadata(configured)
+        choosing.useConversationPresentation(); choosing.bind(changed, eligible: true)
+        let questionID = "77777777-2222-4333-8444-555555555555"
+        var questionRow = row; questionRow["stage"] = "waiting_for_user"
+        questionRow["question"] = ["id": questionID, "job_id": jobID, "import_id": importID, "revision": 2,
+            "kind": "text", "question": "Which calendar?", "options": ["Work", "Personal"], "credential_name": NSNull()]
+        var suggested: String?, chosen = false
+        choosing.onSuggestedAnswer = { suggested = $0 }
+        choosing.request = { path, method, body, done in
+            if path.hasSuffix("/answer") {
+                chosen = method == "POST" && body?["question_id"] as? String == questionID &&
+                    body?["value"] as? String == "Personal" && preparationInteger(body?["revision"]) == 2
+                done(row, nil)
+            }
+        }
+        choosing.adopt(questionRow, context: changed)
+        choosing.optionButtons.last?.performClick(nil)
+        guard suggested == "Personal", choosing.answerButton.isHidden, choosing.answerField.isHidden,
+              choosing.composerActionTitle == "Continue", choosing.composerEnabled else { return false }
+        choosing.submitText("Personal") { chosen = chosen && $0 }
+        guard chosen, choosing.currentQuestion == nil else { return false }
+
+        let config = PiSetupView(); config.available = { true }; config.useConversationPresentation()
+        var unconfigured = configured; unconfigured["configured"] = false; unconfigured["model"] = ""
+        config.settings = PiSettingsMetadata(unconfigured); config.bind(context, eligible: true)
+        config.beforeStart = { done in done(context) }
+        var started = 0, privateKeySubmitted = false
+        config.request = { path, method, body, done in
+            if path == "v1/pi/settings", method == "PUT" {
+                privateKeySubmitted = body?["api_key"] as? String == "Synthetic provider key"
+                done(configured, nil)
+            } else if path == "v1/pi/jobs", method == "POST" {
+                started += 1; var fresh = row; fresh["revision"] = 1; done(fresh, nil)
+            }
+        }
+        config.startSetup()
+        guard config.inlineSettingsVisible, config.authorizationPresentationBlocked, started == 0,
+              config.pendingConfiguredStart == context else { return false }
+        guard PiSettingsView.submitSelfTest(config.settingsView, model: "test-model", key: "Synthetic provider key"),
+              privateKeySubmitted, started == 1, config.job?.active == true, !config.inlineSettingsVisible,
+              config.conversationEvents.isEmpty else { return false }
+        let abandoned = PiSetupView(); abandoned.available = { true }; abandoned.settings = PiSettingsMetadata(unconfigured)
+        abandoned.bind(context, eligible: true); abandoned.beforeStart = { done in done(context) }; abandoned.startSetup()
+        abandoned.bind(changed, eligible: true)
+        return abandoned.pendingConfiguredStart == nil && !abandoned.inlineSettingsVisible
     }
 
     static func contractSelfTest() -> Bool {

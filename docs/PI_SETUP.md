@@ -8,21 +8,26 @@ across unfamiliar projects has not been established.
 
 1. Open **Add App** and describe what your assistant should be able to do,
    including useful inputs and outputs.
-2. If you have existing source, expand **Add files or a project link (optional)**.
-   Choose or drop a source folder or Markdown/text document, or paste a public
-   HTTPS project link. For a single Python or JavaScript source file, choose its
-   containing folder. Choose **Use these instructions** for a setup document.
-3. Select **Configure Model** once to select the provider and model used by Pi.
-   Save an API key for a remote provider, or configure an existing compatible
-   local model endpoint. **Model Settings…** lets you change it later.
-4. Select **Set Up App**. Pi inspects the staged source, writes the adapter and
-   package, acquires dependencies and runtimes, runs checks, and repairs failures.
+2. Use the attachment menu for a source folder, Markdown/text instructions,
+   public HTTPS project link, runtime/model resources, or a prepared package.
+   For a single Python or JavaScript source file, choose its containing folder.
+   Choose **Use these instructions** for a setup document.
+3. Select **Set Up App**. If no provider is configured, the conversation shows
+   **Agent settings** inline. Select the provider and exact model, and save its
+   API key or compatible local endpoint. Saving continues the requested setup
+   only while the same draft and source remain selected. Agent settings are
+   also available later through the conversation's details.
+4. The MeeCP agent inspects the staged source, writes the adapter and package,
+   acquires dependencies and runtimes, runs checks, and repairs failures. Its
+   completed messages and current host progress appear in the conversation.
 5. Review the verified app's tools and declared access. Choose its name,
    configuration, and startup behavior here, then select **Add App** or
    **Add & Start App** to install it.
 
-The description and setup action share one composer. Saved setups appear when
-there are drafts to resume. Active runs show progress, questions, and cancellation;
+The description, replies and setup action share one composer that stays visible
+while the conversation and review scroll. Once saved, the app request remains
+distinct from replies; **Edit request** explicitly changes the draft. Saved
+setups appear when there are drafts to resume. Active runs show progress, questions, and cancellation;
 failed or canceled runs offer **Try Again** with a readable failure explanation.
 Interrupted runs offer **Resume Setup**. The host resolves the current attempt
 by draft and source identity, including after a window or host restart.
@@ -34,15 +39,19 @@ manifest, lockfile, launcher, provenance, licenses, and verification fixtures ar
 generated setup outputs. Recipe selection and authoring are absent from the
 normal Pi flow.
 
-When setup needs a decision or credential, Add App shows Pi's question inline.
-Answer and select **Continue** to resume the same coding session. Credential
+When setup needs a decision or credential, Add App shows the question inline.
+Suggested choices populate the composer; answer and select **Continue** to
+resume the same coding session. Credential
 answers use a secure field and remain in the host's secret store; Pi receives
 an opaque binding identity rather than the credential value. Ordinary
-implementation choices remain the agent's responsibility.
+implementation choices remain the agent's responsibility. While the agent is
+working and has no pending question, the composer can send a follow-up message
+through the pinned SDK's steering API. Acceptance means that the active worker
+queued the message. It does not guarantee that a model follows the instruction.
 
-Add App has three setup tabs. **Pi agent** is selected by default. Switching
-tabs keeps the current description, source, and saved draft and shows only the
-selected method's controls:
+The MeeCP agent is the default setup method. **Other ways to add an app** offers
+the alternative methods below. Switching methods keeps the current description,
+source, and saved draft and shows the selected method's controls:
 
 - **Manual setup** includes JSON Utilities, existing service connections, model
   capture, publisher package downloads, and recipe-based preparation with
@@ -103,8 +112,19 @@ Saving settings sends no source files. **Set Up App** authorizes the coding run
 against the selected source and intent. The configured model can receive staged
 source, generated files, host-supplied package/schema guidance, and tool results.
 For a remote provider, these requests go to that provider. The UI and durable
-job records contain progress metadata and fixed error codes; there is no model
-conversation, prompt, provider-response, or command-output log.
+job records contain progress metadata and fixed error codes. Live conversation
+text uses a separate bounded RAM transport for the native UI. It contains user
+messages and completed assistant text, with no thinking, tool output, raw
+provider objects or secret answers. There is no durable model conversation,
+prompt, provider-response, or command-output log.
+
+Conversation limits are 8,192 UTF-8 bytes per message, 64 follow-up message
+identities per attempt, eight queued messages, and a ring of 128 events or
+256 KiB. The host retains at most eight sessions. Ready/failed history expires
+after five minutes; canceled/interrupted history is cleared immediately. A host
+restart clears all conversation text. Authoritative job state and retained files
+remain available for fresh-session resumption. The native UI also bounds and
+validates its in-memory transcript and discards it when the host reports expiry.
 
 ## Execution and dependency boundaries
 
@@ -338,6 +358,9 @@ cannot configure provider credentials or start Pi jobs.
 | `GET /v1/pi/jobs/{job_id}` | Read progress and the verified attachment identity. |
 | `POST /v1/pi/jobs/{job_id}/cancel` | Cancel an active job with an empty JSON object. |
 | `POST /v1/pi/jobs/{job_id}/answer` | Answer the current transient question for the exact question ID and import revision. |
+| `POST /v1/pi/jobs/{job_id}/messages` | Send a bounded ordinary message using a UUID message identity and exact import/revision/source binding; acceptance requires worker acknowledgment. |
+| `POST /v1/pi/jobs/{job_id}/conversation` | Read bounded RAM events after a sequence cursor using the exact import/revision/source binding. The native transport uses this route. |
+| `GET /v1/pi/jobs/{job_id}/conversation` | Equivalent read for clients supplying the binding and cursor as query parameters. |
 | `POST /v1/pi/current` | Resolve the authoritative active/ready/latest attempt for an exact import/revision/source binding. |
 | `GET /v1/pi/resources/{import_id}` | Read the current retained resource inventory. |
 | `POST /v1/pi/resources` | Capture selected resources, publish a new draft revision and resume an interrupted active attempt. |
@@ -360,6 +383,11 @@ and `value`. Questions and answers are never journaled. The worker allows up to
 context compaction can preserve progress without persisting a conversation.
 
 ## Regression checks
+
+The [conversational setup acceptance](CONVERSATIONAL_APP_SETUP_VALIDATION.md)
+records the native workspace/composer checks and real SDK steering checks for
+the 2026-10-14 UI integration. These qualify transport and lifecycle behavior,
+not general model quality or unfamiliar-app installation success.
 
 The final general Pi suite passed 272 tests, with two optional live dependency
 checks skipped. Separate real npm checks passed installation, CLI execution,

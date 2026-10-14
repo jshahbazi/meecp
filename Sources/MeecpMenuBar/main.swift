@@ -464,6 +464,11 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private var publisherDownloadCard: NSView?
     private var draftActionsStack: NSStackView?
     private var appBriefCard: NSView?
+    private var conversationView: AddAppConversationView?
+    private var conversationComposerContext: PreparationContext?
+    private var editingConversationRequest = false
+    private var managementHeading: NSTextField?
+    private var managementCaption: NSTextField?
     private var setupMethodPicker: NSSegmentedControl?
     private var manualSetupStack: NSStackView?
     private var externalAgentSetupCard: NSView?
@@ -916,6 +921,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     @objc private func showManagement() {
         dashboard.dismiss()
         if window == nil { makeManagementWindow() }
+        selectWorkspace(0)
         window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); refreshWindow(); poll()
         if let id = management?.selectedID { loadDetails(id) }
     }
@@ -927,6 +933,9 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private func selectWorkspace(_ index: Int) {
         workspacePicker?.selectedSegment = index
         managementTabs?.selectTabViewItem(at: index)
+        window?.title = index == 1 ? "meecp — Add App" : "meecp — Manage Apps"
+        managementHeading?.stringValue = index == 1 ? "Add App" : "Manage Apps"
+        managementCaption?.stringValue = index == 1 ? "Work with an agent to prepare your app" : "Local tools, models, and connections"
         if index == 0, let id = management?.selectedID { loadDetails(id) }
         if index == 1 { window?.makeFirstResponder(intentField) }
     }
@@ -941,10 +950,10 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         brand.setAccessibilityLabel("meecp")
         brand.widthAnchor.constraint(equalToConstant: 40).isActive = true
         brand.heightAnchor.constraint(equalToConstant: 40).isActive = true
-        let titles = workspaceStack([
-            workspaceLabel("Manage Apps", size: 23, weight: .semibold),
-            workspaceLabel("Local tools, models, and connections", size: 12, secondary: true)
-        ], spacing: 3)
+        let headingTitle = workspaceLabel("Manage Apps", size: 23, weight: .semibold)
+        let headingCaption = workspaceLabel("Local tools, models, and connections", size: 12, secondary: true)
+        managementHeading = headingTitle; managementCaption = headingCaption
+        let titles = workspaceStack([headingTitle, headingCaption], spacing: 3)
         let spacer = NSView(); spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let picker = NSSegmentedControl(labels: ["Installed Apps", "Add App"], trackingMode: .selectOne,
                                         target: self, action: #selector(changeWorkspace))
@@ -988,11 +997,9 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private func makeSetupWorkspace() -> NSView {
-        let page = NSScrollView(); page.hasVerticalScroller = true; page.autohidesScrollers = true; page.drawsBackground = false
         let content = WorkspaceDocumentStack(); content.orientation = .vertical; content.alignment = .leading; content.spacing = 18
         content.edgeInsets = NSEdgeInsets(top: 24, left: 28, bottom: 28, right: 28)
-        content.translatesAutoresizingMaskIntoConstraints = false; page.documentView = content
-        content.widthAnchor.constraint(equalTo: page.contentView.widthAnchor).isActive = true
+        content.translatesAutoresizingMaskIntoConstraints = false
 
         let draftPicker = NSPopUpButton(); draftPicker.addItem(withTitle: "New draft")
         draftPicker.target = self; draftPicker.action = #selector(selectDraft)
@@ -1011,6 +1018,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                                          target: self, action: #selector(selectSetupMethod))
         methods.selectedSegment = 0; methods.segmentStyle = .rounded
         methods.setAccessibilityLabel("App setup method"); setupMethodPicker = methods
+        methods.isHidden = true
         content.addArrangedSubview(methods); workspaceFill(methods, in: content, inset: 28)
 
         let starter = button("Try JSON Utilities", action: #selector(useStarterApp)); self.starterButton = starter
@@ -1070,7 +1078,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         intent.isVerticallyResizable = true; intent.isHorizontallyResizable = false; intent.autoresizingMask = [.width]
         intent.textContainer?.widthTracksTextView = true; intent.textContainerInset = NSSize(width: 10, height: 10)
         intent.setAccessibilityLabel("Requested tools and behavior"); intentScroll.documentView = intent; self.intentField = intent
-        intentScroll.heightAnchor.constraint(equalToConstant: 132).isActive = true
+        intentScroll.heightAnchor.constraint(equalToConstant: 100).isActive = true
         let role = NSPopUpButton(); role.addItems(withTitles: ["Choose how to use this document", "Use this information", "Use these instructions"])
         role.target = self; role.action = #selector(setupChanged); role.setAccessibilityLabel("Document role"); self.documentRoleField = role
         let sourceURL = NSTextField(); sourceURL.placeholderString = "Project link (optional)"; sourceURL.delegate = self
@@ -1110,8 +1118,22 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         }
         piSetupView.onStateChange = { [weak self] in self?.refreshWindow() }
         piSetupView.onJobChange = { [weak self] id in
-            if let id { self?.savedSetup["pi_job_id"] = id } else { self?.savedSetup.removeValue(forKey: "pi_job_id") }
-            self?.persistSetup()
+            guard let self else { return }
+            if id != nil, self.setupMethodPicker?.selectedSegment == 0, !self.draftDirty,
+               let job = self.piSetupView.job, !self.editingConversationRequest || job.active,
+               let draft = self.currentDraft,
+               job.importID == draft.id, job.revision == draft.revision, job.sourceRevision == draft.sourceRevision,
+               let context = PreparationContext(importID: job.importID, revision: job.revision, sourceRevision: job.sourceRevision),
+               self.conversationComposerContext != context {
+                self.conversationComposerContext = context
+                self.editingConversationRequest = false
+                self.intentField?.string = ""
+            } else if id == nil, self.conversationComposerContext != nil {
+                self.conversationComposerContext = nil
+                self.intentField?.string = self.currentDraft?.intent ?? ""
+            }
+            if let id { self.savedSetup["pi_job_id"] = id } else { self.savedSetup.removeValue(forKey: "pi_job_id") }
+            self.persistSetup()
         }
         piSetupView.onReady = { [weak self] job in
             guard let self, !self.draftDirty, !self.setupRequest, let current = self.currentDraft,
@@ -1128,16 +1150,12 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                 self.displayDraft(draft); self.reviewPackage()
             }
         }
-        let sourceCard = workspaceCard("What would you like your assistant to do?",
-            subtitle: "Describe the tools and behavior you want. You can also add existing source files or a project link.",
-            views: [intentScroll, sourceOptionsButton, sourceOptions])
-        appBriefCard = sourceCard
-        let piCard = workspaceCard("Set up with Pi", subtitle: "Pi builds your app, asks for anything it needs, and checks that it works.", views: [piSetupView])
-        piSetupCard = piCard
+        piSetupCard = piSetupView
         piResourcesView.request = { [weak self] path, method, body, completion in self?.request(path, method: method, body: body, completion: completion) }
         piResourcesView.available = { [weak self] in
             guard let self else { return false }
             return self.hostAvailable && self.connection() != nil && !self.setupRequest && !self.stopping && !self.quitting &&
+                (self.currentDraft != nil || !self.requestedAppIntent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) &&
                 (self.currentDraft?.editable ?? true) && !self.artifactCaptureView.blocksNavigation && !self.agentPreparationView.blocksNavigation
         }
         piResourcesView.beforeAttach = { [weak self] completion in
@@ -1166,7 +1184,18 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             self.setupLabel?.stringValue = "Resources saved. MeeCP will reuse them during setup and retries."
         }
         piResourcesView.onStateChange = { [weak self] in self?.refreshWindow() }
-        piSetupView.addArrangedSubview(piResourcesView); workspaceFill(piResourcesView, in: piSetupView)
+        let conversation = AddAppConversationView(composer: intentScroll, setup: piSetupView,
+            resources: piResourcesView, sourceOptions: sourceOptions)
+        conversationView = conversation; appBriefCard = conversation
+        conversation.onSend = { [weak self] text in self?.sendConversation(text) }
+        conversation.onChooseSource = { [weak self] in self?.chooseSource() }
+        conversation.onChoosePackage = { [weak self] in self?.choosePackage() }
+        conversation.onSourceLink = { [weak self] in
+            guard let self, self.intakeEnabled else { return }
+            self.sourceOptionsExpanded = true; self.refreshWindow(); self.window?.makeFirstResponder(self.piSourceURL)
+        }
+        conversation.onOtherWays = { [weak self] in self?.showOtherSetupWays() }
+        conversation.onEditRequest = { [weak self] in self?.editConversationRequest() }
 
         artifactCaptureView.available = { [weak self] in
             guard let self else { return false }
@@ -1176,7 +1205,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         artifactCaptureView.beforeCapture = { [weak self] completion in self?.saveDraftBeforeNavigation(completion: completion) }
         artifactCaptureView.choices = { [weak self] in
             guard let self else { return [:] }
-            var choices: [String: Any] = ["intent": self.intentField?.string ?? "", "start": self.startCheck?.state == .on, "start_policy": self.selectedPolicy]
+            var choices: [String: Any] = ["intent": self.requestedAppIntent, "start": self.startCheck?.state == .on, "start_policy": self.selectedPolicy]
             if let name = self.nameField?.stringValue, !name.isEmpty { choices["name"] = name }
             return choices
         }
@@ -1307,14 +1336,84 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let manual = workspaceStack([starterCard, serviceCard, captureCard, publisherToggle, downloadCard, prepareCard])
         manualSetupStack = manual
         for card in [starterCard, serviceCard, captureCard, publisherToggle, downloadCard, prepareCard] { workspaceFill(card, in: manual) }
-        for card in [sourceCard, piCard, externalAgentCard, draftActions, manual, label, configureCard, reviewCard] {
-            content.addArrangedSubview(card); workspaceFill(card, in: content, inset: 28)
+        for card in [label, configureCard, reviewCard] {
+            conversation.reviewContainer.addArrangedSubview(card)
+            workspaceFill(card, in: conversation.reviewContainer)
         }
-        return page
+        for view in [draftsRow, host, methods] {
+            content.removeArrangedSubview(view); view.removeFromSuperview()
+            conversation.contextContainer.addArrangedSubview(view)
+            workspaceFill(view, in: conversation.contextContainer)
+        }
+        for card in [externalAgentCard, draftActions, manual] {
+            conversation.alternateContainer.addArrangedSubview(card)
+            workspaceFill(card, in: conversation.alternateContainer)
+        }
+        return conversation
     }
 
     func controlTextDidChange(_ notification: Notification) { setupChanged() }
-    func textDidChange(_ notification: Notification) { setupChanged() }
+    func textDidChange(_ notification: Notification) {
+        if usesConversationReplyComposer, notification.object as? NSTextView === intentField {
+            conversationView?.refresh()
+            return
+        }
+        setupChanged()
+    }
+
+    /// The draft owns the request. Conversation text must never revise it or
+    /// enter the native setup preferences as a replacement brief.
+    private var usesConversationReplyComposer: Bool {
+        guard setupMethodPicker?.selectedSegment == 0, let draft = currentDraft,
+              let source = draft.sourceRevision,
+              let context = PreparationContext(importID: draft.id, revision: draft.revision, sourceRevision: source) else { return false }
+        return conversationComposerContext == context
+    }
+
+    private var requestedAppIntent: String {
+        usesConversationReplyComposer ? currentDraft?.intent ?? "" : intentField?.string ?? currentDraft?.intent ?? ""
+    }
+
+    private func sendConversation(_ text: String) {
+        guard setupMethodPicker?.selectedSegment == 0 else { saveDraft(); return }
+        if piSetupView.job?.active == true {
+            let expected = conversationComposerContext
+            let jobID = piSetupView.job?.id
+            piSetupView.submitText(text) { [weak self] accepted in
+                guard let self, accepted, self.conversationComposerContext == expected,
+                      self.piSetupView.job?.id == jobID, self.intentField?.string == text else { return }
+                self.intentField?.string = ""; self.conversationView?.refresh()
+            }
+        } else {
+            piSetupView.startSetup()
+        }
+    }
+
+    private func editConversationRequest() {
+        guard intakeEnabled, let draft = currentDraft, draft.editable, draft.packagePath == nil else { return }
+        conversationComposerContext = nil; intentField?.string = draft.intent
+        editingConversationRequest = true
+        refreshWindow(); window?.makeFirstResponder(intentField)
+    }
+
+    @objc private func chooseOtherSetupWay(_ sender: NSMenuItem) {
+        guard intakeEnabled, (0...2).contains(sender.tag) else { return }
+        if usesConversationReplyComposer {
+            intentField?.string = currentDraft?.intent ?? ""; conversationComposerContext = nil
+        }
+        setupMethodPicker?.selectedSegment = sender.tag; selectSetupMethod()
+    }
+
+    private func showOtherSetupWays() {
+        guard intakeEnabled, let view = conversationView else { return }
+        let menu = NSMenu(title: "Add app method")
+        for (index, title) in ["MeeCP agent", "Manual setup", "Have your agent do it"].enumerated() {
+            let item = NSMenuItem(title: title, action: #selector(chooseOtherSetupWay(_:)), keyEquivalent: "")
+            item.tag = index; item.target = self
+            item.state = setupMethodPicker?.selectedSegment == index ? .on : .off; menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 16, y: view.bounds.height - 12), in: view)
+    }
 
     private func refreshActionButtons() {
         management?.update(apps: dashboardApps, hostMessage: hostMessage,
@@ -1345,8 +1444,8 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let piEligible = currentDraft.map { draft in
             draft.editable && draft.packagePath == nil &&
             (["local_folder", "application_directory"].contains(draft.sourceKind) || draft.isDocument && selectedDocumentRole == "instructions") &&
-            !(intentField?.string ?? draft.intent).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        } ?? !(intentField?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            !requestedAppIntent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        } ?? !requestedAppIntent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         piSetupView.bind(preparationContext, eligible: piEligible); piSetupView.refreshAvailability()
         piResourcesView.bind(preparationContext); piResourcesView.refreshAvailability()
         refreshActionButtons()
@@ -1357,7 +1456,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             (hostAvailable ? "" : "Waiting for meecp to connect. Your saved setup is kept.")
         setupHostText?.isHidden = !uiPreviewMode && hostAvailable
         setupLabel?.isHidden = setupLabel?.stringValue.isEmpty != false
-        let brief = (intentField?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let brief = requestedAppIntent.trimmingCharacters(in: .whitespacesAndNewlines)
         briefSummary?.stringValue = brief.isEmpty ? "" : "Requested: " + brief
         briefSummary?.isHidden = brief.isEmpty
         savedSetupsRow?.isHidden = drafts.isEmpty && currentDraft == nil
@@ -1389,15 +1488,19 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         manualSetupStack?.isHidden = method != 1
         externalAgentSetupCard?.isHidden = method != 2
         draftActionsStack?.isHidden = method == 0
-        appBriefCard?.isHidden = currentDraft?.packagePath != nil || upgradeTarget != nil
-        piSetupCard?.isHidden = method != 0 || currentDraft?.packagePath != nil || upgradeTarget != nil
+        appBriefCard?.isHidden = false
+        piSetupCard?.isHidden = method != 0 || upgradeTarget != nil
         preparedConfigurationCard?.isHidden = currentDraft?.attachment == nil && setupPlan == nil
         installationReviewCard?.isHidden = currentDraft?.packagePath == nil && setupPlan == nil && setupOperation == nil
         draftField?.isEnabled = intakeEnabled
         nameField?.isEnabled = editable; policyField?.isEnabled = editable; startCheck?.isEnabled = editable
         if upgradeTarget != nil { nameField?.isEnabled = false; policyField?.isEnabled = false; startCheck?.isEnabled = false }
         configurationView.setEditable(editable)
-        intentField?.isEditable = editable; documentRoleField?.isEnabled = editable && currentDraft?.isDocument == true
+        if usesConversationReplyComposer {
+            intentField?.isEditable = !uiPreviewMode && hostAvailable && !setupRequest && !stopping && !quitting &&
+                piSetupView.job?.active == true && piSetupView.currentQuestionKind != "secret" && piSetupView.composerEnabled
+        } else { intentField?.isEditable = editable && !piSetupView.authorizationPresentationBlocked }
+        documentRoleField?.isEnabled = editable && currentDraft?.isDocument == true
         documentRoleField?.isHidden = currentDraft?.isDocument != true || isDescriptionDraft(currentDraft)
         saveDraftButton?.isEnabled = editable && (currentDraft == nil ? !brief.isEmpty : draftDirty)
         copyInstructionsButton?.isEnabled = editable && (currentDraft != nil || !brief.isEmpty)
@@ -1436,6 +1539,14 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         downloadRetryButton?.isEnabled = intakeEnabled && ["failed", "canceled"].contains(downloadStatus ?? "")
         downloadUseButton?.isEnabled = intakeEnabled && downloadStatus == "completed" && selectedDownload?["package_path"] is String
         showInstalledButton?.isHidden = installedSetupAppID == nil
+        conversationView?.setMethod(method)
+        let prepared = currentDraft?.packagePath != nil || setupPlan != nil || setupOperation != nil || upgradeTarget != nil
+        conversationView?.update(title: currentDraft?.name ?? "Add an app", intent: requestedAppIntent,
+            source: sourcePath.isEmpty ? nil : sourcePath, context: preparationContext,
+            installationStatus: operation?.label ?? (setupLabel?.isHidden == false ? setupLabel?.stringValue : nil),
+            canEditRequest: intakeEnabled && currentDraft?.editable == true && !prepared,
+            prepared: prepared, readOnly: !enabled || prepared)
+        conversationView?.setComposerEnabled(method == 0 ? !prepared && piSetupView.composerEnabled : editable)
     }
 
     private var installedSetupAppID: String? {
@@ -2046,15 +2157,24 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         importViewGeneration &+= 1
         let changed = currentDraft?.id != draft.id || currentDraft?.revision != draft.revision || currentDraft?.packageDigest != draft.packageDigest
         let changedApp = currentDraft?.id != draft.id
+        let sameComposer = conversationComposerContext?.importID == draft.id &&
+            conversationComposerContext?.revision == draft.revision && conversationComposerContext?.sourceRevision == draft.sourceRevision
+        if !sameComposer { conversationComposerContext = nil }
+        if changedApp { editingConversationRequest = false }
         if !isDescriptionDraft(draft) || currentDraft != nil && changedApp { piSourceURL?.stringValue = "" }
         currentDraft = draft; draftDirty = false
         upgradeTarget = nil
         pathField?.stringValue = isDescriptionDraft(draft) ? "" : draft.sourceKind == "service_connection" ? "Local service connection" : draft.sourceKind == "captured_artifact_collection" ? "Captured artifacts" : draft.sourcePath
         if changedApp && !(pathField?.stringValue.isEmpty ?? true) { sourceOptionsExpanded = true }
-        nameField?.stringValue = draft.name; intentField?.string = draft.intent
+        nameField?.stringValue = draft.name
+        if !sameComposer { intentField?.string = draft.intent }
         policyField?.selectItem(at: draft.policy == "host" ? 1 : 0)
         startCheck?.state = draft.start ? .on : .off
         documentRoleField?.selectItem(at: draft.documentRole == "reference" ? 1 : draft.documentRole == "instructions" ? 2 : 0)
+        if draft.isDocument && !isDescriptionDraft(draft) && draft.documentRole == nil && draft.packagePath == nil {
+            sourceOptionsExpanded = true
+            conversationView?.revealSourceOptions()
+        }
         if changed { setupPlan = nil; reviewText?.string = "" }
         setupOperation = draft.operationID
         setupSettings = ["schema_version": 1, "configuration": draft.requirements["configuration"] as? [String: Any] ?? [:],
@@ -2134,6 +2254,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         serviceConnectionView.invalidate()
         importViewGeneration &+= 1
         currentDraft = nil; draftDirty = false; setupPlan = nil; setupOperation = nil
+        conversationComposerContext = nil; editingConversationRequest = false
         upgradeTarget = nil; setupSettings = ["schema_version": 1, "configuration": [String: Any](), "secret_references": [String: String]()]
         configurationView.configure(package: nil, settings: setupSettings)
         pathField?.stringValue = ""; nameField?.stringValue = ""; intentField?.string = ""; piSourceURL?.stringValue = ""
@@ -2157,7 +2278,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private func createPiBrief(completion: @escaping (Bool) -> Void) {
         guard intakeEnabled || capturingResourcesDraft && hostAvailable && connection() != nil && !setupRequest && !stopping && !quitting,
               currentDraft == nil else { completion(false); return }
-        let intent = (intentField?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let intent = requestedAppIntent.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !intent.isEmpty else { completion(false); return }
         let name = (nameField?.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let sourceURL = (piSourceURL?.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2176,7 +2297,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private func beginImport(_ source: URL, name suppliedName: String? = nil) {
         guard intakeEnabled else { return }
         // Attaching source after writing a brief must keep the user's request.
-        let initialIntent = currentDraft == nil ? intentField?.string ?? "" : ""
+        let initialIntent = requestedAppIntent
         saveDraftBeforeNavigation { [weak self] saved in
             guard let self = self, saved else { return }
             let directory = (try? source.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
@@ -2233,7 +2354,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private func hasDraftChanges(_ draft: ImportDraft) -> Bool {
-        (nameField?.stringValue ?? draft.name) != draft.name || (intentField?.string ?? draft.intent) != draft.intent ||
+        (nameField?.stringValue ?? draft.name) != draft.name || requestedAppIntent != draft.intent ||
         selectedPolicy != draft.policy || (startCheck?.state == .on) != draft.start ||
         draft.isDocument && selectedDocumentRole != draft.documentRole ||
         configurationChanged(draft)
@@ -2250,7 +2371,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         guard !setupRequest, let draft = currentDraft, draft.editable else { completion(false); return }
         guard hasDraftChanges(draft) else { draftDirty = false; completion(true); return }
         var payload: [String: Any] = ["revision": draft.revision, "name": nameField?.stringValue ?? draft.name,
-                                      "intent": intentField?.string ?? draft.intent, "start": startCheck?.state == .on, "start_policy": selectedPolicy]
+                                      "intent": requestedAppIntent, "start": startCheck?.state == .on, "start_policy": selectedPolicy]
         if draft.isDocument {
             if let role = selectedDocumentRole { payload["document_role"] = role }
             else { payload["document_role"] = NSNull() }
@@ -2262,7 +2383,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             var requirements = draft.requirements
             requirements["configuration"] = settings["configuration"]; requirements["secret_references"] = settings["secret_references"]
             payload["requirements"] = requirements
-            if (intentField?.string ?? draft.intent) == draft.intent && selectedDocumentRole == draft.documentRole {
+            if requestedAppIntent == draft.intent && selectedDocumentRole == draft.documentRole {
                 payload["carry_attachment"] = true
                 payload.removeValue(forKey: "intent"); payload.removeValue(forKey: "document_role")
             }
@@ -3622,6 +3743,72 @@ extension MeecpApp {
             && app.briefSummary?.stringValue == "Requested: Synthetic app behavior"
     }
 
+    /// Replies must remain transient and cannot dirty a reviewed draft. This
+    /// fixture also keeps installed-app navigation independent from setup.
+    fileprivate static func conversationalWorkspaceSelfTest() -> Bool {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("meecp-conversation-ui-" + UUID().uuidString)
+        guard (try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
+              attributes: [.posixPermissions: 0o700])) != nil else { return false }
+        let previous = ProcessInfo.processInfo.environment["MCPME_STATE_DIR"]
+        setenv("MCPME_STATE_DIR", directory.path, 1)
+        defer {
+            if let previous { setenv("MCPME_STATE_DIR", previous, 1) } else { unsetenv("MCPME_STATE_DIR") }
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let app = MeecpApp(); let setup = app.makeSetupWorkspace()
+        guard setup === app.conversationView, app.setupMethodPicker?.isHidden == true else { return false }
+        let id = "11111111-2222-4333-8444-555555555555"
+        let source = "sha256:" + String(repeating: "a", count: 64)
+        var row: [String: Any] = ["draft_id": id, "revision": 1, "state": "waiting_for_agent", "name": "Fixture App",
+            "source": ["kind": "document", "revision": source,
+                "locator": directory.appendingPathComponent("pi-setup/briefs/fixture/app.md").path],
+            "intent": "Public synthetic setup requirement", "document_role": "instructions", "start": false, "start_policy": "manual"]
+        guard let draft = ImportDraft(row), let context = PreparationContext(importID: id, revision: 1, sourceRevision: source) else { return false }
+        app.displayDraft(draft); app.conversationComposerContext = context
+        app.intentField?.string = "Public synthetic live reply"
+        app.setupPlan = ["plan_id": "99999999-2222-4333-8444-555555555555"]
+        let generation = app.importViewGeneration
+        app.textDidChange(Notification(name: NSText.didChangeNotification, object: app.intentField))
+        guard app.requestedAppIntent == draft.intent, !app.hasDraftChanges(draft), !app.draftDirty,
+              app.setupPlan != nil, app.importViewGeneration == generation else { return false }
+        app.displayDraft(draft)
+        guard app.intentField?.string == "Public synthetic live reply", app.requestedAppIntent == draft.intent else { return false }
+        app.editingConversationRequest = true; app.conversationComposerContext = nil
+        app.intentField?.string = "Public revised setup requirement"
+        app.textDidChange(Notification(name: NSText.didChangeNotification, object: app.intentField))
+        guard app.draftDirty, app.setupPlan == nil, app.requestedAppIntent != draft.intent else { return false }
+        let oldJob: [String: Any] = ["id": "99999999-2222-4333-8444-555555555555", "import_id": id,
+            "revision": 1, "source_revision": source, "status": "failed", "stage": "failed", "code": "pi_provider_failed"]
+        app.piSetupView.adopt(oldJob, context: context)
+        guard app.intentField?.string == "Public revised setup requirement", app.conversationComposerContext == nil else { return false }
+        row["revision"] = 2; row["intent"] = "Public revised setup requirement"
+        guard let revised = ImportDraft(row) else { return false }
+        app.displayDraft(revised)
+        guard !app.usesConversationReplyComposer, app.requestedAppIntent == revised.intent else { return false }
+        var document = row
+        document["document_role"] = nil
+        document["source"] = ["kind": "document", "revision": source,
+            "locator": directory.appendingPathComponent("source/setup.md").path]
+        guard let unclassified = ImportDraft(document) else { return false }
+        app.displayDraft(unclassified)
+        guard app.sourceOptionsExpanded, app.documentRoleField?.isHiddenOrHasHiddenAncestor == false else { return false }
+        app.displayDraft(revised)
+        let testWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 780),
+            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        testWindow.isReleasedWhenClosed = false; app.window = testWindow
+        let tabs = NSTabView(frame: testWindow.contentView!.bounds); tabs.tabViewType = .noTabsNoBorder
+        testWindow.contentView!.addSubview(tabs); app.managementTabs = tabs
+        let installed = NSTabViewItem(identifier: "installed"); installed.view = ManagementDashboard(); tabs.addTabViewItem(installed)
+        let adding = NSTabViewItem(identifier: "setup"); adding.view = setup; tabs.addTabViewItem(adding)
+        app.workspacePicker = NSSegmentedControl(labels: ["Installed Apps", "Add App"], trackingMode: .selectOne, target: nil, action: nil)
+        app.selectWorkspace(1); setup.layoutSubtreeIfNeeded()
+        guard tabs.selectedTabViewItem?.identifier as? String == "setup", testWindow.title == "meecp — Add App",
+              app.currentDraft?.id == id else { return false }
+        app.selectWorkspace(0)
+        return tabs.selectedTabViewItem?.identifier as? String == "installed" && testWindow.title == "meecp — Manage Apps"
+            && app.currentDraft?.id == id && app.currentDraft?.revision == 2
+    }
+
     /// Verifies recovery button availability without starting a host or issuing requests.
     fileprivate static func recoveryControlsSelfTest() -> Bool {
         let app = MeecpApp()
@@ -3886,6 +4073,17 @@ if CommandLine.arguments.dropFirst().first == "--pi-resources-ui-self-test" {
     _ = NSApplication.shared
     let passed = PiResourcesView.selfTest()
     print(passed ? "pi_resources_ui_contracts_passed" : "pi_resources_ui_contracts_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--add-app-conversation-ui-self-test" {
+    _ = NSApplication.shared
+    let results = ["conversation": PiSetupView.conversationSelfTest(),
+                   "presentation": AddAppConversationView.selfTest(),
+                   "workspace": MeecpApp.conversationalWorkspaceSelfTest()]
+    let passed = results.values.allSatisfy { $0 }
+    if !passed { print("failed_checks:" + results.filter { !$0.value }.keys.sorted().joined(separator: ",")) }
+    print(passed ? "add_app_conversation_ui_contracts_passed" : "add_app_conversation_ui_contracts_failed")
     exit(passed ? 0 : 1)
 }
 

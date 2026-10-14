@@ -114,6 +114,8 @@ final class PiResourcesView: NSStackView {
     private let detailLabel = workspaceLabel("", size: 11, secondary: true)
     private let spinner = NSProgressIndicator()
     var blocksNavigation: Bool { busy }
+    var canChooseResources: Bool { !busy && available?() == true && request != nil }
+    func chooseExistingResources() { chooseResources() }
 
     override init(frame: NSRect) {
         super.init(frame: frame)

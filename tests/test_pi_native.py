@@ -373,6 +373,7 @@ async def test_compiler_probe_cleanup_cannot_follow_background_replaced_director
 
 
 @native
+@pytest.mark.metal_hardware
 async def test_prebuilt_probe_computes_without_offline_compiler_and_reaps(
     tmp_path, group_reaper, metal_compute, compiled_probe, capfd
 ):

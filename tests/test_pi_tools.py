@@ -237,6 +237,7 @@ def metal_compute_server(tmp_path_factory):
 
 
 @native
+@pytest.mark.metal_hardware
 async def test_admitted_metal_probe_computes_and_preserves_filesystem_network_denials(broker, metal_compute, metal_compute_server, tmp_path):
     package = tmp_path / "package"; package.mkdir(mode=0o700)
     executable = package / "compute"

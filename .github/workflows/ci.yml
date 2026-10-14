@@ -38,8 +38,12 @@ jobs:
         run: uv sync --locked
       - name: Scan history for generic credentials
         run: uv run --locked python .github/scripts/scan_secrets.py
+      - name: Check native Metal admission classification
+        run: uv run --locked python -m pytest -q -rs tests/test_native_capabilities.py
       - name: Run tests
-        run: uv run --locked python -m pytest -q
+        # The hosted VM cannot create residency sets. Physical GPU acceptance
+        # remains active in the default local suite; see README.md.
+        run: uv run --locked python -m pytest -q -m "not metal_hardware"
       - name: Test hotdog demo and build dependencies
         working-directory: examples/hotdog-or-not-hotdog
         run: uv run --locked --group build python -m pytest -q

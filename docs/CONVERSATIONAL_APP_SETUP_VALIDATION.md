@@ -217,6 +217,39 @@ preserved the installed app state. They qualify the focused repairs on this
 Mac; hosted CI must independently establish the runner outcome. No full local
 suite, model quality campaign or standalone app installation was repeated.
 
+## Installer CI residency admission follow-up
+
+Signed installer run `38639559404` failed before importing Apple credentials:
+5,621 tests passed, 615 skipped, and the two Metal acceptance fixtures failed
+with `metal_compute_control_failed_residency`. The unconfined control passed the
+GPU family check but could not create a residency set. The run did not retain
+Metal's error domain/code. Follow-up hosted run `38647206410` established that
+both the residency set and `NSError` were nil (`residency_none_0`). A nil error
+does not prove an unsupported feature and remains a fatal hardware-control
+failure. The repository has no registered hardware runner.
+
+The control now maps only `MTLDeviceErrorDomain` with
+`MTLDeviceErrorNotSupported` to a distinct unsupported-hardware status (`77`).
+Apple documents that error as an unsupported device feature; the classification
+requires the macOS 26.4 SDK and runtime. Missing errors, other domains/codes,
+unexpected output, and subsequent compute failures remain fatal. Production
+helpers and confined executions still cannot classify their failures as skips.
+
+The native regression check exercises the exact classifier with real `NSError`
+instances, including nil, incorrect-domain, and unknown-code errors. It and the
+Python admission checks passed locally together with both previously failing
+native target checks: 39 passed after adding bounded error-identifier
+diagnostics. Error descriptions and `userInfo` are never emitted. This
+establishes local classification and compute behavior.
+
+The two physical GPU acceptance tests now carry the `metal_hardware` marker.
+The default local suite and `./test.sh` still run them. Hosted CI and the signed
+installer explicitly select `-m "not metal_hardware"` and run the classifier
+regressions before that suite. They retain all other standard tests and import
+Apple credentials only after testing. This hosted profile does not qualify GPU
+execution; the local hardware checks provide that scoped evidence. A future
+qualified hardware runner should run `pytest -m metal_hardware` separately.
+
 ## Limits
 
 These fixtures qualify UI, transport and lifecycle behavior. They do not measure

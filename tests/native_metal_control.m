@@ -1,9 +1,21 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#include <stdio.h>
+#include <string.h>
 
 // Independent synthetic hardware admission, never a production helper. Only
-// absent device (75) or an explicitly unsupported feature family (76) skips.
-// Every allocation, compilation, submission, and arithmetic failure is fatal.
+// absent device (75), unsupported feature family (76), or Metal's explicit
+// unsupported residency error (77) skips. Unclassified failures remain fatal.
+static int residencyFailureStatus(NSError *error) {
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260400
+    if (@available(macOS 26.4, *)) {
+        if ([error.domain isEqualToString:MTLDeviceErrorDomain] &&
+            error.code == MTLDeviceErrorNotSupported) return 77;
+    }
+#endif
+    return 11;
+}
+
 int main(void) {
     @autoreleasepool {
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
@@ -17,7 +29,24 @@ int main(void) {
         MTLResidencySetDescriptor *descriptor = [MTLResidencySetDescriptor new];
         descriptor.initialCapacity = 1;
         id<MTLResidencySet> residency = [device newResidencySetWithDescriptor:descriptor error:&error];
-        if (!residency) return 11;
+        // A feature family does not guarantee that the current device/driver
+        // implements residency sets. Classify only Metal's documented error;
+        // never emit the error description or skip an unknown allocation failure.
+        if (!residency) {
+            int status = residencyFailureStatus(error);
+            if (status == 11) {
+                // Only the bounded framework error identifier/code is reported.
+                // Error descriptions and userInfo may contain private data.
+                const char *domain = error ? error.domain.UTF8String : "none";
+                if (!domain || !*domain || strlen(domain) > 128 ||
+                    strspn(domain, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.") != strlen(domain))
+                    domain = "unrecognized";
+                NSInteger code = error.code;
+                if (code < -65535 || code > 65535) code = 65535;
+                printf("residency_error:%s:%ld\n", domain, (long)code);
+            }
+            return status;
+        }
         id<MTLBuffer> buffer = [device newBufferWithLength:sizeof(uint32_t) * 4
             options:MTLResourceStorageModeShared];
         if (!buffer || !buffer.contents) return 12;

@@ -38,6 +38,10 @@ use separate transient storage and do not increment its revision or invalidate
 a verified plan. Source selection, resource capture and explicit request editing
 retain the existing draft revision and fresh-attempt rules. Required document
 role selection opens its source controls rather than remaining hidden.
+Conversation polling preserves existing message views, including selected text,
+and adds/removes only changed or evicted events. Native fixtures check message
+view identity across unchanged polls, appends and eviction. Tab sizing fixtures
+check that the conversation fills its workspace before and after resizing.
 
 ## Standalone delivery
 

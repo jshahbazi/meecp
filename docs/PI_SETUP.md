@@ -12,7 +12,7 @@ across unfamiliar projects has not been established.
    public HTTPS project link, runtime/model resources, or a prepared package.
    For a single Python or JavaScript source file, choose its containing folder.
    Choose **Use these instructions** for a setup document.
-3. Select **Set Up App**. If no provider is configured, the conversation shows
+3. Select **Create app**. If no provider is configured, the conversation shows
    **Agent settings** inline. Select the provider and exact model, and save its
    API key or compatible local endpoint. Saving continues the requested setup
    only while the same draft and source remain selected. Agent settings are
@@ -108,7 +108,7 @@ outside model messages, generated packages, and subprocess environments. The
 worker uses the API key supplied for that job and does not load the user's Pi
 credential files or environment credentials.
 
-Saving settings sends no source files. **Set Up App** authorizes the coding run
+Saving settings sends no source files. **Create app** authorizes the coding run
 against the selected source and intent. The configured model can receive staged
 source, generated files, host-supplied package/schema guidance, and tool results.
 For a remote provider, these requests go to that provider. The UI and durable

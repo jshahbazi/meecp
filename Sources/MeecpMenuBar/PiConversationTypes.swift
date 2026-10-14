@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-struct PiConversationEvent {
+struct PiConversationEvent: Equatable {
     let sequence: Int
     let role: String
     let text: String

@@ -270,6 +270,7 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     private var conversationAvailable = false
     private var conversationCanMessage = false
     private var conversationEvents: [PiConversationEvent] = []
+    private var renderedEvents: [Int: (event: PiConversationEvent, view: NSView)] = [:]
     private var unacknowledgedMessage: (id: String, text: String, jobID: String, context: PreparationContext)?
     private let optionsStack = NSStackView()
     private var optionButtons: [NSButton] = []
@@ -758,6 +759,7 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         conversationJobID = nil; conversationCursor = 0; conversationPolling = false
         conversationAvailable = false; conversationCanMessage = false; conversationEvents = []; unacknowledgedMessage = nil
         for view in eventStack.arrangedSubviews { eventStack.removeArrangedSubview(view); view.removeFromSuperview() }
+        renderedEvents.removeAll()
         conversationNotice.stringValue = ""; conversationNotice.isHidden = true
     }
 
@@ -788,10 +790,20 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     }
 
     private func renderConversation() {
-        for view in eventStack.arrangedSubviews { eventStack.removeArrangedSubview(view); view.removeFromSuperview() }
-        for event in conversationEvents {
+        let retained = Set(conversationEvents.map(\.sequence))
+        for sequence in Array(renderedEvents.keys) where !retained.contains(sequence) {
+            if let old = renderedEvents.removeValue(forKey: sequence) {
+                eventStack.removeArrangedSubview(old.view); old.view.removeFromSuperview()
+            }
+        }
+        for (index, event) in conversationEvents.enumerated() {
+            if let old = renderedEvents[event.sequence], old.event == event { continue }
+            if let old = renderedEvents[event.sequence] {
+                eventStack.removeArrangedSubview(old.view); old.view.removeFromSuperview()
+            }
             let bubble = piConversationBubble(role: event.role, text: event.text)
-            eventStack.addArrangedSubview(bubble); workspaceFill(bubble, in: eventStack)
+            eventStack.insertArrangedSubview(bubble, at: index); workspaceFill(bubble, in: eventStack)
+            renderedEvents[event.sequence] = (event, bubble)
         }
         conversationNotice.stringValue = conversationAvailable ? "Messages stay in memory for this setup. Credentials use the secure fields below."
             : "The earlier conversation is unavailable. Your draft and saved resources remain available."
@@ -833,7 +845,10 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         }
         view.adopt(row, context: context)
         pendingConversation?(batch([assistant], cursor: 1), nil)
-        guard validQuery, view.canSendMessage, view.eventStack.arrangedSubviews.count == 1 else { return false }
+        guard validQuery, view.canSendMessage, view.eventStack.arrangedSubviews.count == 1,
+              let assistantBubble = view.eventStack.arrangedSubviews.first else { return false }
+        view.pollConversation(); pendingConversation?(batch([], cursor: 1), nil)
+        guard view.eventStack.arrangedSubviews.first === assistantBubble else { return false }
         var whitespaceAccepted = true
         view.submitText(" \n\t ") { whitespaceAccepted = $0 }
         guard !whitespaceAccepted, messageBodies.isEmpty else { return false }
@@ -849,7 +864,12 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         guard accepted, view.conversationEvents.count == 1 else { return false }
         let user: [String: Any] = ["sequence": 2, "role": "user", "text": "Keep the requested engine.", "message_id": id]
         pendingConversation?(batch([user], cursor: 2), nil)
-        guard view.conversationEvents.count == 2, view.eventStack.arrangedSubviews.count == 2 else { return false }
+        guard view.conversationEvents.count == 2, view.eventStack.arrangedSubviews.count == 2,
+              view.eventStack.arrangedSubviews.first === assistantBubble,
+              let userBubble = view.eventStack.arrangedSubviews.last else { return false }
+        view.pollConversation(); pendingConversation?(batch([], cursor: 2, first: 2), nil)
+        guard view.eventStack.arrangedSubviews.count == 1, view.eventStack.arrangedSubviews.first === userBubble,
+              assistantBubble.superview == nil, view.renderedEvents.count == 1 else { return false }
         view.pollConversation(); let stale = pendingConversation
         view.bind(changed, eligible: true)
         stale?(batch([user], cursor: 2), nil)

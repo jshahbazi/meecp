@@ -46,7 +46,8 @@ final class AddAppConversationView: NSView {
     init(composer: NSScrollView, setup: PiSetupView, resources: PiResourcesView, sourceOptions: NSView) {
         self.composer = composer; self.setup = setup; self.resources = resources; self.sourceOptions = sourceOptions
         super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
+        // NSTabView owns this root's frame; only its contents use constraints.
+        autoresizingMask = [.width, .height]
         setup.useConversationPresentation()
         setup.onConversationChange = { [weak self] in
             guard let self else { return }
@@ -244,6 +245,12 @@ final class AddAppConversationView: NSView {
         let composer = NSScrollView(); let text = NSTextView(); composer.documentView = text
         let setup = PiSetupView(); let resources = PiResourcesView()
         let view = AddAppConversationView(composer: composer, setup: setup, resources: resources, sourceOptions: NSView())
+        let tabs = NSTabView(frame: NSRect(x: 0, y: 0, width: 960, height: 640)); tabs.tabViewType = .noTabsNoBorder
+        let item = NSTabViewItem(identifier: "add"); item.view = view; tabs.addTabViewItem(item)
+        tabs.layoutSubtreeIfNeeded()
+        guard view.frame.width > 900, view.frame.height > 600 else { return false }
+        tabs.setFrameSize(NSSize(width: 1120, height: 676)); tabs.layoutSubtreeIfNeeded()
+        guard view.frame.width > 1080, view.frame.height > 650 else { return false }
         let context = PreparationContext(importID: "11111111-2222-4333-8444-555555555555", revision: 1, sourceRevision: "sha256:" + String(repeating: "a", count: 64))
         view.update(title: "Repository tool", intent: "Find relevant source lines", source: "Selected repository", context: context, canEditRequest: true)
         guard view.titleLabel.stringValue == "Repository tool", !view.requestStack.isHidden, view.welcome.isHidden,

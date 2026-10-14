@@ -3803,7 +3803,9 @@ extension MeecpApp {
         app.workspacePicker = NSSegmentedControl(labels: ["Installed Apps", "Add App"], trackingMode: .selectOne, target: nil, action: nil)
         app.selectWorkspace(1); setup.layoutSubtreeIfNeeded()
         guard tabs.selectedTabViewItem?.identifier as? String == "setup", testWindow.title == "meecp — Add App",
-              app.currentDraft?.id == id else { return false }
+              app.currentDraft?.id == id,
+              abs(setup.frame.width - tabs.contentRect.width) < 1,
+              abs(setup.frame.height - tabs.contentRect.height) < 1 else { return false }
         app.selectWorkspace(0)
         return tabs.selectedTabViewItem?.identifier as? String == "installed" && testWindow.title == "meecp — Manage Apps"
             && app.currentDraft?.id == id && app.currentDraft?.revision == 2

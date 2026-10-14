@@ -92,9 +92,15 @@ when a durable selection/exposure marker exists.
 
 Native reapers retain exact child identity and write private completion receipts
 after `waitpid`, including when the supervisor dies. Startup clears an ownership
-entry only after its matching instance/nonce receipt proves completion. Losing the
-reaper before that proof leaves `ownership_lost` and blocks replacement. No recovery
-path discovers or signals a recorded PID.
+entry after its matching instance/nonce receipt proves completion, or a later Mac
+boot proves the recorded processes have ended. New launches record the kernel boot
+UUID. Earlier receipts record the currently observed boot UUID and recover after
+the next Mac restart. Startup clears obsolete ownership
+records and reservations automatically, preserves installed data and connection
+settings, and follows the saved startup policy and explicit Stop suppression.
+Losing the reaper during the same Mac boot still blocks replacement until exit is
+proved. Missing or unsafe proof stays blocked. No recovery path discovers or
+signals a recorded PID.
 
 ## Owner API and scoped upgrade access
 

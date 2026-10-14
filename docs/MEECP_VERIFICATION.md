@@ -50,6 +50,41 @@ The corrected app was rebuilt, signed, and deployed at the existing canonical pa
 
 Actual VS Code Insiders 1.141.0-insider verification used a new empty window with the same global `jevk5` configuration. Start reached **Running** and **Discovered 2 tools**; a server-only Restart reached Running again with a new discovery of both tools and no error metadata. No model calls were made. Only the verification window was closed; the original working window and configuration were preserved. Its existing MCP connection may need its own server restart to load the correction. Both projects remained Ready afterward.
 
+## Ownership recovery after host reinstall (2026-10-14)
+
+New launch records include the kernel boot UUID. Startup automatically settles
+matching private receipts from an earlier boot, including a pending launch whose
+reaper never wrote completion. Older untagged entries record the observed boot
+and recover after a subsequent Mac restart. Same-boot and unknown-boot receipts
+remain blocked. File dates and wall-clock adjustments cannot authorize cleanup.
+Registry reconciliation precedes deletion of the final durable ledger proof,
+allowing an interrupted cleanup to replay safely.
+
+The receipt/recovery suites passed **66 tests**, including real native process
+launches, simulated boot changes, legacy tagging, retained same-boot ownership,
+invalid or unsafe receipts, saved policy and Stop suppression, preserved data
+and credentials, and an interrupted ledger write followed by recovery and a real
+SDK tool call. The lifecycle/registry/host/upgrade suites passed **104 tests** with
+one existing opt-in case skipped. The policy and authority suites passed **41
+tests**, including source-identity coverage for the new boot helper. Swift tests
+passed **21 tests** with three opt-in installer cases skipped; all four native
+UI/contract self-tests passed. A fresh ad hoc app bundle built successfully.
+
+The existing local development installation was replaced through verified
+staging, graceful shutdown, and atomic bundle replacement. A separate authorized
+owner-assisted repair retained private backups and cleared four reviewed stale
+ownership records after checking that their package runtimes were absent.
+Connection files remained byte-identical. The previously running manual app was
+resumed. Post-launch inspection found five apps, no ownership blocks or error
+codes, and boot UUIDs on all fresh ledger entries. Installed recovery modules and
+the native executable matched the tested build; strict deep signature verification
+passed. This one-time legacy cleanup does not enable automatic date-based proof.
+
+These checks simulate kernel boot identity changes; they do not perform a
+physical Mac reboot or qualify a signed release. The remaining recovery warning
+uses a concrete Mac restart instruction instead of requiring users to interpret
+process ownership terminology.
+
 ## Claim boundaries
 
 The execution profile uses trusted local packages with the current user's permissions. Access declarations are not an OS sandbox. The initial GPU policy admits one resident managed GPU package; multi-engine contention and fairness belong to Phase 4 in the updated roadmap. Reaper-loss tests establish blocked replacement and retained reservations, not guaranteed target cleanup after losing its reaper. Decision transport parity does not establish new model-quality or calibration results.

@@ -16,6 +16,7 @@ import secrets
 import stat
 from typing import Any
 
+from .boot_session import BootSession, valid_boot_identity
 from .private import PrivateStateError, check_private_file, ensure_private_directory
 
 MAGIC = b"MCPMEOR1"
@@ -127,14 +128,10 @@ def acknowledge_nonlaunch(descriptor: int, instance_id: str, nonce: str) -> None
         raise PrivateStateError("ownership_receipt_unavailable") from None
 
 
-def verify_receipt(slot_directory: Path, metadata: dict[str, Any]) -> bool:
-    """Return true only for a complete stable frame bound to this journal entry.
-
-    This read never creates directories, follows receipt links, signals a PID,
-    or mutates the ownership ledger. Every absent/unsafe/invalid input fails shut.
-    """
+def _read_receipt(slot_directory: Path, metadata: dict[str, Any]) -> tuple[bytes, os.stat_result] | None:
+    """Read only a stable private frame bound to this journal entry."""
     if not _metadata(metadata):
-        return False
+        return None
     try:
         slot = Path(slot_directory).absolute()
         directory = slot / "ownership-receipts"
@@ -148,16 +145,44 @@ def verify_receipt(slot_directory: Path, metadata: dict[str, Any]) -> bool:
             if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
                     or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1
                     or before.st_size != RECEIPT_BYTES):
-                return False
+                return None
             frame = source.read(RECEIPT_BYTES + 1)
             after, current = os.fstat(source.fileno()), path.lstat()
             if any(getattr(before, key) != getattr(after, key) or getattr(after, key) != getattr(current, key)
                    for key in _ATTRIBUTES):
-                return False
+                return None
         _private_directory(slot)
         _private_directory(directory)
         check_private_file(path)
-        return frame in (_frame(metadata["instance_id"], metadata["nonce"], b"C"),
-                         _frame(metadata["instance_id"], metadata["nonce"], b"N"))
+        if frame not in tuple(_frame(metadata["instance_id"], metadata["nonce"], state)
+                              for state in (b"P", b"C", b"N")):
+            return None
+        return frame, after
     except (OSError, ValueError, TypeError, PrivateStateError):
+        return None
+
+
+def verify_receipt(slot_directory: Path, metadata: dict[str, Any]) -> bool:
+    """Require stable identity-bound native completion or proven nonlaunch.
+
+    This read never creates directories, follows receipt links, signals a PID,
+    or mutates the ownership ledger. Every absent/unsafe/invalid input fails shut.
+    """
+    receipt = _read_receipt(slot_directory, metadata)
+    return receipt is not None and receipt[0][-1:] in (b"C", b"N")
+
+
+def verify_previous_boot_receipt(slot_directory: Path, metadata: dict[str, Any],
+                                 boot: BootSession | None, launch_boot_id: str | None = None) -> bool:
+    """A previous kernel boot proves even an unfinished launch has ended.
+
+    A legacy receipt first needs an observed boot UUID journaled by the host.
+    File dates cannot prove a reboot because the wall clock can change.
+    The same private/frame checks still apply.
+    """
+    if boot is None:
         return False
+    receipt = _read_receipt(slot_directory, metadata)
+    if receipt is None:
+        return False
+    return valid_boot_identity(launch_boot_id) and launch_boot_id.lower() != boot.identity

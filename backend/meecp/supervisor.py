@@ -32,9 +32,10 @@ from .downloads import DownloadError, DownloadManager
 from .connections import connection_names
 from .limits import DEFAULT_REQUEST_BYTES, MAX_REQUEST_BYTES
 from .activity import ACTIVITY_EVENTS, ACTIVITY_FRAME, Activity, timestamp
+from .boot_session import current_boot_session
 from .imports import ImportError as ImportDraftError, ImportStore
 from .private import PrivateStateError, check_private_file, ensure_private_directory, read_private_json, snapshot_package, write_private_json
-from .ownership_receipts import prepare_receipt, verify_receipt
+from .ownership_receipts import prepare_receipt, verify_receipt, verify_previous_boot_receipt
 from .processes import OwnedProcess, OwnershipLost, ProcessOwner, _await_ownership
 from .pi_listeners import ListenerError, assert_loopback, monitor_listeners
 from .registry import Registry, RegistryError
@@ -250,6 +251,7 @@ class Supervisor(UpgradeHost):
             os.close(self.lock_fd)
             raise
         self.reaper = reaper.absolute()
+        self.boot_session = current_boot_session()
         self.listeners: dict[str, socket.socket] = {}
         self.plan_listeners: dict[str, socket.socket] = {}
         self.workers: dict[str, Worker] = {}
@@ -850,6 +852,8 @@ class Supervisor(UpgradeHost):
         completion_fd, completion = prepare_receipt(self.slot_directory(slot_id), identifier)
         try:
             self.ledger(slot_id)[identifier] = {"state": "launching", "completion": completion}
+            if self.boot_session is not None:
+                self.ledger(slot_id)[identifier]["boot_id"] = self.boot_session.identity
             self.save_ledger(slot_id)
             process = await self.owner(slot_id).launch(instance_id=identifier,
                 completion_fd=completion_fd, completion_nonce=completion["nonce"], **kwargs)
@@ -882,8 +886,10 @@ class Supervisor(UpgradeHost):
         if completion is not None:
             self.retire_completion(slot_id, completion)
 
-    def retire_completion(self, slot_id: str, completion: dict):
-        if not verify_receipt(self.slot_directory(slot_id), completion):
+    def retire_completion(self, slot_id: str, completion: dict, *, launch_boot_id=None):
+        if not (verify_receipt(self.slot_directory(slot_id), completion)
+                or verify_previous_boot_receipt(self.slot_directory(slot_id), completion,
+                                                self.boot_session, launch_boot_id)):
             return
         path = self.slot_directory(slot_id) / "ownership-receipts" / (completion["instance_id"] + ".receipt")
         with contextlib.suppress(PrivateStateError, OSError):
@@ -904,20 +910,37 @@ class Supervisor(UpgradeHost):
             for slot in self.registry.list_slots():
                 ledger = self.ledger(slot.id)
                 removed = []
+                tagged = False
                 for identifier, value in list(ledger.items()):
                     completion = value.get("completion")
                     if (isinstance(completion, dict) and completion.get("instance_id") == identifier
-                            and verify_receipt(self.slot_directory(slot.id), completion)):
-                        ledger.pop(identifier)
-                        removed.append(completion)
-                    elif completion is not None and value.get("state") != "ownership_lost":
-                        pending = True
+                            and (verify_receipt(self.slot_directory(slot.id), completion)
+                                 or verify_previous_boot_receipt(self.slot_directory(slot.id), completion,
+                                                                 self.boot_session, value.get("boot_id")))):
+                        removed.append((identifier, completion, value.get("boot_id")))
+                    else:
+                        # Older releases did not record a boot UUID. Observe
+                        # this outstanding identity now so the next Mac boot
+                        # can settle it, including an unacknowledged launch.
+                        if completion is not None and "boot_id" not in value and self.boot_session is not None:
+                            value["boot_id"] = self.boot_session.identity
+                            tagged = True
+                        if (completion is not None and value.get("state") != "ownership_lost"
+                                and slot.observed_state != "ownership_lost"):
+                            pending = True
                 if removed:
-                    self.save_ledger(slot.id)
-                    for completion in removed:
-                        self.retire_completion(slot.id, completion)
-                    if not ledger:
+                    # Clear the registry block while all exit proofs are still
+                    # durable. A crash here can replay them; deleting the last
+                    # proof first could leave ownership_lost with no way out.
+                    if len(removed) == len(ledger):
                         self.registry.reconcile_owned_exit(slot.id, expected_generation=slot.generation)
+                    for identifier, _, _ in removed:
+                        ledger.pop(identifier)
+                    self.save_ledger(slot.id)
+                    for _, completion, launch_boot_id in removed:
+                        self.retire_completion(slot.id, completion, launch_boot_id=launch_boot_id)
+                elif tagged:
+                    self.save_ledger(slot.id)
             if not pending or asyncio.get_running_loop().time() >= deadline:
                 return
             await asyncio.sleep(0.05)

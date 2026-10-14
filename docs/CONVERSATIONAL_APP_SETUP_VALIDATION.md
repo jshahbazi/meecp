@@ -192,6 +192,31 @@ check pass. No tests, builds, installation or model runs were repeated during
 PR preparation, as requested. The preceding installed acceptance records apply
 to their recorded commits; they do not qualify the merged PR tree.
 
+## PR CI follow-up
+
+The first PR CI run, `38623955883`, reported 89 failures. The conversation
+changes modify the complete Python source closure used by TextGen components;
+87 recipe/policy/lifecycle checks rejected the preceding immutable identities.
+TextGen component 1.0.24 and recipe 1.0.25 bind the changed source, with exact
+catalog and release-policy references. Earlier recipe directories and their
+model/runtime provenance remain unchanged. Current hashes and native/signed
+acceptance limits are recorded in [release authority](PHASE3_RELEASE_POLICY.md).
+
+The remaining two failures also occur on main at `bdfa708`. Their old hardware
+control established only that an unconfined Metal device existed. A separate
+fixed test control now verifies the required residency feature family, residency
+allocation, shader execution and exact arithmetic before confined acceptance.
+Only an absent device or an explicitly unsupported feature family can skip;
+unknown statuses, control failures and target sandbox failures remain fatal.
+This changes test admission without widening the production GPU sandbox.
+
+After the CI failure report, 345 focused recipe/policy/upgrade checks passed,
+with 492 explicitly opt-in scanner integrations skipped. The Metal classifier
+and both native target checks passed locally: 30 checks total. These runs
+preserved the installed app state. They qualify the focused repairs on this
+Mac; hosted CI must independently establish the runner outcome. No full local
+suite, model quality campaign or standalone app installation was repeated.
+
 ## Limits
 
 These fixtures qualify UI, transport and lifecycle behavior. They do not measure

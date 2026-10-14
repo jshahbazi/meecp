@@ -374,7 +374,7 @@ async def test_compiler_probe_cleanup_cannot_follow_background_replaced_director
 
 @native
 async def test_prebuilt_probe_computes_without_offline_compiler_and_reaps(
-    tmp_path, group_reaper, metal_device, compiled_probe, capfd
+    tmp_path, group_reaper, metal_compute, compiled_probe, capfd
 ):
     root = tmp_path / "host"
     root.mkdir(mode=0o700)
@@ -400,8 +400,9 @@ async def test_prebuilt_probe_computes_without_offline_compiler_and_reaps(
         report = await broker.preflight()
         assert report["metal_compiler"]["available"] is False
         runtime = report["metal_runtime"]
+        assert runtime["device_available"] is True, "metal_probe_sandbox_device_unavailable"
+        assert runtime["residency_available"] is True, "metal_probe_sandbox_residency_unavailable"
         assert runtime["status"] == "ready" and runtime["compute_passed"] is True
-        assert runtime["device_available"] is True and runtime["residency_available"] is True
         assert runtime["helper_sha256"] == receipt["helper_sha256"]
         assert calls[0]["argv"] == [str(helper)] and calls[0]["require_metal_compiler"] is False
         assert "DEVELOPER_DIR" not in broker.env and not broker.owner.instances

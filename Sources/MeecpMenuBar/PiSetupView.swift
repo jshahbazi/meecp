@@ -1,4 +1,5 @@
 import AppKit
+import AppInstallation
 import Foundation
 
 private func piIdentifier(_ value: Any?) -> String? {
@@ -218,6 +219,16 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     var onReady: ((PiSetupJob) -> Void)?
     var onStateChange: (() -> Void)?
     var onJobChange: ((String?) -> Void)?
+    var applicationLaunchExclusions: [URL] = [FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/mcpme", isDirectory: true)]
+    private var verifyXcodeApplication: (String, [URL], @escaping (URL?) -> Void) -> Void = { path, roots, completion in
+        DispatchQueue.global(qos: .userInitiated).async {
+            let app = XcodeApplication.verifiedURL(for: path, excluding: roots)
+            DispatchQueue.main.async { completion(app) }
+        }
+    }
+    private var openSystemURL: (URL) -> Bool = { NSWorkspace.shared.open($0) }
+    private var systemVerification: UUID?
     private(set) var job: PiSetupJob?
     private(set) var errorCode: String?
     private var context: PreparationContext?
@@ -226,7 +237,7 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     private var settingsLoading = false
     private var busy = false
     private var polling = false
-    private var epoch: UInt64 = 0
+    private var epoch: UInt64 = 0 { didSet { systemVerification = nil } }
     private var deliveredReady: String?
     private var restoredJobID: String?
     private let modelLabel = workspaceLabel("Loading setup model…", size: 12, secondary: true)
@@ -355,8 +366,8 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         notice.isHidden = active
         startButton.isHidden = active
         retryButton.isHidden = active || (errorCode == nil && restoredJobID == nil)
-        systemButton.isHidden = job?.active != true || job?.systemAction == nil
-        systemButton.isEnabled = enabled && !busy && !systemButton.isHidden
+        systemButton.isHidden = job?.active != true || job?.stage != "waiting_for_system" || job?.systemAction == nil
+        systemButton.isEnabled = enabled && !busy && systemVerification == nil && !systemButton.isHidden
         actionRow.isHidden = startButton.isHidden && cancelButton.isHidden && retryButton.isHidden && systemButton.isHidden
         errorDetail.isHidden = errorDetail.stringValue.isEmpty
         if let settings {
@@ -427,6 +438,8 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         case "pi_question_changed": return "The setup question changed. Refresh the setup and answer the new question."
         case "pi_resource_blocked": return "The Mac cannot run another setup right now. Close other setup work and try again."
         case "pi_canceled", "canceled": return "Setup was canceled. Your draft is still available to try again."
+        case "pi_xcode_untrusted": return "MeeCP could not verify this application as Apple Xcode. Install Xcode from Apple or refresh Metal setup."
+        case "pi_system_action_failed": return "The Apple setup application could not open. Refresh Metal setup and try again."
         default: return "Setup could not finish. Check the draft and try again."
         }
     }
@@ -557,13 +570,32 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     }
 
     @objc private func openSystemSetup() {
-        guard let job, job.active, let action = job.systemAction, let kind = action["kind"] as? String else { return }
+        guard available?() == true, !busy, systemVerification == nil, let job, job.active,
+              job.stage == "waiting_for_system", let action = job.systemAction,
+              let kind = action["kind"] as? String else { return }
         if kind == "install_xcode", action["url"] as? String == "https://developer.apple.com/xcode/",
-           let url = URL(string: "https://developer.apple.com/xcode/") { NSWorkspace.shared.open(url) }
-        else if kind == "open_xcode", let path = action["application_path"] as? String,
-                path.hasPrefix("/"), URL(fileURLWithPath: path).lastPathComponent.hasSuffix(".app") {
-            NSWorkspace.shared.open(URL(fileURLWithPath: path))
-        } else { return }
+           let url = URL(string: "https://developer.apple.com/xcode/") {
+            guard openSystemURL(url) else { fail("pi_system_action_failed"); return }
+            continueSystem(job)
+        } else if kind == "open_xcode", let path = action["application_path"] as? String {
+            let verification = UUID(), expected = epoch
+            systemVerification = verification; refreshAvailability()
+            verifyXcodeApplication(path, applicationLaunchExclusions) { [weak self] app in
+                guard let self, self.systemVerification == verification else { return }
+                self.systemVerification = nil; self.refreshAvailability()
+                guard expected == self.epoch, self.available?() == true,
+                      let current = self.job, current.active, current.stage == "waiting_for_system",
+                      current.id == job.id, current.importID == job.importID,
+                      current.revision == job.revision, current.sourceRevision == job.sourceRevision,
+                      (current.systemAction as NSDictionary?)?.isEqual(to: action) == true else { return }
+                guard let app else { self.fail("pi_xcode_untrusted"); return }
+                guard self.openSystemURL(app) else { self.fail("pi_system_action_failed"); return }
+                self.continueSystem(current)
+            }
+        }
+    }
+
+    private func continueSystem(_ job: PiSetupJob) {
         request?("v1/pi/jobs/" + job.id + "/continue-system", "POST", [:]) { [weak self] _, _ in self?.poll(force: true) }
     }
 
@@ -772,7 +804,48 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         authoritative.adopt(advancedRow, context: advanced)
         guard !authoritative.systemButton.isHidden, authoritative.systemButton.isEnabled,
               authoritative.status.stringValue.contains("Apple"), authoritative.job?.systemAction != nil else { return false }
-        // Verify the control only; this test never opens an OS installer.
+        // Exercise the real launch controller with injected effects. No app or
+        // browser opens, and no continuation is sent before local verification.
+        let system = PiSetupView(); system.available = { true }
+        var pendingVerification: ((URL?) -> Void)?
+        var opened: [URL] = [], continuations = 0
+        system.verifyXcodeApplication = { _, _, completion in pendingVerification = completion }
+        system.openSystemURL = { opened.append($0); return true }
+        system.request = { path, _, _, _ in if path.hasSuffix("/continue-system") { continuations += 1 } }
+        var systemRow = advancedRow
+        systemRow["system_action"] = ["kind": "open_xcode", "application_path": "/workspace/Fake.app"]
+        system.adopt(systemRow, context: advanced); system.openSystemSetup()
+        guard opened.isEmpty, continuations == 0, !system.systemButton.isEnabled,
+              system.cancelButton.isEnabled else { return false }
+        pendingVerification?(nil)
+        guard opened.isEmpty, continuations == 0, system.errorCode == "pi_xcode_untrusted" else { return false }
+        let verified = URL(fileURLWithPath: "/Applications/Xcode Beta.app")
+        systemRow["system_action"] = ["kind": "open_xcode", "application_path": "/alias/Xcode.app"]
+        system.adopt(systemRow, context: advanced); system.openSystemSetup(); pendingVerification?(verified)
+        guard opened == [verified], continuations == 1 else { return false }
+        system.adopt(systemRow, context: advanced); system.openSystemSetup()
+        var canceled = systemRow; canceled["status"] = "canceled"
+        system.adopt(canceled, context: advanced); pendingVerification?(verified)
+        guard opened.count == 1, continuations == 1 else { return false }
+        system.adopt(systemRow, context: advanced); system.openSystemSetup()
+        var changed = systemRow; changed["stage"] = "building"
+        system.job = PiSetupJob(changed); pendingVerification?(verified)
+        guard opened.count == 1, continuations == 1 else { return false }
+        system.adopt(systemRow, context: advanced); system.openSystemSetup()
+        changed = systemRow
+        changed["system_action"] = ["kind": "open_xcode", "application_path": "/changed/Xcode.app"]
+        system.job = PiSetupJob(changed); pendingVerification?(verified)
+        guard opened.count == 1, continuations == 1 else { return false }
+        system.adopt(systemRow, context: advanced); system.openSystemSetup()
+        system.openSystemURL = { _ in false }; pendingVerification?(verified)
+        guard opened.count == 1, continuations == 1, system.errorCode == "pi_system_action_failed" else { return false }
+        system.openSystemURL = { opened.append($0); return true }
+        system.adopt(systemRow, context: advanced); system.openSystemSetup(); system.connectionReset()
+        pendingVerification?(verified)
+        guard opened.count == 1, continuations == 1 else { return false }
+        systemRow["system_action"] = ["kind": "install_xcode", "url": "https://developer.apple.com/xcode/"]
+        system.adopt(systemRow, context: advanced); system.openSystemSetup()
+        guard opened.last?.absoluteString == "https://developer.apple.com/xcode/", continuations == 2 else { return false }
         advancedRow.removeValue(forKey: "system_action")
         advancedRow["status"] = "interrupted"; advancedRow["stage"] = "interrupted"; advancedRow["code"] = "pi_interrupted"
         authoritative.adopt(advancedRow, context: advanced)

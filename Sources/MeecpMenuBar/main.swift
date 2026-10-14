@@ -1084,6 +1084,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         sourceOptionsButton.setAccessibilityLabel("Show or hide optional app source")
         self.sourceOptionsButton = sourceOptionsButton
 
+        piSetupView.applicationLaunchExclusions = [stateDirectory]
         piSetupView.request = { [weak self] path, method, body, completion in
             self?.request(path, method: method, body: body, completion: completion)
         }

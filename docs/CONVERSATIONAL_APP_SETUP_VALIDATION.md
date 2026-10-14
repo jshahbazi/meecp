@@ -87,6 +87,44 @@ This acceptance record is a documentation follow-up to the installed source
 commit; it does not change the delivered implementation or rebuild historical
 artifacts.
 
+## Compact layout refinement
+
+The follow-up implementation at clean commit
+`e9dfe0824e6326d62511abaf2ef271512b5ec423` replaces the large empty band
+between a new request and its composer with a compact form. The content column
+is capped at 900 points. The outer column has an explicit native frame so a
+hidden form's preferred width cannot shrink the tab workspace. Active
+conversations and installation review retain the expanding thread.
+
+Agent settings is a rounded card capped at 600 points, with grouped provider
+and model fields and optional Advanced endpoint controls. The ordinary composer
+is hidden while settings or a secure-input step is active; its text is retained.
+Cancel restores editable request controls immediately. App details groups Source
+and Saved files, with shorter copy and no stale reconnect notice for a new draft.
+
+The release build and all four native self-tests above pass, including from the
+standalone bundle. Added checks cover compact height, full tab sizing before and
+after resize, settings disclosure expanding the viewport, retained composer text,
+the 600-point form and narrow stacked fields, hidden endpoint preservation and
+existing-versus-initial save actions. An independent source review found no
+concrete lifecycle or credential regression.
+
+Live native inspection used an isolated host state and then the installed app.
+It checked the compact request form, opening and closing App details, first-time
+and saved agent configuration, expanded Advanced fields, and visible form
+actions without a disabled message area or a scroll jump. No provider key was
+entered and no model request was sent during this UI inspection.
+
+The standalone build was installed at `/Applications/meecp.app` and relaunched
+through the verified native installer. Candidate and installed receipts match
+this clean implementation commit. Complete host and worker inventories, native
+input/source hashes, Metal helper receipts and deep strict code signatures pass;
+the installed native executable is byte-identical to the qualified candidate.
+The owner API returned 200, and the previously running ColGrep app returned to
+Ready with its original startup policy and port. Backend/SDK source was unchanged
+in this UI follow-up; its earlier transport and model qualification retains its
+original scope.
+
 ## Limits
 
 These fixtures qualify UI, transport and lifecycle behavior. They do not measure

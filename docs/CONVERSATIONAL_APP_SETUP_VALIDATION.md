@@ -125,6 +125,54 @@ Ready with its original startup policy and port. Backend/SDK source was unchange
 in this UI follow-up; its earlier transport and model qualification retains its
 original scope.
 
+## Native workflow retirement
+
+Clean implementation commit `7460e5f7f61c8130aa26882090074ee0101d0144`
+retires native Manual setup and Have your agent do it. Their integration is
+preserved as comments in
+[LegacyAddAppWorkflowReference.swift](../Sources/MeecpMenuBar/LegacyAddAppWorkflowReference.swift),
+with the retired presentation snippets in
+[AddAppConversationView.swift](../Sources/MeecpMenuBar/AddAppConversationView.swift).
+The native app no longer constructs, wires, polls or restores those workflow
+controllers. The attachment menu offers only source, link, model/runtime files
+and prepared-package selection. Shared agent setup, resources, configuration,
+installation/upgrade/recovery and Manage Apps remain active. Low-level
+compatibility types and separately authorized backend/CLI APIs retain their
+existing scope.
+
+The release build and all four current native UI self-tests pass, both from the
+source executable and standalone bundle. The management fixture now checks the
+active agent/shared controls and absence of retired controllers and Objective-C
+actions. Historical manual preparation/capture checks no longer form part of
+that current management result. The conversation fixture checks actionable
+legacy-reference-draft handling, retained intent, disabled reference onboarding,
+and model-file routing to resources. Nine retired native UI/operational
+entrypoints each return exit 2 with `native_setup_workflow_retired` before any
+old workflow begins.
+
+Independent review identified the remaining GGUF source-picker path and
+ambiguous reference-document choice. The source picker now offers folders,
+apps/packages and text; dropped model files receive guidance for the active
+resource action. Saved reference-role values remain readable, while the retired
+reference preparation option is disabled for new selections.
+
+Before replacement, the owner API confirmed terminal legacy preparation,
+resolution, capture and publisher-download jobs, no preparation/capture/
+resolution reservations, and no active setup, installation or tool request.
+The standalone bundle was installed and relaunched. Candidate and installed
+copies pass complete host/worker inventories, current source/native input
+hashes, Metal helper receipts and deep strict signatures; the installed native
+executable is byte-identical to the qualified candidate. Live inspection of the
+installed Add menu confirms the alternative workflow entry is absent. The
+owner API returned 200 and the running ColGrep app returned to Ready with its
+original startup policy and port. Saved draft identifiers and legacy capture/
+download references are retained as inert metadata and do not resume old native
+workflows.
+
+This documentation follow-up does not change the installed implementation.
+The prior transport, model and Metal acceptance records retain their scope;
+this retirement does not repeat or expand those claims.
+
 ## Limits
 
 These fixtures qualify UI, transport and lifecycle behavior. They do not measure

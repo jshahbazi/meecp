@@ -1,5 +1,7 @@
 """Narrow baseline admission for hardware-dependent native test cases."""
 
+import re
+
 import pytest
 
 
@@ -8,6 +10,11 @@ def require_metal_compute(result):
     # Target helpers and sandboxed executions must never turn their failures
     # into a skip. Unknown statuses, crashes, output, and incorrect arithmetic
     # in the independent control are failures too.
+    if result.returncode == 11 and not result.stderr and result.stdout:
+        identifier = re.fullmatch(rb"residency_error:([A-Za-z0-9_.]{1,128}):(-?[0-9]{1,5})\n", result.stdout)
+        if identifier and abs(int(identifier[2])) <= 65535:
+            pytest.fail("metal_compute_control_failed_residency_" + identifier[1].decode("ascii")
+                + "_" + identifier[2].decode("ascii"), pytrace=False)
     if result.stdout or result.stderr:
         pytest.fail("metal_compute_control_output_invalid", pytrace=False)
     if result.returncode == 75:

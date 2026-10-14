@@ -1,5 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#include <stdio.h>
+#include <string.h>
 
 // Independent synthetic hardware admission, never a production helper. Only
 // absent device (75), unsupported feature family (76), or Metal's explicit
@@ -30,7 +32,21 @@ int main(void) {
         // A feature family does not guarantee that the current device/driver
         // implements residency sets. Classify only Metal's documented error;
         // never emit the error description or skip an unknown allocation failure.
-        if (!residency) return residencyFailureStatus(error);
+        if (!residency) {
+            int status = residencyFailureStatus(error);
+            if (status == 11) {
+                // Only the bounded framework error identifier/code is reported.
+                // Error descriptions and userInfo may contain private data.
+                const char *domain = error ? error.domain.UTF8String : "none";
+                if (!domain || !*domain || strlen(domain) > 128 ||
+                    strspn(domain, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.") != strlen(domain))
+                    domain = "unrecognized";
+                NSInteger code = error.code;
+                if (code < -65535 || code > 65535) code = 65535;
+                printf("residency_error:%s:%ld\n", domain, (long)code);
+            }
+            return status;
+        }
         id<MTLBuffer> buffer = [device newBufferWithLength:sizeof(uint32_t) * 4
             options:MTLResourceStorageModeShared];
         if (!buffer || !buffer.contents) return 12;

@@ -64,6 +64,22 @@ def test_native_residency_error_classifier_rejects_unrecognized_errors(tmp_path)
     assert result.returncode == 0, "metal_residency_classifier_failed"
 
 
+def test_residency_error_identifier_is_fatal_without_dumping_private_error_details():
+    result = subprocess.CompletedProcess(["fixed-compute-control"], 11,
+        b"residency_error:MTLDeviceErrorDomain:999\n", b"")
+    with pytest.raises(pytest.fail.Exception, match="^metal_compute_control_failed_residency_MTLDeviceErrorDomain_999$"):
+        require_metal_compute(result)
+
+
+@pytest.mark.parametrize("output", [b"residency_error:private data:1\n",
+    b"residency_error:Metal:99999\n", b"residency_error:Metal:1\nextra\n",
+    b"residency_error:" + b"a" * 129 + b":1\n"])
+def test_residency_error_diagnostics_are_bounded_and_reject_extra_details(output):
+    result = subprocess.CompletedProcess(["fixed-compute-control"], 11, output, b"")
+    with pytest.raises(pytest.fail.Exception, match="^metal_compute_control_output_invalid$"):
+        require_metal_compute(result)
+
+
 @pytest.mark.parametrize("returncode", [-9, 1, *range(10, 21), 127])
 def test_failed_compute_control_cannot_be_skipped(returncode):
     result = subprocess.CompletedProcess(["fixed-compute-control"], returncode, b"", b"")

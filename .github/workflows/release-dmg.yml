@@ -60,12 +60,11 @@ jobs:
           MCPME_COMMAND_SIGNED_ASSET_BASE64: ${{ secrets.MCPME_COMMAND_SIGNED_ASSET_BASE64 }}
         run: uv run --locked python .github/scripts/prepare_command_asset.py --output "$RUNNER_TEMP/meecp-release-assets/command-native-v1.tar.gz"
       - name: Run tests before importing credentials
+        # This hosted profile excludes the two physical GPU acceptance tests.
+        # The default local suite still runs them; see README.md.
         run: |
-          uv run --locked python -m pytest -q -rs \
-            tests/test_native_capabilities.py \
-            tests/test_pi_native.py::test_prebuilt_probe_computes_without_offline_compiler_and_reaps \
-            tests/test_pi_tools.py::test_admitted_metal_probe_computes_and_preserves_filesystem_network_denials
-          uv run --locked python -m pytest -q --durations=30
+          uv run --locked python -m pytest -q -rs tests/test_native_capabilities.py
+          uv run --locked python -m pytest -q --durations=30 -m "not metal_hardware"
       - name: Import temporary Apple credentials
         env:
           MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}

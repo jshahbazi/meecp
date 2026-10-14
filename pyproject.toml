@@ -19,6 +19,7 @@ dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2"]
 testpaths = ["tests"]
 pythonpath = ["backend", "vendor"]
 asyncio_mode = "auto"
+markers = ["metal_hardware: requires a host with usable Metal residency sets and GPU compute"]
 
 [tool.uv]
 package = false

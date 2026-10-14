@@ -441,19 +441,21 @@ class PiToolBroker:
         return result, bool(references)
 
     def _trust_environment(self):
-        """Copy explicitly configured public CA certificates, never private material."""
+        """Stage configured certificates or native public roots for confined clients."""
         source = os.environ.get("NODE_EXTRA_CA_CERTS")
-        if not source:
-            return {}
         target = self.workspace / ".trust/ca.pem"
         if not target.is_file():
             try:
-                descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-                with os.fdopen(descriptor, "rb") as stream:
-                    info = os.fstat(stream.fileno())
-                    if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_FILE:
-                        raise ValueError()
-                    data = stream.read(MAX_FILE + 1).decode("ascii")
+                if source:
+                    descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                    with os.fdopen(descriptor, "rb") as stream:
+                        info = os.fstat(stream.fileno())
+                        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_FILE:
+                            raise ValueError()
+                        data = stream.read(MAX_FILE + 1).decode("ascii")
+                else:
+                    from .pi_trust import native_anchor_pem
+                    data = native_anchor_pem()
                 blocks = re.findall(r"-----BEGIN CERTIFICATE-----\s+[A-Za-z0-9+/=\s]+-----END CERTIFICATE-----", data)
                 if not blocks or len(blocks) > 512:
                     raise ValueError()
@@ -462,7 +464,7 @@ class PiToolBroker:
                 self._write(".trust/ca.pem", "\n".join(blocks) + "\n")
             except (OSError, UnicodeError, ValueError):
                 raise PiToolError("trust_configuration_unavailable") from None
-        return {"NODE_EXTRA_CA_CERTS": str(target), "SSL_CERT_FILE": str(target)}
+        return {"NODE_EXTRA_CA_CERTS": str(target), "SSL_CERT_FILE": str(target), "GIT_SSL_CAINFO": str(target)}
 
     def capabilities(self):
         return {"platform": {"os": platform.system(), "architecture": platform.machine()},
@@ -711,7 +713,7 @@ class PiToolBroker:
         size, observed = 0, hashlib.sha256()
         try:
             async with asyncio.timeout(FETCH_TIMEOUT):
-                async with self.network.stream(url, accept="application/octet-stream") as chunks:
+                async with self.network.stream(url, accept="application/octet-stream", follow_redirects=True) as chunks:
                     async for chunk in chunks:
                         self._check_roots()
                         if not isinstance(chunk, bytes):

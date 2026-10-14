@@ -28,7 +28,7 @@ import uuid
 import zipfile
 from pathlib import Path
 from typing import Any, AsyncIterator
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from .contracts import (MAX_ARTIFACTS, MAX_PACKAGE_BYTES, PackageError,
                         package_relative_path, validate_package)
@@ -46,6 +46,8 @@ MAX_COMPRESSION_RATIO = 200
 CHUNK_BYTES = 64 * 1024
 DISK_HEADROOM_BYTES = 16 * 1024 * 1024
 NETWORK_IDLE_SECONDS = 30
+NETWORK_CLOSE_SECONDS = 2
+MAX_REDIRECTS = 5
 DOWNLOAD_TIMEOUT_SECONDS = 3600
 _HASH = re.compile(r"^[0-9a-f]{64}$")
 _TERMINAL = {"completed", "failed", "canceled"}
@@ -137,49 +139,122 @@ def _tls_context() -> ssl.SSLContext:
     return NativeSSLContext(ssl.PROTOCOL_TLS_CLIENT)
 
 
+def _transport_url(raw: str, *, redirect=False) -> str:
+    """Validate ephemeral transport locators, including signed redirect queries."""
+    code = "download_redirect_blocked" if redirect else "invalid_download_url"
+    if (not isinstance(raw, str) or not 1 <= len(raw) <= 8192
+            or any(ord(char) < 33 or ord(char) > 126 for char in raw) or "\\" in raw or "#" in raw):
+        raise DownloadError(code)
+    try:
+        parsed = urlsplit(raw)
+        host = parsed.hostname
+        if (parsed.scheme != "https" or not host or parsed.username is not None or parsed.password is not None
+                or parsed.port not in (None, 443) or host.endswith(".") or "%" in host):
+            raise ValueError()
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            if len(host) > 253 or any(not re.fullmatch(r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?", part)
+                                      for part in host.split(".")):
+                raise ValueError()
+            authority = host.lower()
+        else:
+            if not _public_address(address):
+                raise DownloadError("download_network_blocked")
+            authority = f"[{address.compressed}]" if address.version == 6 else address.compressed
+        path = parsed.path or "/"
+        if not path.startswith("/"):
+            raise ValueError()
+        for component in (path, parsed.query):
+            if re.search(r"%(?![0-9a-fA-F]{2})|%(?:0[0-9a-f]|1[0-9a-f]|7f)", component, re.IGNORECASE):
+                raise ValueError()
+        return urlunsplit(("https", authority, path, parsed.query, ""))
+    except DownloadError:
+        raise
+    except (ValueError, UnicodeError):
+        raise DownloadError(code) from None
+
+
+async def _close_transport(writer) -> None:
+    """Bound TLS close-notify waits and abort on timeout or cancellation."""
+    writer.close()
+    try:
+        async with asyncio.timeout(NETWORK_CLOSE_SECONDS):
+            await writer.wait_closed()
+    except (OSError, TimeoutError):
+        writer.transport.abort()
+    except asyncio.CancelledError:
+        writer.transport.abort()
+        raise
+
+
 class PinnedHTTPSNetwork:
-    """No proxy, authentication, cookies, redirect, or DNS re-resolution on connect."""
+    """Direct public-IP HTTPS transport with opt-in bounded redirects."""
 
     @contextlib.asynccontextmanager
-    async def stream(self, url: str, *, accept: str = "application/zip", gzip_limit: int | None = None) -> AsyncIterator[AsyncIterator[bytes]]:
+    async def stream(self, url: str, *, accept: str = "application/zip", gzip_limit: int | None = None,
+                     follow_redirects: bool = False) -> AsyncIterator[AsyncIterator[bytes]]:
         if accept not in {"application/zip", "application/vnd.pypi.simple.v1+json", "application/octet-stream"}:
             raise DownloadError("download_response_invalid")
         if gzip_limit is not None and (accept != "application/vnd.pypi.simple.v1+json"
                 or type(gzip_limit) is not int or not 1 <= gzip_limit <= 16 * 1024**2):
             raise DownloadError("download_response_invalid")
-        parsed = urlsplit(url)
-        host = parsed.hostname
+        if type(follow_redirects) is not bool:
+            raise DownloadError("download_response_invalid")
+        current = _transport_url(url)
+        visited = {current}
         writer = None
         try:
-            async with asyncio.timeout(NETWORK_IDLE_SECONDS):
-                addresses = await asyncio.get_running_loop().getaddrinfo(
-                    host, 443, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP)
-            if not addresses or len(addresses) > 64:
-                raise DownloadError("download_network_blocked")
-            resolved = []
-            for family, _, _, _, address in addresses:
-                ip = ipaddress.ip_address(address[0])
-                if family not in (socket.AF_INET, socket.AF_INET6) or not _public_address(ip):
+            redirects = 0
+            while True:
+                parsed = urlsplit(current)
+                host = parsed.hostname
+                async with asyncio.timeout(NETWORK_IDLE_SECONDS):
+                    addresses = await asyncio.get_running_loop().getaddrinfo(
+                        host, parsed.port or 443, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP)
+                if not addresses or len(addresses) > 64:
                     raise DownloadError("download_network_blocked")
-                if (family, str(ip)) not in resolved:
-                    resolved.append((family, str(ip)))
-            # Use the platform's certificate trust, including managed macOS
-            # Keychain roots. A relocated host must not depend on OpenSSL's
-            # build-time CA path or inherited SSL_CERT_FILE/SSL_CERT_DIR.
-            # Each transfer owns its context; never patch global ssl state.
-            context = _tls_context()
-            # Connecting to the vetted numeric address cannot trigger a second DNS
-            # lookup. TLS verifies the selected URL hostname, including SNI.
-            async with asyncio.timeout(NETWORK_IDLE_SECONDS):
-                reader, writer = await asyncio.open_connection(
-                    resolved[0][1], 443, family=resolved[0][0], ssl=context,
-                    server_hostname=host, limit=8192)
-                request = (f"GET {parsed.path or '/'} HTTP/1.1\r\nHost: {parsed.netloc}\r\n"
-                           f"Accept: {accept}\r\nAccept-Encoding: {'gzip' if gzip_limit else 'identity'}\r\n"
-                           f"Connection: {'keep-alive' if gzip_limit else 'close'}\r\nUser-Agent: meecp/1\r\n\r\n")
-                writer.write(request.encode("ascii"))
-                await writer.drain()
-                headers = await self._headers(reader, allow_gzip=gzip_limit is not None)
+                resolved = []
+                for family, _, _, _, address in addresses:
+                    ip = ipaddress.ip_address(address[0])
+                    if family not in (socket.AF_INET, socket.AF_INET6) or not _public_address(ip):
+                        raise DownloadError("download_network_blocked")
+                    if (family, str(ip)) not in resolved:
+                        resolved.append((family, str(ip)))
+                context = _tls_context()
+                async with asyncio.timeout(NETWORK_IDLE_SECONDS):
+                    reader, writer = await asyncio.open_connection(
+                        resolved[0][1], 443, family=resolved[0][0], ssl=context,
+                        server_hostname=host, limit=8192)
+                    request = (f"GET {parsed.path or '/'}{'?' + parsed.query if parsed.query else ''} HTTP/1.1\r\n"
+                               f"Host: {parsed.netloc}\r\nAccept: {accept}\r\nAccept-Encoding: {'gzip' if gzip_limit else 'identity'}\r\n"
+                               f"Connection: {'keep-alive' if gzip_limit else 'close'}\r\nUser-Agent: meecp/1\r\n\r\n")
+                    writer.write(request.encode("ascii"))
+                    await writer.drain()
+                    status, headers = await self._headers(reader, allow_gzip=gzip_limit is not None,
+                                                  allow_redirect=follow_redirects)
+                if status == 200:
+                    break
+                location = headers.get(b"location")
+                if redirects >= MAX_REDIRECTS or location is None:
+                    raise DownloadError("download_redirect_blocked")
+                try:
+                    target = location.decode("ascii")
+                    if (not target or any(ord(char) < 33 or ord(char) > 126 for char in target)
+                            or "\\" in target or "#" in target):
+                        raise ValueError()
+                    next_url = _transport_url(urljoin(current, target), redirect=True)
+                except DownloadError:
+                    raise
+                except (ValueError, UnicodeError):
+                    raise DownloadError("download_redirect_blocked") from None
+                if next_url in visited:
+                    raise DownloadError("download_redirect_blocked")
+                previous, writer = writer, None
+                await _close_transport(previous)
+                visited.add(next_url)
+                current = next_url
+                redirects += 1
             chunks = self._body(reader, headers, closing=gzip_limit is None)
             yield self._gunzip(chunks, gzip_limit) if headers.get(b"content-encoding", b"").lower() == b"gzip" else chunks
         except DownloadError:
@@ -188,12 +263,7 @@ class PinnedHTTPSNetwork:
             raise DownloadError("download_network_unavailable") from None
         finally:
             if writer is not None:
-                writer.close()
-                try:
-                    async with asyncio.timeout(2):
-                        await writer.wait_closed()
-                except (OSError, asyncio.TimeoutError):
-                    pass
+                await _close_transport(writer)
 
     async def _line(self, reader: asyncio.StreamReader) -> bytes:
         async with asyncio.timeout(NETWORK_IDLE_SECONDS):
@@ -202,14 +272,15 @@ class PinnedHTTPSNetwork:
             raise DownloadError("download_response_invalid")
         return value
 
-    async def _headers(self, reader: asyncio.StreamReader, *, allow_gzip: bool = False) -> dict[bytes, bytes]:
+    async def _headers(self, reader: asyncio.StreamReader, *, allow_gzip: bool = False,
+                       allow_redirect: bool = False) -> tuple[int, dict[bytes, bytes]]:
         first = await self._line(reader)
         if not re.fullmatch(rb"HTTP/1\.[01] [0-9]{3}(?: [\x20-\x7e]*)?\r\n", first):
             raise DownloadError("download_response_invalid")
         status = int(first.split(b" ")[1])
-        if 300 <= status <= 399:
+        if 300 <= status <= 399 and (not allow_redirect or status not in {301, 302, 303, 307, 308}):
             raise DownloadError("download_redirect_blocked")
-        if status != 200:
+        if status != 200 and not 300 <= status <= 399:
             raise DownloadError("download_http_failed")
         headers: dict[bytes, bytes] = {}
         total = len(first)
@@ -239,7 +310,7 @@ class PinnedHTTPSNetwork:
             length = headers[b"content-length"]
             if not re.fullmatch(rb"[0-9]{1,20}", length) or int(length) > MAX_ARCHIVE_BYTES:
                 raise DownloadError("download_response_invalid")
-        return headers
+        return status, headers
 
     async def _gunzip(self, chunks, limit):
         import zlib

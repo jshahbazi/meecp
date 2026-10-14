@@ -42,6 +42,10 @@ Conversation polling preserves existing message views, including selected text,
 and adds/removes only changed or evicted events. Native fixtures check message
 view identity across unchanged polls, appends and eviction. Tab sizing fixtures
 check that the conversation fills its workspace before and after resizing.
+The first-run fixture disables Create app for an empty request. A lazy-window
+fixture loads the authoritative draft before creating the management window,
+then checks the restored intent, source, document role and startup choices. An
+explicit deletion still marks the request dirty; restoration does not mask edits.
 
 ## Standalone delivery
 

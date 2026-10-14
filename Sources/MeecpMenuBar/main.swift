@@ -992,7 +992,14 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         installed.onRetry = { [weak self] in if !uiPreviewMode { self?.retryHost() } }
         let installedTab = NSTabViewItem(identifier: "installed"); installedTab.view = installed; tabs.addTabViewItem(installedTab)
         let setupTab = NSTabViewItem(identifier: "setup"); setupTab.view = makeSetupWorkspace(); tabs.addTabViewItem(setupTab)
-        if !uiPreviewMode { restoreSetup(); pollImports() }
+        if !uiPreviewMode {
+            restoreSetup()
+            // Startup polling may hydrate the draft before this lazy window
+            // exists. Apply that authoritative record to the new controls;
+            // an unchanged inventory will not fetch or display it again.
+            if let draft = currentDraft { displayDraft(draft) }
+            pollImports()
+        }
         refreshWindow()
     }
 
@@ -3766,6 +3773,25 @@ extension MeecpApp {
                 "locator": directory.appendingPathComponent("pi-setup/briefs/fixture/app.md").path],
             "intent": "Public synthetic setup requirement", "document_role": "instructions", "start": false, "start_policy": "manual"]
         guard let draft = ImportDraft(row), let context = PreparationContext(importID: id, revision: 1, sourceRevision: source) else { return false }
+        var startupRow = row
+        startupRow["source"] = ["kind": "document", "revision": source,
+            "locator": directory.appendingPathComponent("source/setup.md").path]
+        startupRow["start_policy"] = "host"; startupRow["start"] = true
+        guard let startupDraft = ImportDraft(startupRow) else { return false }
+        let preloaded = MeecpApp()
+        preloaded.displayDraft(startupDraft)
+        guard preloaded.intentField == nil else { return false }
+        preloaded.makeManagementWindow()
+        guard preloaded.intentField?.string == startupDraft.intent,
+              preloaded.nameField?.stringValue == startupDraft.name,
+              preloaded.pathField?.stringValue == startupDraft.sourcePath,
+              preloaded.documentRoleField?.indexOfSelectedItem == 2,
+              preloaded.selectedPolicy == "host", preloaded.startCheck?.state == .on,
+              !preloaded.draftDirty else { return false }
+        preloaded.intentField?.string = ""
+        preloaded.textDidChange(Notification(name: NSText.didChangeNotification, object: preloaded.intentField))
+        guard preloaded.draftDirty, preloaded.requestedAppIntent.isEmpty else { return false }
+        preloaded.window?.orderOut(nil)
         app.displayDraft(draft); app.conversationComposerContext = context
         app.intentField?.string = "Public synthetic live reply"
         app.setupPlan = ["plan_id": "99999999-2222-4333-8444-555555555555"]

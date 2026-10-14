@@ -181,13 +181,28 @@ def bind_listener(port: int = 0) -> socket.socket:
         raise HostError("port_conflict", 409) from None
 
 
-def preferred_listener() -> socket.socket:
+def preferred_listener(excluded_ports=()) -> socket.socket:
+    excluded_ports = frozenset(excluded_ports)
     for port in range(19386, 19486):
+        if port in excluded_ports:
+            continue
         try:
             return bind_listener(port)
         except HostError:
             pass
-    return bind_listener()
+    rejected = []
+    try:
+        # Hold rejected ephemeral ports until selection finishes so the kernel
+        # cannot repeatedly return a registered slot's currently unbound port.
+        for _ in range(len(excluded_ports) + 1):
+            listener = bind_listener()
+            if listener.getsockname()[1] not in excluded_ports:
+                return listener
+            rejected.append(listener)
+        raise HostError("port_conflict", 409)
+    finally:
+        for listener in rejected:
+            listener.close()
 
 
 @dataclass
@@ -2012,7 +2027,8 @@ class Supervisor(UpgradeHost):
                      _import_binding: dict | None = None) -> dict:
         if set(payload) - {"package", "name", "start_policy", "start", "settings"} or not isinstance(payload.get("package"), str):
             raise HostError("invalid_install_plan")
-        if len(self.registry.list_slots()) >= 16 or len(self.plan_listeners) >= 32:
+        registered = self.registry.list_slots()
+        if len(registered) >= 16 or len(self.plan_listeners) >= 32:
             raise HostError("capacity_exceeded", 409)
         start_policy = payload.get("start_policy", "manual")
         if start_policy not in {"manual", "host"} or type(payload.get("start", False)) is not bool:
@@ -2031,11 +2047,23 @@ class Supervisor(UpgradeHost):
             raise HostError("invalid_slot_identity")
         if legacy_jev and (package.manifest.profile != "model-service" or {tool.name for tool in package.manifest.tools} != {"jevk5_decide", "jevk5_status"}):
             raise HostError("invalid_legacy_profile")
+        assigned_ports = {slot.public_port for slot in registered}
+        for held_plan, held_listener in self.plan_listeners.items():
+            try:
+                port = held_listener.getsockname()[1]
+            except OSError:
+                # A closed held socket does not revoke its published plan.
+                port = read_private_json(self.root / "plans" / (held_plan + ".json")).get("public_port")
+                if type(port) is not int or not 1024 <= port <= 65535:
+                    raise HostError("invalid_plan")
+            assigned_ports.add(port)
+        if public_port is not None and public_port in assigned_ports:
+            raise HostError("port_conflict", 409)
         snapshot = _prepared or snapshot_package(package, self.root / "staging" / plan_id / "package")
         if _import_binding is not None:
             self.imports.validate_binding(_import_binding["import_id"], _import_binding["import_revision"],
                                           _import_binding["import_digest"])
-        listener = bind_listener(public_port) if public_port is not None else preferred_listener()
+        listener = bind_listener(public_port) if public_port is not None else preferred_listener(assigned_ports)
         plan = {"plan_id": plan_id, "slot_id": slot_id, "package_digest": snapshot.digest,
                 "package_path": str(snapshot.root), "name": name, "start_policy": start_policy,
                 "start": payload.get("start", False), "public_port": listener.getsockname()[1], "legacy_jev": legacy_jev,

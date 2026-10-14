@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import re
 import stat
@@ -226,16 +227,13 @@ class ToolchainManager:
         if code != 0:
             return None
         clang = await self._find("clang", developer)
-        if clang is None:
-            return None
+        sdk = None
         code, data = await self._run(["/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-path"], developer)
-        if code != 0:
-            return None
-        try:
-            sdk = _trusted_path(data.decode("utf-8").strip(), directory=True)
-        except (UnicodeError, ValueError):
-            return None
-        metal = await self._find("metal", developer)
+        if code == 0:
+            try:
+                sdk = _trusted_path(data.decode("utf-8").strip(), directory=True)
+            except (UnicodeError, ValueError):
+                pass
         version, build = None, None
         if full_xcode:
             code, data = await self._run(["/usr/bin/xcodebuild", "-version"], developer)
@@ -243,7 +241,14 @@ class ToolchainManager:
                 match = _VERSION.fullmatch(data.decode("utf-8", "replace").strip())
                 if match:
                     version, build = match.groups()
-        roots = [developer, sdk]
+        first_launch_ready = clang is not None and sdk is not None and (not full_xcode or version is not None)
+        if not full_xcode and not first_launch_ready:
+            return None
+        # A signed installed Xcode can still require its native first-launch or
+        # license flow. Keep its trusted identity so that installing a second
+        # copy is never suggested as the remedy for missing clang/SDK lookup.
+        metal = await self._find("metal", developer) if first_launch_ready else None
+        roots = [developer, *([sdk] if sdk is not None else [])]
         for binary in (clang, metal):
             if binary is not None:
                 roots.extend(path for path in binary.parents if path.name.endswith(".xctoolchain"))
@@ -262,6 +267,7 @@ class ToolchainManager:
             "sdk": sdk,
             "metal": metal,
             "full_xcode": full_xcode,
+            "first_launch_ready": first_launch_ready,
             "apple_signature_verified": True,
             "xcode_version": version,
             "xcode_build": build,
@@ -272,10 +278,13 @@ class ToolchainManager:
         self._reads = tuple(_Directory.pin(path) for path in selected["roots"])
         self._selected = selected
         self.broker.env["DEVELOPER_DIR"] = str(selected["developer"])
-        self.broker.env["SDKROOT"] = str(selected["sdk"])
+        if selected["sdk"] is not None:
+            self.broker.env["SDKROOT"] = str(selected["sdk"])
+        else:
+            self.broker.env.pop("SDKROOT", None)
 
     async def _compiler_usable(self, selected):
-        if selected["metal"] is None:
+        if not selected["first_launch_ready"] or selected["metal"] is None:
             return False
         self._select(selected)
         # xcrun finding a shim is insufficient. Compile a fixed tiny shader
@@ -314,18 +323,36 @@ class ToolchainManager:
         if selected is not None:
             value.update(
                 developer_dir=str(selected["developer"]),
-                sdk_path=str(selected["sdk"]),
                 full_xcode=selected["full_xcode"],
+                first_launch_ready=selected["first_launch_ready"],
+                acquisition_ready=selected["full_xcode"] and selected["first_launch_ready"],
                 apple_signature_verified=selected["apple_signature_verified"],
                 xcode_version=selected["xcode_version"],
                 xcode_build=selected["xcode_build"],
-                clang_path=str(selected["clang"]),
-                clang_sha256=await asyncio.to_thread(_digest, selected["clang"]),
             )
+            if selected["sdk"] is not None:
+                value["sdk_path"] = str(selected["sdk"])
+            if selected["clang"] is not None:
+                value.update(
+                    clang_path=str(selected["clang"]), clang_sha256=await asyncio.to_thread(_digest, selected["clang"])
+                )
+            if selected["full_xcode"]:
+                value["xcodebuild_sha256"] = await asyncio.to_thread(
+                    _digest, selected["developer"] / "usr/bin/xcodebuild"
+                )
             if selected["metal"] is not None:
                 value.update(
                     metal_path=str(selected["metal"]), metal_sha256=await asyncio.to_thread(_digest, selected["metal"])
                 )
+            readiness = {
+                key: item
+                for key, item in value.items()
+                if key not in {"status", "available", "required", "acquired", "documentation"}
+            }
+            readiness["root_identities"] = [(_Directory.pin(root).identity) for root in selected["roots"]]
+            value["readiness_fingerprint"] = hashlib.sha256(
+                json.dumps(readiness, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
         if action:
             value["action_required"] = action
             value["continuation"] = "ensure_metal_toolchain"
@@ -341,27 +368,46 @@ class ToolchainManager:
             choices = await self._developer_candidates()
             selected = None
             acquisition = None
+            installed_xcode = None
             for developer in choices:
                 candidate = await self._inspect(developer)
                 if candidate is None:
                     continue
                 selected = selected or candidate
-                if candidate["full_xcode"] and acquisition is None:
-                    acquisition = candidate
+                if candidate["full_xcode"]:
+                    installed_xcode = installed_xcode or candidate
+                    if candidate["first_launch_ready"] and acquisition is None:
+                        acquisition = candidate
                 if await self._compiler_usable(candidate):
                     self._select(candidate)
                     return await self._facts(candidate, available=True, required=required)
+            selected = acquisition or installed_xcode or selected
             if selected is not None:
                 self._select(selected)
+            open_xcode = (
+                {
+                    "code": "xcode_components_or_license_required",
+                    "kind": "open_xcode",
+                    "application_path": str(selected["developer"].parent.parent),
+                }
+                if selected is not None and selected["full_xcode"]
+                else None
+            )
             if not required:
-                return await self._facts(selected, available=False, required=False)
+                return await self._facts(
+                    selected,
+                    available=False,
+                    required=False,
+                    action=open_xcode if selected is not None and not selected["first_launch_ready"] else None,
+                )
             if acquisition is None:
                 return await self._facts(
                     selected,
                     available=False,
                     required=True,
                     status="action_required",
-                    action={
+                    action=open_xcode
+                    or {
                         "code": "full_xcode_required",
                         "kind": "install_xcode",
                         "url": "https://developer.apple.com/xcode/",
@@ -379,6 +425,7 @@ class ToolchainManager:
             if refreshed is not None and await self._compiler_usable(refreshed):
                 self._select(refreshed)
                 return await self._facts(refreshed, available=True, required=True, acquired=code == 0)
+            acquisition = refreshed or acquisition
             self._select(acquisition)
             return await self._facts(
                 acquisition,

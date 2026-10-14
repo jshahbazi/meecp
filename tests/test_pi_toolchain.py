@@ -134,6 +134,54 @@ async def test_optional_missing_toolchain_does_not_download_or_select_globally(t
     assert not any(call[0][1:3] == ["--print-path"] for call in calls)
 
 
+async def test_optional_missing_prefers_ready_full_xcode_acquisition_over_clt(tmp_path, monkeypatch):
+    _patch_trust(monkeypatch)
+    clt = _tree(tmp_path, full=False, metal=False)
+    full = _tree(tmp_path, full=True, metal=False)
+    broker = FakeBroker(tmp_path)
+    runner, calls, _ = _runner(broker, [clt, full])
+    manager = ToolchainManager(broker, runner=runner, candidates=[clt, full])
+
+    result = await manager.ensure({"required": False})
+
+    assert not result["available"] and result["developer_dir"] == str(full)
+    assert result["first_launch_ready"] and result["acquisition_ready"]
+    assert len(result["readiness_fingerprint"]) == 64
+    assert broker.env["DEVELOPER_DIR"] == str(full)
+    assert not any(call[0][1:2] == ["-downloadComponent"] for call in calls)
+
+
+@pytest.mark.parametrize("unavailable", ["clang", "sdk", "version"])
+async def test_signed_installed_xcode_first_launch_gap_requests_open_not_reinstall(tmp_path, monkeypatch, unavailable):
+    _patch_trust(monkeypatch)
+    full = _tree(tmp_path, full=True, metal=False)
+    broker = FakeBroker(tmp_path)
+    runner, calls, _ = _runner(broker, [full])
+
+    async def first_launch(argv, environment, timeout=15):
+        if (
+            (unavailable == "clang" and argv[1:3] == ["--find", "clang"])
+            or (unavailable == "sdk" and argv[1:4] == ["--sdk", "macosx", "--show-sdk-path"])
+            or (unavailable == "version" and argv[1:2] == ["-version"])
+        ):
+            calls.append((argv, dict(environment), timeout))
+            return 1, b""
+        return await runner(argv, environment, timeout)
+
+    manager = ToolchainManager(broker, runner=first_launch, candidates=[full])
+    result = await manager.ensure({"required": True})
+
+    assert result["status"] == "action_required" and result["full_xcode"]
+    assert result["apple_signature_verified"] and not result["first_launch_ready"]
+    assert not result["acquisition_ready"]
+    assert result["action_required"]["kind"] == "open_xcode"
+    assert result["action_required"]["application_path"] == str(full.parent.parent)
+    assert "None" not in result.values()
+    assert not broker.runs
+    assert not any(call[0][1:2] == ["-downloadComponent"] for call in calls)
+    assert not any("-license" in call[0] or "-runFirstLaunch" in call[0] for call in calls)
+
+
 @pytest.mark.asyncio
 async def test_required_download_uses_selected_xcode_and_rechecks(tmp_path, monkeypatch):
     _patch_trust(monkeypatch)

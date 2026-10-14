@@ -64,7 +64,7 @@ retained files, verified resources and saved opaque credential references;
 interrupted conversations are not replayed. Successful preparation attaches a package to the exact draft
 revision and opens review. Preparation does not install or start the app.
 
-**Add Setup Resources** accepts model files, runtime trees and archives separately
+**Add Existing Files or Runtime…** accepts model files, runtime trees and archives separately
 from text source intake. MeeCP captures independent private copies, hashes and
 origin/license metadata, then places them under `resources/` in each attempt.
 The picker supports cancellation while capture settles. Imported resources and
@@ -73,7 +73,8 @@ their bytes before use and avoids downloading an already retained artifact.
 The source-text limit remains unchanged. Resource bounds are 16 GiB per file,
 32 GiB per collection and 64 GiB for the retained resource store; actual capture
 also requires host disk and memory admission. Captured archives are retained
-as files and must be explicitly extracted in the workspace.
+as files and must be explicitly extracted in the workspace. Selected runtime
+trees retain bundled model containers and provenance archives without opening them.
 
 A failed or canceled installation offers **Retry Installation**. This action
 uses the same verified package and effective configuration/startup choices,
@@ -188,8 +189,10 @@ exact Metal asset mount remain read-only to workspace commands.
 If a full Xcode installation or Apple's account/license/component UI is needed,
 MeeCP presents **Continue Metal Setup**, opens the appropriate Apple page or
 verified Xcode application, and periodically rechecks readiness. No terminal
-diagnosis or resource-path handoff is requested. MeeCP continues automatically
-once those tools are available. It does not silently accept an OS license or
+diagnosis or resource-path handoff is requested. Once Xcode becomes ready,
+MeeCP automatically acquires a missing Metal component and resumes the original
+tool. A failed acquisition waits for a readiness change or explicit Continue.
+It does not silently accept an OS license or
 replace the requested inference engine.
 
 Managed native commands have explicit argv, workspace-only writes, declared

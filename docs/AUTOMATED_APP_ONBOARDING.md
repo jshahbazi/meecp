@@ -1,6 +1,6 @@
 # Automated app onboarding and Metal preparation
 
-Status: implementation in progress, 2026-10-14. This plan owns the improvements requested after the Stark/ColGrep onboarding journey. MeeCP owns acquisition, environment preparation, verification and recovery; user interaction is limited to missing task requirements, credentials and unavoidable operating-system dialogs.
+Status: implemented with [scoped platform acceptance](AUTOMATED_APP_ONBOARDING_VALIDATION.md), 2026-10-14. This plan owns the improvements requested after the Stark/ColGrep onboarding journey. MeeCP owns acquisition, environment preparation, verification and recovery; user interaction is limited to missing task requirements, credentials and unavoidable operating-system dialogs.
 
 ## Contracts
 

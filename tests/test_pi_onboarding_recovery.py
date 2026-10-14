@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from meecp.imports import ImportError as DraftError
 from meecp.pi_setup import PiSetup, PiSetupError
+from meecp.pi_toolchain import ToolchainManager
 from meecp.pi_tools import PiToolBroker, PiToolError
 from meecp.preparation_capture import CapturePolicyV1
 from meecp.processes import OwnershipLost, ProcessError, _await_ownership
@@ -24,6 +25,7 @@ from test_meecp_imports import source_folder
 from test_meecp_packages import edit_manifest, make_package
 from test_pi_setup import _relock_probe_package, configure
 from test_pi_setup import native_probe_server as _probe_fixture
+from test_pi_toolchain import FakeBroker, _patch_trust, _runner, _tree
 from test_preparation_processes import group_reaper as _reaper_fixture
 
 
@@ -356,6 +358,127 @@ async def test_system_action_continues_same_tool_after_recheck_without_journalin
     assert await task == {"success": True, "output": "ready"}
     assert manager.get(record["id"])["system_action"] is None
     assert record["id"] not in manager.system_events
+
+
+def _continuation_broker(root, monkeypatch, candidates, *, successful_download_after=1):
+    root.mkdir()
+    _patch_trust(monkeypatch)
+
+    class Broker(FakeBroker):
+        async def invoke(self, name, args):
+            self.invocations.append((name, args))
+            return {"success": True, "output": "public synthetic native command completed"}
+
+    broker = Broker(root)
+    broker.invocations = []
+    broker.downloads = 0
+    broker.optional_checks = 0
+    runner, calls, _ = _runner(broker, candidates)
+
+    async def acquire(argv, environment, timeout=15):
+        if argv[1:3] == ["-downloadComponent", "MetalToolchain"]:
+            broker.downloads += 1
+            if broker.downloads >= successful_download_after:
+                path = Path(environment["DEVELOPER_DIR"]) / "Toolchains/Metal.xctoolchain/usr/bin/metal"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"public synthetic acquired compiler")
+                path.chmod(0o700)
+            else:
+                calls.append((argv, dict(environment), timeout))
+                return 1, b""
+        return await runner(argv, environment, timeout)
+
+    manager = ToolchainManager(broker, runner=acquire, candidates=candidates)
+    ensure = manager.ensure
+
+    async def counted(args):
+        result = await ensure(args)
+        if args == {"required": False}:
+            broker.optional_checks += 1
+        return result
+
+    manager.ensure = counted
+    broker.toolchain_manager = manager
+    original_wait_for = asyncio.wait_for
+
+    async def quick_poll(awaitable, timeout):
+        return await original_wait_for(awaitable, timeout=0.01 if timeout == 15 else timeout)
+
+    monkeypatch.setattr(asyncio, "wait_for", quick_poll)
+    return broker
+
+
+async def test_newly_installed_xcode_automatically_acquires_metal_then_continues_original_tool(
+    host, tmp_path, monkeypatch
+):
+    manager = host.pi_setup
+    selected, _ = draft(host, tmp_path)
+    record = record_for(manager, selected)
+    candidates = []
+    broker = _continuation_broker(tmp_path / "public-tools", monkeypatch, candidates)
+    facts = await broker.toolchain_manager.ensure({"required": True})
+    assert facts["action_required"]["kind"] == "install_xcode"
+    args = {"argv": ["public-synthetic-native-command"], "memory_mb": 256, "require_metal_compiler": True}
+    task = asyncio.create_task(
+        manager._continue_system(
+            record, broker, "native_command", args, {"success": False, "output": json.dumps(facts)}
+        )
+    )
+    try:
+        await wait_stage(manager, record, "waiting_for_system")
+        candidates.append(_tree(tmp_path / "public-tools", metal=False))
+        result = await asyncio.wait_for(task, 3)
+        assert result["success"]
+        assert broker.downloads == 1 and broker.invocations == [("native_command", args)]
+        assert manager.get(record["id"])["system_action"] is None
+        assert record["id"] not in manager.system_events
+        assert manager.public_job(record["id"])["question"] is None
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("change", ["explicit_continue", "toolchain_identity"])
+async def test_failed_metal_acquisition_waits_for_user_or_readiness_change_without_repeated_downloads(
+    host, tmp_path, monkeypatch, change
+):
+    manager = host.pi_setup
+    selected, _ = draft(host, tmp_path)
+    record = record_for(manager, selected)
+    root = tmp_path / "public-tools"
+    broker = _continuation_broker(root, monkeypatch, [], successful_download_after=2)
+    full = _tree(root, metal=False)
+    broker.toolchain_manager._candidates.append(full)
+    facts = await broker.toolchain_manager.ensure({"required": True})
+    assert facts["action_required"]["kind"] == "open_xcode" and broker.downloads == 1
+    task = asyncio.create_task(
+        manager._continue_system(
+            record,
+            broker,
+            "ensure_metal_toolchain",
+            {"required": True},
+            {"success": False, "output": json.dumps(facts)},
+        )
+    )
+    try:
+        async with asyncio.timeout(3):
+            while broker.optional_checks < 3:
+                await asyncio.sleep(0.01)
+        assert broker.downloads == 1 and not task.done()
+        if change == "explicit_continue":
+            manager.continue_system(record["id"])
+        else:
+            # A newly installed trusted control-plane binary changes readiness
+            # even when its developer directory and version label are stable.
+            (full / "usr/bin/xcodebuild").write_bytes(b"public synthetic newly installed xcodebuild")
+        assert (await asyncio.wait_for(task, 3))["success"]
+        assert broker.downloads == 2
+        assert broker.invocations == [("ensure_metal_toolchain", {"required": True})]
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 async def test_capture_disk_admission_waits_for_owned_pi_resource_work(host, tmp_path, monkeypatch):

@@ -217,6 +217,27 @@ preserved the installed app state. They qualify the focused repairs on this
 Mac; hosted CI must independently establish the runner outcome. No full local
 suite, model quality campaign or standalone app installation was repeated.
 
+## Installer CI residency admission follow-up
+
+Signed installer run `38639559404` failed before importing Apple credentials:
+5,621 tests passed, 615 skipped, and the two Metal acceptance fixtures failed
+with `metal_compute_control_failed_residency`. The unconfined control passed the
+GPU family check but could not create a residency set. The run did not retain
+Metal's error domain/code, so the precise device error remains unverified.
+
+The control now maps only `MTLDeviceErrorDomain` with
+`MTLDeviceErrorNotSupported` to a distinct unsupported-hardware status (`77`).
+Apple documents that error as an unsupported device feature; the classification
+requires the macOS 26.4 SDK and runtime. Missing errors, other domains/codes,
+unexpected output, and subsequent compute failures remain fatal. Production
+helpers and confined executions still cannot classify their failures as skips.
+
+The native regression check exercises the exact classifier with real `NSError`
+instances, including nil, incorrect-domain, and unknown-code errors. It and the
+Python admission checks passed locally together with both previously failing
+native target checks: 34 passed. This establishes local classification and
+compute behavior; the hosted runner must verify its own outcome.
+
 ## Limits
 
 These fixtures qualify UI, transport and lifecycle behavior. They do not measure

@@ -14,6 +14,8 @@ def require_metal_compute(result):
         pytest.skip("host has no Metal device; hardware compute acceptance requires a GPU")
     if result.returncode == 76:
         pytest.skip("host Metal device lacks the required residency-set feature family")
+    if result.returncode == 77:
+        pytest.skip("host Metal device explicitly reports residency sets unsupported")
     if result.returncode != 0:
         stages = {11: "residency", 12: "buffer", 13: "shader_library", 14: "function",
                   15: "pipeline", 16: "queue", 17: "command_buffer", 18: "encoder",

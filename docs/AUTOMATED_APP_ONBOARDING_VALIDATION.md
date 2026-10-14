@@ -22,6 +22,20 @@ or the commercial two-Mac benchmark.
 | Native UI | Built-app setup/resource self-tests passed. The installed UI showed Retry Installation for the preserved slot-conflict attempt and resource import in a new Pi setup. |
 | App delivery | The standalone build and installed app passed deep strict signature checks and helper receipt validation. Owner API health returned 200 and installed source hashes matched the implementation. |
 
+## Installed development build
+
+The installed build receipt identifies source commit
+`efefd6a42030abe91fad831d27f938f53051638a`. The ad hoc signed standalone app
+passed deep strict code-seal verification after installation and restart.
+Installed production source and the native helper/source hashes matched the
+build. The owner API returned HTTP 200.
+
+Acceptance then ran against the installed backend, reaper, Python runtime and
+Metal helper. Compiler readiness, native compute, actual Stark generation,
+ColGrep semantic indexing/search and owned cleanup all passed. Temporary native
+reservations were released. The existing Colgrep slot was restored to Ready
+after the update.
+
 ## Regression runs
 
 These are scoped runs, with overlap; counts are not added together.

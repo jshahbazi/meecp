@@ -2,6 +2,7 @@
 import hashlib
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import re
@@ -203,6 +204,16 @@ def test_public_metadata_exception_is_exact_value_and_path_for_one_rule_only():
     assert stark["condition"] == "AND" and stark["regexTarget"] == "secret"
     assert stark["paths"] == [r"^(?:engines/STARK_VALIDATION\.json|engines/STARK_JEVK5_VALIDATION\.json)$"]
     assert stark["regexes"] == [r"^(?:06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523|9cf04fffe3d8c3b85e439fb35c7acad0761ab51c422a8c4256d9f887c3a0be7d)$"]
+
+
+def test_current_textgen_recipe_metadata_has_an_exact_reviewed_scan_path():
+    root = SCRIPT.parents[2]
+    catalog = json.loads((root / "templates/builtin-recipes/catalog.json").read_bytes())
+    recipe = next(item for item in catalog["recipes"] if item["recipe_id"] == "mcpme.text-generation")
+    relative = (Path("templates/builtin-recipes") / recipe["directory"] / "model-provenance.json").as_posix()
+    assert relative in scanner.PUBLIC_GGUF_METADATA_PATHS
+    metadata = json.loads((root / relative).read_bytes())
+    assert metadata["tokenizer_sha256"] == scanner.PUBLIC_GGUF_METADATA_DIGEST
 
 
 def test_historical_metadata_exceptions_are_only_the_verified_value_path_pairs():

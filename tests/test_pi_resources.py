@@ -114,6 +114,22 @@ def test_acquired_archive_is_retained_without_extraction_or_false_license(tmp_pa
         capture(store, {**request, "origin": {"kind": "download", "url": "https://example.com/asset?token=transient"}})
 
 
+def test_selected_tree_retains_model_and_provenance_archives_as_opaque_files(tmp_path, monkeypatch):
+    root = tmp_path.resolve() / "native-bundle"
+    (root / "source").mkdir(parents=True)
+    (root / "weights.npz").write_bytes(b"PK synthetic opaque model container")
+    (root / "source/provenance.tar.gz").write_bytes(b"synthetic opaque source archive")
+    monkeypatch.setattr("tarfile.open", lambda *args, **kwargs: pytest.fail("capture must not extract archives"))
+    monkeypatch.setattr("zipfile.ZipFile", lambda *args, **kwargs: pytest.fail("capture must not interpret model archives"))
+    store = resources.PiResourceStore(tmp_path.resolve() / "store")
+    captured = capture(store, {"name": "runtime", "kind": "tree", "path": str(root)})
+    assert captured["file_count"] == 2
+    work = tmp_path.resolve() / "work"
+    mounted = store.materialize(IMPORT, 1, SOURCE, work, disk_ceiling_bytes=BUDGET)["resources"][0]
+    assert (work / mounted["path"] / "weights.npz").read_bytes() == (root / "weights.npz").read_bytes()
+    assert (work / mounted["path"] / "source/provenance.tar.gz").read_bytes() == (root / "source/provenance.tar.gz").read_bytes()
+
+
 @pytest.mark.parametrize("unsafe", ["symlink", "hardlink", "credential", "tree-link"])
 def test_resources_reject_unsafe_inputs_without_catalog_publication(tmp_path, unsafe):
     request = source(tmp_path)

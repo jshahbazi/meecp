@@ -151,7 +151,10 @@ def _scan(path, *, tree=False, check=lambda: None):
     def file(parent, name, relative):
         nonlocal total
         check()
-        _source_path(str(path / relative) if tree else str(path))
+        # A selected tree is an opaque input collection. Model formats such as
+        # NPZ and bundled runtime wheels remain ordinary files here; capture
+        # never inspects or expands an archive.
+        _source_path(str(path / relative) if tree else str(path), archive=True)
         details = os.stat(name, dir_fd=parent, follow_symlinks=False)
         if (not stat.S_ISREG(details.st_mode) or details.st_nlink != 1
                 or not 0 <= details.st_size <= MAX_ARTIFACT_FILE_BYTES):

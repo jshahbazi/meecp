@@ -7,10 +7,8 @@ final class AddAppConversationView: NSView {
     var onChooseSource: (() -> Void)?
     var onChoosePackage: (() -> Void)?
     var onSourceLink: (() -> Void)?
-    var onOtherWays: (() -> Void)?
     var onEditRequest: (() -> Void)?
     let contextContainer = NSStackView()
-    let alternateContainer = NSStackView()
     let reviewContainer = NSStackView()
     private let setup: PiSetupView
     private let resources: PiResourcesView
@@ -37,7 +35,6 @@ final class AddAppConversationView: NSView {
     private var detailsButton: NSButton!
     private var settingsButton: NSButton!
     private var editButton: NSButton!
-    private var agentVisible = true
     private var writable = true
     private var composerSendAllowed = true
     private var hasIntent = false
@@ -87,10 +84,7 @@ final class AddAppConversationView: NSView {
         let welcomeText = workspaceLabel("Describe your app or paste a link. MeeCP will handle setup and ask you here when it needs a choice.", size: 14, secondary: true)
         for view in [welcomeTitle, welcomeText] { welcome.addArrangedSubview(view); workspaceFill(view, in: welcome) }
         requestStack.orientation = .vertical; requestStack.alignment = .leading; requestStack.spacing = 8
-        for stack in [contextContainer, alternateContainer] {
-            stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 12
-        }
-        alternateContainer.isHidden = true
+        contextContainer.orientation = .vertical; contextContainer.alignment = .leading; contextContainer.spacing = 12
         reviewContainer.orientation = .vertical; reviewContainer.alignment = .leading; reviewContainer.spacing = 12
         reviewContainer.setAccessibilityLabel("App installation review")
         editButton = NSButton(title: "Edit request", target: self, action: #selector(editRequest))
@@ -104,7 +98,7 @@ final class AddAppConversationView: NSView {
         detailsStack.isHidden = true
         thread.orientation = .vertical; thread.alignment = .leading; thread.spacing = 14
         thread.edgeInsets = NSEdgeInsets(top: 12, left: 0, bottom: 12, right: 0)
-        for view in [contextContainer, welcome, requestStack, editButton!, setup, alternateContainer, reviewContainer, detailsStack] {
+        for view in [contextContainer, welcome, requestStack, editButton!, setup, reviewContainer, detailsStack] {
             thread.addArrangedSubview(view); workspaceFill(view, in: thread)
         }
         thread.translatesAutoresizingMaskIntoConstraints = false
@@ -120,7 +114,7 @@ final class AddAppConversationView: NSView {
             text.setAccessibilityLabel("Message the app setup agent")
         }
         attachButton = NSPopUpButton(); attachButton.pullsDown = true
-        attachButton.addItems(withTitles: ["Add…", "Repository or source…", "Paste a source link", "Model or runtime files…", "Existing app package…", "Other setup methods"])
+        attachButton.addItems(withTitles: ["Add…", "Repository or source…", "Paste a source link", "Model or runtime files…", "Existing app package…"])
         attachButton.menu?.autoenablesItems = false
         attachButton.target = self; attachButton.action = #selector(chooseAttachment)
         attachButton.setAccessibilityLabel("Add files or a source to this app")
@@ -214,14 +208,6 @@ final class AddAppConversationView: NSView {
         refresh()
     }
 
-    /// Manual preparation and external-agent handoff reuse the shared composer
-    /// and installation review without running a second Pi lifecycle.
-    func setAgentVisible(_ visible: Bool) {
-        if !visible && agentVisible { setup.dismissInlineSettings() }
-        agentVisible = visible; setup.isHidden = !visible; settingsButton.isHidden = !visible; refresh()
-    }
-
-    func setMethod(_ method: Int) { setAgentVisible(method == 0); alternateContainer.isHidden = method == 0 }
     func setPrepared(_ value: Bool) { prepared = value; refresh() }
     func setCanEditRequest(_ value: Bool) { canEditRequest = value; refresh() }
 
@@ -232,15 +218,15 @@ final class AddAppConversationView: NSView {
     }
 
     func refresh() {
-        let compact = setup.job == nil && alternateContainer.isHidden && !prepared
+        let compact = setup.job == nil && !prepared
         if compactLayout != compact {
             compactLayout = compact
             compactThreadHeight.isActive = compact
             bottomSpace.isHidden = !compact
         }
         needsLayout = true
-        composerCard.isHidden = agentVisible && setup.authorizationPresentationBlocked
-        settingsButton.isHidden = !agentVisible || setup.authorizationPresentationBlocked
+        composerCard.isHidden = setup.authorizationPresentationBlocked
+        settingsButton.isHidden = setup.authorizationPresentationBlocked
         welcome.isHidden = hasIntent || setup.job != nil
         requestStack.isHidden = !hasIntent
         editButton.isHidden = !hasIntent || !canEditRequest || !writable || setup.blocksNavigation || prepared
@@ -249,24 +235,24 @@ final class AddAppConversationView: NSView {
             statusLabel.stringValue = job.status == "running" ? job.question != nil ? "Needs your input" : job.stage == "waiting_for_system" ? "Waiting for Apple" : "Working"
                 : ["ready": "Ready to install", "interrupted": "Interrupted", "canceled": "Stopped", "failed": "Needs attention"][job.status] ?? "Draft"
         } else { statusLabel.stringValue = setup.authorizationPresentationBlocked ? "Agent settings" : hasIntent ? "Draft" : "New app" }
-        sendButton.title = agentVisible ? setup.composerActionTitle : "Save request"
+        sendButton.title = setup.composerActionTitle
         let text = composer.documentView as? NSTextView
         let hasMessage = text?.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-        let needsMessage = agentVisible && (setup.job?.active == true || !hasIntent)
-        sendButton.isEnabled = writable && composerSendAllowed && (agentVisible ? setup.composerEnabled : true) && (!needsMessage || hasMessage)
+        let needsMessage = setup.job?.active == true || !hasIntent
+        sendButton.isEnabled = writable && composerSendAllowed && setup.composerEnabled && (!needsMessage || hasMessage)
         if let text = composer.documentView as? NSTextView {
             // The root owns text storage and editability, including draft vs
             // follow-up mode; presentation never clears or revises that text.
-            text.setAccessibilityHelp(agentVisible ? setup.composerPlaceholder : "Describe the tools and behavior for this app")
+            text.setAccessibilityHelp(setup.composerPlaceholder)
             if let brief = text as? AppBriefTextView {
-                brief.placeholderText = agentVisible ? setup.composerPlaceholder : "Describe the tools and behavior for this app…"
+                brief.placeholderText = setup.composerPlaceholder
             }
         }
-        composerHint.stringValue = agentVisible && setup.job?.active == true ? "Message this setup" : "Links, files, or a description"
+        composerHint.stringValue = setup.job?.active == true ? "Message this setup" : "Links, files, or a description"
         footerHint.stringValue = setup.job?.active == true ? "You can leave this window. Setup stays available." : "Your draft and selected resources stay on this Mac."
-        settingsButton.isEnabled = agentVisible && !setup.blocksNavigation && !setup.authorizationPresentationBlocked
+        settingsButton.isEnabled = !setup.blocksNavigation && !setup.authorizationPresentationBlocked
         let sourceAllowed = writable && !resources.blocksNavigation && !setup.blocksNavigation
-        for index in [1, 2, 4, 5] { attachButton.item(at: index)?.isEnabled = sourceAllowed }
+        for index in [1, 2, 4] { attachButton.item(at: index)?.isEnabled = sourceAllowed }
         attachButton.item(at: 3)?.isEnabled = resources.canChooseResources
         attachButton.isEnabled = sourceAllowed || resources.canChooseResources
         detailsButton.title = detailsVisible ? "Hide app details" : "App details"
@@ -288,7 +274,6 @@ final class AddAppConversationView: NSView {
         case 2: detailsVisible = true; detailsStack.isHidden = false; onSourceLink?()
         case 3: detailsVisible = true; detailsStack.isHidden = false; resources.chooseExistingResources()
         case 4: onChoosePackage?()
-        case 5: onOtherWays?()
         default: break
         }
         refresh()
@@ -348,12 +333,59 @@ final class AddAppConversationView: NSView {
         guard !view.compactThreadHeight.isActive, view.bottomSpace.isHidden else { print("expanded_layout_check_failed"); return false }
         view.setPrepared(false)
         view.setComposerEnabled(false)
-        guard !view.sendButton.isEnabled, view.attachButton.isEnabled, view.attachButton.item(at: 5)?.isEnabled == true,
+        guard !view.sendButton.isEnabled, view.attachButton.isEnabled,
+              view.attachButton.numberOfItems == 5,
+              view.attachButton.item(withTitle: "Other setup methods") == nil,
+              view.attachButton.item(at: 4)?.isEnabled == true,
               !view.editButton.isHidden else { print("add_app_check_failed:edit_availability"); return false }
-        view.setAgentVisible(false); view.setComposerEnabled(true)
+        view.setComposerEnabled(true)
         var sent: String?; view.onSend = { sent = $0 }; view.sendButton.performClick(nil)
-        guard sent == "Keep responses concise", setup.isHidden, view.settingsButton.isHidden else { print("add_app_check_failed:alternate_method"); return false }
+        guard sent == "Keep responses concise", !setup.isHidden, !view.settingsButton.isHidden,
+              view.sendButton.title == setup.composerActionTitle else { print("add_app_check_failed:agent_message"); return false }
         view.update(title: "", intent: "", source: nil, context: nil, readOnly: true)
         return !view.sendButton.isEnabled && view.requestStack.isHidden
     }
 }
+
+/*
+ Retired presentation reference: Manual and Have your agent do it.
+ These alternatives are inactive. Keep this source reference for a deliberate
+ future restoration; the Add App workspace always uses the MeeCP agent.
+
+ // Former members and initialization:
+ var onOtherWays: (() -> Void)?
+ let alternateContainer = NSStackView()
+ private var agentVisible = true
+ for stack in [contextContainer, alternateContainer] {
+     stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 12
+ }
+ alternateContainer.isHidden = true
+ for view in [contextContainer, welcome, requestStack, editButton!, setup, alternateContainer, reviewContainer, detailsStack] {
+     thread.addArrangedSubview(view); workspaceFill(view, in: thread)
+ }
+ attachButton.addItems(withTitles: ["Add…", "Repository or source…", "Paste a source link", "Model or runtime files…", "Existing app package…", "Other setup methods"])
+
+ /// Manual preparation and external-agent handoff reuse the shared composer
+ /// and installation review without running a second Pi lifecycle.
+ func setAgentVisible(_ visible: Bool) {
+     if !visible && agentVisible { setup.dismissInlineSettings() }
+     agentVisible = visible; setup.isHidden = !visible; settingsButton.isHidden = !visible; refresh()
+ }
+ func setMethod(_ method: Int) { setAgentVisible(method == 0); alternateContainer.isHidden = method == 0 }
+
+ // Former refresh branches:
+ let compact = setup.job == nil && alternateContainer.isHidden && !prepared
+ composerCard.isHidden = agentVisible && setup.authorizationPresentationBlocked
+ settingsButton.isHidden = !agentVisible || setup.authorizationPresentationBlocked
+ sendButton.title = agentVisible ? setup.composerActionTitle : "Save request"
+ let needsMessage = agentVisible && (setup.job?.active == true || !hasIntent)
+ sendButton.isEnabled = writable && composerSendAllowed && (agentVisible ? setup.composerEnabled : true) && (!needsMessage || hasMessage)
+ text.setAccessibilityHelp(agentVisible ? setup.composerPlaceholder : "Describe the tools and behavior for this app")
+ brief.placeholderText = agentVisible ? setup.composerPlaceholder : "Describe the tools and behavior for this app…"
+ composerHint.stringValue = agentVisible && setup.job?.active == true ? "Message this setup" : "Links, files, or a description"
+ settingsButton.isEnabled = agentVisible && !setup.blocksNavigation && !setup.authorizationPresentationBlocked
+ for index in [1, 2, 4, 5] { attachButton.item(at: index)?.isEnabled = sourceAllowed }
+
+ // Former attachment dispatch:
+ case 5: onOtherWays?()
+*/

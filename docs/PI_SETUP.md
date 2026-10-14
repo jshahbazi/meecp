@@ -11,7 +11,9 @@ across unfamiliar projects has not been established.
 2. Use the attachment menu for a source folder, Markdown/text instructions,
    public HTTPS project link, runtime/model resources, or a prepared package.
    For a single Python or JavaScript source file, choose its containing folder.
-   Choose **Use these instructions** for a setup document.
+   Choose **Use these instructions** for a setup document. For a GGUF or other
+   model file, describe the app first and choose **Model or runtime files…**;
+   the source picker does not accept model files.
 3. Select **Create app**. If no provider is configured, the conversation shows
    **Agent settings** inline. Select the provider and exact model, and save its
    API key or compatible local endpoint. Saving continues the requested setup
@@ -49,22 +51,28 @@ working and has no pending question, the composer can send a follow-up message
 through the pinned SDK's steering API. Acceptance means that the active worker
 queued the message. It does not guarantee that a model follows the instruction.
 
-The MeeCP agent is the default setup method. **Other ways to add an app** offers
-the alternative methods below. Switching methods keeps the current description,
-source, and saved draft and shows the selected method's controls:
+The MeeCP agent is the only native preparation workflow. The former **Manual
+setup** and **Have your agent do it** choices and their native integration are
+retired. Their implementation types remain compiled for isolated compatibility
+fixtures, without app instantiation, wiring, polling or restoration.
+The conversation retains source/link attachments, model/runtime resources,
+prepared-package import, configuration, review, installation and recovery.
+Importing an existing prepared package works without first creating a draft or
+configuring a setup provider and can proceed directly to review. The Pi verifier
+currently accepts `mcp-stdio` packages; reference-document service onboarding
+remains planned.
 
-- **Manual setup** includes JSON Utilities, existing service connections, model
-  capture, publisher package downloads, and recipe-based preparation with
-  optional assistance from a configured preparation agent.
-- **Have your agent do it** lets you copy agent instructions or export a setup
-  specification directly after entering a description; either action saves the
-  draft automatically. Importing an existing prepared package also works without
-  first creating a draft. This method needs no setup model or provider
-  configuration in meecp.
+Legacy incomplete drafts with a source kind unsupported by Pi show instructions
+to create a new agent draft using source/instructions or import a prepared
+package. They cannot restart a retired workflow and are not resumed
+automatically. Their saved files and intent remain retained. Compatible Pi
+drafts keep the normal explicit resume controls, and prepared-package review
+and installation recovery remain available.
 
-Existing prepared packages can still proceed directly to review.
-Reference-document services and model-engine packages have their own supported
-paths; the Pi verifier currently accepts `mcp-stdio` packages.
+The host's preparation/import APIs and CLI remain compatibility interfaces.
+External-management consent and its authority checks remain separate from the
+retired native setup handoff. Commented reference code and the retirement scope
+are documented in [the owning conversation contract](CONVERSATIONAL_APP_SETUP.md#native-workflow-retirement).
 
 Closing the window leaves an active setup running in the host. **Cancel Setup**
 stops owned setup work. Source files and the saved draft are retained. A host

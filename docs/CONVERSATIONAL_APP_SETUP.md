@@ -16,7 +16,9 @@ preparation, questions, recovery and installation review.
    model/runtime resource or prepared-package selection. Initial provider/model
    configuration appears inline when needed. A user-authorized setup continues
    after those settings are saved, without losing the original brief or source
-   binding. Configuration alone sends no source to a provider.
+   binding. Configuration alone sends no source to a provider. Model files,
+   including GGUF, use **Model or runtime files…** with an app description;
+   they are not text-source selections.
 3. The accepted draft intent is distinct from subsequent conversation text.
    Editing or sending a reply cannot silently revise the durable draft, alter
    its source revision, or invalidate package readiness. Explicitly editing the
@@ -39,16 +41,21 @@ preparation, questions, recovery and installation review.
    plan. Its tools, declared access, startup choices and required settings remain
    reviewable. Installation progress and failed/recovery-required operations
    follow the existing controls; they do not become simulated chat outcomes.
-8. Manual setup and external-agent handoff remain available through secondary
-   choices. Their source/brief and package review remain the same draft; they do
-   not require a Pi provider or duplicate another preparation session.
+8. The MeeCP agent is the only native preparation workflow. Source/link and
+   resource selection, prepared-package import, configuration, review,
+   installation and recovery remain available in the conversation. Importing
+   an already prepared package can proceed directly to review without a Pi
+   provider. Manual setup and **Have your agent do it** have no native controls,
+   controller wiring, polling or restored execution.
 
 ## Implementation and acceptance
 
-The implementation satisfies the contracts below. Scoped native, host and
-real SDK qualification is recorded in
-[the acceptance record](CONVERSATIONAL_APP_SETUP_VALIDATION.md). Standalone
-delivery qualification is recorded there separately from source checks.
+The original integration and compact layout refinement were qualified in
+[the acceptance record](CONVERSATIONAL_APP_SETUP_VALIDATION.md). That record
+describes the source and delivered builds checked at each checkpoint; its
+earlier method-navigation checks do not establish acceptance for the subsequent
+native workflow retirement described below. Standalone delivery qualification
+is recorded separately from source checks.
 
 - Native AppKit conversation surface composed with the existing Pi, resource,
   configuration, package review and management controllers.
@@ -59,7 +66,7 @@ delivery qualification is recorded there separately from source checks.
   provider; no live account or model is needed for transport qualification.
 - Native checks for initial setup, configured/unconfigured providers, reply vs
   draft intent, stale callbacks, question changes, secret clearing, host restart,
-  saved-source/resource revision changes, package review, and method navigation.
+  saved-source/resource revision changes, package review, and workspace navigation.
 - Build/seal the standalone app and check Manage Apps and Add App navigation.
   Preserve the user's installed runtime state across the update.
 
@@ -84,4 +91,29 @@ text is retained and reappears when the step closes.
 
 App details groups Source and Saved files separately. It no longer presents
 unlabelled intake and technical information as one broad Details section.
+
+## Native workflow retirement
+
+On 2026-10-14, the user requested retirement of the native Manual setup and
+**Have your agent do it** workflows. Their native integration, actions, polling,
+restoration and layouts are preserved as commented reference material in
+[LegacyAddAppWorkflowReference.swift](../Sources/MeecpMenuBar/LegacyAddAppWorkflowReference.swift)
+and the retired alternative-method section of
+[AddAppConversationView.swift](../Sources/MeecpMenuBar/AddAppConversationView.swift).
+Legacy implementation types remain compiled for isolated compatibility
+fixtures. The app does not instantiate or wire them, poll or restore their
+workflows, or expose them through Add App. Their former native acceptance
+entrypoints report that the workflow is retired.
+
+Saved drafts and prepared packages are retained. A legacy incomplete draft
+whose source kind Pi cannot prepare shows an actionable choice to create a new
+agent draft with source/instructions or import an already prepared package.
+It does not start an old preparation controller or automatically resume a
+legacy attempt. Compatible agent drafts keep the normal explicit resume path;
+verified package review and installation recovery keep their existing paths.
+
+The host's preparation and import APIs, CLI and external-management
+authorization are separate compatibility capabilities. They retain their
+existing source, draft, grant and exact-plan checks. Retiring native workflow
+controls does not remove those contracts or broaden their authority.
 

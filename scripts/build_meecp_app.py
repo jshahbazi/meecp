@@ -11,7 +11,7 @@ import shutil
 import subprocess
 
 from build_meecp_host import (ROOT, BuildCommandError, build as build_host, project_version, run,
-                              refresh_command_inventory, refresh_command_resource_inventory)
+                              refresh_command_inventory, refresh_command_resource_inventory, refresh_native_metal_inventory)
 from build_preparation_toolchain import refresh_toolchain_manifest
 from build_pi_runtime import refresh_inventory as refresh_pi_inventory
 from prepare_json_package import prepare as prepare_json_package
@@ -359,6 +359,8 @@ def build(destination: Path, legacy_recovery_app: Path | None = None,
         refresh_command_inventory(host)
     if (host / "command-resource-execution.json").is_file():
         refresh_command_resource_inventory(host)
+    if (host / "native-metal-probe.json").is_file():
+        refresh_native_metal_inventory(host)
     refresh_postbuild_host_artifacts(host, host_receipt, expected_legacy=legacy_recovery_app is not None)
     for relative in host_receipt["artifact_sha256"]:
         host_receipt["artifact_sha256"][relative] = sha256(host / relative)

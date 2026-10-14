@@ -123,9 +123,10 @@ private func managementRequestTimeout(_ path: String, method: String) -> TimeInt
     if authorizationPath.prefix(3) == ["v1", "authorization", "requests"] &&
         (method == "GET" && authorizationPath.count == 4 ||
          method == "POST" && authorizationPath.count == 5 && authorizationPath.last == "approve") { return 300 }
+    if method == "POST" && path == "v1/pi/resources" { return 1800 }
     let preparesFiles = path == "v1/imports" || path == "v1/preparations/plan-form" || path == "v1/agent-preparations/plans" || path == "v1/agent-preparations/start" ||
         path == "v1/upgrade/apply" ||
-        ["/plan", "/attach", "/engine"].contains { path.hasSuffix($0) }
+        ["/plan", "/attach", "/engine", "/retry-install", "/resume"].contains { path.hasSuffix($0) }
     return method == "POST" && preparesFiles ? 300 : 30
 }
 
@@ -426,6 +427,9 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     private var reviewButton: NSButton?
     private var planDetailsButton: NSButton?
     private var installButton: NSButton?
+    private var retryInstallationButton: NSButton?
+    private let piResourcesView = PiResourcesView()
+    private var capturingResourcesDraft = false
     private var showInstalledButton: NSButton?
     private var reviewText: NSTextView?
     private var setupLabel: NSTextField?
@@ -598,6 +602,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         setupRequest = false; detailRequests = []; pendingAppRequests = []
         preparationView.invalidate(); recipesView.invalidate(); agentPreparationView.invalidate(); piSetupView.connectionReset()
         agentPreparationView.resetProviderConnection()
+        piResourcesView.connectionReset()
         serviceConnectionView.connectionReset()
     }
 
@@ -721,7 +726,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             self.hostAvailable = true
             self.projects = parsed.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }; self.operations = operations.compactMap(Operation.init)
             self.hostMessage = "\(parsed.filter { $0.state == "ready" }.count) ready / \(parsed.count) installed"
-            self.rebuildMenu(); self.refreshWindow(); self.pollTrackedOperations(); self.pollImports(); self.pollDownloads(); self.preparationView.poll(); self.artifactCaptureView.poll(); self.agentPreparationView.poll(); self.piSetupView.poll(); self.authorizationCoordinator.poll()
+            self.rebuildMenu(); self.refreshWindow(); self.pollTrackedOperations(); self.pollImports(); self.pollDownloads(); self.preparationView.poll(); self.artifactCaptureView.poll(); self.agentPreparationView.poll(); self.piSetupView.poll(); self.piResourcesView.poll(); self.authorizationCoordinator.poll()
             if Date().timeIntervalSince(self.lastDetailRefresh) >= 6 {
                 var selected: Set<String> = []
                 if self.dashboard.isVisible, let id = self.dashboard.selectedID { selected.insert(id) }
@@ -1129,6 +1134,39 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         appBriefCard = sourceCard
         let piCard = workspaceCard("Set up with Pi", subtitle: "Pi builds your app, asks for anything it needs, and checks that it works.", views: [piSetupView])
         piSetupCard = piCard
+        piResourcesView.request = { [weak self] path, method, body, completion in self?.request(path, method: method, body: body, completion: completion) }
+        piResourcesView.available = { [weak self] in
+            guard let self else { return false }
+            return self.hostAvailable && self.connection() != nil && !self.setupRequest && !self.stopping && !self.quitting &&
+                (self.currentDraft?.editable ?? true) && !self.artifactCaptureView.blocksNavigation && !self.agentPreparationView.blocksNavigation
+        }
+        piResourcesView.beforeAttach = { [weak self] completion in
+            guard let self else { completion(nil); return }
+            if self.currentDraft == nil {
+                self.capturingResourcesDraft = true
+                self.createPiBrief { [weak self] saved in
+                    guard let self else { completion(nil); return }
+                    self.capturingResourcesDraft = false
+                    guard saved, let draft = self.currentDraft, let source = draft.sourceRevision else { completion(nil); return }
+                    completion(PreparationContext(importID: draft.id, revision: draft.revision, sourceRevision: source))
+                }
+            } else {
+                self.saveCurrentDraft { [weak self] saved in
+                    guard let self, saved, let draft = self.currentDraft, draft.editable, let source = draft.sourceRevision else { completion(nil); return }
+                    completion(PreparationContext(importID: draft.id, revision: draft.revision, sourceRevision: source))
+                }
+            }
+        }
+        piResourcesView.onCaptured = { [weak self] object in
+            guard let self, let draft = ImportDraft(object), let source = draft.sourceRevision else { return }
+            guard let context = PreparationContext(importID: draft.id, revision: draft.revision, sourceRevision: source) else { return }
+            self.piSetupView.adopt(nil, context: context)
+            self.displayDraft(draft)
+            if let job = object["job"] as? [String: Any] { self.piSetupView.adopt(job, context: context) }
+            self.setupLabel?.stringValue = "Resources saved. MeeCP will reuse them during setup and retries."
+        }
+        piResourcesView.onStateChange = { [weak self] in self?.refreshWindow() }
+        piSetupView.addArrangedSubview(piResourcesView); workspaceFill(piResourcesView, in: piSetupView)
 
         artifactCaptureView.available = { [weak self] in
             guard let self else { return false }
@@ -1249,9 +1287,10 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         reviewScroll.heightAnchor.constraint(equalToConstant: 190).isActive = true
         let review = button("Review Package", action: #selector(reviewPackage)); self.reviewButton = review
         let install = button("Add App", action: #selector(installPackage)); self.installButton = install
+        let retryInstallation = button("Retry Installation", action: #selector(retryInstallation)); self.retryInstallationButton = retryInstallation
         install.bezelColor = .controlAccentColor
         let details = button("Package and Verification Details…", action: #selector(showPlanDetails)); self.planDetailsButton = details
-        let actions = workspaceStack([review, install, details], horizontal: true, spacing: 8)
+        let actions = workspaceStack([review, install, retryInstallation, details], horizontal: true, spacing: 8)
         let showInstalled = button("Open Installed App", action: #selector(showInstalledApp))
         self.showInstalledButton = showInstalled
         let cancelOperation = button("Cancel Operation", action: #selector(cancelSetupOperation)); self.operationCancelButton = cancelOperation
@@ -1309,6 +1348,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             !(intentField?.string ?? draft.intent).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         } ?? !(intentField?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         piSetupView.bind(preparationContext, eligible: piEligible); piSetupView.refreshAvailability()
+        piResourcesView.bind(preparationContext); piResourcesView.refreshAvailability()
         refreshActionButtons()
         if let id = pendingInstalledSelection, projects.contains(where: { $0.id == id }), management != nil {
             pendingInstalledSelection = nil; management?.select(id: id)
@@ -1368,6 +1408,9 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         reviewButton?.title = setupPlan == nil ? "Review App" : "Update Review"
         reviewButton?.isHidden = setupPlan != nil && !draftDirty
         installButton?.isEnabled = enabled && setupPlan != nil && setupOperation == nil && !draftDirty
+        let installationRetry = operation?.action == "install" && ["failed", "canceled"].contains(operation?.status ?? "") && currentDraft?.attachment != nil
+        retryInstallationButton?.isHidden = !installationRetry
+        retryInstallationButton?.isEnabled = enabled && !setupRequest && installationRetry
         planDetailsButton?.isEnabled = setupPlan != nil
         installButton?.title = upgradeTarget != nil ? "Apply Reviewed Upgrade" : startCheck?.state == .on ? "Add & Start App" : "Add App"
         startCheck?.title = upgradeTarget == nil ? "Start after install" : "Keep running after upgrade"
@@ -1408,7 +1451,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private var intakeEnabled: Bool {
-        !uiPreviewMode && !setupRequest && !stopping && !quitting && !artifactCaptureView.blocksNavigation && !agentPreparationView.blocksNavigation && !piSetupView.blocksNavigation && connection() != nil
+        !uiPreviewMode && !setupRequest && !stopping && !quitting && !artifactCaptureView.blocksNavigation && !agentPreparationView.blocksNavigation && !piSetupView.blocksNavigation && !piResourcesView.blocksNavigation && connection() != nil
     }
 
     private var bundledStarterPackage: URL? {
@@ -2112,7 +2155,8 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     private func createPiBrief(completion: @escaping (Bool) -> Void) {
-        guard intakeEnabled, currentDraft == nil else { completion(false); return }
+        guard intakeEnabled || capturingResourcesDraft && hostAvailable && connection() != nil && !setupRequest && !stopping && !quitting,
+              currentDraft == nil else { completion(false); return }
         let intent = (intentField?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !intent.isEmpty else { completion(false); return }
         let name = (nameField?.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2324,6 +2368,10 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
     }
 
     @objc private func reviewPackage() {
+        preparePackageReview(installWhenReady: false)
+    }
+
+    private func preparePackageReview(installWhenReady: Bool) {
         if currentDraft?.attachment != nil || upgradeTarget != nil {
             guard let settings = try? configurationView.settings() else {
                 setupLabel?.stringValue = "Complete the required settings and select an available saved secret."; return
@@ -2346,6 +2394,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                 }
             }
             self.setupRequest = true; self.setupLabel?.stringValue = "Verifying prepared artifacts…"; self.refreshWindow()
+            let expectedDraft = self.currentDraft
             self.request(self.upgradeTarget == nil ? "v1/install/plan" : "v1/upgrade/plan", method: "POST", body: payload) { [weak self] object, code in
                 guard let self = self else { return }; self.setupRequest = false
                 guard let object = object, let id = object["plan_id"] as? String, validUUID(id), object["package"] is [String: Any] else {
@@ -2354,6 +2403,11 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                 self.setupPlan = object; self.setupOperation = nil; self.reviewText?.string = self.reviewSummary(object)
                 self.setupLabel?.stringValue = self.upgradeTarget == nil ? "Review the tools and declared access. Add App applies this exact plan." : "Review the replacement tools, configuration, and data policy. Apply Reviewed Upgrade applies this exact plan."
                 self.persistSetup(); self.refreshWindow(); self.pollImports()
+                if installWhenReady, self.upgradeTarget == nil, let expectedDraft,
+                   self.currentDraft?.id == expectedDraft.id, self.currentDraft?.revision == expectedDraft.revision,
+                   object["package_digest"] as? String == expectedDraft.packageDigest {
+                    self.installPackage()
+                }
             }
         }
     }
@@ -2368,6 +2422,24 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             }
             self.setupOperation = operation.id; self.trackedOperations.insert(operation.id); self.operations.insert(operation, at: 0)
             self.setupLabel?.stringValue = operation.label; self.persistSetup(); self.refreshWindow(); self.poll()
+        }
+    }
+
+    @objc private func retryInstallation() {
+        guard !setupRequest, let draft = currentDraft, let operation = setupOperation.flatMap({ id in operations.first { $0.id == id } }),
+              operation.action == "install", ["failed", "canceled"].contains(operation.status), draft.attachment != nil else { return }
+        setupRequest = true; setupLabel?.stringValue = "Reusing your verified app for another installation…"; refreshWindow()
+        let expected = importViewGeneration
+        request("v1/imports/" + draft.id + "/retry-install", method: "POST", body: ["revision": draft.revision]) { [weak self] object, code in
+            guard let self else { return }; self.setupRequest = false
+            guard expected == self.importViewGeneration, self.currentDraft?.id == draft.id,
+                  let object, let retry = ImportDraft(object), retry.packageDigest == draft.packageDigest,
+                  let source = retry.sourceRevision,
+                  let context = PreparationContext(importID: retry.id, revision: retry.revision, sourceRevision: source) else {
+                self.setupLabel?.stringValue = self.draftError(code ?? "installation_retry_unavailable"); self.refreshWindow(); return
+            }
+            self.piSetupView.adopt(nil, context: context)
+            self.displayDraft(retry); self.preparePackageReview(installWhenReady: true)
         }
     }
 
@@ -3809,6 +3881,13 @@ if CommandLine.arguments.dropFirst().first == "--pi-setup-ui-self-test" {
     _ = NSApplication.shared
     let passed = PiSetupView.contractSelfTest()
     print(passed ? "pi_setup_ui_contracts_passed" : "pi_setup_ui_contracts_failed")
+    exit(passed ? 0 : 1)
+}
+
+if CommandLine.arguments.dropFirst().first == "--pi-resources-ui-self-test" {
+    _ = NSApplication.shared
+    let passed = PiResourcesView.selfTest()
+    print(passed ? "pi_resources_ui_contracts_passed" : "pi_resources_ui_contracts_failed")
     exit(passed ? 0 : 1)
 }
 

@@ -104,7 +104,7 @@ worker only advertises these host tools:
 | `write_file` | Writes a bounded UTF-8 file inside the private workspace. |
 | `run_command` | Runs an explicit argument array with workspace writes, selected read access, and owned process lifetime. Network access is an explicit option. |
 | `start_process` / `read_process` / `stop_process` | Starts, inspects, and reaps temporary services or background work owned by this setup. |
-| `fetch_url` | Downloads a bounded public HTTPS file through the host's address, redirect, and transfer policy; an expected SHA-256 can be supplied. |
+| `fetch_url` | Downloads a bounded public HTTPS file, following up to five validated HTTPS redirects; an expected SHA-256 can be supplied. |
 | `extract_archive` | Unpacks downloaded runtime, toolchain, or source archives into the workspace. |
 | `prepare_environment` | Uses an available private-runtime convenience helper. |
 | `install_dependencies` | Uses an available dependency-manager convenience helper and retains locked dependency metadata. |
@@ -124,6 +124,25 @@ the requested wildcard bind address from an explicit loopback bind. Generated
 local services must bind to loopback and authenticate their routes. Tool results return
 to the in-memory coding session so the agent can fix compilation or test
 failures. Runtime identity and hashes are checked before launching Pi.
+
+Setup downloads support ordinary release and model-host redirects. Each hop
+resolves and checks every destination address, connects to a vetted public IP,
+and verifies TLS against that hop's hostname. Downgrades, credentials in URLs,
+private destinations, loops, malformed responses, and excess hops are rejected.
+Server-issued signed query strings remain transient transport data; the host
+does not return or persist them. Download limits and supplied hashes still
+apply. The separate pinned prepared-package ZIP intake retains its direct-URL
+contract described in [Pinned package downloads](PINNED_DOWNLOADS.md).
+
+Network-enabled setup commands receive a private, certificate-only CA bundle.
+An explicitly configured host CA file takes precedence; otherwise the host
+exports the Mac's default trusted public anchors. Git receives `GIT_SSL_CAINFO`,
+and compatible clients receive `SSL_CERT_FILE` and `NODE_EXTRA_CA_CERTS`. Trust
+is staged once per workspace. Certificate and hostname verification stay
+enabled. Setup commands receive no added Keychain or private-key access.
+
+The [download and command-trust validation record](PI_NETWORK_VALIDATION.md)
+identifies the checked public release and native Git paths.
 
 Commands can receive explicit nonsecret environment values. `credentials` maps
 environment names to opaque secret IDs requested during that job. The host

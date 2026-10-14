@@ -309,7 +309,7 @@ async def test_fetch_streams_into_private_file_and_verifies_hash(broker):
     assert result["success"] is True
     assert json.loads(result["output"]) == {"path": "downloads/test.whl", "size": len(data), "sha256": digest}
     assert (broker.workspace / "downloads/test.whl").read_bytes() == data
-    assert broker.network.calls[0][1] == {"accept": "application/octet-stream"}
+    assert broker.network.calls[0][1] == {"accept": "application/octet-stream", "follow_redirects": True}
     assert not list((broker.workspace / "downloads").glob(".pi-tool-*"))
 
 

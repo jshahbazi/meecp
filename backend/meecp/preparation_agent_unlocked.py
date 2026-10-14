@@ -13,7 +13,7 @@ from .preparation_components import ComponentReference, PreparationDescriptorV2,
 from .preparation_contracts import PreparationError, canonical_bytes, contract_digest
 from .preparation_agent_adapter import AgentAdapterInput
 
-COMPONENT_ID, VERSION = "agent-unlocked-python-adapter-v1", "1.0.0"
+COMPONENT_ID, VERSION = "agent-unlocked-python-adapter-v1", "1.0.4"
 
 
 def component_catalog():

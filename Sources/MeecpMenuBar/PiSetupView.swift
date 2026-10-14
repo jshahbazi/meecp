@@ -1,4 +1,5 @@
 import AppKit
+import AppInstallation
 import Foundation
 
 private func piIdentifier(_ value: Any?) -> String? {
@@ -50,12 +51,13 @@ struct PiSetupJob {
     let stage: String
     let errorCode: String?
     let question: PiSetupQuestion?
+    let systemAction: [String: Any]?
 
     init?(_ object: [String: Any]) {
         guard let id = preparationUUID(object["id"]), let importID = preparationUUID(object["import_id"]),
               let revision = preparationInteger(object["revision"]), revision > 0,
               let sourceRevision = preparationText(object["source_revision"], maximum: 256),
-              let status = object["status"] as? String, ["running", "ready", "failed", "canceled"].contains(status),
+              let status = object["status"] as? String, ["running", "ready", "failed", "canceled", "interrupted"].contains(status),
               let stage = preparationCode(object["stage"]) else { return nil }
         if let value = object["code"], !(value is NSNull), preparationCode(value) == nil { return nil }
         let question: PiSetupQuestion?
@@ -68,6 +70,7 @@ struct PiSetupJob {
         self.sourceRevision = sourceRevision
         self.status = status; self.stage = stage; self.errorCode = preparationCode(object["code"])
         self.question = question
+        self.systemAction = object["system_action"] as? [String: Any]
     }
 
     var active: Bool { status == "running" }
@@ -216,6 +219,16 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     var onReady: ((PiSetupJob) -> Void)?
     var onStateChange: (() -> Void)?
     var onJobChange: ((String?) -> Void)?
+    var applicationLaunchExclusions: [URL] = [FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/mcpme", isDirectory: true)]
+    private var verifyXcodeApplication: (String, [URL], @escaping (URL?) -> Void) -> Void = { path, roots, completion in
+        DispatchQueue.global(qos: .userInitiated).async {
+            let app = XcodeApplication.verifiedURL(for: path, excluding: roots)
+            DispatchQueue.main.async { completion(app) }
+        }
+    }
+    private var openSystemURL: (URL) -> Bool = { NSWorkspace.shared.open($0) }
+    private var systemVerification: UUID?
     private(set) var job: PiSetupJob?
     private(set) var errorCode: String?
     private var context: PreparationContext?
@@ -224,7 +237,7 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     private var settingsLoading = false
     private var busy = false
     private var polling = false
-    private var epoch: UInt64 = 0
+    private var epoch: UInt64 = 0 { didSet { systemVerification = nil } }
     private var deliveredReady: String?
     private var restoredJobID: String?
     private let modelLabel = workspaceLabel("Loading setup model…", size: 12, secondary: true)
@@ -243,6 +256,7 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     private var cancelButton: NSButton!
     private var retryButton: NSButton!
     private var settingsButton: NSButton!
+    private var systemButton: NSButton!
     private let settingsView = PiSettingsView()
     private var settingsWindow: NSWindow?
     private var modelRow: NSView!
@@ -261,6 +275,8 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         cancelButton = NSButton(title: "Cancel Setup", target: self, action: #selector(cancelSetup))
         retryButton = NSButton(title: "Refresh Status", target: self, action: #selector(refreshStatus))
         settingsButton = NSButton(title: "Model Settings…", target: self, action: #selector(showSettings))
+        systemButton = NSButton(title: "Finish Metal Setup…", target: self, action: #selector(openSystemSetup))
+        systemButton.isHidden = true
         answerButton = NSButton(title: "Continue", target: self, action: #selector(answerQuestion))
         answerField.isAutomaticTextCompletionEnabled = false; answerField.completes = false
         answerField.hasVerticalScroller = true; answerField.numberOfVisibleItems = 6
@@ -276,7 +292,7 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         progress.style = .spinning; progress.controlSize = .small; progress.isDisplayedWhenStopped = false
         modelRow = workspaceStack([modelLabel, settingsButton!], horizontal: true)
         let statusRow = workspaceStack([progress, status], horizontal: true)
-        actionRow = workspaceStack([startButton!, cancelButton!, retryButton!], horizontal: true)
+        actionRow = workspaceStack([startButton!, cancelButton!, retryButton!, systemButton!], horizontal: true)
         for view in [modelRow!, notice, actionRow!, statusRow, errorDetail, questionView] {
             addArrangedSubview(view); workspaceFill(view, in: self)
         }
@@ -298,6 +314,12 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
             clearQuestion()
             onJobChange?(nil)
         }
+        if self.context != context {
+            // A save can advance this import while its previous status request
+            // is still outstanding. Invalidate that reply and release its latch
+            // so the new exact binding can be reconciled immediately.
+            epoch &+= 1; polling = false; settingsLoading = false
+        }
         self.context = context; self.eligible = eligible
         refreshAvailability()
         deliverReady()
@@ -306,6 +328,18 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     func restore(_ id: String) {
         guard preparationUUID(id) != nil, job == nil else { return }
         restoredJobID = id; refreshAvailability()
+    }
+
+    func adopt(_ object: [String: Any]?, context: PreparationContext) {
+        if let object {
+            guard let next = PiSetupJob(object), next.importID == context.importID,
+                  next.revision == context.revision, next.sourceRevision == context.sourceRevision else { return }
+            epoch &+= 1; busy = false; polling = false; restoredJobID = nil
+            self.context = context; job = next; onJobChange?(next.id); showJob()
+        } else {
+            epoch &+= 1; busy = false; polling = false; restoredJobID = nil
+            self.context = context; job = nil; deliveredReady = nil; clearQuestion(); onJobChange?(nil); refreshAvailability()
+        }
     }
 
     func connectionReset() {
@@ -319,8 +353,8 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         let enabled = available?() == true
         let active = job?.active == true || restoredJobID != nil || busy
         let configured = settings?.configured == true
-        let retryState = job?.status == "failed" || job?.status == "canceled"
-        startButton.title = configured && retryState ? "Try Again" : configured ? "Set Up App" : "Configure Model"
+        let retryState = ["failed", "canceled", "interrupted"].contains(job?.status ?? "")
+        startButton.title = configured && job?.status == "interrupted" ? "Resume Setup" : configured && retryState ? "Try Again" : configured ? "Set Up App" : "Configure Model"
         startButton.action = configured ? #selector(startSetup) : #selector(showSettings)
         startButton.isEnabled = enabled && !active && (configured ? eligible && settings?.ready == true : settings != nil)
         cancelButton.isHidden = job?.active != true
@@ -332,7 +366,9 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         notice.isHidden = active
         startButton.isHidden = active
         retryButton.isHidden = active || (errorCode == nil && restoredJobID == nil)
-        actionRow.isHidden = startButton.isHidden && cancelButton.isHidden && retryButton.isHidden
+        systemButton.isHidden = job?.active != true || job?.stage != "waiting_for_system" || job?.systemAction == nil
+        systemButton.isEnabled = enabled && !busy && systemVerification == nil && !systemButton.isHidden
+        actionRow.isHidden = startButton.isHidden && cancelButton.isHidden && retryButton.isHidden && systemButton.isHidden
         errorDetail.isHidden = errorDetail.stringValue.isEmpty
         if let settings {
             modelLabel.stringValue = settings.configured ? "Setup model: " + settings.provider + " / " + settings.model : "Choose a model to set up your apps."
@@ -389,7 +425,7 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         case "pi_runtime_unavailable", "pi_runtime_changed": return "The bundled setup runtime is unavailable. Rebuild or reinstall meecp, then try again."
         case "pi_job_not_found": return "This setup run is no longer available. Start it again."
         case "pi_source_changed": return "The selected source changed during setup. Choose the source again and retry."
-        case "pi_interrupted": return "Setup was interrupted. Start it again to resume from the saved draft."
+        case "pi_interrupted": return "Setup was interrupted. Resume using your saved files and resources."
         case "pi_deadline_exceeded": return "Setup took too long to finish. Check the source and try again."
         case "pi_credentials_unavailable": return "A requested app credential is unavailable. Try setup again and provide the credential when asked."
         case "pi_provider_auth_failed": return "The provider rejected the API key. Check Model Settings and try again."
@@ -402,6 +438,8 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         case "pi_question_changed": return "The setup question changed. Refresh the setup and answer the new question."
         case "pi_resource_blocked": return "The Mac cannot run another setup right now. Close other setup work and try again."
         case "pi_canceled", "canceled": return "Setup was canceled. Your draft is still available to try again."
+        case "pi_xcode_untrusted": return "MeeCP could not verify this application as Apple Xcode. Install Xcode from Apple or refresh Metal setup."
+        case "pi_system_action_failed": return "The Apple setup application could not open. Refresh Metal setup and try again."
         default: return "Setup could not finish. Check the draft and try again."
         }
     }
@@ -445,11 +483,14 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         beforeStart { [weak self] context in
             guard let self, let context, self.available?() == true, !self.blocksNavigation,
                   self.context == context, self.eligible, self.settings?.ready == true, let request = self.request else { return }
-            self.epoch &+= 1; self.busy = true; self.errorCode = nil; self.errorDetail.stringValue = ""; self.deliveredReady = nil
+            self.epoch &+= 1; self.busy = true; self.polling = false
+            self.errorCode = nil; self.errorDetail.stringValue = ""; self.deliveredReady = nil
             self.clearQuestion()
             self.status.stringValue = "Starting app setup…"; self.refreshAvailability(); self.onStateChange?()
             let expected = self.epoch
-            request("v1/pi/jobs", "POST", ["import_id": context.importID, "revision": context.revision]) { [weak self] object, code in
+            let resumable = self.job.map { ["failed", "canceled", "interrupted"].contains($0.status) && $0.importID == context.importID && $0.revision == context.revision && $0.sourceRevision == context.sourceRevision && $0.errorCode != "pi_ownership_lost" } == true
+            let endpoint = resumable ? "v1/pi/jobs/" + self.job!.id + "/resume" : "v1/pi/jobs"
+            request(endpoint, "POST", ["import_id": context.importID, "revision": context.revision]) { [weak self] object, code in
                 guard let self, expected == self.epoch else { return }
                 self.busy = false
                 guard let object, let job = PiSetupJob(object), job.importID == context.importID, job.revision == context.revision,
@@ -469,10 +510,15 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         case "running":
             let stages = ["starting": "Starting Pi…", "preparing": "Preparing the workspace…", "running": "Pi is setting up your app…",
                           "thinking": "Pi is working on your app…", "waiting_for_user": "Pi needs an answer to continue.",
+                          "preflight": "Checking your Mac and prerequisites…", "preparing_resources": "Preparing retained resources…",
+                          "preparing_metal": "Preparing Metal tools automatically…", "native_testing": "Testing the native runtime…",
+                          "waiting_for_system": "Finish Apple's tool setup. MeeCP will continue automatically.",
+                          "waiting_for_resources": "Waiting for available GPU and memory. Setup will continue automatically.",
                           "building": "Building your app…", "verifying": "Verifying the prepared app…", "attaching": "Preparing installation review…"]
             status.stringValue = stages[job.stage] ?? "Setting up your app: " + job.stage.replacingOccurrences(of: "_", with: " ") + "…"
         case "ready": status.stringValue = "App prepared. Review its tools and access before adding it."
         case "canceled": status.stringValue = "App setup canceled. Your source and draft are kept."
+        case "interrupted": status.stringValue = "Setup interrupted by a restart. Your files and resources are saved. Resume Setup to continue."
         default: status.stringValue = Self.userMessage(for: job.errorCode ?? "pi_setup_failed")
         }
         refreshAvailability(); onStateChange?()
@@ -491,8 +537,23 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     func poll(force: Bool = false) {
         guard available?() == true else { return }
         if settings == nil, !settingsLoading, errorCode == nil { loadSettings() }
-        guard !busy, !polling, let id = restoredJobID ?? job?.id, force || restoredJobID != nil || job?.active == true,
-              let request else { return }
+        guard !busy, !polling, let request else { return }
+        if let context {
+            polling = true; let expected = epoch
+            request("v1/pi/current", "POST", ["import_id": context.importID, "revision": context.revision, "source_revision": context.sourceRevision]) { [weak self] object, code in
+                guard let self, expected == self.epoch, self.context == context else { return }
+                self.polling = false
+                guard let object else { self.fail(code ?? "pi_job_invalid"); return }
+                if let row = object["job"] as? [String: Any], let next = PiSetupJob(row),
+                   next.importID == context.importID, next.revision == context.revision, next.sourceRevision == context.sourceRevision {
+                    self.restoredJobID = nil; self.job = next; self.onJobChange?(next.id); self.showJob()
+                } else if object["job"] is NSNull {
+                    self.restoredJobID = nil; self.job = nil; self.onJobChange?(nil); self.refreshAvailability()
+                } else { self.fail("pi_job_invalid") }
+            }
+            return
+        }
+        guard let id = restoredJobID ?? job?.id, force || restoredJobID != nil || job?.active == true else { return }
         polling = true; let expected = epoch; let previous = job
         request("v1/pi/jobs/" + id, "GET", nil) { [weak self] object, code in
             guard let self, expected == self.epoch else { return }
@@ -506,6 +567,36 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
             }
             self.restoredJobID = nil; self.job = next; self.showJob()
         }
+    }
+
+    @objc private func openSystemSetup() {
+        guard available?() == true, !busy, systemVerification == nil, let job, job.active,
+              job.stage == "waiting_for_system", let action = job.systemAction,
+              let kind = action["kind"] as? String else { return }
+        if kind == "install_xcode", action["url"] as? String == "https://developer.apple.com/xcode/",
+           let url = URL(string: "https://developer.apple.com/xcode/") {
+            guard openSystemURL(url) else { fail("pi_system_action_failed"); return }
+            continueSystem(job)
+        } else if kind == "open_xcode", let path = action["application_path"] as? String {
+            let verification = UUID(), expected = epoch
+            systemVerification = verification; refreshAvailability()
+            verifyXcodeApplication(path, applicationLaunchExclusions) { [weak self] app in
+                guard let self, self.systemVerification == verification else { return }
+                self.systemVerification = nil; self.refreshAvailability()
+                guard expected == self.epoch, self.available?() == true,
+                      let current = self.job, current.active, current.stage == "waiting_for_system",
+                      current.id == job.id, current.importID == job.importID,
+                      current.revision == job.revision, current.sourceRevision == job.sourceRevision,
+                      (current.systemAction as NSDictionary?)?.isEqual(to: action) == true else { return }
+                guard let app else { self.fail("pi_xcode_untrusted"); return }
+                guard self.openSystemURL(app) else { self.fail("pi_system_action_failed"); return }
+                self.continueSystem(current)
+            }
+        }
+    }
+
+    private func continueSystem(_ job: PiSetupJob) {
+        request?("v1/pi/jobs/" + job.id + "/continue-system", "POST", [:]) { [weak self] _, _ in self?.poll(force: true) }
     }
 
     @objc func cancelSetup() {
@@ -583,6 +674,10 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
               !view.status.stringValue.contains("pi_settings_invalid") else { return false }
         row["status"] = "running"; row["stage"] = "building"; row["code"] = NSNull(); row.removeValue(forKey: "question")
         var postedRevision: Int?
+        var postedEndpoint: String?
+        var currentQueries = 0
+        var validCurrentRequests = true
+        let nextJobID = "66666666-2222-4333-8444-555555555555"
         var stalePoll: (([String: Any]?, String?) -> Void)?
         var readyCount = 0
         view.onReady = { _ in readyCount += 1 }
@@ -590,29 +685,190 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         view.request = { path, method, body, completion in
             if path == "v1/pi/settings" { completion(settings, nil) }
             else if path == "v1/pi/jobs", method == "POST" {
-                postedRevision = preparationInteger(body?["revision"]); completion(row, nil)
+                postedRevision = preparationInteger(body?["revision"]); postedEndpoint = path; completion(row, nil)
+            } else if path == "v1/pi/jobs/" + jobID + "/resume", method == "POST" {
+                postedRevision = preparationInteger(body?["revision"]); postedEndpoint = path
+                var next = row; next["id"] = nextJobID; completion(next, nil)
             } else if path.hasSuffix("/cancel") {
                 var canceled = row; canceled["status"] = "canceled"; canceled["stage"] = "canceled"; completion(canceled, nil)
-            } else { stalePoll = completion }
+            } else if path == "v1/pi/current" {
+                currentQueries += 1
+                validCurrentRequests = validCurrentRequests && method == "POST" && body?["import_id"] as? String == importID &&
+                    preparationInteger(body?["revision"]) == 1 && body?["source_revision"] as? String == source
+                stalePoll = completion
+            }
         }
         view.bind(original, eligible: true); view.poll()
         view.beforeStart = { completion in view.bind(revised, eligible: true); completion(revised) }
         view.startSetup()
-        guard postedRevision == 2, view.blocksNavigation, view.cancelButton.isEnabled else { return false }
+        guard postedRevision == 2, postedEndpoint == "v1/pi/jobs", validCurrentRequests, currentQueries == 1,
+              view.blocksNavigation, view.cancelButton.isEnabled else { return false }
         view.poll(); view.cancelSetup()
         row["status"] = "ready"; row["stage"] = "ready"
-        stalePoll?(row, nil)
+        stalePoll?(["job": row], nil)
         guard view.job?.status == "canceled", !view.blocksNavigation, readyCount == 0,
               view.startButton.title == "Try Again" else { return false }
         view.startSetup()
-        guard view.job?.status == "ready", readyCount == 1 else { return false }
+        guard view.job?.status == "ready", view.job?.id == nextJobID, readyCount == 1,
+              postedEndpoint == "v1/pi/jobs/" + jobID + "/resume", postedRevision == 2 else { return false }
         view.bind(revised, eligible: false); view.bind(revised, eligible: false)
         guard readyCount == 1 else { return false }
-        let resumed = PiSetupView(); resumed.available = { true }; resumed.request = { path, _, _, completion in completion(path == "v1/pi/settings" ? settings : row, nil) }
+
+        // Saving a revision and starting setup can both supersede an in-flight
+        // current-job request. Its late reply must not pin the polling latch or
+        // overwrite the new context and attempt.
+        let rebinding = PiSetupView(); rebinding.available = { true }
+        rebinding.settings = PiSettingsMetadata(settings); rebinding.bind(original, eligible: true)
+        var pendingCurrent: [(([String: Any]?, String?) -> Void)] = []
+        var rebindingReady = 0
+        var freshRow = row; freshRow["id"] = nextJobID; freshRow["revision"] = 2
+        freshRow["status"] = "running"; freshRow["stage"] = "preflight"
+        rebinding.onReady = { _ in rebindingReady += 1 }
+        rebinding.request = { path, method, body, completion in
+            if path == "v1/pi/current", method == "POST" { pendingCurrent.append(completion) }
+            else if path == "v1/pi/jobs", method == "POST", preparationInteger(body?["revision"]) == 2 {
+                completion(freshRow, nil)
+            }
+        }
+        rebinding.poll(); rebinding.bind(revised, eligible: true); rebinding.poll()
+        guard pendingCurrent.count == 2 else { return false }
+        var oldReady = row; oldReady["revision"] = 1
+        pendingCurrent[0](["job": oldReady], nil)
+        guard rebinding.job == nil, rebindingReady == 0 else { return false }
+        pendingCurrent[1](["job": NSNull()], nil)
+        rebinding.poll()
+        guard pendingCurrent.count == 3 else { return false }
+        rebinding.beforeStart = { completion in completion(revised) }
+        rebinding.startSetup(); rebinding.poll()
+        guard pendingCurrent.count == 4, rebinding.job?.id == nextJobID else { return false }
+        pendingCurrent[2](["job": NSNull()], nil)
+        guard rebinding.job?.id == nextJobID else { return false }
+        freshRow["status"] = "ready"; freshRow["stage"] = "ready"
+        pendingCurrent[3](["job": freshRow], nil)
+        guard rebindingReady == 1, rebinding.job?.status == "ready", !rebinding.blocksNavigation else { return false }
+
+        let resumed = PiSetupView(); resumed.available = { true }
+        var restoredGET = false
+        resumed.request = { path, method, body, completion in
+            if path == "v1/pi/settings" { completion(settings, nil) }
+            else if path == "v1/pi/jobs/" + jobID && method == "GET" && body == nil {
+                restoredGET = true; completion(row, nil)
+            } else if path == "v1/pi/current" && method == "POST" { completion(["job": row], nil) }
+        }
         resumed.onReady = { _ in readyCount += 1 }; resumed.restore(jobID); resumed.poll()
-        guard readyCount == 1 else { return false }
+        guard readyCount == 1, restoredGET else { return false }
         resumed.bind(revised, eligible: false)
         guard readyCount == 2 && !resumed.blocksNavigation else { return false }
+
+        // A persisted canceled attempt cannot pin polling to its old ID. The
+        // current-job route supplies the unique active attempt for this binding.
+        let authoritative = PiSetupView(); authoritative.available = { true }
+        authoritative.settings = PiSettingsMetadata(settings)
+        var oldCanceled = row; oldCanceled["status"] = "canceled"; oldCanceled["stage"] = "canceled"
+        var active = row; active["id"] = nextJobID; active["status"] = "running"; active["stage"] = "preparing_resources"
+        authoritative.restore(jobID); authoritative.job = PiSetupJob(oldCanceled); authoritative.bind(revised, eligible: true)
+        var currentRow: [String: Any]? = active
+        var authoritativeRequests = 0, validAuthorityRequest = true
+        authoritative.request = { path, method, body, completion in
+            authoritativeRequests += 1
+            validAuthorityRequest = validAuthorityRequest && path == "v1/pi/current" && method == "POST" &&
+                body?["import_id"] as? String == importID && preparationInteger(body?["revision"]) == authoritative.context?.revision &&
+                body?["source_revision"] as? String == authoritative.context?.sourceRevision
+            completion(["job": currentRow.map { $0 as Any } ?? NSNull()], nil)
+        }
+        authoritative.poll()
+        guard validAuthorityRequest, authoritativeRequests == 1, authoritative.job?.id == nextJobID,
+              authoritative.job?.active == true, authoritative.restoredJobID == nil, authoritative.blocksNavigation else { return false }
+        var wrongCurrent = active; wrongCurrent["revision"] = 1; currentRow = wrongCurrent; authoritative.poll()
+        guard authoritative.job?.id == nextJobID, authoritative.errorCode == "pi_job_invalid" else { return false }
+        wrongCurrent = active; wrongCurrent["source_revision"] = "sha256:" + String(repeating: "b", count: 64)
+        currentRow = wrongCurrent; authoritative.poll()
+        guard authoritative.job?.id == nextJobID, authoritative.errorCode == "pi_job_invalid" else { return false }
+        currentRow = active; authoritative.poll()
+        guard authoritative.errorCode == nil, authoritative.job?.id == nextJobID else { return false }
+        currentRow = nil; authoritative.poll()
+        guard authoritative.job == nil, !authoritative.blocksNavigation else { return false }
+
+        // Resource changes grant a new exact context. Only its matching host
+        // record may be adopted; an earlier source/revision cannot replace it.
+        guard let advanced = PreparationContext(importID: importID, revision: 3, sourceRevision: source) else { return false }
+        let advancedJobID = "55555555-2222-4333-8444-555555555555"
+        var advancedRow = active; advancedRow["id"] = advancedJobID; advancedRow["revision"] = 3
+        authoritative.adopt(advancedRow, context: advanced)
+        guard authoritative.context == advanced, authoritative.job?.id == advancedJobID,
+              authoritative.job?.revision == 3, authoritative.blocksNavigation else { return false }
+        authoritative.adopt(active, context: advanced)
+        guard authoritative.job?.id == advancedJobID, authoritative.context == advanced else { return false }
+        advancedRow["stage"] = "waiting_for_system"
+        advancedRow["system_action"] = ["kind": "install_xcode", "url": "https://developer.apple.com/xcode/"]
+        authoritative.adopt(advancedRow, context: advanced)
+        guard !authoritative.systemButton.isHidden, authoritative.systemButton.isEnabled,
+              authoritative.status.stringValue.contains("Apple"), authoritative.job?.systemAction != nil else { return false }
+        // Exercise the real launch controller with injected effects. No app or
+        // browser opens, and no continuation is sent before local verification.
+        let system = PiSetupView(); system.available = { true }
+        var pendingVerification: ((URL?) -> Void)?
+        var opened: [URL] = [], continuations = 0
+        system.verifyXcodeApplication = { _, _, completion in pendingVerification = completion }
+        system.openSystemURL = { opened.append($0); return true }
+        system.request = { path, _, _, _ in if path.hasSuffix("/continue-system") { continuations += 1 } }
+        var systemRow = advancedRow
+        systemRow["system_action"] = ["kind": "open_xcode", "application_path": "/workspace/Fake.app"]
+        system.adopt(systemRow, context: advanced); system.openSystemSetup()
+        guard opened.isEmpty, continuations == 0, !system.systemButton.isEnabled,
+              system.cancelButton.isEnabled else { return false }
+        pendingVerification?(nil)
+        guard opened.isEmpty, continuations == 0, system.errorCode == "pi_xcode_untrusted" else { return false }
+        let verified = URL(fileURLWithPath: "/Applications/Xcode Beta.app")
+        systemRow["system_action"] = ["kind": "open_xcode", "application_path": "/alias/Xcode.app"]
+        system.adopt(systemRow, context: advanced); system.openSystemSetup(); pendingVerification?(verified)
+        guard opened == [verified], continuations == 1 else { return false }
+        system.adopt(systemRow, context: advanced); system.openSystemSetup()
+        var canceled = systemRow; canceled["status"] = "canceled"
+        system.adopt(canceled, context: advanced); pendingVerification?(verified)
+        guard opened.count == 1, continuations == 1 else { return false }
+        system.adopt(systemRow, context: advanced); system.openSystemSetup()
+        var changed = systemRow; changed["stage"] = "building"
+        system.job = PiSetupJob(changed); pendingVerification?(verified)
+        guard opened.count == 1, continuations == 1 else { return false }
+        system.adopt(systemRow, context: advanced); system.openSystemSetup()
+        changed = systemRow
+        changed["system_action"] = ["kind": "open_xcode", "application_path": "/changed/Xcode.app"]
+        system.job = PiSetupJob(changed); pendingVerification?(verified)
+        guard opened.count == 1, continuations == 1 else { return false }
+        system.adopt(systemRow, context: advanced); system.openSystemSetup()
+        system.openSystemURL = { _ in false }; pendingVerification?(verified)
+        guard opened.count == 1, continuations == 1, system.errorCode == "pi_system_action_failed" else { return false }
+        system.openSystemURL = { opened.append($0); return true }
+        system.adopt(systemRow, context: advanced); system.openSystemSetup(); system.connectionReset()
+        pendingVerification?(verified)
+        guard opened.count == 1, continuations == 1 else { return false }
+        systemRow["system_action"] = ["kind": "install_xcode", "url": "https://developer.apple.com/xcode/"]
+        system.adopt(systemRow, context: advanced); system.openSystemSetup()
+        guard opened.last?.absoluteString == "https://developer.apple.com/xcode/", continuations == 2 else { return false }
+        advancedRow.removeValue(forKey: "system_action")
+        advancedRow["status"] = "interrupted"; advancedRow["stage"] = "interrupted"; advancedRow["code"] = "pi_interrupted"
+        authoritative.adopt(advancedRow, context: advanced)
+        guard authoritative.startButton.title == "Resume Setup", authoritative.startButton.isEnabled,
+              authoritative.systemButton.isHidden, authoritative.status.stringValue.contains("saved") else { return false }
+        var resumeEndpoint: String?, resumeRevision: Int?
+        authoritative.beforeStart = { completion in completion(advanced) }
+        authoritative.request = { path, method, body, completion in
+            guard method == "POST", body?["import_id"] as? String == importID else { return }
+            resumeEndpoint = path; resumeRevision = preparationInteger(body?["revision"])
+            var fresh = advancedRow; fresh["id"] = "44444444-2222-4333-8444-555555555555"
+            fresh["status"] = "running"; fresh["stage"] = "preflight"; fresh["code"] = NSNull(); completion(fresh, nil)
+        }
+        authoritative.startButton.performClick(nil)
+        guard resumeEndpoint == "v1/pi/jobs/" + advancedJobID + "/resume", resumeRevision == 3,
+              authoritative.job?.id == "44444444-2222-4333-8444-555555555555", authoritative.job?.active == true else { return false }
+        for terminal in ["failed", "canceled"] {
+            var retryRow = advancedRow; retryRow["status"] = terminal; retryRow["stage"] = terminal
+            retryRow["code"] = terminal == "failed" ? "pi_provider_failed" : NSNull()
+            authoritative.adopt(retryRow, context: advanced); resumeEndpoint = nil
+            authoritative.startSetup()
+            guard resumeEndpoint == "v1/pi/jobs/" + advancedJobID + "/resume", resumeRevision == 3 else { return false }
+        }
 
         let questionID = "77777777-2222-4333-8444-555555555555"
         var question: [String: Any] = ["id": questionID, "job_id": jobID, "import_id": importID, "revision": 2,
@@ -638,7 +894,11 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
             } else if path.hasSuffix("/cancel") {
                 var canceled = row; canceled["status"] = "canceled"; canceled["stage"] = "canceled"; canceled.removeValue(forKey: "question")
                 completion(canceled, nil)
-            } else { questionPoll = completion }
+            } else if path == "v1/pi/current", method == "POST" {
+                guard body?["import_id"] as? String == importID, body?["source_revision"] as? String == source,
+                      preparationInteger(body?["revision"]) == answering.context?.revision else { return }
+                questionPoll = completion
+            }
         }
         answering.bind(revised, eligible: true); answering.poll(); answering.beforeStart = { completion in completion(revised) }
         answering.startSetup()
@@ -656,21 +916,21 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         answering.answerQuestion()
         guard answerCount == 1, answering.answerField.stringValue.isEmpty else { return false }
         row.removeValue(forKey: "question"); row["stage"] = "thinking"
-        answerReply?(row, nil); questionPoll?(staleQuestionRow, nil)
+        answerReply?(row, nil); questionPoll?(["job": staleQuestionRow], nil)
         guard answering.currentQuestion == nil, answering.job?.stage == "thinking", answering.questionView.isHidden else { return false }
 
         question["id"] = "88888888-2222-4333-8444-555555555555"; question["kind"] = "secret"
         question["question"] = "Enter the app credential."; question["options"] = []; question["credential_name"] = "API_KEY"
         row["question"] = question; row["stage"] = "waiting_for_user"
-        answering.poll(); questionPoll?(row, nil)
+        answering.poll(); questionPoll?(["job": row], nil)
         guard !answering.credentialField.isHidden, answering.answerField.isHidden, answering.authorizationPresentationBlocked else { return false }
         answering.credentialField.stringValue = "Synthetic credential"; answering.answerQuestion()
         guard answerCount == 2, answering.credentialField.stringValue.isEmpty else { return false }
         row.removeValue(forKey: "question"); row["stage"] = "thinking"; answerReply?(row, nil)
         guard answering.currentQuestion == nil else { return false }
         row["question"] = question; row["stage"] = "waiting_for_user"
-        answering.poll(); questionPoll?(row, nil); answering.credentialField.stringValue = "Synthetic credential"
-        answering.cancelSetup(); questionPoll?(row, nil)
+        answering.poll(); questionPoll?(["job": row], nil); answering.credentialField.stringValue = "Synthetic credential"
+        answering.cancelSetup(); questionPoll?(["job": row], nil)
         return answering.job?.status == "canceled" && answering.credentialField.stringValue.isEmpty && answering.questionView.isHidden && !answering.blocksNavigation
     }
 }

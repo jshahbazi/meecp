@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "scope": "experimental-jevk5-stark-bf16-installed-integration",
+  "historical_source_commit": "893ca7289fcaf0634a0fa9f49390c37deb033821",
+  "historical_record_sha256": "1b63e9f9d5e811fd5a3fb91640e6c942024371a2ea48d14d7b69eccac329bcf6",
+  "installed_integration_accepted": false,
+  "native_reacceptance_required": true,
+  "current_source_deviations": {
+    "backend/meecp/supervisor.py": {
+      "accepted_sha256": "239ad2e749dba459de6f72061104d738800a12c8d45f43a9ac5df36779270811",
+      "current_sha256": "efb2275d48486dcb3278465873a3fa5bc5dfa2459879b7a5a1f679d1dea49deb"
+    }
+  }
+}

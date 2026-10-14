@@ -100,9 +100,16 @@ new timing result.
 
 Package builder tests cover input identity, source mutation, symlink rejection,
 copy closure, private runtime provenance, launcher routing and metadata/lock
-validation. The [installed acceptance record](../engines/STARK_JEVK5_VALIDATION.json)
-binds the completed run to the exact package, current consumer sources, native
-worker and model hashes. On 2026-10-11 it passed:
+validation. The [historical installed acceptance record](../engines/STARK_JEVK5_VALIDATION.json)
+binds the completed run to the exact package, recorded consumer sources, native
+worker and model hashes at source commit
+`893ca7289fcaf0634a0fa9f49390c37deb033821`. The current host supervisor has changed
+since that run. [Current scope](../engines/STARK_JEVK5_CURRENT_SCOPE.json) explicitly
+retires installed integration acceptance and requires a fresh native replay.
+It pins every current deviation without changing the accepted record. CI rejects
+undeclared further drift or a claim of current acceptance. The standalone engine
+dependency and its numerical qualification remain unchanged; their gates do not
+qualify the changed installed host. On 2026-10-11 the recorded source passed:
 
 - All 243 tokenizations and 486 cold/repeat private scoring replies, preserving
   candidate logits, vocabulary log probabilities and calibrated probabilities by

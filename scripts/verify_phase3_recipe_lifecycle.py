@@ -46,6 +46,9 @@ LIFECYCLE_POLICY_SHA256 = frozenset({
     "29d0359e9846afff79061c0fd0d0bf265f88fd78deb6c62193af1ba614ca9dcc",
     "ca7d40f1dd0075e757597caea0b5437c87fc63437818e54f815666471bf242b2",
     "75b7b219d5f3d71a9470026738555b7dc95b8938395e4ff9c53cb678ace3023f",
+    # Reviewed current-source candidate; this permits running the harness and
+    # does not transfer historical signed/native acceptance to a new producer.
+    "3759108296c6fb49e1f4aa15e35603d2eac5e93b81e1ecc4bf9d0015839202b5",
 })
 BARRIERS = {"disabled_queued": "scheduler_before_snapshot", "stale_source": "scheduler_before_snapshot",
     "revoked_verification": "actual_verifier_return_before_publication",

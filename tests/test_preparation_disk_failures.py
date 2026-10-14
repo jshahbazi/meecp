@@ -29,6 +29,11 @@ async def test_post_build_enospc_cannot_attach_or_release_before_owned_cleanup(
     controlled, monkeypatch, capfd, boundary, hold_cleanup,
 ):
     import meecp.preparation_runner as runner_module
+    import meecp.private as private_module
+
+    # Exercise streamed-write ENOSPC independently of APFS clone availability.
+    # A successful clone legitimately bypasses the write hook below.
+    monkeypatch.setattr(private_module, "_clone_file", lambda *args, **kwargs: False)
 
     runner, imports, _, draft, _, resources, released = controlled
     child_handles = []

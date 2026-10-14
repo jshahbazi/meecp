@@ -9,9 +9,9 @@ import { test } from "node:test";
 
 const WORKER = resolve(process.env.MCPME_PI_TEST_WORKER ?? new URL("worker.mjs", import.meta.url).pathname);
 const SECRET = "synthetic-private-value-never-emitted";
-const TOOLS = ["ask_user", "capabilities", "check_package", "extract_archive", "fetch_url",
+const TOOLS = ["ask_user", "capabilities", "check_package", "ensure_metal_toolchain", "extract_archive", "fetch_url",
   "install_dependencies", "list_files", "prepare_environment", "read_file", "read_process",
-  "run_command", "start_process", "stop_process", "write_file"];
+  "run_command", "start_process", "stop_process", "write_file", "native_command", "preflight", "retain_resource"].sort();
 
 async function mockProvider(response) {
   const requests = [];

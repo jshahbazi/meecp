@@ -9,20 +9,20 @@ from __future__ import annotations
 import asyncio
 import codecs
 import contextlib
-from dataclasses import dataclass
 import hashlib
 import json
 import os
-from pathlib import Path
 import platform
 import re
 import secrets
 import ssl
 import stat
+from dataclasses import dataclass
+from pathlib import Path
 
 from .downloads import DownloadError, PinnedHTTPSNetwork, normalize_spec
-from .private import PrivateStateError, ensure_private_directory
 from .pi_listeners import ListenerError, nonloopback_listener, watch_listeners
+from .private import PrivateStateError, ensure_private_directory
 from .processes import OwnershipLost, ProcessError, ProcessOwner, _await_ownership, _watch_ownership
 
 MAX_FILE = 1024 * 1024
@@ -37,9 +37,9 @@ MAX_COMMAND = 128
 MAX_ARG_BYTES = 32 * 1024
 MAX_COMMAND_BYTES = 128 * 1024
 MAX_PATH = 4096
-MAX_FETCH = 4 * 1024**3
-MAX_FETCH_TOTAL = 16 * 1024**3
-FETCH_TIMEOUT = 120
+MAX_FETCH = 16 * 1024**3
+MAX_FETCH_TOTAL = 32 * 1024**3
+FETCH_TIMEOUT = 900
 SANDBOX = Path("/usr/bin/sandbox-exec")
 _HASH = re.compile(r"^[a-f0-9]{64}$")
 _SYSTEM_READS = (
@@ -107,6 +107,9 @@ class PiToolBroker:
         self._busy = asyncio.Lock()
         self._fetch_bytes = 0
         self.host_root = None
+        # Only the host callback can admit and reserve a native GPU command.
+        self.native_runner = None
+        self.native_ownership_settled = False
         self.credential_resolver = None
         self.services = {}
         self.network = PinnedHTTPSNetwork()
@@ -128,8 +131,8 @@ class PiToolBroker:
                 self._roots.append(_Root(path, fd, _identity(details), private))
             self.owner = ProcessOwner(Path(reaper))
             self.env = self._environment(executable_env)
-            if Path("/Library/Developer/CommandLineTools").is_dir():
-                self.env["DEVELOPER_DIR"] = "/Library/Developer/CommandLineTools"
+            from .pi_toolchain import ToolchainManager
+            self.toolchain_manager = ToolchainManager(self)
         except BaseException as error:
             for root in self._roots:
                 os.close(root.descriptor)
@@ -138,7 +141,7 @@ class PiToolBroker:
                 raise PiToolError("unsafe_root") from None
             raise
 
-    def _check_roots(self):
+    def _check_roots(self, *, validate_toolchain=True):
         if self._closed:
             raise PiToolError("broker_closed")
         for root in self._roots:
@@ -153,6 +156,8 @@ class PiToolBroker:
                 raise PiToolError("root_changed") from None
         if any(process.ownership_lost for process in self.owner.instances.values()):
             raise OwnershipLost()
+        if validate_toolchain and hasattr(self, "toolchain_manager"):
+            self.toolchain_manager.validate()
 
     def _select(self, value: str, *, write=False):
         if (not isinstance(value, str) or not value or len(value) > MAX_PATH or
@@ -334,7 +339,10 @@ class PiToolBroker:
     async def invoke(self, name: str, args: dict) -> dict:
         try:
             async with self._busy:
-                self._check_roots()
+                # Fixed host discovery can inspect a replacement Apple
+                # installation before repinning its read-only toolchain roots.
+                # Every ordinary command still validates the selected roots.
+                self._check_roots(validate_toolchain=name not in {"preflight", "ensure_metal_toolchain"})
                 if name == "read_file":
                     self._arguments(args, ("path",), ("offset", "limit"))
                     return {"success": True, "output": self._read(args["path"], offset=args.get("offset"), limit=args.get("limit"))}
@@ -344,6 +352,23 @@ class PiToolBroker:
                 if name == "capabilities":
                     self._arguments(args, ())
                     return {"success": True, "output": json.dumps(self.capabilities())}
+                if name == "preflight":
+                    self._arguments(args, ())
+                    return {"success": True, "output": json.dumps(await self.preflight())}
+                if name == "ensure_metal_toolchain":
+                    self._arguments(args, (), ("required",))
+                    facts = await self.toolchain_manager.ensure(args)
+                    return {"success": facts["available"] or not facts["required"], "output": json.dumps(facts)}
+                if name == "native_command":
+                    from .pi_native import validate_native
+                    validate_native(self, args)
+                    if self.native_runner is None:
+                        raise PiToolError("native_command_unavailable")
+                    if args.get("require_metal_compiler", False):
+                        facts = await self.toolchain_manager.ensure({"required": True})
+                        if not facts["available"]:
+                            return {"success": False, "output": json.dumps(facts)}
+                    return await self.native_runner(args)
                 if name == "write_file":
                     self._arguments(args, ("path", "content"))
                     self._write(args["path"], args["content"])
@@ -358,7 +383,7 @@ class PiToolBroker:
                     self._arguments(args, ("process_id",))
                     return await self._service(name, args["process_id"])
                 if name == "fetch_url":
-                    self._arguments(args, ("url", "path"), ("sha256",))
+                    self._arguments(args, ("url", "path"), ("sha256", "size"))
                     return await self._fetch(args)
                 if name == "install_dependencies":
                     self._arguments(args, ("ecosystem", "project_path"), ("target_path",))
@@ -367,7 +392,7 @@ class PiToolBroker:
                     from .pi_dependencies import install_dependencies
                     return await install_dependencies(self, args, self.host_root)
                 if name in {"prepare_environment", "extract_archive"}:
-                    from .pi_environment import prepare_environment, extract_archive
+                    from .pi_environment import extract_archive, prepare_environment
                     if name == "prepare_environment":
                         self._arguments(args, ("runtime",), ("target_path",))
                         if self.host_root is None:
@@ -420,7 +445,7 @@ class PiToolBroker:
                 not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", key) or not isinstance(value, str)
                 or len(value) > 8192 or "\0" in value for key, value in values.items())):
             raise PiToolError("invalid_environment")
-        if set(values) & {"HOME", "TMPDIR", "XDG_CONFIG_HOME", "MCPME_SETTINGS_FD"}:
+        if set(values) & {"HOME", "TMPDIR", "XDG_CONFIG_HOME", "MCPME_SETTINGS_FD", "DEVELOPER_DIR", "SDKROOT", "TOOLCHAINS"}:
             raise PiToolError("invalid_environment")
         result = dict(self.env)
         result.update(values)
@@ -429,7 +454,8 @@ class PiToolBroker:
         references = args.get("credentials", {})
         if (not isinstance(references, dict) or len(references) > 16 or any(
                 not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", key) or not isinstance(value, str)
-                for key, value in references.items()) or set(references) & {"PATH", "HOME", "TMPDIR", "MCPME_SETTINGS_FD"}):
+                for key, value in references.items()) or set(references) & {
+                    "PATH", "HOME", "TMPDIR", "MCPME_SETTINGS_FD", "DEVELOPER_DIR", "SDKROOT", "TOOLCHAINS"}):
             raise PiToolError("invalid_credentials")
         if references:
             if self.credential_resolver is None:
@@ -438,22 +464,25 @@ class PiToolBroker:
                 result.update(self.credential_resolver(references))
             except Exception:
                 raise PiToolError("credentials_unavailable") from None
+        result["PATH"] = self.toolchain_manager.command_path(result["PATH"])
         return result, bool(references)
 
     def _trust_environment(self):
-        """Copy explicitly configured public CA certificates, never private material."""
+        """Stage configured certificates or native public roots for confined clients."""
         source = os.environ.get("NODE_EXTRA_CA_CERTS")
-        if not source:
-            return {}
         target = self.workspace / ".trust/ca.pem"
         if not target.is_file():
             try:
-                descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-                with os.fdopen(descriptor, "rb") as stream:
-                    info = os.fstat(stream.fileno())
-                    if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_FILE:
-                        raise ValueError()
-                    data = stream.read(MAX_FILE + 1).decode("ascii")
+                if source:
+                    descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                    with os.fdopen(descriptor, "rb") as stream:
+                        info = os.fstat(stream.fileno())
+                        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_FILE:
+                            raise ValueError()
+                        data = stream.read(MAX_FILE + 1).decode("ascii")
+                else:
+                    from .pi_trust import native_anchor_pem
+                    data = native_anchor_pem()
                 blocks = re.findall(r"-----BEGIN CERTIFICATE-----\s+[A-Za-z0-9+/=\s]+-----END CERTIFICATE-----", data)
                 if not blocks or len(blocks) > 512:
                     raise ValueError()
@@ -462,21 +491,26 @@ class PiToolBroker:
                 self._write(".trust/ca.pem", "\n".join(blocks) + "\n")
             except (OSError, UnicodeError, ValueError):
                 raise PiToolError("trust_configuration_unavailable") from None
-        return {"NODE_EXTRA_CA_CERTS": str(target), "SSL_CERT_FILE": str(target)}
+        return {"NODE_EXTRA_CA_CERTS": str(target), "SSL_CERT_FILE": str(target), "GIT_SSL_CAINFO": str(target)}
 
     def capabilities(self):
         return {"platform": {"os": platform.system(), "architecture": platform.machine()},
             "workspace": str(self.workspace), "host_root": str(self.host_root) if self.host_root else None,
-            "tools": ["capabilities", "list_files", "read_file", "write_file", "run_command", "start_process",
+            "tools": ["capabilities", "preflight", "ensure_metal_toolchain", "native_command", "list_files", "read_file", "write_file", "run_command", "start_process",
                 "read_process", "stop_process", "fetch_url", "prepare_environment", "extract_archive",
-                "install_dependencies", "ask_user", "check_package"],
+                "install_dependencies", "retain_resource", "ask_user", "check_package"],
             "commands": {"network": "optional outbound network; owned TCP listeners checked for loopback",
                 "filesystem": "private workspace writes, selected runtimes and system resources readable",
                 "environment": "explicit values; opaque credential IDs may be injected without returning their output"},
+            "native_commands": {"available": self.native_runner is not None, "gpu": "host-admitted exclusive Metal",
+                "memory_mb": "required bounded resource declaration", "metal_compiler": dict(self.toolchain_manager.snapshot)},
+            "retained_resources": {"inventory": "resources.json", "checkpoint": "fresh session; verified files and opaque credentials only",
+                "max_file_bytes": MAX_FETCH, "max_collection_bytes": MAX_FETCH_TOTAL},
             "runtimes": {"bundled": ["python", "node"], "other": "fetch and extract a runtime or build one in the workspace"},
             "dependency_managers": "Python uv and npm helpers; any staged manager can run custom commands",
-            "system_tools": [str(Path("/usr/bin") / name) for name in ("clang", "clang++", "make", "git", "xcrun", "swift", "tar", "unzip")
-                if (Path("/usr/bin") / name).is_file()],
+            "developer_tools": self.toolchain_manager.command_tools,
+            "system_tools": [*self.toolchain_manager.command_tools.values(),
+                *(str(Path("/usr/bin") / name) for name in ("tar", "unzip") if (Path("/usr/bin") / name).is_file())],
             "package": {"entrypoint": "relocatable MCP stdio launcher; may own child services",
                 "schemas": ["package.schema.json", "lock.schema.json"], "recipe_required": False}}
 
@@ -516,7 +550,7 @@ class PiToolBroker:
         env, hidden = self._command_environment(args)
         executable, sandbox_args, cwd, env = self.launch_spec(args["argv"], str(cwd), network=args.get("network", False), env=env)
         process = await self.owner.launch(executable, [*sandbox_args[:2], "/bin/sh", "-c", 'exec "$@" 2>&1',
-            "meecp-command", *args["argv"]], cwd, env, owned_group=True,
+            "meecp-command", *sandbox_args[2:]], cwd, env, owned_group=True,
             expected_reaper=self.owner.reaper, startup_timeout=15, stop_grace=0.2, admit=self._launch_admitted)
         assert process.stdin is not None and process.stdout is not None
         process.stdin.close()
@@ -600,19 +634,21 @@ class PiToolBroker:
             if size > MAX_ARG_BYTES or total > MAX_COMMAND_BYTES:
                 raise PiToolError("command_size_limit")
 
-    def launch_spec(self, argv: list[str], cwd: str = ".", *, network=False, env=None):
-        """Confined launch tuple; a read-only package root may be the cwd."""
+    def launch_spec(self, argv: list[str], cwd: str = ".", *, network=False, gpu=False, env=None):
+        """Confined launch tuple; GPU access is a host-selected probe capability."""
         if (platform.system() != "Darwin" or platform.machine() != "arm64" or
                 not platform.mac_ver()[0].startswith("26.")):
             raise PiToolError("unsupported_platform")
         self._argv(argv)
-        if type(network) is not bool:
+        if type(network) is not bool or type(gpu) is not bool:
             raise PiToolError("invalid_arguments")
         cwd_path = self._path(str(cwd), directory=True)
         self._check_roots()
+        argv = self.toolchain_manager.command_argv(argv)
         quote = lambda value: json.dumps(str(value), ensure_ascii=True)
-        reads = (*_SYSTEM_READS, self.workspace, *self.read_roots)
-        ancestors = sorted({ancestor for path in (self.workspace, *self.read_roots) for ancestor in path.parents}, key=str)
+        toolchain_roots = self.toolchain_manager.read_roots
+        reads = (*_SYSTEM_READS, self.workspace, *self.read_roots, *toolchain_roots)
+        ancestors = sorted({ancestor for path in (self.workspace, *self.read_roots, *toolchain_roots) for ancestor in path.parents}, key=str)
         profile = "\n".join([
             "(version 1)", "(deny default (with no-log))",
             "(allow sysctl-read)",
@@ -629,6 +665,11 @@ class PiToolBroker:
             # native owned process group so timeout and cancellation reap them.
             "(deny syscall-unix (syscall-number 82 147) (with no-log))",
         ])
+        if gpu:
+            # Selected only for an admitted native command or package probe.
+            # IOSurface access is required by native Metal residency sets.
+            profile += '\n(allow iokit-open (iokit-user-client-class "AGXDeviceUserClient") (iokit-user-client-class "IOSurfaceRootUserClient"))'
+            profile += '\n(allow mach-lookup (global-name "com.apple.MTLCompilerService"))'
         if network:
             profile += '\n(allow network-outbound)\n(allow network-bind (local tcp4 "localhost:*"))\n(allow network-inbound (local tcp4 "localhost:*"))'
             profile += '\n(allow file-read* (literal "/private/etc/resolv.conf") (literal "/private/var/run/resolv.conf") (literal "/private/etc/hosts") (literal "/private/etc/services") (subpath "/private/etc/ssl"))'
@@ -642,23 +683,30 @@ class PiToolBroker:
     def command_launch(self, command, cwd=None):
         return self.launch_spec(command, "." if cwd is None else str(cwd))
 
-    async def _run(self, args):
+    async def _run(self, args, *, gpu=False):
+        if gpu:
+            # Argument/sandbox validation below cannot create native authority.
+            self.native_ownership_settled = True
         self._argv(args["argv"])
         timeout = args.get("timeout_seconds", 60)
         if type(timeout) is not int or not 1 <= timeout <= 1800:
             raise PiToolError("invalid_timeout")
         cwd = self._path(args.get("cwd", "."), write=True, directory=True)
         env, hidden = self._command_environment(args)
-        executable, sandbox_args, cwd, env = self.launch_spec(args["argv"], str(cwd), network=args.get("network", False), env=env)
+        executable, sandbox_args, cwd, env = self.launch_spec(args["argv"], str(cwd), network=args.get("network", False), gpu=gpu, env=env)
         # Reaper stderr is deliberately discarded for other host processes.
         # This fixed wrapper merges command diagnostics into the same bounded
         # in-memory result. Argument forwarding evaluates no selected shell text.
         launch = (executable, [*sandbox_args[:2], "/bin/sh", "-c", 'exec "$@" 2>&1',
-            "meecp-command", *args["argv"]], cwd, env)
+            "meecp-command", *sandbox_args[2:]], cwd, env)
         process = None
+        previous_instances = set(self.owner.instances)
+        previous_pending = set(self.owner._pending_ids)
         try:
             async with asyncio.timeout(timeout):
                 try:
+                    if gpu:
+                        self.native_ownership_settled = False
                     process = await self.owner.launch(*launch, owned_group=True,
                         expected_reaper=self.owner.reaper, startup_timeout=min(10, timeout), stop_grace=0.2,
                         admit=lambda: self._launch_admitted())
@@ -677,7 +725,9 @@ class PiToolBroker:
                                 raise PiToolError("output_limit")
                         code = await process.wait()
                         output = json.dumps({"returncode": code,
-                            "stdout": data.decode("utf-8", "replace"), **({"output_hidden": True} if hidden else {})}, ensure_ascii=True)
+                            "stdout": data.decode("utf-8", "replace"), **({"output_hidden": True} if hidden else {}),
+                            **({"peak_memory_bytes": process.peak_memory_bytes,
+                                "reserved_memory_mb": args["memory_mb"]} if gpu else {})}, ensure_ascii=True)
                         if len(output.encode("utf-8")) > MAX_COMMAND_RESULT:
                             raise PiToolError("output_limit")
                         return {"success": code == 0, "output": output}
@@ -685,7 +735,17 @@ class PiToolBroker:
                     result = await _watch_ownership(process, action)
                 finally:
                     if process is not None:
-                        await _settle(process.stop())
+                        async def stop():
+                            await process.stop()
+                            if gpu:
+                                self.native_ownership_settled = True
+                        await _settle(stop())
+                    elif gpu:
+                        # A canceled/failed launch may leave an unknown owner.
+                        # Existing CPU services do not belong to this command.
+                        self.native_ownership_settled = not (
+                            set(self.owner.instances) - previous_instances
+                            or set(self.owner._pending_ids) - previous_pending)
             self._check_roots()
             return result
         except TimeoutError:
@@ -693,20 +753,47 @@ class PiToolBroker:
         except ListenerError as error:
             raise PiToolError(error.code) from None
 
+    async def native_run_impl(self, args):
+        """Host callback implementation; admission must precede this call."""
+        from .pi_native import validate_native
+        self.native_ownership_settled = False
+        try:
+            validate_native(self, args)
+        except BaseException:
+            # This explicit validation path has not attempted a native launch.
+            self.native_ownership_settled = True
+            raise
+        return await self._run(args, gpu=True)
+
+    async def preflight(self):
+        from .pi_native import preflight
+        return await preflight(self)
+
     def _launch_admitted(self):
         self._check_roots()
+        return True
+
+    def _toolchain_discovery_admitted(self):
+        # This callback is only for the host's fixed system-tool commands.
+        # Workspace/runtime roots and native ownership remain mandatory; old
+        # compiler/SDK/asset pins must not prevent their own rediscovery.
+        self._check_roots(validate_toolchain=False)
         return True
 
     async def _fetch(self, args):
         digest = args.get("sha256")
         if digest is not None and (not isinstance(digest, str) or not _HASH.fullmatch(digest)):
             raise PiToolError("invalid_hash")
-        url = normalize_spec({"url": args["url"], "sha256": "0" * 64, "size": 1})["url"]
+        expected_size = args.get("size")
+        if expected_size is not None and (type(expected_size) is not int or not 1 <= expected_size <= MAX_FETCH):
+            raise PiToolError("invalid_download_size")
+        url = normalize_spec({"url": args["url"], "sha256": "0" * 64,
+            "size": expected_size if expected_size is not None else 1})["url"]
         parent, name, temporary, fd, path = self._output(args["path"])
         size, observed = 0, hashlib.sha256()
         try:
             async with asyncio.timeout(FETCH_TIMEOUT):
-                async with self.network.stream(url, accept="application/octet-stream") as chunks:
+                async with self.network.stream(url, accept="application/octet-stream", follow_redirects=True) as chunks:
                     async for chunk in chunks:
                         self._check_roots()
                         if not isinstance(chunk, bytes):
@@ -715,9 +802,13 @@ class PiToolBroker:
                         self._fetch_bytes += len(chunk)
                         if size > MAX_FETCH or self._fetch_bytes > MAX_FETCH_TOTAL:
                             raise PiToolError("download_size_limit")
+                        if expected_size is not None and size > expected_size:
+                            raise PiToolError("download_size_mismatch")
                         observed.update(chunk)
                         self._write_bytes(fd, chunk)
             actual = observed.hexdigest()
+            if expected_size is not None and size != expected_size:
+                raise PiToolError("download_size_mismatch")
             if digest is not None and digest != actual:
                 raise PiToolError("download_hash_mismatch")
             self._publish(parent, name, temporary, fd)

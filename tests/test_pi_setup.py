@@ -14,7 +14,8 @@ import pytest
 from meecp.grants import read_credential
 from meecp.contracts import validate_package
 from meecp.pi_setup import PiSetup, PiSetupError
-from meecp.processes import OwnershipLost
+from meecp.pi_tools import PiToolBroker
+from meecp.processes import OwnedProcess, OwnershipLost
 from meecp.supervisor import Supervisor, management_app
 from test_meecp_imports import source_folder
 from test_meecp_packages import edit_manifest, make_package
@@ -92,8 +93,18 @@ def test_runtime_requires_complete_hashed_inventory(host, tmp_path):
         host.pi_setup._runtime()
 
 
+def fake_setup_preflight(monkeypatch):
+    async def preflight(broker):
+        # Manager fixtures use an inert reaper and mock the model worker.
+        # Actual compiler/device readiness has separate owned native tests.
+        return {"schema_version": 1, "metal_runtime": {"status": "unavailable"},
+            "metal_compiler": {"status": "missing", "available": False, "required": False}}
+    monkeypatch.setattr(PiToolBroker, "preflight", preflight)
+
+
 def enable_fake_work(manager, monkeypatch, *, started=None, release=None):
     configure(manager)
+    fake_setup_preflight(monkeypatch)
     monkeypatch.setattr(manager, "_runtime", lambda: (Path("/unused-node"), Path("/unused-worker")))
     async def agent(record, workspace, broker, runtime, settings, key):
         assert key == "synthetic-provider-secret"
@@ -165,7 +176,7 @@ async def test_immediate_cancel_terminalizes_unstarted_task(host, tmp_path, monk
     replacement = await manager.start(payload)
     assert replacement["id"] != job["id"]
     await manager.close()
-    assert manager.get(replacement["id"])["status"] == "canceled"
+    assert manager.get(replacement["id"])["status"] == "interrupted"
 
 
 def test_description_and_url_create_immutable_instruction_draft(host):
@@ -346,6 +357,69 @@ async def test_independent_native_mcp_probe_checks_actual_service(host, tmp_path
             await host.pi_setup._verify(package, directory)
         assert str(caught.value) == error
         assert "not-json" not in "".join(capfd.readouterr()) + caplog.text
+
+
+@pytest.mark.parametrize("gpu", [False, True])
+async def test_independent_probe_selects_gpu_only_after_resource_admission(host, tmp_path, native_probe_server,
+        group_reaper, monkeypatch, gpu):
+    package = _fixture_package(tmp_path / "package", json.dumps([
+        {"tool": "validate_json", "arguments": {}, "expected": {"valid": True}}]).encode())
+    shutil.copyfile(native_probe_server, package.root / "bin/service")
+    (package.root / "bin/service").chmod(0o700)
+    edit_manifest(package.root, entrypoint={"executable": "bin/service", "args": ["success"], "cwd": "."},
+        resources={"memory_mb": 64, "cpu_only": not gpu, "gpu": gpu}, lifecycle={"max_sessions": 1})
+    _relock_probe_package(package.root)
+    package = validate_package(package.root)
+    host.reaper = group_reaper
+    directory = tmp_path / "verification"; directory.mkdir(mode=0o700)
+    original = PiToolBroker.launch_spec
+    selected = []
+    def recorded(instance, *args, **kwargs):
+        assert host.pi_setup.probe_reservations[directory.name]["gpu"] is gpu
+        assert kwargs["gpu"] is gpu
+        launch = original(instance, *args, **kwargs)
+        assert ("IOSurfaceRootUserClient" in launch[1][1]) is gpu
+        selected.append(gpu)
+        return launch
+    monkeypatch.setattr(PiToolBroker, "launch_spec", recorded)
+    assert await host.pi_setup._verify(package, directory) is None
+    assert selected == [gpu] and not host.pi_setup.probe_reservations
+
+
+async def test_cancel_gpu_probe_reaps_before_releasing_reservation(host, tmp_path, native_probe_server, group_reaper,
+        monkeypatch):
+    package = _fixture_package(tmp_path / "package", json.dumps([
+        {"tool": "validate_json", "arguments": {}, "expected": {"valid": True}}]).encode())
+    shutil.copyfile(native_probe_server, package.root / "bin/service")
+    (package.root / "bin/service").chmod(0o700)
+    edit_manifest(package.root, entrypoint={"executable": "bin/service", "args": ["success"], "cwd": "."},
+        resources={"memory_mb": 64, "cpu_only": False, "gpu": True}, lifecycle={"max_sessions": 1})
+    _relock_probe_package(package.root)
+    package = validate_package(package.root)
+    host.reaper = group_reaper
+    directory = tmp_path / "verification"; directory.mkdir(mode=0o700)
+    entered = asyncio.Event()
+    original_stop = OwnedProcess.stop
+    stopped = []
+    async def recorded_stop(instance, *args, **kwargs):
+        assert host.pi_setup.probe_reservations[directory.name]["gpu"] is True
+        result = await original_stop(instance, *args, **kwargs)
+        assert instance.returncode is not None and instance.wrapper.returncode is not None
+        assert host.pi_setup.probe_reservations[directory.name]["gpu"] is True
+        stopped.append(True)
+        return result
+    async def held_call(*args, **kwargs):
+        entered.set()
+        await asyncio.Event().wait()
+    monkeypatch.setattr("meecp.pi_setup.ClientSession.call_tool", held_call)
+    monkeypatch.setattr(OwnedProcess, "stop", recorded_stop)
+    task = asyncio.create_task(host.pi_setup._verify(package, directory))
+    await asyncio.wait_for(entered.wait(), 5)
+    assert host.pi_setup.probe_reservations[directory.name]["gpu"] is True
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert stopped and not host.pi_setup.probe_reservations
 
 
 async def test_attachment_timeout_revokes_admission_before_commit(host, tmp_path, monkeypatch):

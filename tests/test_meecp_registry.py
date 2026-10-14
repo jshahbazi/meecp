@@ -82,6 +82,8 @@ def test_registry_rejects_unsafe_storage(tmp_path, kind):
         state.chmod(0o755)
     elif kind == "database_mode":
         db.touch(mode=0o644)
+        # Explicitly make the fixture unsafe even under an owner-only umask.
+        db.chmod(0o644)
     elif kind in ("database_symlink", "journal_symlink"):
         target = tmp_path / "outside"
         target.write_text("outside preserved")

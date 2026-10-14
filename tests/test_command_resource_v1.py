@@ -80,9 +80,17 @@ async def test_actual_windowed_report_never_claims_complete_lifetime_or_result(b
         assert not report.lifetime_coverage_complete and not report.hard_aggregate_enforced
         assert not result.result_admissible and not hasattr(result, "stdout")
         if mode == "overlap":
-            assert report.max_group_members == 3
-            assert report.max_group_window_footprint_bytes >= 20 * 1024**2
-        assert owner.reconcile()["pending"] == 0
+            if report.reason == "membership_changed":
+                # Forking can cross the sampler's before/after snapshots. The
+                # rejected window cannot establish the fixture's final peak.
+                assert not report.sample_windows_valid
+                assert report.attempted_samples == report.samples + 1
+                assert 1 <= report.max_group_members <= 3
+            else:
+                assert report.reason == "exited" and report.sample_windows_valid
+                assert report.max_group_members == 3
+                assert report.max_group_window_footprint_bytes >= 20 * 1024**2
+        assert owner.reconcile() == {"pending": 0, "reserved_units": 0}
         assert b"synthetic" not in owner.journal_path.read_bytes()
     finally:
         await owner.close()

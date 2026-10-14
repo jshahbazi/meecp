@@ -45,6 +45,27 @@ The footprint fixture now touches 24 MiB in one process and waits, preserving th
 
 Both corrections cleared independent review before the successful complete regression. Published component and recipe bytes were preserved; no new runtime recipe version was required.
 
+### Installer CI overlap assertion follow-up
+
+Signed installer run [38648453271](https://github.com/jshahbazi/meecp/actions/runs/38648453271)
+on `7235939` passed the Metal admission classifier and reported 5,629 passing
+tests, 615 skips and two hardware-test deselections. Its one failure was the
+overlap smoke test: the sampler rejected a changing membership window after one
+valid sample, with two observed group members. The test still required the
+three-member final peak even though that window had been rejected.
+
+The smoke test now checks that this specific `membership_changed` outcome has
+invalid windows, exactly one rejected sampling attempt, bounded observed
+membership, an inadmissible result, and zero pending ownership/reserved units.
+A successful observation still requires valid windows, three group members and
+at least 20 MiB of group footprint. Other failure reasons are rejected.
+The deterministic membership-fault test and the separate measured SDK positive
+retain their exact rejection and three-member assertions. Production resource
+policy, sampler code, helpers and recipes are unchanged.
+
+No tests or builds were run for this follow-up, as requested. This correction
+has source review only and does not qualify a completed signed installer.
+
 ## Artifact and source binding
 
 The frozen host contains 4,885 payload files plus `build.json`. Packaged, native linkage and relocated CLI receipts rehash its complete membership and bytes. The native binary is `dist/McpmeMenuBar-phase3-a0-7344a55`, SHA-256 `5b908894ba9d405a434eefce8c2a9efd013395961a630fb8ecee778f9cd6d4bd`. Native source and compiler inputs match the frozen Git composition.

@@ -1456,6 +1456,8 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
             (hostAvailable ? "" : "Waiting for meecp to connect. Your saved setup is kept.")
         setupHostText?.isHidden = !uiPreviewMode && hostAvailable
         setupLabel?.isHidden = setupLabel?.stringValue.isEmpty != false
+        if setupMethodPicker?.selectedSegment == 0, let draft = currentDraft, draft.packagePath == nil,
+           setupLabel?.stringValue == draftStatus(draft) { setupLabel?.isHidden = true }
         let brief = requestedAppIntent.trimmingCharacters(in: .whitespacesAndNewlines)
         briefSummary?.stringValue = brief.isEmpty ? "" : "Requested: " + brief
         briefSummary?.isHidden = brief.isEmpty
@@ -1543,7 +1545,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let prepared = currentDraft?.packagePath != nil || setupPlan != nil || setupOperation != nil || upgradeTarget != nil
         conversationView?.update(title: currentDraft?.name ?? "Add an app", intent: requestedAppIntent,
             source: sourcePath.isEmpty ? nil : sourcePath, context: preparationContext,
-            installationStatus: operation?.label ?? (setupLabel?.isHidden == false ? setupLabel?.stringValue : nil),
+            installationStatus: operation?.label ?? (prepared && setupLabel?.isHidden == false ? setupLabel?.stringValue : nil),
             canEditRequest: intakeEnabled && currentDraft?.editable == true && !prepared,
             prepared: prepared, readOnly: !enabled || prepared)
         conversationView?.setComposerEnabled(method == 0 ? !prepared && piSetupView.composerEnabled : editable)
@@ -2196,8 +2198,8 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
                 return "Save your draft, then choose a preparation method below."
             }
             return draft.intent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? "Describe the tools you want, then choose Set Up App."
-                : "Choose Set Up App to prepare this source with Pi."
+                ? "Describe the tools you want, then choose Create app."
+                : "Choose Create app to prepare this source with the MeeCP agent."
         }
         var message = draft.label + "."
         if draft.isDocument && draft.documentRole == "reference" && draft.packagePath == nil {

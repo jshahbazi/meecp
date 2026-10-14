@@ -117,7 +117,9 @@ final class AddAppConversationView: NSView {
         sendButton = NSButton(title: "Create app", target: self, action: #selector(send))
         sendButton.bezelStyle = .rounded; sendButton.bezelColor = .controlAccentColor
         sendButton.keyEquivalent = "\r"; sendButton.keyEquivalentModifierMask = [.command]
-        let composerControls = workspaceStack([attachButton!, composerHint, sendButton!], horizontal: true, spacing: 10)
+        let composerSpacer = NSView()
+        composerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let composerControls = workspaceStack([attachButton!, composerHint, composerSpacer, sendButton!], horizontal: true, spacing: 10)
         let composerCard = NSBox(); composerCard.boxType = .custom; composerCard.titlePosition = .noTitle
         composerCard.fillColor = .controlBackgroundColor; composerCard.borderColor = .separatorColor
         composerCard.borderWidth = 1; composerCard.cornerRadius = 13; composerCard.contentViewMargins = .zero
@@ -132,7 +134,9 @@ final class AddAppConversationView: NSView {
         workspaceFill(composer, in: composerContent); workspaceFill(composerControls, in: composerContent)
         settingsButton = NSButton(title: "Agent settings", target: self, action: #selector(openSettings))
         settingsButton.bezelStyle = .inline
-        let footer = workspaceStack([footerHint, settingsButton!], horizontal: true)
+        let footerSpacer = NSView()
+        footerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let footer = workspaceStack([footerHint, footerSpacer, settingsButton!], horizontal: true)
         let content = workspaceStack([heading, threadScroll, composerCard, footer], spacing: 12)
         addSubview(content)
         for view in [heading, threadScroll, composerCard, footer] { workspaceFill(view, in: content) }
@@ -195,11 +199,11 @@ final class AddAppConversationView: NSView {
         else if let job = setup.job {
             statusLabel.stringValue = job.status == "running" ? job.question != nil ? "Needs your input" : job.stage == "waiting_for_system" ? "Waiting for Apple" : "Working"
                 : ["ready": "Ready to install", "interrupted": "Interrupted", "canceled": "Stopped", "failed": "Needs attention"][job.status] ?? "Draft"
-        } else { statusLabel.stringValue = hasIntent ? "Draft" : "New app" }
+        } else { statusLabel.stringValue = setup.authorizationPresentationBlocked ? "Agent settings" : hasIntent ? "Draft" : "New app" }
         sendButton.title = agentVisible ? setup.composerActionTitle : "Save request"
         let text = composer.documentView as? NSTextView
         let hasMessage = text?.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-        let needsMessage = agentVisible && setup.job?.active == true
+        let needsMessage = agentVisible && (setup.job?.active == true || !hasIntent)
         sendButton.isEnabled = writable && composerSendAllowed && (agentVisible ? setup.composerEnabled : true) && (!needsMessage || hasMessage)
         if let text = composer.documentView as? NSTextView {
             // The root owns text storage and editability, including draft vs
@@ -245,6 +249,17 @@ final class AddAppConversationView: NSView {
         let composer = NSScrollView(); let text = NSTextView(); composer.documentView = text
         let setup = PiSetupView(); let resources = PiResourcesView()
         let view = AddAppConversationView(composer: composer, setup: setup, resources: resources, sourceOptions: NSView())
+        setup.available = { true }
+        setup.request = { path, _, _, done in
+            if path == "v1/pi/settings" {
+                done(["configured": false, "provider": "openai", "model": "", "base_url": NSNull(),
+                      "runtime_available": true, "available_providers": ["openai"]], nil)
+            }
+        }
+        setup.poll(); view.refresh()
+        guard !view.sendButton.isEnabled else { return false }
+        text.string = "Initial public app requirement"; view.refresh()
+        guard view.sendButton.isEnabled else { return false }
         let tabs = NSTabView(frame: NSRect(x: 0, y: 0, width: 960, height: 640)); tabs.tabViewType = .noTabsNoBorder
         let item = NSTabViewItem(identifier: "add"); item.view = view; tabs.addTabViewItem(item)
         tabs.layoutSubtreeIfNeeded()

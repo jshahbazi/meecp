@@ -65,3 +65,23 @@ delivery qualification is recorded there separately from source checks.
 
 Broad setup success rates and model quality remain outside this UI change.
 
+## Layout refinement
+
+New requests and saved drafts without a conversation use a compact layout: the
+composer follows the visible content, with unused height below the form. Once
+an agent conversation or installation review exists, the thread expands and
+the composer stays at the bottom. The content column is bounded to 900 points
+and remains usable at the management window's minimum size.
+
+Agent settings uses a native card bounded to 600 points, grouped provider and
+model fields, and a secure API-key field. Advanced settings discloses a custom
+endpoint and opens automatically for a saved endpoint or validation error.
+Collapsing Advanced preserves its value. First-time configuration uses Continue;
+editing an existing configuration uses Save settings. Credential clearing and
+exact-draft continuation retain their existing contracts.
+The ordinary composer is hidden during settings and secure-input steps; its
+text is retained and reappears when the step closes.
+
+App details groups Source and Saved files separately. It no longer presents
+unlabelled intake and technical information as one broad Details section.
+

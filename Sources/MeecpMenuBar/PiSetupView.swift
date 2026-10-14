@@ -115,6 +115,14 @@ final class PiSettingsView: NSStackView {
     private let baseURL = NSTextField(string: "")
     private let apiKey = NSSecureTextField(string: "")
     private let status = workspaceLabel("", size: 12, secondary: true)
+    private let card = NSBox()
+    private let heading = workspaceLabel("Set up your agent", size: 17, weight: .semibold)
+    private let explanation = workspaceLabel("Choose a model so MeeCP can prepare your app.", size: 12, secondary: true)
+    private let keyHelp = workspaceLabel("Stored privately on this Mac.", size: 11, secondary: true)
+    private let modelFields = NSStackView()
+    private let advancedFields = NSStackView()
+    private var stackedFieldWidths: [NSLayoutConstraint] = []
+    private var advancedButton: NSButton!
     private var saveButton: NSButton!
     private var closeButton: NSButton!
     private var metadata: PiSettingsMetadata?
@@ -123,25 +131,99 @@ final class PiSettingsView: NSStackView {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        orientation = .vertical; alignment = .leading; spacing = 12
+        orientation = .vertical; alignment = .leading; spacing = 0
+        setContentHuggingPriority(.required, for: .vertical)
+        card.boxType = .custom; card.titlePosition = .noTitle
+        card.borderColor = .separatorColor; card.fillColor = .controlBackgroundColor
+        card.borderWidth = 1; card.cornerRadius = 12; card.contentViewMargins = .zero
         provider.setAccessibilityLabel("Setup model provider")
-        model.placeholderString = "Model ID"; model.setAccessibilityLabel("Setup model ID")
-        baseURL.placeholderString = "Default provider endpoint"; baseURL.setAccessibilityLabel("Custom provider base URL")
-        apiKey.placeholderString = "Leave blank to keep the saved key"; apiKey.setAccessibilityLabel("Setup provider API key")
+        model.placeholderString = "Enter a model ID"; model.setAccessibilityLabel("Setup model ID")
+        baseURL.placeholderString = "https://api.example.com/v1"; baseURL.setAccessibilityLabel("Custom provider base URL")
+        apiKey.placeholderString = "Enter your API key"; apiKey.setAccessibilityLabel("Setup provider API key")
         apiKey.isAutomaticTextCompletionEnabled = false
         saveButton = NSButton(title: "Continue", target: self, action: #selector(save))
+        saveButton.bezelColor = .controlAccentColor
         closeButton = NSButton(title: "Cancel", target: self, action: #selector(close))
-        let notice = workspaceLabel("Which model should prepare your apps? Choose a provider, enter its model ID, and add your API key. The key stays private on this Mac. Saving these settings sends no source files.", size: 12, secondary: true)
-        for view in [notice, workspaceLabel("Provider", size: 12, weight: .medium), provider,
-                     workspaceLabel("Model", size: 12, weight: .medium), model,
-                     workspaceLabel("API key", size: 12, weight: .medium), apiKey,
-                     workspaceLabel("Custom endpoint (optional)", size: 12, weight: .medium), baseURL,
-                     status, workspaceStack([saveButton!, closeButton!], horizontal: true)] {
-            addArrangedSubview(view); workspaceFill(view, in: self)
+        advancedButton = NSButton(title: "Advanced", target: self, action: #selector(toggleAdvanced))
+        advancedButton.isBordered = false; advancedButton.controlSize = .small
+        advancedButton.font = .systemFont(ofSize: 12)
+        advancedButton.imagePosition = .imageLeft
+        advancedButton.contentTintColor = .secondaryLabelColor
+        advancedButton.setAccessibilityLabel("Advanced agent settings")
+
+        func group(_ title: String, _ views: [NSView]) -> NSStackView {
+            let stack = workspaceStack([workspaceLabel(title, size: 12, weight: .medium)] + views, spacing: 6)
+            for child in stack.arrangedSubviews { workspaceFill(child, in: stack) }
+            return stack
         }
+        let providerGroup = group("Provider", [provider])
+        let modelGroup = group("Model ID", [model])
+        modelFields.orientation = .horizontal; modelFields.alignment = .top; modelFields.spacing = 12
+        modelFields.distribution = .fillEqually
+        modelFields.addArrangedSubview(providerGroup); modelFields.addArrangedSubview(modelGroup)
+        stackedFieldWidths = [providerGroup.widthAnchor.constraint(equalTo: modelFields.widthAnchor),
+                              modelGroup.widthAnchor.constraint(equalTo: modelFields.widthAnchor)]
+        let keyGroup = group("API key", [apiKey, keyHelp])
+        advancedFields.orientation = .vertical; advancedFields.alignment = .leading; advancedFields.spacing = 6
+        let endpointGroup = group("Custom endpoint", [baseURL,
+            workspaceLabel("Leave blank to use your provider's default endpoint.", size: 11, secondary: true)])
+        advancedFields.addArrangedSubview(endpointGroup); workspaceFill(endpointGroup, in: advancedFields)
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let actions = workspaceStack([closeButton!, spacer, saveButton!], horizontal: true, spacing: 10)
+        let privacy = workspaceLabel("Your request and selected source are shared with this provider when app setup begins.", size: 11, secondary: true)
+        let content = workspaceStack([heading, explanation, modelFields, keyGroup, advancedButton!, advancedFields,
+                                      status, actions, privacy], spacing: 14)
+        content.setCustomSpacing(5, after: heading)
+        content.setCustomSpacing(8, after: advancedButton)
+        for child in [heading, explanation, modelFields, keyGroup, advancedFields, status, actions, privacy] {
+            workspaceFill(child, in: content)
+        }
+        card.translatesAutoresizingMaskIntoConstraints = false
+        addArrangedSubview(card)
+        let fillWidth = card.widthAnchor.constraint(equalTo: widthAnchor)
+        fillWidth.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            card.leadingAnchor.constraint(equalTo: leadingAnchor),
+            card.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+            card.widthAnchor.constraint(lessThanOrEqualToConstant: 600), fillWidth,
+        ])
+        let container = card.contentView!
+        container.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
+            content.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -18),
+            content.topAnchor.constraint(equalTo: container.topAnchor, constant: 18),
+            content.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -18),
+        ])
+        setAdvanced(false); setStatus("")
         refreshAvailability()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layout() {
+        let orientation: NSUserInterfaceLayoutOrientation = bounds.width > 0 && bounds.width < 440 ? .vertical : .horizontal
+        if modelFields.orientation != orientation {
+            modelFields.orientation = orientation
+            modelFields.alignment = orientation == .horizontal ? .top : .leading
+            modelFields.distribution = orientation == .horizontal ? .fillEqually : .fill
+            if orientation == .vertical { NSLayoutConstraint.activate(stackedFieldWidths) }
+            else { NSLayoutConstraint.deactivate(stackedFieldWidths) }
+        }
+        super.layout()
+    }
+
+    private func setAdvanced(_ expanded: Bool) {
+        advancedFields.isHidden = !expanded
+        advancedButton.image = NSImage(systemSymbolName: expanded ? "chevron.down" : "chevron.right", accessibilityDescription: nil)
+        advancedButton.setAccessibilityValue(expanded ? 1 : 0)
+    }
+
+    @objc private func toggleAdvanced() { setAdvanced(advancedFields.isHidden) }
+
+    private func setStatus(_ text: String) {
+        status.stringValue = text; status.isHidden = text.isEmpty
+    }
 
     static func validBaseURL(_ text: String) -> Bool {
         guard let url = URL(string: text), ["http", "https"].contains(url.scheme ?? ""),
@@ -161,7 +243,13 @@ final class PiSettingsView: NSStackView {
         if let item = provider.itemArray.first(where: { $0.representedObject as? String == value.provider }) { provider.select(item) }
         model.stringValue = value.model
         baseURL.stringValue = value.baseURL ?? ""
-        status.stringValue = value.runtimeAvailable ? "" : "The bundled setup runtime is unavailable. Settings can be saved; app setup needs a complete runtime."
+        heading.stringValue = value.configured ? "Agent settings" : "Set up your agent"
+        explanation.stringValue = value.configured ? "MeeCP uses this model to create and update your apps." : "Choose a model so MeeCP can prepare your app."
+        apiKey.placeholderString = value.configured ? "Leave blank to keep your saved key" : "Enter your API key"
+        keyHelp.stringValue = value.configured ? "Stored privately on this Mac. Leave blank to keep your saved key." : "Stored privately on this Mac and used only with your provider."
+        saveButton.title = value.configured ? "Save settings" : "Continue"
+        setAdvanced(value.baseURL != nil)
+        setStatus(value.runtimeAvailable ? "" : "The agent runtime is unavailable. You can save these settings and finish setup once it is restored.")
         refreshAvailability()
     }
 
@@ -182,6 +270,7 @@ final class PiSettingsView: NSStackView {
         let enabled = !busy && available?() == true && metadata != nil
         for field in [model, baseURL, apiKey] { field.isEnabled = enabled }
         provider.isEnabled = enabled; saveButton.isEnabled = enabled; closeButton.isEnabled = !busy
+        advancedButton.isEnabled = !busy
     }
 
     @objc private func close() { clearCredentialEntry(); onClose?() }
@@ -190,23 +279,24 @@ final class PiSettingsView: NSStackView {
         guard !busy, available?() == true, metadata != nil, let request,
               let providerID = provider.selectedItem?.representedObject as? String,
               let modelID = piModel(model.stringValue), !modelID.isEmpty else {
-            status.stringValue = "Choose a provider and enter a model ID."; return
+            setStatus("Choose a provider and enter a model ID."); return
         }
         let endpoint = baseURL.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard endpoint.isEmpty || Self.validBaseURL(endpoint) else {
-            status.stringValue = "Use an HTTPS endpoint or an HTTP endpoint on this Mac, without a password or query."; return
+            setAdvanced(true)
+            setStatus("Use an HTTPS endpoint or an HTTP endpoint on this Mac, without a password or query."); return
         }
         var body: [String: Any] = ["provider": providerID, "model": modelID, "base_url": endpoint.isEmpty ? NSNull() : endpoint]
         if !apiKey.stringValue.isEmpty { body["api_key"] = apiKey.stringValue }
-        clearCredentialEntry(); busy = true; refreshAvailability(); let expected = epoch
-        request("v1/pi/settings", "PUT", body) { [weak self] object, code in
+        clearCredentialEntry(); busy = true; setStatus("Saving settings…"); refreshAvailability(); let expected = epoch
+        request("v1/pi/settings", "PUT", body) { [weak self] object, _ in
             guard let self, expected == self.epoch else { return }
             self.busy = false
             guard let object, let value = PiSettingsMetadata(object) else {
-                self.status.stringValue = "Settings could not be saved (" + (preparationCode(code) ?? "pi_settings_invalid") + ")."
+                self.setStatus("Settings could not be saved. Try again.")
                 self.refreshAvailability(); return
             }
-            self.configure(value); self.status.stringValue = "Settings saved."
+            self.configure(value); self.setStatus("Settings saved.")
             self.onSaved?(value)
         }
     }
@@ -215,6 +305,44 @@ final class PiSettingsView: NSStackView {
     static func submitSelfTest(_ view: PiSettingsView, model: String, key: String) -> Bool {
         view.model.stringValue = model; view.apiKey.stringValue = key; view.save()
         return view.apiKey.stringValue.isEmpty
+    }
+
+    /// Uses synthetic metadata and a fake request; never touches saved credentials.
+    static func formSelfTest() -> Bool {
+        let configured: [String: Any] = ["configured": true, "provider": "openai", "model": "test-model",
+            "base_url": "https://api.example.com/v1", "runtime_available": true, "available_providers": ["openai"]]
+        guard let metadata = PiSettingsMetadata(configured) else { return false }
+        let view = PiSettingsView(); view.available = { true }; view.configure(metadata)
+        guard view.saveButton.title == "Save settings", !view.advancedFields.isHidden,
+              view.apiKey.stringValue.isEmpty else { return false }
+        view.toggleAdvanced()
+        var preservedEndpoint = false
+        view.request = { path, method, body, done in
+            preservedEndpoint = path == "v1/pi/settings" && method == "PUT" &&
+                body?["base_url"] as? String == "https://api.example.com/v1" && body?["api_key"] == nil
+            done(configured, nil)
+        }
+        view.save()
+        guard preservedEndpoint, view.apiKey.stringValue.isEmpty else { return false }
+        var initial = configured; initial["configured"] = false; initial["model"] = ""; initial["base_url"] = NSNull()
+        guard let initialMetadata = PiSettingsMetadata(initial) else { return false }
+        view.configure(initialMetadata)
+        guard view.saveButton.title == "Continue", view.advancedFields.isHidden, view.status.isHidden else { return false }
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 920, height: 700))
+        view.translatesAutoresizingMaskIntoConstraints = false; container.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+        container.layoutSubtreeIfNeeded()
+        guard view.card.frame.width > 590, view.card.frame.width <= 600,
+              view.card.frame.height > 200, view.card.frame.height < 500,
+              view.modelFields.orientation == .horizontal else { return false }
+        container.setFrameSize(NSSize(width: 360, height: 700)); container.layoutSubtreeIfNeeded()
+        container.layoutSubtreeIfNeeded()
+        return view.card.frame.width <= 360 && view.modelFields.orientation == .vertical &&
+            view.modelFields.arrangedSubviews.allSatisfy { $0.frame.width > 300 }
     }
 }
 
@@ -355,7 +483,7 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         settingsView.onClose = { [weak self] in
             guard let self else { return }
             self.pendingConfiguredStart = nil; self.inlineSettingsVisible = false; self.settingsView.isHidden = true
-            self.clearCredentialEntry(); self.refreshAvailability(); self.onConversationChange?()
+            self.clearCredentialEntry(); self.refreshAvailability(); self.onStateChange?(); self.onConversationChange?()
         }
         refreshAvailability()
     }
@@ -811,6 +939,7 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
     }
 
     static func conversationSelfTest() -> Bool {
+        guard PiSettingsView.formSelfTest() else { return false }
         let importID = "11111111-2222-4333-8444-555555555555", jobID = "99999999-2222-4333-8444-555555555555"
         let source = "sha256:" + String(repeating: "a", count: 64)
         guard let context = PreparationContext(importID: importID, revision: 1, sourceRevision: source),

@@ -28,7 +28,7 @@ record defects found after the initial acceptance and their regression coverage.
 ## Installed development build
 
 The installed build receipt identifies source commit
-`efefd6a42030abe91fad831d27f938f53051638a`. The ad hoc signed standalone app
+`69cba31a16925dfff3486ceab9b5dcaf3ce8faea` after the corrective review. The ad hoc signed standalone app
 passed deep strict code-seal verification after installation and restart.
 Installed production source and the native helper/source hashes matched the
 build. The owner API returned HTTP 200.
@@ -38,6 +38,12 @@ Metal helper. Compiler readiness, native compute, actual Stark generation,
 ColGrep semantic indexing/search and owned cleanup all passed. Temporary native
 reservations were released. The existing Colgrep slot was restored to Ready
 after the update.
+
+The large-resource check was repeated against this reviewed installed backend:
+all 5,101,146,906 bytes survived a fresh host, materialized within the tightened
+disk admission, and generated through the real worker without an original-path
+read grant. Both release UI self-tests and deep strict code-seal verification
+passed again. The original Colgrep Manual policy and port 19389 were preserved.
 
 ## Regression runs
 

@@ -1,4 +1,4 @@
-"""Restart recovery uses exact receipts and boot proof, never a recorded PID."""
+"""Restart recovery uses exact native receipts without requiring a Mac reboot."""
 from __future__ import annotations
 
 import asyncio
@@ -141,6 +141,9 @@ async def test_sigkill_receipts_reconcile_running_and_stopped_manual_slots(tmp_p
     monkeypatch.setattr(os, "kill", lambda pid, sig: signals.append((pid, sig)))
     try:
         slot_id = before["slot"]["slot_id"]
+        assert all(record["completion"]["schema_version"] == 2
+                   and record["boot_id"] == host.boot_session.identity
+                   for record in before["ledger"].values())
         await host.initialize()
         slot = host.registry.get_slot(slot_id)
         assert slot.generation == before["slot"]["generation"]
@@ -492,41 +495,81 @@ async def test_failed_exec_retires_completed_receipt_after_ledger_removal(tmp_pa
         await host.close()
 
 
-async def test_actual_reaper_sigkill_never_clears_ownership_on_restart(tmp_path, prepared, monkeypatch):
-    _, reaper = prepared
+@pytest.mark.parametrize("start_policy,wake_suppressed", [
+    ("manual", False), ("manual", True), ("host", True),
+])
+async def test_actual_reaper_sigkill_recovers_on_same_boot_and_allows_explicit_start(
+        tmp_path, prepared, monkeypatch, start_policy, wake_suppressed):
+    monkeypatch.setattr("meecp.supervisor.current_boot_session", lambda: BootSession(CURRENT_BOOT))
+    package, reaper = prepared
     state = tmp_path / "state"
     host = Supervisor(state, reaper)
-    slot = blocked_slot(host, tmp_path / "source")
-    host.registry.reconcile_owned_exit(slot.id, expected_generation=slot.generation)
-    process = await host.launch(slot.id, executable=Path(sys.executable), args=["-c", "import time; time.sleep(100)"],
-                                cwd=host.root, env={})
-    completion = host.ledger(slot.id)[process.instance_id]["completion"]
     real_kill = os.kill
-    real_kill(process.reaper_pid, signal.SIGKILL)
+    process = None
+    host_closed = False
     try:
+        plan = host.plan_install({"package": str(package), "start": False, "start_policy": start_policy})
+        operation = await finish(host, await host.apply_install(plan["plan_id"]))
+        assert operation.status == "completed", operation.error_code
+        slot = host.registry.get_slot(operation.slot_id)
+        await host.stop_gateway(slot.id)
+        accepted = host.data_directory(slot) / "accepted.bin"
+        accepted.write_bytes(b"accepted before relaunch")
+        connection = host.connection(slot.id)
+        process = await host.launch(slot.id, executable=Path(sys.executable),
+            args=["-c", "import time; time.sleep(100)"], cwd=host.root, env={})
+        completion = host.ledger(slot.id)[process.instance_id]["completion"]
+        assert completion["schema_version"] == 2
+        real_kill(process.reaper_pid, signal.SIGKILL)
         with pytest.raises(OwnershipLost):
             await asyncio.wait_for(process.wait(), 5)
         assert not verify_receipt(host.slot_directory(slot.id), completion)
         assert host.ledger(slot.id)[process.instance_id]["state"] == "ownership_lost"
+        before = host.registry.update_slot(slot.id, desired_state="running",
+            wake_suppressed=wake_suppressed, observed_state="ownership_lost", error_code="ownership_lost")
+        reservation = host.slot_directory(slot.id) / "reservation.json"
+        write_private_json(reservation, {"memory_mb": 32, "gpu": False})
         await host.close()
+        host_closed = True
         restarted = Supervisor(state, reaper)
         signals = []
         monkeypatch.setattr(os, "kill", lambda pid, sig: signals.append((pid, sig)))
         try:
             await restarted.initialize()
             recovered = restarted.registry.get_slot(slot.id)
-            assert recovered.generation == slot.generation
-            assert recovered.error_code == "ownership_lost" and recovered.observed_state == "ownership_lost"
-            assert process.instance_id in restarted.ledger(slot.id)
-            with pytest.raises(HostError, match="^ownership_lost$"):
-                await restarted.control(slot.id, "start")
+            assert recovered.observed_state == "stopped" and recovered.error_code is None
+            for field in ("generation", "package_digest", "package_path", "data_path", "credential_ref",
+                          "public_port", "start_policy", "wake_suppressed", "desired_state"):
+                assert getattr(recovered, field) == getattr(before, field)
+            assert restarted.boot_session.identity == CURRENT_BOOT
+            connection_unchanged = restarted.connection(slot.id) == connection
+            assert connection_unchanged
+            assert restarted.data_directory(recovered).joinpath("accepted.bin").read_bytes() == b"accepted before relaunch"
+            assert process.instance_id not in restarted.ledger(slot.id)
+            assert not receipt_path(restarted.slot_directory(slot.id), completion).exists()
+            assert not reservation.exists() and slot.id not in restarted.reservations
+            with pytest.raises(ProcessLookupError):
+                real_kill(process.pid, 0)
+            assert restarted.workers[slot.id].process.instance_id in restarted.ledger(slot.id)
+            await restarted.control(slot.id, "start")
+            started = restarted.registry.get_slot(slot.id)
+            assert started.observed_state == "ready" and started.generation == before.generation + 1
+            assert not started.wake_suppressed
+            assert await tool_call(restarted, slot.id) == {"valid": True, "kind": "object"}
+            await restarted.reserve_model(started, restarted.package(started))
+            assert slot.id in restarted.reservations and reservation.exists()
+            await restarted.release_model(slot.id)
+            assert slot.id not in restarted.reservations and not reservation.exists()
             assert not signals
         finally:
             await restarted.close()
     finally:
-        process.close_stdio()
-        with contextlib.suppress(ProcessLookupError):
-            real_kill(process.pid, signal.SIGKILL)
+        if not host_closed:
+            await host.close()
+        if process is not None:
+            process.close_stdio()
+            with contextlib.suppress(ProcessLookupError):
+                real_kill(process.pid, signal.SIGKILL)
 
 
 async def test_registry_receipt_reconciliation_preserves_generation_and_checks_expected_value(tmp_path):

@@ -10,17 +10,24 @@ from __future__ import annotations
 
 import os
 import fcntl
+import asyncio
 from pathlib import Path
 import re
 import secrets
 import stat
+import struct
+import subprocess
 from typing import Any
+import zlib
 
 from .boot_session import BootSession, valid_boot_identity
 from .private import PrivateStateError, check_private_file, ensure_private_directory
 
 MAGIC = b"MCPMEOR1"
 RECEIPT_BYTES = 105
+RECOVERABLE_MAGIC = b"MCPMEOR2"
+RECOVERABLE_GROUP_MAGIC = b"MCPMEOG2"
+RECOVERABLE_RECEIPT_BYTES = 197
 _INSTANCE = re.compile(r"[0-9a-f]{32}")
 _NONCE = re.compile(r"[0-9a-f]{64}")
 _ATTRIBUTES = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_mode", "st_uid", "st_nlink")
@@ -28,13 +35,23 @@ _ATTRIBUTES = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_
 
 def _metadata(value: Any) -> bool:
     return (isinstance(value, dict) and set(value) == {"schema_version", "instance_id", "nonce"}
-            and type(value["schema_version"]) is int and value["schema_version"] == 1
+            and type(value["schema_version"]) is int and value["schema_version"] in (1, 2, 3)
             and isinstance(value["instance_id"], str) and _INSTANCE.fullmatch(value["instance_id"]) is not None
             and isinstance(value["nonce"], str) and _NONCE.fullmatch(value["nonce"]) is not None)
 
 
-def _frame(instance_id: str, nonce: str, state: bytes) -> bytes:
-    return MAGIC + instance_id.encode("ascii") + nonce.encode("ascii") + state
+def _frame(instance_id: str, nonce: str, state: bytes, *, recoverable: bool = False, owned_group: bool = False) -> bytes:
+    magic = (RECOVERABLE_GROUP_MAGIC if owned_group else RECOVERABLE_MAGIC) if recoverable else MAGIC
+    prefix = magic + instance_id.encode("ascii") + nonce.encode("ascii") + state
+    if not recoverable:
+        return prefix
+    frame = prefix + bytes(88)
+    return frame + struct.pack("!I", zlib.crc32(frame[:104] + frame[105:193]))
+
+
+def _valid_recoverable_frame(frame: bytes) -> bool:
+    return (len(frame) == RECOVERABLE_RECEIPT_BYTES
+            and struct.unpack("!I", frame[193:])[0] == zlib.crc32(frame[:104] + frame[105:193]))
 
 
 def _private_directory(path: Path) -> None:
@@ -52,7 +69,8 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def prepare_receipt(slot_directory: Path, instance_id: str) -> tuple[int, dict[str, Any]]:
+def prepare_receipt(slot_directory: Path, instance_id: str, *, recoverable: bool = False,
+                    owned_group: bool = False) -> tuple[int, dict[str, Any]]:
     """Create and fsync a pending capability before the caller journals launch.
 
     The caller owns the returned descriptor and must close it after launch. A
@@ -69,8 +87,9 @@ def prepare_receipt(slot_directory: Path, instance_id: str) -> tuple[int, dict[s
         descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         os.fchmod(descriptor, 0o600)
         os.set_inheritable(descriptor, False)
-        metadata = {"schema_version": 1, "instance_id": instance_id, "nonce": secrets.token_hex(32)}
-        pending = _frame(instance_id, metadata["nonce"], b"P")
+        metadata = {"schema_version": (3 if owned_group else 2) if recoverable else 1,
+                    "instance_id": instance_id, "nonce": secrets.token_hex(32)}
+        pending = _frame(instance_id, metadata["nonce"], b"P", recoverable=recoverable, owned_group=owned_group)
         offset = 0
         while offset < len(pending):
             count = os.write(descriptor, pending[offset:])
@@ -104,8 +123,12 @@ def validate_receipt_descriptor(descriptor: int, instance_id: str, nonce: str) -
         return (stat.S_ISREG(details.st_mode) and details.st_uid == os.getuid()
                 and stat.S_IMODE(details.st_mode) == 0o600 and details.st_nlink == 1
                 and fcntl.fcntl(descriptor, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDWR
-                and details.st_size == RECEIPT_BYTES
-                and os.pread(descriptor, RECEIPT_BYTES + 1, 0) == _frame(instance_id, nonce, b"P"))
+                and ((details.st_size == RECEIPT_BYTES
+                      and os.pread(descriptor, RECEIPT_BYTES + 1, 0) == _frame(instance_id, nonce, b"P"))
+                     or (details.st_size == RECOVERABLE_RECEIPT_BYTES
+                         and os.pread(descriptor, RECOVERABLE_RECEIPT_BYTES + 1, 0)
+                             in (_frame(instance_id, nonce, b"P", recoverable=True),
+                                 _frame(instance_id, nonce, b"P", recoverable=True, owned_group=True)))))
     except OSError:
         return False
 
@@ -120,15 +143,14 @@ def acknowledge_nonlaunch(descriptor: int, instance_id: str, nonce: str) -> None
     if not validate_receipt_descriptor(descriptor, instance_id, nonce):
         raise PrivateStateError("ownership_receipt_unavailable")
     try:
-        data = _frame(instance_id, nonce, b"N")
-        if os.pwrite(descriptor, data, 0) != len(data):
+        if os.pwrite(descriptor, b"N", 104) != 1:
             raise OSError()
         os.fsync(descriptor)
     except OSError:
         raise PrivateStateError("ownership_receipt_unavailable") from None
 
 
-def _read_receipt(slot_directory: Path, metadata: dict[str, Any]) -> tuple[bytes, os.stat_result] | None:
+def _read_receipt(slot_directory: Path, metadata: dict[str, Any], *, allow_pending_damage=False) -> tuple[bytes, os.stat_result] | None:
     """Read only a stable private frame bound to this journal entry."""
     if not _metadata(metadata):
         return None
@@ -142,11 +164,12 @@ def _read_receipt(slot_directory: Path, metadata: dict[str, Any]) -> tuple[bytes
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(descriptor, "rb") as source:
             before = os.fstat(source.fileno())
+            size = RECOVERABLE_RECEIPT_BYTES if metadata["schema_version"] in (2, 3) else RECEIPT_BYTES
             if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
                     or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1
-                    or before.st_size != RECEIPT_BYTES):
+                    or before.st_size != size):
                 return None
-            frame = source.read(RECEIPT_BYTES + 1)
+            frame = source.read(size + 1)
             after, current = os.fstat(source.fileno()), path.lstat()
             if any(getattr(before, key) != getattr(after, key) or getattr(after, key) != getattr(current, key)
                    for key in _ATTRIBUTES):
@@ -154,8 +177,14 @@ def _read_receipt(slot_directory: Path, metadata: dict[str, Any]) -> tuple[bytes
         _private_directory(slot)
         _private_directory(directory)
         check_private_file(path)
-        if frame not in tuple(_frame(metadata["instance_id"], metadata["nonce"], state)
-                              for state in (b"P", b"C", b"N")):
+        if metadata["schema_version"] == 1:
+            if frame not in tuple(_frame(metadata["instance_id"], metadata["nonce"], state)
+                                  for state in (b"P", b"C", b"N")):
+                return None
+        elif (frame[:104] != _frame(metadata["instance_id"], metadata["nonce"], b"P", recoverable=True,
+                                  owned_group=metadata["schema_version"] == 3)[:104]
+              or frame[104:105] not in (b"P", b"R", b"C", b"N")
+              or (not _valid_recoverable_frame(frame) and not (allow_pending_damage and frame[104:105] == b"P"))):
             return None
         return frame, after
     except (OSError, ValueError, TypeError, PrivateStateError):
@@ -169,7 +198,58 @@ def verify_receipt(slot_directory: Path, metadata: dict[str, Any]) -> bool:
     or mutates the ownership ledger. Every absent/unsafe/invalid input fails shut.
     """
     receipt = _read_receipt(slot_directory, metadata)
-    return receipt is not None and receipt[0][-1:] in (b"C", b"N")
+    return receipt is not None and receipt[0][104:105] in (b"C", b"N")
+
+
+async def recover_receipt(slot_directory: Path, metadata: dict[str, Any], reaper: Path, *,
+                          boot: BootSession | None, launch_boot_id: str | None) -> bool:
+    """Settle a prior launch through its native kernel identities, without a reboot.
+
+    The helper receives only a pre-opened private receipt capability. It checks
+    lifetime identity and uses atomic identity-qualified signals; PID discovery
+    and Python PID signaling have no authority here. Cancellation joins cleanup.
+    """
+    if (not _metadata(metadata) or metadata["schema_version"] not in (2, 3) or boot is None
+            or not valid_boot_identity(launch_boot_id) or launch_boot_id.lower() != boot.identity):
+        return False
+    from .processes import _await_ownership
+
+    receipt = _read_receipt(slot_directory, metadata, allow_pending_damage=True)
+    if receipt is None:
+        return False
+    if verify_receipt(slot_directory, metadata):
+        return True
+    descriptor = None
+    try:
+        path = Path(slot_directory) / "ownership-receipts" / (metadata["instance_id"] + ".receipt")
+        descriptor = os.open(path, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
+        details = os.fstat(descriptor)
+        if any(getattr(details, key) != getattr(receipt[1], key) for key in _ATTRIBUTES):
+            return False
+        async def settle():
+            helper = await asyncio.create_subprocess_exec(str(reaper), "--recover-receipt", str(descriptor),
+                pass_fds=(descriptor,), env={}, stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                await asyncio.wait_for(helper.wait(), 40)
+            except TimeoutError:
+                if helper.returncode is None:
+                    helper.kill()  # This is our helper, not a journaled PID.
+                await helper.wait()
+                return False
+            return helper.returncode == 0 and verify_receipt(slot_directory, metadata)
+
+        action = asyncio.create_task(settle())
+        try:
+            return await asyncio.shield(action)
+        except asyncio.CancelledError:
+            await _await_ownership(asyncio.gather(action, return_exceptions=True))
+            raise
+    except (OSError, ValueError):
+        return False
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def verify_previous_boot_receipt(slot_directory: Path, metadata: dict[str, Any],

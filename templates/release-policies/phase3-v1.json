@@ -21,7 +21,7 @@
       {
         "id": "text-generate-v1",
         "version": "1.0.22",
-        "digest": "4333ab989ece53c3d21d7becf3d1de536f6f45d03d784f834bf05d50f2daa5d1"
+        "digest": "f35027206f9a83604de9dca3ed5092c4580bbe3f57835d112351a20786306608"
       },
       {
         "id": "service-text-generate-v1",
@@ -72,12 +72,12 @@
         {
           "id": "llamacpp-cpu-v1",
           "version": "1.0.22",
-          "digest": "4ee640d73214a86056c6048bf3cc29679e8d46f566b91133dae96c58f698d88c"
+          "digest": "f635d1da3f39c59eedb70d7506a2470c83415cde7dca493fa4de21f454b086bf"
         },
         {
           "id": "text-generate-v1",
           "version": "1.0.22",
-          "digest": "4333ab989ece53c3d21d7becf3d1de536f6f45d03d784f834bf05d50f2daa5d1"
+          "digest": "f35027206f9a83604de9dca3ed5092c4580bbe3f57835d112351a20786306608"
         }
       ],
       [

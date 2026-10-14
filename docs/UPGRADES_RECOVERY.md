@@ -91,16 +91,30 @@ empty directory. Corrupt or missing upgrade records remain recoverable failures
 when a durable selection/exposure marker exists.
 
 Native reapers retain exact child identity and write private completion receipts
-after `waitpid`, including when the supervisor dies. Startup clears an ownership
-entry after its matching instance/nonce receipt proves completion, or a later Mac
-boot proves the recorded processes have ended. New launches record the kernel boot
-UUID. Earlier receipts record the currently observed boot UUID and recover after
-the next Mac restart. Startup clears obsolete ownership
-records and reservations automatically, preserves installed data and connection
-settings, and follows the saved startup policy and explicit Stop suppression.
-Losing the reaper during the same Mac boot still blocks replacement until exit is
-proved. Missing or unsafe proof stays blocked. No recovery path discovers or
-signals a recorded PID.
+after `waitpid`, including when the supervisor dies. New launch receipts also
+record kernel process identities before a private gate permits package execution.
+On reinstall or relaunch, meecp automatically cleans up abandoned runtimes and
+clears their ownership records before opening replacements. This works during the
+same Mac session; a Mac restart is not required.
+
+Foreground orphan cleanup uses the recorded lifetime identity and macOS
+audit-token signals, with kernel checks preventing PID reuse from targeting a
+different process. Grouped apps have a separate native group owner. If the outer
+wrapper dies, that owner closes the process group, reaps its held leader and writes
+completion. Relaunch can request that owner's cleanup and await its receipt.
+Recovery does not force-kill the sole group owner or infer group completion from
+its disappearance. Corrupt receipts, unavailable identity checks, and simultaneous
+loss of both native group owners remain unproven failures.
+
+The kernel boot UUID scopes identities to the current boot; a different recorded
+boot also proves old processes have ended. Earlier receipt formats retain their
+native completion path during normal installer shutdown. They cannot authorize
+same-boot signaling without the identity fields. Reinstall preserves installed
+data and connection settings, then follows the saved startup policy and explicit
+Stop suppression. Accepted tool calls are never replayed automatically.
+After confirmed inherited cleanup, startup briefly retries the saved port while
+native children finish closing inherited sockets. A persistent conflict keeps
+the ordinary error and never moves the endpoint or evicts its current owner.
 
 ## Owner API and scoped upgrade access
 

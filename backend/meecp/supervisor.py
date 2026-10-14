@@ -32,10 +32,10 @@ from .downloads import DownloadError, DownloadManager
 from .connections import connection_names
 from .limits import DEFAULT_REQUEST_BYTES, MAX_REQUEST_BYTES
 from .activity import ACTIVITY_EVENTS, ACTIVITY_FRAME, Activity, timestamp
-from .boot_session import current_boot_session
+from .boot_session import current_boot_session, valid_boot_identity
 from .imports import ImportError as ImportDraftError, ImportStore
 from .private import PrivateStateError, check_private_file, ensure_private_directory, read_private_json, snapshot_package, write_private_json
-from .ownership_receipts import prepare_receipt, verify_receipt, verify_previous_boot_receipt
+from .ownership_receipts import prepare_receipt, verify_receipt, verify_previous_boot_receipt, recover_receipt
 from .processes import OwnedProcess, OwnershipLost, ProcessOwner, _await_ownership
 from .pi_listeners import ListenerError, assert_loopback, monitor_listeners
 from .registry import Registry, RegistryError
@@ -849,7 +849,9 @@ class Supervisor(UpgradeHost):
 
     async def launch(self, slot_id: str, **kwargs) -> OwnedProcess:
         identifier = uuid.uuid4().hex
-        completion_fd, completion = prepare_receipt(self.slot_directory(slot_id), identifier)
+        completion_fd, completion = prepare_receipt(self.slot_directory(slot_id), identifier,
+                                                   recoverable=self.boot_session is not None,
+                                                   owned_group=kwargs.get("owned_group", False))
         try:
             self.ledger(slot_id)[identifier] = {"state": "launching", "completion": completion}
             if self.boot_session is not None:
@@ -901,18 +903,32 @@ class Supervisor(UpgradeHost):
             finally:
                 os.close(descriptor)
 
-    async def reconcile_owned_receipts(self):
+    async def reconcile_owned_receipts(self) -> set[str]:
         # Reapers retain the child identity after this process dies. A bounded
         # wait lets their stop grace finish before classifying unresolved state.
         deadline = asyncio.get_running_loop().time() + 35
+        settled = set()
         while True:
             pending = False
             for slot in self.registry.list_slots():
+                # This is recovery of inherited ownership, never a sweep of
+                # runtimes held by the current supervisor.
+                if slot.id in self.owners:
+                    continue
                 ledger = self.ledger(slot.id)
                 removed = []
                 tagged = False
                 for identifier, value in list(ledger.items()):
                     completion = value.get("completion")
+                    if (isinstance(completion, dict) and completion.get("instance_id") == identifier
+                            and completion.get("schema_version") in (2, 3)
+                            and self.boot_session is not None and valid_boot_identity(value.get("boot_id"))
+                            and value["boot_id"].lower() == self.boot_session.identity
+                            and not verify_receipt(self.slot_directory(slot.id), completion)
+                            and not verify_previous_boot_receipt(self.slot_directory(slot.id), completion,
+                                                                 self.boot_session, value.get("boot_id"))):
+                        await recover_receipt(self.slot_directory(slot.id), completion, self.reaper,
+                                              boot=self.boot_session, launch_boot_id=value["boot_id"])
                     if (isinstance(completion, dict) and completion.get("instance_id") == identifier
                             and (verify_receipt(self.slot_directory(slot.id), completion)
                                  or verify_previous_boot_receipt(self.slot_directory(slot.id), completion,
@@ -922,7 +938,8 @@ class Supervisor(UpgradeHost):
                         # Older releases did not record a boot UUID. Observe
                         # this outstanding identity now so the next Mac boot
                         # can settle it, including an unacknowledged launch.
-                        if completion is not None and "boot_id" not in value and self.boot_session is not None:
+                        if (isinstance(completion, dict) and completion.get("schema_version") == 1
+                                and "boot_id" not in value and self.boot_session is not None):
                             value["boot_id"] = self.boot_session.identity
                             tagged = True
                         if (completion is not None and value.get("state") != "ownership_lost"
@@ -934,6 +951,7 @@ class Supervisor(UpgradeHost):
                     # proof first could leave ownership_lost with no way out.
                     if len(removed) == len(ledger):
                         self.registry.reconcile_owned_exit(slot.id, expected_generation=slot.generation)
+                        settled.add(slot.id)
                     for identifier, _, _ in removed:
                         ledger.pop(identifier)
                     self.save_ledger(slot.id)
@@ -942,8 +960,22 @@ class Supervisor(UpgradeHost):
                 elif tagged:
                     self.save_ledger(slot.id)
             if not pending or asyncio.get_running_loop().time() >= deadline:
-                return
+                return settled
             await asyncio.sleep(0.05)
+
+    async def _bind_recovered_listener(self, slot, settled: set[str]) -> socket.socket:
+        # Native cleanup can finish just before a fenced child or killed group
+        # member is scheduled to close its inherited listener. Give only those
+        # recovered slots a short grace, without changing their saved port.
+        deadline = asyncio.get_running_loop().time() + 1
+        while True:
+            try:
+                return bind_listener(slot.public_port)
+            except HostError as error:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if slot.id not in settled or error.code != "port_conflict" or remaining <= 0:
+                    raise
+                await asyncio.sleep(min(0.05, remaining))
 
     def connection(self, slot_id: str) -> dict:
         return read_private_json(self.slot_directory(slot_id) / "connection.json")
@@ -1869,7 +1901,7 @@ class Supervisor(UpgradeHost):
         await self.recover_preparations()
         self.reconcile_imports()
         await self.capture_work(self.captures.reconcile_draft_references)
-        await self.reconcile_owned_receipts()
+        settled = await self.reconcile_owned_receipts()
         try:
             from .migrations import initialize_transfers
         except ImportError:
@@ -1937,7 +1969,7 @@ class Supervisor(UpgradeHost):
                 self.registry.update_slot(slot.id, observed_state="failed", error_code="installation_recovery_required")
                 continue
             try:
-                self.listeners[slot.id] = bind_listener(slot.public_port)
+                self.listeners[slot.id] = await self._bind_recovered_listener(slot, settled)
                 if slot.start_policy == "host" and not slot.wake_suppressed:
                     await self.control(slot.id, "start")
                 else:

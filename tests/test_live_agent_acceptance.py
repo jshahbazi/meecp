@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from test_recipe_native_management_acceptance import native_recipe_driver, private_json, file_identity
+from test_recipe_native_management_acceptance import private_json, file_identity
 
 
 @pytest.fixture
@@ -593,6 +593,7 @@ def test_main_preserves_fixed_native_fallback_and_metadata(driver, tmp_path, mon
 
 
 @pytest.mark.parametrize("fault", ["missing_generation", "invalid_generation", "extra_secret", "simulation_marker", "expired", "replaced_manager"])
+@pytest.mark.skip(reason="Native manual/external-agent setup workflow retired; historical acceptance only")
 def test_compiled_live_fixture_denied_before_claim(native_recipe_driver, tmp_path, driver, fault):
     workspace = tmp_path.resolve() / ("meecp-native-onboarding-" + str(uuid.uuid4()))
     base = workspace / "live-agent"
@@ -620,6 +621,7 @@ def test_compiled_live_fixture_denied_before_claim(native_recipe_driver, tmp_pat
     assert not output.exists() and not marker.with_suffix(".claimed").exists()
 
 
+@pytest.mark.skip(reason="Native manual/external-agent setup workflow retired; historical acceptance only")
 async def test_real_owner_parent_refuses_closed_live_profile_before_provider_call(native_recipe_driver, tmp_path, driver):
     import uvicorn
     from meecp.supervisor import Supervisor, management_app, HostServer, bind_listener

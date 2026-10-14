@@ -21,11 +21,13 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from meecp.contracts import PackageError, validate_package
+from meecp.private import write_private_json
 from meecp.processes import OwnershipLost
 from meecp.supervisor import HostError, Supervisor, Worker
 from meecp.worker import RemoteLauncher
 from meecp import worker as worker_module
 from test_meecp_gateway import CHILD, TOOL
+from test_meecp_host import finish, prepared
 from test_meecp_packages import make_package, relock
 
 
@@ -352,39 +354,77 @@ async def test_relocated_locked_python_cache_survives_install_and_gateway_sessio
     assert validate_package(source).digest == original.digest
 
 
-async def test_ownership_loss_persists_blocks_restart_and_is_scoped(reaper, tmp_path):
+async def test_ownership_loss_fences_current_host_and_recovers_on_relaunch(reaper, tmp_path, prepared):
     host = Supervisor(tmp_path / "state", reaper)
-    slot = add_slot(host, tmp_path, 19386)
-    independent = add_slot(host, tmp_path, 19387)
-    process = await host.launch(slot.id, executable=Path(sys.executable),
-                               args=["-c", "import time; time.sleep(100)"], cwd=tmp_path, env={})
-    target_pid = process.pid
-    assert target_pid is not None
+    real_kill = os.kill
+    process = None
+    reopened = None
+    host_closed = False
     try:
-        os.kill(process.reaper_pid, signal.SIGKILL)
+        package = prepared[0]
+        plan = host.plan_install({"package": str(package), "start": False})
+        operation = await finish(host, await host.apply_install(plan["plan_id"]))
+        assert operation.status == "completed", operation.error_code
+        slot = host.registry.get_slot(operation.slot_id)
+        await host.stop_gateway(slot.id)
+        plan = host.plan_install({"package": str(package), "name": "Independent lifecycle fixture", "start": False})
+        operation = await finish(host, await host.apply_install(plan["plan_id"]))
+        assert operation.status == "completed", operation.error_code
+        independent = host.registry.get_slot(operation.slot_id)
+        await host.stop_gateway(independent.id)
+        process = await host.launch(slot.id, executable=Path(sys.executable),
+            args=["-c", "import time; time.sleep(100)"], cwd=tmp_path, env={})
+        target_pid = process.pid
+        assert target_pid is not None
+        completion = host.ledger(slot.id)[process.instance_id]["completion"]
+        assert completion["schema_version"] == 2
+        reservation = host.slot_directory(slot.id) / "reservation.json"
+        retained = {"memory_mb": 32, "gpu": False}
+        write_private_json(reservation, retained)
+        host.reservations[slot.id] = retained
+        real_kill(process.reaper_pid, signal.SIGKILL)
         with pytest.raises(OwnershipLost):
             await asyncio.wait_for(process.wait(), 5)
         assert host.ledger(slot.id)[process.instance_id]["state"] == "ownership_lost"
         assert host.registry.get_slot(slot.id).observed_state == "ownership_lost"
+        assert host.reservations[slot.id] == retained and reservation.exists()
         with pytest.raises(HostError, match="ownership_lost"):
             await host.control(slot.id, "start")
+        real_kill(target_pid, 0)
         other = await host.launch(independent.id, executable=Path(sys.executable),
                                   args=["-c", "pass"], cwd=tmp_path, env={})
         await host.reap(independent.id, other)
         assert not host.ledger(independent.id)
-    finally:
         await host.close()
-        with contextlib.suppress(ProcessLookupError):
-            os.kill(target_pid, signal.SIGKILL)
-    reopened = Supervisor(tmp_path / "state", reaper)
-    try:
-        # Restart rejection must occur before package validation or a new launch.
+        host_closed = True
+        reopened = Supervisor(tmp_path / "state", reaper)
+        # The new host must recover the durable identity before admitting Start.
         with pytest.raises(HostError, match="ownership_lost"):
             await reopened.control(slot.id, "start")
         assert reopened.ledger(slot.id)[process.instance_id]["state"] == "ownership_lost"
         assert slot.id not in reopened.workers
+        assert reopened.boot_session == host.boot_session
+        await reopened.initialize()
+        recovered = reopened.registry.get_slot(slot.id)
+        assert recovered.observed_state == "stopped" and recovered.error_code is None
+        assert recovered.generation == slot.generation
+        assert process.instance_id not in reopened.ledger(slot.id)
+        assert slot.id in reopened.workers
+        assert not reservation.exists() and slot.id not in reopened.reservations
+        with pytest.raises(ProcessLookupError):
+            real_kill(target_pid, 0)
+        assert reopened.registry.get_slot(independent.id).error_code is None
+        await reopened.control(slot.id, "start")
+        assert reopened.registry.get_slot(slot.id).observed_state == "ready"
     finally:
-        await reopened.close()
+        if reopened is not None:
+            await reopened.close()
+        if not host_closed:
+            await host.close()
+        if process is not None:
+            process.close_stdio()
+            with contextlib.suppress(ProcessLookupError):
+                real_kill(process.pid, signal.SIGKILL)
 
 
 async def test_spontaneous_gateway_exit_clears_confirmed_ownership(reaper, tmp_path):

@@ -1,49 +1,11 @@
 """Compiled production driver rejects fixtures before any owner request."""
 import json
-import hashlib
 import os
-from pathlib import Path
 import subprocess
-import sys
 import time
 import uuid
 
 import pytest
-
-
-@pytest.fixture(scope="module")
-def native_recipe_driver(tmp_path_factory):
-    if sys.platform != "darwin":
-        pytest.skip("native AppKit acceptance requires macOS")
-    root = Path(__file__).resolve().parents[1]
-    scratch = tmp_path_factory.mktemp("native-recipe-build").resolve()
-    inputs = [root / "Package.swift"] + sorted(path for folder in ("Sources", "native")
-        for path in (root / folder).rglob("*") if path.is_file())
-    def hashes():
-        return {path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in inputs}
-    before = hashes()
-    child = subprocess.Popen(["/usr/bin/swift", "build", "--package-path", str(root),
-        "--scratch-path", str(scratch), "-c", "release", "--product", "MeecpMenuBar"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    try:
-        output, error = child.communicate(timeout=180)
-    except subprocess.TimeoutExpired:
-        child.kill()
-        child.communicate()
-        pytest.fail("native_recipe_compile_timeout", pytrace=False)
-    if child.returncode != 0:
-        pytest.fail("native_recipe_compile_failed", pytrace=False)
-    binary = scratch / "arm64-apple-macosx" / "release" / "MeecpMenuBar"
-    assert binary.is_file()
-    assert hashes() == before
-    private_json(scratch / "native-build-receipt.json", {"schema_version": 1,
-        "compiler_exit_code": child.returncode, "compiler_joined": True,
-        "compiler_stdout_bytes": len(output), "compiler_stderr_bytes": len(error),
-        "source_inputs_before_after": before, "binary_path": str(binary),
-        "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest()})
-    # Compiler output stays in memory and is never emitted, including on failure.
-    del output, error
-    return binary
 
 
 def private_json(path, value):
@@ -67,6 +29,7 @@ def file_identity(path):
 @pytest.mark.parametrize("fault", ["unknown_field", "unsupported_action", "extra_recipe_field",
     "wrong_nonce", "expired", "manager_replaced", "marker_hardlink", "fixture_mode",
     "symlink_folder", "claimed_nonce", "existing_output"])
+@pytest.mark.skip(reason="Native manual/external-agent setup workflow retired; historical acceptance only")
 def test_compiled_driver_rejects_unowned_or_stale_fixture(native_recipe_driver, tmp_path, fault):
     workspace = tmp_path.resolve() / ("meecp-native-onboarding-" + str(uuid.uuid4()))
     root = workspace / "native_management"
@@ -151,6 +114,7 @@ def test_compiled_context_checks_replay_and_same_byte_inode_substitution(native_
     assert not list(temporary.iterdir())
 
 
+@pytest.mark.skip(reason="Native manual/external-agent setup workflow retired; historical acceptance only")
 def test_python_canonical_fixture_reaches_exact_once_claim(native_recipe_driver, tmp_path):
     workspace = tmp_path.resolve() / ("meecp-native-onboarding-" + str(uuid.uuid4()))
     root = workspace / "native_management"

@@ -112,7 +112,7 @@ private struct Project: Equatable {
     var status: String {
         ["stopped": "Stopped", "starting": "Starting", "loading": "Loading", "warming_up": "Warming up",
          "ready": "Ready", "stopping": "Stopping", "draining": "Stopping", "failed": "Failed",
-         "ownership_lost": "Reconciliation required", "updating": "Updating"][state] ?? "Unavailable"
+         "ownership_lost": "App recovery needed", "updating": "Updating"][state] ?? "Unavailable"
     }
     var policyLabel: String { ["manual": "Manual", "host": "Automatic", "first_call": "On first call"][policy] ?? "Manual" }
     var blocked: Bool { ["ownership_lost", "updating"].contains(state) || ["installation_recovery_required", "removal_recovery_required", "upgrade_recovery_required"].contains(error ?? "") }
@@ -1031,6 +1031,7 @@ final class MeecpApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextF
         let sourceOptions = workspaceStack([drop, sourceURL, role], spacing: 10)
         self.sourceOptionsStack = sourceOptions
         for view in [drop, sourceURL, role] { workspaceFill(view, in: sourceOptions) }
+        piSetupView.applicationLaunchExclusions = [stateDirectory]
         piSetupView.request = { [weak self] path, method, body, completion in
             self?.request(path, method: method, body: body, completion: completion)
         }

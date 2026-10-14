@@ -5,6 +5,10 @@ initial head `5ac7d23518a0531b0ba7d3f81d014330a5f52133` against
 `f0cf2b46df988994b0a12317cd625473c008801b`, followed by the corrective changes
 recorded below. This is a source, integration and scoped platform review.
 
+Corrective implementation and installed build:
+`69cba31a16925dfff3486ceab9b5dcaf3ce8faea`. The later receipt update changes
+documentation only.
+
 Verdict: **Conforms within the recorded local acceptance scope after correction.**
 The initial implementation had concrete correctness and confinement defects;
 passing earlier checks did not establish those failure paths. Physical

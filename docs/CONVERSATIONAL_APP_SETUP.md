@@ -116,4 +116,3 @@ The host's preparation and import APIs, CLI and external-management
 authorization are separate compatibility capabilities. They retain their
 existing source, draft, grant and exact-plan checks. Retiring native workflow
 controls does not remove those contracts or broaden their authority.
-

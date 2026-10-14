@@ -50,6 +50,56 @@ The corrected app was rebuilt, signed, and deployed at the existing canonical pa
 
 Actual VS Code Insiders 1.141.0-insider verification used a new empty window with the same global `jevk5` configuration. Start reached **Running** and **Discovered 2 tools**; a server-only Restart reached Running again with a new discovery of both tools and no error metadata. No model calls were made. Only the verification window was closed; the original working window and configuration were preserved. Its existing MCP connection may need its own server restart to load the correction. Both projects remained Ready afterward.
 
+## Automatic ownership recovery on reinstall or relaunch (2026-10-14)
+
+Foreground receipt format 2 records kernel lifetime and audit-token identities
+before a private gate permits execution. Format 3 preserves a separate native
+group owner through loss of the outer lifecycle proxy. Startup settles inherited
+same-boot receipts before opening replacement gateways. The foreground helper
+confirms the old target ended; grouped recovery requires the retained owner's
+completion after descendant cleanup. Pending pre-exec frames settle under an
+independent native lock, including interrupted identity writes. Cancellation
+joins recovery before closing its receipt capability.
+
+The kernel boot UUID scopes signaling authority. Missing or mismatched boot
+metadata, damaged execution-authorized frames, unavailable identity checks, and
+loss of both group owners cannot authorize guessed PID or process-group signals.
+Older receipts retain their normal native completion path on graceful shutdown.
+Registry reconciliation precedes deletion of the final durable ledger proof, so
+an interruption can replay cleanup. A one-second port retry applies only after
+confirmed inherited settlement and retains the saved port. Persistent conflicts
+keep their ordinary error.
+
+The regression cases include real native foreground and grouped process loss,
+stopped group owners, exited leaders with live descendants, interruption before
+spawn acknowledgment, cancellation during cleanup, and unrelated process/group
+protection. They also cover saved policy and Stop suppression, selected data and
+connection preservation, interrupted install/upgrade recovery, and a real SDK
+tool call after recovery. The engineering checks qualify the supported local
+process profiles; they do not qualify a Developer ID release or a new macOS ABI.
+The remaining UI warning describes recovery on reopening meecp without asking
+the user to restart the Mac.
+
+The integrated receipt/relaunch/lifecycle/process/registry/host/upgrade run passed
+**209 tests** with one existing opt-in case skipped. The policy, implementation
+identity, packaged preflight, and signed-command authority checks passed **93
+tests**. Swift tests passed **21 tests** with three opt-in installer cases skipped;
+all four native UI/contract self-tests passed. Native compilation also passed
+with `-Wall -Wextra -Werror`. A fresh ad hoc bundle built successfully with the
+updated TextGen implementation identities and unchanged signed-command helpers.
+
+The local development app was replaced at `/Applications/meecp.app` through
+verified staging, graceful shutdown, and atomic replacement, with a separate
+bundle backup. No manual ownership-record repair was needed for this replacement.
+The previously Ready manual app was resumed; its runtime generation advanced
+once through the normal Start path. All five registered apps retained their IDs,
+ports, selected package/settings/data paths, startup policies, and Stop flags.
+Per-app connection and settings files and the saved data-file hashes matched the
+private pre-install snapshot. Post-launch inspection found no ownership blocks
+or slot error codes and five fresh same-boot identity-bearing receipts. Installed
+recovery Python modules and native binaries matched the tested source/build, and
+strict deep signature verification passed. The Mac was not restarted.
+
 ## Claim boundaries
 
-The execution profile uses trusted local packages with the current user's permissions. Access declarations are not an OS sandbox. The initial GPU policy admits one resident managed GPU package; multi-engine contention and fairness belong to Phase 4 in the updated roadmap. Reaper-loss tests establish blocked replacement and retained reservations, not guaranteed target cleanup after losing its reaper. Decision transport parity does not establish new model-quality or calibration results.
+The execution profile uses trusted local packages with the current user's permissions. Access declarations are not an OS sandbox. The initial GPU policy admits one resident managed GPU package; multi-engine contention and fairness belong to Phase 4 in the updated roadmap. Reaper-loss tests cover relaunch recovery for the identity-bearing foreground profile and the grouped profile with a surviving inner owner. Missing legacy proof and loss of both group owners remain blocked with retained reservations. Decision transport parity does not establish new model-quality or calibration results.

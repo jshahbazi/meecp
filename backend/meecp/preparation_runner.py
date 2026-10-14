@@ -42,14 +42,14 @@ WHEEL_HOSTS = frozenset({"files.pythonhosted.org"})
 MAX_WORKSPACE_ENTRIES = 200000
 RUNNER_FILES = ("preparation_runner.py", "preparation_builder.py", "preparation_acquisition.py",
                 "preparation_components.py", "preparation_processes.py", "preparations.py",
-                "preparation_authority.py", "preparation_contracts.py", "processes.py", "ownership_receipts.py",
+                "preparation_authority.py", "preparation_contracts.py", "processes.py", "ownership_receipts.py", "boot_session.py",
                 "imports.py", "preparation_application_source.py", "private.py", "recipes.py", "contracts.py", "preparation_inputs.py",
                 "preparation_resolved_python.py", "preparation_resolution.py", "preparation_admission.py", "preparation_release_policy.py", "preparation_release_artifact.py",
                 "management_workflow_grants.py", "grants.py",
                 "preparation_service_contracts.py", "preparation_service_receipts.py")
 VERIFIER_FILES = ("preparation_verifier.py", "preparation_probe_confinement.py", "process_graph_accounting_v1.py",
                   "preparation_processes.py", "preparation_contracts.py",
-                  "contracts.py", "processes.py", "ownership_receipts.py")
+                  "contracts.py", "processes.py", "ownership_receipts.py", "boot_session.py")
 
 
 def implementation_digest(domain: str, filenames: tuple[str, ...], *, reaper: Path | None = None,

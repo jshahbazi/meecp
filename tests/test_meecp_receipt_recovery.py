@@ -1,4 +1,4 @@
-"""Restart recovery uses native completion proof, never a recorded target PID."""
+"""Restart recovery uses exact native receipts without requiring a Mac reboot."""
 from __future__ import annotations
 
 import asyncio
@@ -15,17 +15,20 @@ import uuid
 
 import pytest
 
+from meecp.boot_session import BootSession
 from meecp.contracts import validate_package
 from meecp.ownership_receipts import prepare_receipt, verify_receipt
 from meecp.private import read_private_json, write_private_json
 from meecp.processes import OwnershipLost, ProcessError
 from meecp.registry import RegistryError
 from meecp.supervisor import HostError, Supervisor
-from test_meecp_host import prepared  # Reuse the actual signed native fixture.
+from test_meecp_host import finish, prepared, tool_call  # Reuse the actual signed native fixture.
 from test_meecp_packages import make_package
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PRIOR_BOOT = "11111111-1111-4111-8111-111111111111"
+CURRENT_BOOT = "22222222-2222-4222-8222-222222222222"
 
 # The subprocess owns its Supervisor and every native process. SIGKILL prevents
 # Python cleanup from running, leaving only the native completion capabilities.
@@ -138,6 +141,9 @@ async def test_sigkill_receipts_reconcile_running_and_stopped_manual_slots(tmp_p
     monkeypatch.setattr(os, "kill", lambda pid, sig: signals.append((pid, sig)))
     try:
         slot_id = before["slot"]["slot_id"]
+        assert all(record["completion"]["schema_version"] == 2
+                   and record["boot_id"] == host.boot_session.identity
+                   for record in before["ledger"].values())
         await host.initialize()
         slot = host.registry.get_slot(slot_id)
         assert slot.generation == before["slot"]["generation"]
@@ -228,8 +234,14 @@ def blocked_slot(host: Supervisor, source: Path):
     return host.registry.update_slot(slot.id, observed_state="ownership_lost", error_code="ownership_lost")
 
 
-@pytest.mark.parametrize("failure", ["missing", "pending", "malformed", "wrong_nonce", "unsafe_file", "missing_metadata"])
-async def test_unproven_receipt_keeps_ledger_generation_reservation_and_control_blocked(tmp_path, monkeypatch, failure):
+@pytest.mark.parametrize("failure,boot_state", [
+    ("missing", "different"), ("pending", "same"), ("pending", "unknown"),
+    ("malformed", "different"), ("wrong_nonce", "different"),
+    ("unsafe_file", "different"), ("missing_metadata", "different"),
+])
+async def test_unproven_receipt_keeps_ledger_generation_reservation_and_control_blocked(
+        tmp_path, monkeypatch, failure, boot_state):
+    monkeypatch.setattr("meecp.supervisor.current_boot_session", lambda: BootSession(PRIOR_BOOT))
     state = tmp_path / "state"
     host = Supervisor(state, tmp_path / "unused-reaper")
     slot = blocked_slot(host, tmp_path / "source")
@@ -244,13 +256,18 @@ async def test_unproven_receipt_keeps_ledger_generation_reservation_and_control_
         metadata = {**metadata, "nonce": "0" * 64}
     elif failure == "unsafe_file":
         path.chmod(0o644)
-    record = {"state": "ownership_lost"}
+    elif failure == "pending":
+        os.utime(path, ns=(1, 1))
+    record = {"state": "ownership_lost", "boot_id": PRIOR_BOOT}
     if failure != "missing_metadata":
         record["completion"] = metadata
     host.ledger(slot.id)[metadata["instance_id"]] = record
     host.save_ledger(slot.id)
     write_private_json(host.slot_directory(slot.id) / "reservation.json", {"memory_mb": 32, "gpu": False})
     await host.close()
+    boot = (None if boot_state == "unknown" else
+            BootSession(PRIOR_BOOT if boot_state == "same" else CURRENT_BOOT))
+    monkeypatch.setattr("meecp.supervisor.current_boot_session", lambda: boot)
     restarted = Supervisor(state, tmp_path / "unused-reaper")
     signals = []
     monkeypatch.setattr(os, "kill", lambda pid, sig: signals.append((pid, sig)))
@@ -270,7 +287,140 @@ async def test_unproven_receipt_keeps_ledger_generation_reservation_and_control_
         await restarted.close()
 
 
-async def test_supervisor_receipt_capability_is_closed_before_target_exec(tmp_path, prepared):
+@pytest.mark.parametrize("start_policy,wake_suppressed,proof", [
+    ("manual", False, "uuid"), ("manual", True, "uuid"),
+    ("host", True, "uuid"), ("manual", False, "legacy"),
+])
+async def test_previous_boot_pending_receipt_recovers_slot_and_explicit_start(
+        tmp_path, prepared, monkeypatch, start_policy, wake_suppressed, proof):
+    package, reaper = prepared
+    state = tmp_path / "state"
+    monkeypatch.setattr("meecp.supervisor.current_boot_session", lambda: BootSession(PRIOR_BOOT))
+    host = Supervisor(state, reaper)
+    try:
+        plan = host.plan_install({"package": str(package), "start": False, "start_policy": start_policy})
+        operation = await finish(host, await host.apply_install(plan["plan_id"]))
+        assert operation.status == "completed", operation.error_code
+        slot = host.registry.get_slot(operation.slot_id)
+        await host.stop_gateway(slot.id)
+        host.data_directory(slot).joinpath("accepted.bin").write_bytes(b"accepted before reboot")
+        before = host.registry.update_slot(slot.id, desired_state="running", wake_suppressed=wake_suppressed,
+                                           observed_state="ownership_lost", error_code="ownership_lost")
+        connection = host.connection(slot.id)
+        descriptor, metadata = prepare_receipt(host.slot_directory(slot.id), uuid.uuid4().hex)
+        os.close(descriptor)
+        record = {"state": "ownership_lost", "completion": metadata}
+        if proof == "uuid":
+            record["boot_id"] = PRIOR_BOOT
+        host.ledger(slot.id)[metadata["instance_id"]] = record
+        host.save_ledger(slot.id)
+        reservation_path = host.slot_directory(slot.id) / "reservation.json"
+        write_private_json(reservation_path, {"memory_mb": 32, "gpu": False})
+        os.utime(receipt_path(host.slot_directory(slot.id), metadata), ns=(1, 1))
+        next_boot = BootSession(CURRENT_BOOT)
+    finally:
+        await host.close()
+
+    if proof == "legacy":
+        monkeypatch.setattr("meecp.supervisor.current_boot_session", lambda: BootSession(PRIOR_BOOT))
+        observed = Supervisor(state, reaper)
+        try:
+            await observed.initialize()
+            unchanged = observed.registry.get_slot(slot.id)
+            assert unchanged == before
+            assert observed.ledger(slot.id) == {metadata["instance_id"]: {**record, "boot_id": PRIOR_BOOT}}
+            assert read_private_json(observed.slot_directory(slot.id) / "ownership.json") == observed.ledger(slot.id)
+            assert receipt_path(observed.slot_directory(slot.id), metadata).exists()
+            assert observed.reservations[slot.id] == {"memory_mb": 32, "gpu": False}
+            assert not observed.workers and not observed.listeners
+            with pytest.raises(HostError, match="^ownership_lost$"):
+                await observed.control(slot.id, "start")
+        finally:
+            await observed.close()
+
+    monkeypatch.setattr("meecp.supervisor.current_boot_session", lambda: next_boot)
+    restarted = Supervisor(state, reaper)
+    signals = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: signals.append((pid, sig)))
+    try:
+        await restarted.initialize()
+        recovered = restarted.registry.get_slot(slot.id)
+        assert recovered.observed_state == "stopped" and recovered.error_code is None
+        for field in ("generation", "package_digest", "package_path", "data_path", "credential_ref",
+                      "public_port", "start_policy", "wake_suppressed", "desired_state"):
+            assert getattr(recovered, field) == getattr(before, field)
+        assert restarted.connection(slot.id) == connection
+        assert restarted.data_directory(recovered).joinpath("accepted.bin").read_bytes() == b"accepted before reboot"
+        assert metadata["instance_id"] not in restarted.ledger(slot.id)
+        assert not receipt_path(restarted.slot_directory(slot.id), metadata).exists()
+        assert not reservation_path.exists() and slot.id not in restarted.reservations
+        assert restarted.workers[slot.id].process.instance_id in restarted.ledger(slot.id)
+        assert not signals
+        await restarted.control(slot.id, "start")
+        started = restarted.registry.get_slot(slot.id)
+        assert started.observed_state == "ready" and started.generation == before.generation + 1
+        assert not started.wake_suppressed
+        assert await tool_call(restarted, slot.id) == {"valid": True, "kind": "object"}
+        assert not signals
+    finally:
+        await restarted.close()
+
+
+async def test_last_receipt_survives_interrupted_ledger_removal_and_replays_on_restart(
+        tmp_path, prepared, monkeypatch):
+    package, reaper = prepared
+    state = tmp_path / "state"
+    monkeypatch.setattr("meecp.supervisor.current_boot_session", lambda: BootSession(PRIOR_BOOT))
+    host = Supervisor(state, reaper)
+    try:
+        plan = host.plan_install({"package": str(package), "start": False})
+        operation = await finish(host, await host.apply_install(plan["plan_id"]))
+        assert operation.status == "completed", operation.error_code
+        slot = host.registry.get_slot(operation.slot_id)
+        await host.stop_gateway(slot.id)
+        host.registry.update_slot(slot.id, observed_state="ownership_lost", error_code="ownership_lost")
+        descriptor, metadata = prepare_receipt(host.slot_directory(slot.id), uuid.uuid4().hex)
+        os.close(descriptor)
+        record = {"state": "ownership_lost", "completion": metadata, "boot_id": PRIOR_BOOT}
+        host.ledger(slot.id)[metadata["instance_id"]] = record
+        host.save_ledger(slot.id)
+    finally:
+        await host.close()
+
+    monkeypatch.setattr("meecp.supervisor.current_boot_session", lambda: BootSession(CURRENT_BOOT))
+    interrupted = Supervisor(state, reaper)
+    def fail_save(slot_id):
+        raise OSError("synthetic ledger persistence failure")
+    monkeypatch.setattr(interrupted, "save_ledger", fail_save)
+    try:
+        with pytest.raises(OSError, match="^synthetic ledger persistence failure$"):
+            await interrupted.initialize()
+        assert read_private_json(interrupted.slot_directory(slot.id) / "ownership.json") == {metadata["instance_id"]: record}
+        assert receipt_path(interrupted.slot_directory(slot.id), metadata).exists()
+        classified = interrupted.registry.get_slot(slot.id)
+        assert classified.observed_state == "failed" and classified.error_code == "operation_interrupted"
+        assert classified.generation == slot.generation
+        assert not interrupted.workers and not interrupted.listeners
+    finally:
+        await interrupted.close()
+
+    restarted = Supervisor(state, reaper)
+    try:
+        await restarted.initialize()
+        recovered = restarted.registry.get_slot(slot.id)
+        assert recovered.generation == slot.generation
+        assert recovered.observed_state == "stopped" and recovered.error_code is None
+        assert metadata["instance_id"] not in restarted.ledger(slot.id)
+        assert not receipt_path(restarted.slot_directory(slot.id), metadata).exists()
+        await restarted.control(slot.id, "start")
+        assert restarted.registry.get_slot(slot.id).observed_state == "ready"
+        assert await tool_call(restarted, slot.id) == {"valid": True, "kind": "object"}
+    finally:
+        await restarted.close()
+
+
+async def test_supervisor_receipt_capability_is_closed_before_target_exec(tmp_path, prepared, monkeypatch):
+    monkeypatch.setattr("meecp.supervisor.current_boot_session", lambda: BootSession(CURRENT_BOOT))
     _, reaper = prepared
     host = Supervisor(tmp_path / "state", reaper)
     slot = blocked_slot(host, tmp_path / "source")
@@ -283,6 +433,7 @@ async def test_supervisor_receipt_capability_is_closed_before_target_exec(tmp_pa
             "import os,json; f=[]\nfor n in range(3,256):\n try: os.fstat(n); f.append(n)\n except OSError: pass\nprint(json.dumps(f),flush=True)"],
             cwd=host.root, env={})
         completion = host.ledger(slot.id)[process.instance_id]["completion"]
+        assert read_private_json(host.slot_directory(slot.id) / "ownership.json")[process.instance_id]["boot_id"] == CURRENT_BOOT
         assert json.loads(await process.stdout.readline()) == []
         await host.reap(slot.id, process)
         assert not host.ledger(slot.id)
@@ -294,6 +445,7 @@ async def test_supervisor_receipt_capability_is_closed_before_target_exec(tmp_pa
 
 
 async def test_completed_identity_is_retired_while_unproven_identity_stays_blocked(tmp_path, prepared, monkeypatch):
+    monkeypatch.setattr("meecp.supervisor.current_boot_session", lambda: BootSession(CURRENT_BOOT))
     _, reaper = prepared
     state = tmp_path / "state"
     host = Supervisor(state, reaper)
@@ -307,7 +459,7 @@ async def test_completed_identity_is_retired_while_unproven_identity_stays_block
     assert verify_receipt(host.slot_directory(slot.id), completed)
     descriptor, pending = prepare_receipt(host.slot_directory(slot.id), uuid.uuid4().hex)
     os.close(descriptor)
-    host.ledger(slot.id)[pending["instance_id"]] = {"state": "ownership_lost", "completion": pending}
+    host.ledger(slot.id)[pending["instance_id"]] = {"state": "ownership_lost", "completion": pending, "boot_id": CURRENT_BOOT}
     host.save_ledger(slot.id)
     host.registry.update_slot(slot.id, observed_state="ownership_lost", error_code="ownership_lost")
     await host.close()
@@ -319,7 +471,7 @@ async def test_completed_identity_is_retired_while_unproven_identity_stays_block
         assert process.instance_id not in restarted.ledger(slot.id)
         assert not receipt_path(restarted.slot_directory(slot.id), completed).exists()
         assert restarted.ledger(slot.id) == {
-            pending["instance_id"]: {"state": "ownership_lost", "completion": pending}}
+            pending["instance_id"]: {"state": "ownership_lost", "completion": pending, "boot_id": CURRENT_BOOT}}
         assert receipt_path(restarted.slot_directory(slot.id), pending).exists()
         recovered = restarted.registry.get_slot(slot.id)
         assert recovered.generation == slot.generation
@@ -343,41 +495,81 @@ async def test_failed_exec_retires_completed_receipt_after_ledger_removal(tmp_pa
         await host.close()
 
 
-async def test_actual_reaper_sigkill_never_clears_ownership_on_restart(tmp_path, prepared, monkeypatch):
-    _, reaper = prepared
+@pytest.mark.parametrize("start_policy,wake_suppressed", [
+    ("manual", False), ("manual", True), ("host", True),
+])
+async def test_actual_reaper_sigkill_recovers_on_same_boot_and_allows_explicit_start(
+        tmp_path, prepared, monkeypatch, start_policy, wake_suppressed):
+    monkeypatch.setattr("meecp.supervisor.current_boot_session", lambda: BootSession(CURRENT_BOOT))
+    package, reaper = prepared
     state = tmp_path / "state"
     host = Supervisor(state, reaper)
-    slot = blocked_slot(host, tmp_path / "source")
-    host.registry.reconcile_owned_exit(slot.id, expected_generation=slot.generation)
-    process = await host.launch(slot.id, executable=Path(sys.executable), args=["-c", "import time; time.sleep(100)"],
-                                cwd=host.root, env={})
-    completion = host.ledger(slot.id)[process.instance_id]["completion"]
     real_kill = os.kill
-    real_kill(process.reaper_pid, signal.SIGKILL)
+    process = None
+    host_closed = False
     try:
+        plan = host.plan_install({"package": str(package), "start": False, "start_policy": start_policy})
+        operation = await finish(host, await host.apply_install(plan["plan_id"]))
+        assert operation.status == "completed", operation.error_code
+        slot = host.registry.get_slot(operation.slot_id)
+        await host.stop_gateway(slot.id)
+        accepted = host.data_directory(slot) / "accepted.bin"
+        accepted.write_bytes(b"accepted before relaunch")
+        connection = host.connection(slot.id)
+        process = await host.launch(slot.id, executable=Path(sys.executable),
+            args=["-c", "import time; time.sleep(100)"], cwd=host.root, env={})
+        completion = host.ledger(slot.id)[process.instance_id]["completion"]
+        assert completion["schema_version"] == 2
+        real_kill(process.reaper_pid, signal.SIGKILL)
         with pytest.raises(OwnershipLost):
             await asyncio.wait_for(process.wait(), 5)
         assert not verify_receipt(host.slot_directory(slot.id), completion)
         assert host.ledger(slot.id)[process.instance_id]["state"] == "ownership_lost"
+        before = host.registry.update_slot(slot.id, desired_state="running",
+            wake_suppressed=wake_suppressed, observed_state="ownership_lost", error_code="ownership_lost")
+        reservation = host.slot_directory(slot.id) / "reservation.json"
+        write_private_json(reservation, {"memory_mb": 32, "gpu": False})
         await host.close()
+        host_closed = True
         restarted = Supervisor(state, reaper)
         signals = []
         monkeypatch.setattr(os, "kill", lambda pid, sig: signals.append((pid, sig)))
         try:
             await restarted.initialize()
             recovered = restarted.registry.get_slot(slot.id)
-            assert recovered.generation == slot.generation
-            assert recovered.error_code == "ownership_lost" and recovered.observed_state == "ownership_lost"
-            assert process.instance_id in restarted.ledger(slot.id)
-            with pytest.raises(HostError, match="^ownership_lost$"):
-                await restarted.control(slot.id, "start")
+            assert recovered.observed_state == "stopped" and recovered.error_code is None
+            for field in ("generation", "package_digest", "package_path", "data_path", "credential_ref",
+                          "public_port", "start_policy", "wake_suppressed", "desired_state"):
+                assert getattr(recovered, field) == getattr(before, field)
+            assert restarted.boot_session.identity == CURRENT_BOOT
+            connection_unchanged = restarted.connection(slot.id) == connection
+            assert connection_unchanged
+            assert restarted.data_directory(recovered).joinpath("accepted.bin").read_bytes() == b"accepted before relaunch"
+            assert process.instance_id not in restarted.ledger(slot.id)
+            assert not receipt_path(restarted.slot_directory(slot.id), completion).exists()
+            assert not reservation.exists() and slot.id not in restarted.reservations
+            with pytest.raises(ProcessLookupError):
+                real_kill(process.pid, 0)
+            assert restarted.workers[slot.id].process.instance_id in restarted.ledger(slot.id)
+            await restarted.control(slot.id, "start")
+            started = restarted.registry.get_slot(slot.id)
+            assert started.observed_state == "ready" and started.generation == before.generation + 1
+            assert not started.wake_suppressed
+            assert await tool_call(restarted, slot.id) == {"valid": True, "kind": "object"}
+            await restarted.reserve_model(started, restarted.package(started))
+            assert slot.id in restarted.reservations and reservation.exists()
+            await restarted.release_model(slot.id)
+            assert slot.id not in restarted.reservations and not reservation.exists()
             assert not signals
         finally:
             await restarted.close()
     finally:
-        process.close_stdio()
-        with contextlib.suppress(ProcessLookupError):
-            real_kill(process.pid, signal.SIGKILL)
+        if not host_closed:
+            await host.close()
+        if process is not None:
+            process.close_stdio()
+            with contextlib.suppress(ProcessLookupError):
+                real_kill(process.pid, signal.SIGKILL)
 
 
 async def test_registry_receipt_reconciliation_preserves_generation_and_checks_expected_value(tmp_path):

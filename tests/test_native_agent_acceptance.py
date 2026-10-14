@@ -11,7 +11,7 @@ import uuid
 
 import pytest
 
-from test_recipe_native_management_acceptance import native_recipe_driver, private_json, file_identity
+from test_recipe_native_management_acceptance import private_json, file_identity
 
 
 @pytest.fixture
@@ -76,6 +76,7 @@ async def test_simulation_derives_all_role_outputs_from_encoded_review(monkeypat
 @pytest.mark.parametrize("fault", ["unknown_field", "scope_extra", "scope_overlap", "scope_duplicate",
     "scope_escape", "scope_recipe", "wrong_nonce", "expired", "manager_replaced", "marker_hardlink",
     "fixture_mode", "claimed_nonce", "existing_output", "dangling_output"])
+@pytest.mark.skip(reason="Native manual/external-agent setup workflow retired; historical acceptance only")
 def test_compiled_agent_fixture_rejects_unowned_scope_before_claim(native_recipe_driver, tmp_path, fault):
     workspace = tmp_path.resolve() / ("meecp-native-onboarding-" + str(uuid.uuid4()))
     root = workspace / "agent"

@@ -173,6 +173,25 @@ This documentation follow-up does not change the installed implementation.
 The prior transport, model and Metal acceptance records retain their scope;
 this retirement does not repeat or expand those claims.
 
+## PR integration with current main
+
+The PR preparation merges main at
+`bdfa708` to retain its runtime ownership recovery, Apple-verified Xcode launcher,
+and current native capability fixtures. The automation work already merged in
+PR #60 is outside the new conversation UI diff. The verified Xcode launcher is
+kept in the conversation's system-action path with current host exclusions and
+stale-callback guards.
+
+The former manual/external-agent native acceptance cases are retained as
+explicitly skipped historical checks. Shared backend and current agent checks
+remain active. Historical command-line acceptance scripts reach the retired
+native entrypoints and cannot establish current workflow acceptance.
+
+Swift, JavaScript and Python source syntax checks and the staged whitespace
+check pass. No tests, builds, installation or model runs were repeated during
+PR preparation, as requested. The preceding installed acceptance records apply
+to their recorded commits; they do not qualify the merged PR tree.
+
 ## Limits
 
 These fixtures qualify UI, transport and lifecycle behavior. They do not measure

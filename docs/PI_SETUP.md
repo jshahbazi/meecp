@@ -229,6 +229,11 @@ verified Xcode application, and periodically rechecks readiness. No terminal
 diagnosis or resource-path handoff is requested. Once Xcode becomes ready,
 MeeCP automatically acquires a missing Metal component and resumes the original
 tool. A failed acquisition waits for a readiness change or explicit Continue.
+Before opening Xcode, the native client independently verifies the complete
+bundle's signed Xcode identifier, Apple certificate chain and authenticated
+Apple team identity. It rejects MeeCP state paths and untrusted ancestor permissions,
+resolves aliases, and rechecks the active waiting job after verification.
+Renamed, personal and custom selected Xcode installations remain supported.
 It does not silently accept an OS license or
 replace the requested inference engine.
 

@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 
-from test_recipe_native_management_acceptance import file_identity, native_recipe_driver, private_json
+from test_recipe_native_management_acceptance import file_identity, private_json
 
 
 def context(tmp_path, public=False):
@@ -47,6 +47,7 @@ def run(binary, fixture, state, home, temporary, public=False):
 @pytest.mark.parametrize("fault", ["unknown_field", "wrong_nonce", "expired", "manager_replaced",
     "source_replaced", "source_link", "marker_hardlink", "fixture_mode", "claimed_nonce",
     "existing_output", "output_link", "outside_source"])
+@pytest.mark.skip(reason="Native manual/external-agent setup workflow retired; historical acceptance only")
 def test_unowned_or_stale_directory_is_rejected_before_claim(native_recipe_driver, tmp_path, fault, public):
     root, state, source, home, temporary, manager, marker, fixture, output, nonce, proof, case = context(tmp_path, public)
     if fault == "unknown_field":
@@ -86,6 +87,7 @@ def test_unowned_or_stale_directory_is_rejected_before_claim(native_recipe_drive
 
 
 @pytest.mark.parametrize("public", [False, True])
+@pytest.mark.skip(reason="Native manual/external-agent setup workflow retired; historical acceptance only")
 def test_positive_python_fixture_claims_once_before_invalid_connection(native_recipe_driver, tmp_path, public):
     root, state, source, home, temporary, manager, marker, fixture, output, nonce, proof, case = context(tmp_path, public)
     private_json(marker, proof); private_json(fixture, case)
@@ -106,6 +108,7 @@ def test_positive_python_fixture_claims_once_before_invalid_connection(native_re
 
 
 @pytest.mark.parametrize("public", [False, True])
+@pytest.mark.skip(reason="Native manual/external-agent setup workflow retired; historical acceptance only")
 def test_directory_namespaces_cannot_consume_each_others_context(native_recipe_driver, tmp_path, public):
     root, state, source, home, temporary, manager, marker, fixture, output, nonce, proof, case = context(tmp_path, public)
     private_json(marker, proof); private_json(fixture, case)

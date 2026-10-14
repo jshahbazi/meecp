@@ -93,8 +93,18 @@ def test_runtime_requires_complete_hashed_inventory(host, tmp_path):
         host.pi_setup._runtime()
 
 
+def fake_setup_preflight(monkeypatch):
+    async def preflight(broker):
+        # Manager fixtures use an inert reaper and mock the model worker.
+        # Actual compiler/device readiness has separate owned native tests.
+        return {"schema_version": 1, "metal_runtime": {"status": "unavailable"},
+            "metal_compiler": {"status": "missing", "available": False, "required": False}}
+    monkeypatch.setattr(PiToolBroker, "preflight", preflight)
+
+
 def enable_fake_work(manager, monkeypatch, *, started=None, release=None):
     configure(manager)
+    fake_setup_preflight(monkeypatch)
     monkeypatch.setattr(manager, "_runtime", lambda: (Path("/unused-node"), Path("/unused-worker")))
     async def agent(record, workspace, broker, runtime, settings, key):
         assert key == "synthetic-provider-secret"
@@ -166,7 +176,7 @@ async def test_immediate_cancel_terminalizes_unstarted_task(host, tmp_path, monk
     replacement = await manager.start(payload)
     assert replacement["id"] != job["id"]
     await manager.close()
-    assert manager.get(replacement["id"])["status"] == "canceled"
+    assert manager.get(replacement["id"])["status"] == "interrupted"
 
 
 def test_description_and_url_create_immutable_instruction_draft(host):

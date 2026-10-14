@@ -27,7 +27,7 @@ from test_meecp_host import prepared
 from test_meecp_host import finish
 from test_meecp_imports import source_folder
 from test_meecp_packages import edit_manifest, make_package
-from test_pi_setup import configure, _relock_probe_package, _PROBE_SERVER
+from test_pi_setup import configure, fake_setup_preflight, _relock_probe_package, _PROBE_SERVER
 from test_preparation_processes import gone, group_reaper
 
 
@@ -46,6 +46,7 @@ def host(tmp_path):
 async def question_work(host, tmp_path, monkeypatch, *, kind="text", wait_after=False, declared_secret=False):
     manager = host.pi_setup
     configure(manager)
+    fake_setup_preflight(monkeypatch)
     monkeypatch.setattr(manager, "_runtime", lambda: (Path("/unused-node"), Path("/unused-worker")))
     replies = []
     answered = asyncio.Event()

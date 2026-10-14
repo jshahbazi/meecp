@@ -558,8 +558,8 @@ class Supervisor(UpgradeHost):
             memory = sum(value["memory_mb"] for value in [*self.reservations.values(),
                 *self.preparation_reservations.values(), *self.capture_reservations.values(), *self.resolution_reservations.values(),
                 *probes])
-            disk = sum(value["disk_bytes"] for value in [*self.preparation_reservations.values(),
-                *self.capture_reservations.values(), *self.resolution_reservations.values()])
+            disk = sum(value.get("disk_bytes", 0) for value in [*self.preparation_reservations.values(),
+                *self.capture_reservations.values(), *self.resolution_reservations.values(), *probes])
             if (memory + (0 if previous is not None else reservation["memory_mb"]) > self.resource_policy["memory_budget_mb"]
                     or disk + (0 if previous is not None else reservation["disk_bytes"]) + 256 * 1024**2 > shutil.disk_usage(self.root).free):
                 raise HostError("resource_blocked", 409)
@@ -665,8 +665,8 @@ class Supervisor(UpgradeHost):
             memory = sum(value["memory_mb"] for value in [*self.reservations.values(),
                 *self.preparation_reservations.values(), *self.capture_reservations.values(), *self.resolution_reservations.values(),
                 *probes])
-            disk = sum(value["disk_bytes"] for value in [*self.preparation_reservations.values(),
-                *self.capture_reservations.values(), *self.resolution_reservations.values()])
+            disk = sum(value.get("disk_bytes", 0) for value in [*self.preparation_reservations.values(),
+                *self.capture_reservations.values(), *self.resolution_reservations.values(), *probes])
             if memory > self.resource_policy["memory_budget_mb"] or disk + 256 * 1024**2 > shutil.disk_usage(self.root).free:
                 raise HostError("resource_blocked", 409)
 
@@ -1071,8 +1071,8 @@ class Supervisor(UpgradeHost):
             probes = list(getattr(getattr(self, "pi_setup", None), "probe_reservations", {}).values())
             memory = sum(value["memory_mb"] for value in [*self.reservations.values(), *self.preparation_reservations.values(),
                 *self.capture_reservations.values(), *self.resolution_reservations.values(), *probes])
-            disk = sum(value["disk_bytes"] for value in [*self.preparation_reservations.values(),
-                *self.capture_reservations.values(), *self.resolution_reservations.values()])
+            disk = sum(value.get("disk_bytes", 0) for value in [*self.preparation_reservations.values(),
+                *self.capture_reservations.values(), *self.resolution_reservations.values(), *probes])
             if (memory + reservation["memory_mb"] > self.resource_policy["memory_budget_mb"]
                     or disk + reservation["disk_bytes"] + 256 * 1024**2 > shutil.disk_usage(self.root).free):
                 raise HostError("resource_blocked", 409)
@@ -2643,6 +2643,11 @@ def management_app(host: Supervisor, token: str, port: int):
                         result = host.imports.revise(draft_id, revision, **{key: value for key, value in payload.items() if key != "revision"})
                         await host.capture_work(host.captures.reconcile_draft_references)
                         host.invalidate_import_plans(draft_id)
+                    elif action == "retry-install" and set(payload) == {"revision"}:
+                        if request.scope["meecp.principal"].get("owner") is not True:
+                            raise GrantError("grant_scope", 403)
+                        from .installation_retry import retry_installation
+                        result = await host.static_work(retry_installation, host.imports, draft_id, revision)
                     elif action == "attach" and set(payload) == {"revision", "package"} and isinstance(payload["package"], str):
                         result = await host.static_work(host.imports.attach, draft_id, revision, Path(payload["package"]))
                     elif action == "engine" and set(payload) == {"revision", "model_engine"} and isinstance(payload["model_engine"], str):

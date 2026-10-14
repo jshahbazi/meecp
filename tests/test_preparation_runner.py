@@ -342,6 +342,23 @@ def test_actual_native_reaper_bytes_change_both_implementation_identities(group_
     assert all(before != after for before, after in zip(first, second))
 
 
+def test_boot_identity_dependency_changes_all_preparation_authority_identities(monkeypatch):
+    from meecp import preparation_runner, preparation_resolution_runner
+
+    inventories = (preparation_runner.RUNNER_FILES, preparation_runner.VERIFIER_FILES,
+                   preparation_resolution_runner.FILES)
+    before = [implementation_digest("boot-dependency-test-v1", files) for files in inventories]
+    read = preparation_runner._read_file
+
+    def changed_boot_source(path, maximum):
+        source = read(path, maximum)
+        return source + b"\n# changed boot identity implementation\n" if path.name == "boot_session.py" else source
+
+    monkeypatch.setattr(preparation_runner, "_read_file", changed_boot_source)
+    after = [implementation_digest("boot-dependency-test-v1", files) for files in inventories]
+    assert all(original != changed for original, changed in zip(before, after))
+
+
 async def test_source_snapshot_changed_after_review(controlled):
     runner, imports, _, draft, *_ = controlled
     plan = await planned(controlled)

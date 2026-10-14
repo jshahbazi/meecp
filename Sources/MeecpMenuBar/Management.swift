@@ -640,7 +640,7 @@ final class ManagementDashboard: NSView, NSSearchFieldDelegate {
         else if app.error == "removal_recovery_required" { warning.stringValue = "Removal needs recovery. Further changes are paused to protect this app's state." }
         else if app.error == "installation_recovery_required" { warning.stringValue = "Installation needs recovery. Open View Operation to review the available Stop and Recover actions." }
         else if app.error == "upgrade_recovery_required" { warning.stringValue = "Upgrade needs recovery. Open View Operation to review the available Stop and Recover actions." }
-        else if app.state == "ownership_lost" { warning.stringValue = "meecp can no longer verify ownership of this app's process. Controls are paused until ownership is recovered." }
+        else if app.state == "ownership_lost" { warning.stringValue = "meecp could not finish recovering this app's previous session. It will retry when meecp opens again. Your app's data and connection settings are kept." }
         else if app.error == "readiness_timeout" { warning.stringValue = "The app did not become ready in time. Choose Start to try again." }
         else if let error = app.error { warning.stringValue = error.replacingOccurrences(of: "_", with: " ").capitalized + ". Review app details and recent activity below." }
         else { warning.stringValue = "" }

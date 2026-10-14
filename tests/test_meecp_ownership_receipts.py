@@ -1,4 +1,4 @@
-"""Durable identity receipts require native waitpid proof or no-child proof."""
+"""Durable identity receipts require completion proof or a prior kernel boot."""
 from __future__ import annotations
 
 import asyncio
@@ -14,8 +14,9 @@ import uuid
 
 import pytest
 
+from meecp.boot_session import BootSession
 from meecp.ownership_receipts import (RECEIPT_BYTES, prepare_receipt,
-                                    validate_receipt_descriptor, verify_receipt)
+                                    validate_receipt_descriptor, verify_previous_boot_receipt, verify_receipt)
 from meecp.private import PrivateStateError
 from meecp.processes import OwnershipLost, ProcessError, ProcessOwner
 
@@ -67,6 +68,52 @@ def test_duplicate_identity_never_overwrites_existing_receipt(tmp_path):
         os.close(descriptor)
 
 
+@pytest.mark.parametrize("launch_boot_id,available,expected", [
+    ("11111111-1111-4111-8111-111111111111", True, True),
+    ("22222222-2222-4222-8222-222222222222", True, False),
+    ("invalid-boot-id", True, False),
+    ("11111111-1111-4111-8111-111111111111", False, False),
+])
+def test_pending_receipt_requires_known_different_kernel_boot(tmp_path, launch_boot_id, available, expected):
+    descriptor, metadata = prepare_receipt(tmp_path, uuid.uuid4().hex)
+    os.close(descriptor)
+    path = receipt_path(tmp_path, metadata)
+    os.utime(path, ns=(1, 1))
+    boot = BootSession("22222222-2222-4222-8222-222222222222") if available else None
+    assert not verify_receipt(tmp_path, metadata)
+    # The UUID proof is independent of wall time; backdated mtime cannot turn
+    # a receipt from the current boot into proof of a previous boot.
+    assert verify_previous_boot_receipt(tmp_path, metadata, boot, launch_boot_id) is expected
+
+
+@pytest.mark.parametrize("timestamps", ["unchanged", "backdated_mtime", "future_mtime"])
+def test_legacy_receipt_timestamps_never_prove_previous_kernel_boot(tmp_path, timestamps):
+    descriptor, metadata = prepare_receipt(tmp_path, uuid.uuid4().hex)
+    os.close(descriptor)
+    path = receipt_path(tmp_path, metadata)
+    if timestamps == "backdated_mtime":
+        os.utime(path, ns=(1, 1))
+    elif timestamps == "future_mtime":
+        future = time.time_ns() + 1_000_000_000_000
+        os.utime(path, ns=(future, future))
+    boot = BootSession("22222222-2222-4222-8222-222222222222")
+    assert not verify_previous_boot_receipt(tmp_path, metadata, boot)
+    assert not verify_receipt(tmp_path, metadata)
+
+
+@pytest.mark.parametrize("launch_boot_id", [None, "22222222-2222-4222-8222-222222222222"])
+def test_clock_advance_within_same_boot_never_settles_pending_receipt(tmp_path, monkeypatch, launch_boot_id):
+    descriptor, metadata = prepare_receipt(tmp_path, uuid.uuid4().hex)
+    os.close(descriptor)
+    path = receipt_path(tmp_path, metadata)
+    os.utime(path, ns=(1, 1))
+    advanced_ns = max(path.stat().st_mtime_ns, path.stat().st_ctime_ns) + 1_000_000_000_000
+    monkeypatch.setattr(time, "time_ns", lambda: advanced_ns)
+    monkeypatch.setattr(time, "time", lambda: advanced_ns / 1_000_000_000)
+    boot = BootSession("22222222-2222-4222-8222-222222222222")
+    assert not verify_previous_boot_receipt(tmp_path, metadata, boot, launch_boot_id)
+
+
 @pytest.mark.parametrize("kind", ["missing", "pending", "truncated", "trailing", "wrong_nonce", "wrong_id", "wrong_magic",
     "public_file", "public_parent", "public_slot", "symlink", "hardlink", "directory", "ancestor_symlink"])
 def test_missing_mismatched_and_unsafe_completion_never_resolves(tmp_path, kind):
@@ -109,10 +156,16 @@ def test_missing_mismatched_and_unsafe_completion_never_resolves(tmp_path, kind)
         alias.symlink_to(tmp_path, target_is_directory=True)
         try:
             assert not verify_receipt(alias, metadata)
+            assert not verify_previous_boot_receipt(alias, metadata,
+                BootSession("22222222-2222-4222-8222-222222222222"),
+                "11111111-1111-4111-8111-111111111111")
         finally:
             alias.unlink()
         return
     assert not verify_receipt(tmp_path, metadata)
+    assert verify_previous_boot_receipt(tmp_path, metadata,
+        BootSession("22222222-2222-4222-8222-222222222222"),
+        "11111111-1111-4111-8111-111111111111") is (kind == "pending")
 
 
 @pytest.mark.parametrize("metadata", [None, [], {}, {"schema_version": True, "instance_id": "a" * 32, "nonce": "b" * 64},
@@ -122,6 +175,9 @@ def test_missing_mismatched_and_unsafe_completion_never_resolves(tmp_path, kind)
 def test_invalid_metadata_is_closed_and_does_not_create_state(tmp_path, metadata):
     absent = tmp_path / "absent"
     assert not verify_receipt(absent, metadata)
+    assert not verify_previous_boot_receipt(absent, metadata,
+        BootSession("22222222-2222-4222-8222-222222222222"),
+        "11111111-1111-4111-8111-111111111111")
     assert not absent.exists()
 
 

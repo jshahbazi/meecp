@@ -16,7 +16,7 @@ from meecp.preparation_agent_providers import AgentProviderRegistry, OpenAIRespo
 from test_preparation_agent_providers import choices, update, SYNTHETIC
 
 
-KEY = ("agent-unlocked-python-adapter-v1", "1.0.0", "3850d78dc24ab286cd4bb40825e0d52a83869c91c4278c525cfd6462ee822b49")
+KEY = ("agent-unlocked-python-adapter-v1", "1.0.4", "88a46a9e494050d9ab6924653dd1cba226d824abd7630c0d8bd023f270e66cd3")
 
 
 def closed():
@@ -67,8 +67,8 @@ def test_all_shipped_policy_implementations_match_current_source():
     assert preparation.artifact is None and agent.artifact is None
 
 
-@pytest.mark.parametrize("damage", ["family", "dependency", "provider"])
-def test_static_preflight_rejects_stale_non_agent_pins_and_closures(damage):
+@pytest.mark.parametrize("damage", ["family", "dependency", "provider", "agent"])
+def test_static_preflight_rejects_stale_pins_and_closures(damage):
     root = Path(__file__).parents[1]
     value = json.loads((root / POLICY_PATH).read_bytes())
     if damage == "family":
@@ -77,8 +77,15 @@ def test_static_preflight_rejects_stale_non_agent_pins_and_closures(damage):
         group = next(group for group in value["preparation"]["recipe_component_sets"]
                      if any(item["id"] == "text-generate-v1" for item in group))
         group[:] = [item for item in group if item["id"] != "llamacpp-cpu-v1"]
-    else:
+    elif damage == "provider":
         value["agent"]["providers"][0]["adapter_digest"] = "0" * 64
+    else:
+        references = [*value["preparation"]["families"],
+                      *[item for group in value["preparation"]["recipe_component_sets"] for item in group],
+                      *value["agent"]["components"]]
+        for item in references:
+            if item["id"] == KEY[0]:
+                item.update(version="1.0.0", digest="3850d78dc24ab286cd4bb40825e0d52a83869c91c4278c525cfd6462ee822b49")
     with pytest.raises(PreparationError, match="^invalid_release_policy$"):
         validate_policy_implementations(ReleasePolicy.model_validate(value))
 

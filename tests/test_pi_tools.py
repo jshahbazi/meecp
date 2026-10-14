@@ -237,7 +237,7 @@ def metal_compute_server(tmp_path_factory):
 
 
 @native
-async def test_admitted_metal_probe_computes_and_preserves_filesystem_network_denials(broker, metal_compute_server, tmp_path):
+async def test_admitted_metal_probe_computes_and_preserves_filesystem_network_denials(broker, metal_device, metal_compute_server, tmp_path):
     package = tmp_path / "package"; package.mkdir(mode=0o700)
     executable = package / "compute"
     executable.write_bytes(metal_compute_server.read_bytes()); executable.chmod(0o700)

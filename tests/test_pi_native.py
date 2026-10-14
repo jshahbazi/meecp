@@ -374,7 +374,7 @@ async def test_compiler_probe_cleanup_cannot_follow_background_replaced_director
 
 @native
 async def test_prebuilt_probe_computes_without_offline_compiler_and_reaps(
-    tmp_path, group_reaper, compiled_probe, capfd
+    tmp_path, group_reaper, metal_device, compiled_probe, capfd
 ):
     root = tmp_path / "host"
     root.mkdir(mode=0o700)
@@ -406,6 +406,35 @@ async def test_prebuilt_probe_computes_without_offline_compiler_and_reaps(
         assert calls[0]["argv"] == [str(helper)] and calls[0]["require_metal_compiler"] is False
         assert "DEVELOPER_DIR" not in broker.env and not broker.owner.instances
         assert capfd.readouterr() == ("", "")
+    finally:
+        await broker.close()
+
+
+@pytest.mark.parametrize("device,residency", [(False, False), (True, False), (True, True)])
+async def test_preflight_reports_missing_device_or_failed_compute_without_claiming_readiness(tmp_path, device, residency):
+    root = tmp_path / "host"
+    root.mkdir(mode=0o700)
+    _, receipt = make_receipt(root)
+    broker = PiToolBroker(tmp_path / "workspace", Path("/unused"), read_roots=(root,))
+    broker.host_root = root
+
+    async def ensure(args):
+        assert args == {"required": False}
+        return {"available": False, "status": "missing", "required": False}
+
+    async def runner(args):
+        return {"success": False, "output": json.dumps({"returncode": 1, "stdout": json.dumps({
+            "schema_version": 1, "device_available": device, "residency_available": residency,
+            "compute_passed": False})})}
+
+    broker.toolchain_manager.ensure = ensure
+    broker.native_runner = runner
+    try:
+        report = await broker.preflight()
+        assert report["metal_runtime"] == {"status": "failed", "device_available": device,
+            "residency_available": residency, "compute_passed": False,
+            "helper_sha256": receipt["helper_sha256"], "helper_source_sha256": receipt["helper_source_sha256"]}
+        assert report["metal_compiler"]["available"] is False and not broker.owner.instances
     finally:
         await broker.close()
 

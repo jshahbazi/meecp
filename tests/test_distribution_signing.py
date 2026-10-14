@@ -167,6 +167,14 @@ def synthetic_starter(destination):
 
 @pytest.mark.parametrize("release", [False, True])
 def test_app_build_records_selected_version_and_validates_signed_starter(monkeypatch, tmp_path, release):
+    from meecp.preparation_release_policy import ReleasePolicy, validate_policy_implementations
+    from meecp.preparation_resolved_python import ResolvedPythonComponent
+    component = ResolvedPythonComponent().reference.model_dump()
+    active_policy = {"schema_version": 1, "policy_id": "test-active-release-v1",
+        "preparation": {"families": [component], "recipe_component_sets": [[component]],
+                        "resolution_candidate_kinds": ["python-callable"]},
+        "agent": {"components": [], "providers": [], "unlocked_resolution": False}, "command": None}
+    assert validate_policy_implementations(ReleasePolicy.model_validate(active_policy))[0] is not None
     source = tmp_path / "source"
     for relative in ("Sources/MeecpMenuBar/main.swift", "Sources/MeecpMenuBar/Brand.swift",
                      "README.md", "model-manifest.json", "THIRD_PARTY_NOTICES.md",
@@ -186,6 +194,7 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
     host_versions = []
     signed_starter = None
     validated_digest = None
+    preflights = []
 
     def run(*arguments):
         nonlocal validated_digest
@@ -213,7 +222,7 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
         (destination / "bin").mkdir(parents=True)
         policy = destination / "templates/release-policies/phase3-v1.json"
         policy.parent.mkdir(parents=True)
-        policy.write_text(json.dumps({"synthetic_active_release_policy": True}))
+        policy.write_text(json.dumps(active_policy))
         resource = host_builder._resource_inventory_contract()
         helper = destination / resource["helper"]
         helper.write_bytes(b"synthetic resource helper")
@@ -228,8 +237,17 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
         }))
         return destination
 
+    def preflight(host):
+        # This build_host fixture intentionally has no private interpreter or
+        # backend. Exercise typed/static authority and ordering here; packaged
+        # subprocess selection and failure handling have dedicated controls.
+        policy = json.loads((host / "templates/release-policies/phase3-v1.json").read_bytes())
+        validate_policy_implementations(ReleasePolicy.model_validate(policy))
+        preflights.append(host)
+
     def sign_runtime(staged, identity, signed_release, keychain):
         nonlocal signed_starter
+        assert preflights == [staged / "Contents/Resources/host"]
         assert signed_release is release
         starter = staged / "Contents/Resources" / app_builder.STARTER_PACKAGE_PATH
         signed_starter = starter / "bin/service"
@@ -245,6 +263,7 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
     monkeypatch.setattr(app_builder, "ROOT", source)
     monkeypatch.setattr(app_builder, "run", run)
     monkeypatch.setattr(app_builder, "build_host", build_host)
+    monkeypatch.setattr(app_builder, "validate_packaged_release_policy", preflight)
     monkeypatch.setattr(app_builder, "prepare_json_package", synthetic_starter)
     monkeypatch.setattr(app_builder, "developer_identity", lambda *args: CERTIFICATE)
     monkeypatch.setattr(app_builder, "sign_runtime", sign_runtime)
@@ -261,7 +280,7 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
     assert receipt["signing"] == host_receipt["signing"] == ("developer_id" if release else "ad_hoc")
     policy = json.loads((resources / "host/templates/release-policies/phase3-v1.json").read_bytes())
     if release:
-        assert policy == {"synthetic_active_release_policy": True}
+        assert policy == active_policy
     else:
         from meecp.preparation_release_policy import ReleasePolicy
         closed = ReleasePolicy.model_validate(policy)

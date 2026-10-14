@@ -145,6 +145,10 @@ async def test_optional_missing_toolchain_does_not_download_or_select_globally(t
     result = await manager.ensure({"required": False})
 
     assert result["status"] == "missing" and result["available"] is False
+    assert result["first_launch_ready"] and result["apple_signature_verified"]
+    assert manager.command_argv(["/usr/bin/clang", "source.c"]) == [str(clt / "usr/bin/clang"), "source.c"]
+    assert broker.env["DEVELOPER_DIR"] == str(clt) and broker.env["SDKROOT"] == result["sdk_path"]
+    assert clt in manager.read_roots
     assert not any(call[0][1:2] == ["-downloadComponent"] for call in calls)
     assert not any(call[0][1:3] == ["--print-path"] for call in calls)
 

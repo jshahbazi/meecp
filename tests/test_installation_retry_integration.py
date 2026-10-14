@@ -18,6 +18,7 @@ from meecp.supervisor import Supervisor
 from test_meecp_host import finish, tool_call
 from test_meecp_packages import edit_manifest, make_package
 from test_pi_setup import native_probe_server as _probe_fixture
+from test_preparation_processes import group_reaper
 
 
 @pytest.fixture(scope="module")
@@ -38,13 +39,15 @@ def _failed_attempt(store, draft):
 
 
 async def test_retry_installs_same_native_package_once_without_pi_and_reaps(
-    tmp_path, retry_probe, monkeypatch, capfd, caplog
+    tmp_path, retry_probe, group_reaper, monkeypatch, capfd, caplog
 ):
+    # Exercise the current ownership protocol instead of whichever older app
+    # happens to be installed. An explicit installed-build acceptance override
+    # still uses its selected binary without weakening receipt validation.
     reaper = Path(
-        os.environ.get("MEECP_TEST_REAPER", "/Applications/meecp.app/Contents/Resources/host/bin/meecp-reap")
+        os.environ.get("MEECP_TEST_REAPER", str(group_reaper))
     ).resolve()
-    if not reaper.is_file():
-        pytest.skip("installed native host reaper required for installation retry acceptance")
+    assert reaper.is_file(), "installation_retry_reaper_unavailable"
 
     package = make_package(tmp_path / "package")
     shutil.copyfile(retry_probe, package / "bin/service")

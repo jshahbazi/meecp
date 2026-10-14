@@ -303,6 +303,12 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
             clearQuestion()
             onJobChange?(nil)
         }
+        if self.context != context {
+            // A save can advance this import while its previous status request
+            // is still outstanding. Invalidate that reply and release its latch
+            // so the new exact binding can be reconciled immediately.
+            epoch &+= 1; polling = false; settingsLoading = false
+        }
         self.context = context; self.eligible = eligible
         refreshAvailability()
         deliverReady()
@@ -464,7 +470,8 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
         beforeStart { [weak self] context in
             guard let self, let context, self.available?() == true, !self.blocksNavigation,
                   self.context == context, self.eligible, self.settings?.ready == true, let request = self.request else { return }
-            self.epoch &+= 1; self.busy = true; self.errorCode = nil; self.errorDetail.stringValue = ""; self.deliveredReady = nil
+            self.epoch &+= 1; self.busy = true; self.polling = false
+            self.errorCode = nil; self.errorDetail.stringValue = ""; self.deliveredReady = nil
             self.clearQuestion()
             self.status.stringValue = "Starting app setup…"; self.refreshAvailability(); self.onStateChange?()
             let expected = self.epoch
@@ -674,6 +681,40 @@ final class PiSetupView: NSStackView, NSWindowDelegate {
               postedEndpoint == "v1/pi/jobs/" + jobID + "/resume", postedRevision == 2 else { return false }
         view.bind(revised, eligible: false); view.bind(revised, eligible: false)
         guard readyCount == 1 else { return false }
+
+        // Saving a revision and starting setup can both supersede an in-flight
+        // current-job request. Its late reply must not pin the polling latch or
+        // overwrite the new context and attempt.
+        let rebinding = PiSetupView(); rebinding.available = { true }
+        rebinding.settings = PiSettingsMetadata(settings); rebinding.bind(original, eligible: true)
+        var pendingCurrent: [(([String: Any]?, String?) -> Void)] = []
+        var rebindingReady = 0
+        var freshRow = row; freshRow["id"] = nextJobID; freshRow["revision"] = 2
+        freshRow["status"] = "running"; freshRow["stage"] = "preflight"
+        rebinding.onReady = { _ in rebindingReady += 1 }
+        rebinding.request = { path, method, body, completion in
+            if path == "v1/pi/current", method == "POST" { pendingCurrent.append(completion) }
+            else if path == "v1/pi/jobs", method == "POST", preparationInteger(body?["revision"]) == 2 {
+                completion(freshRow, nil)
+            }
+        }
+        rebinding.poll(); rebinding.bind(revised, eligible: true); rebinding.poll()
+        guard pendingCurrent.count == 2 else { return false }
+        var oldReady = row; oldReady["revision"] = 1
+        pendingCurrent[0](["job": oldReady], nil)
+        guard rebinding.job == nil, rebindingReady == 0 else { return false }
+        pendingCurrent[1](["job": NSNull()], nil)
+        rebinding.poll()
+        guard pendingCurrent.count == 3 else { return false }
+        rebinding.beforeStart = { completion in completion(revised) }
+        rebinding.startSetup(); rebinding.poll()
+        guard pendingCurrent.count == 4, rebinding.job?.id == nextJobID else { return false }
+        pendingCurrent[2](["job": NSNull()], nil)
+        guard rebinding.job?.id == nextJobID else { return false }
+        freshRow["status"] = "ready"; freshRow["stage"] = "ready"
+        pendingCurrent[3](["job": freshRow], nil)
+        guard rebindingReady == 1, rebinding.job?.status == "ready", !rebinding.blocksNavigation else { return false }
+
         let resumed = PiSetupView(); resumed.available = { true }
         var restoredGET = false
         resumed.request = { path, method, body, completion in

@@ -27,16 +27,18 @@ def register(host, package, port, state="stopped"):
 @pytest.mark.parametrize("state", ["stopped", "ownership_lost"])
 async def test_new_plan_skips_registered_unbound_preferred_port(host, tmp_path, state):
     package = validate_package(make_package(tmp_path / "source"))
-    slot = register(host, package, 19386, state)
+    with preferred_listener() as available:
+        port = available.getsockname()[1]
+    slot = register(host, package, port, state)
     connection = host.slot_directory(slot.id) / "connection.json"
-    write_private_json(connection, {"slot_id": slot.id, "endpoint": "http://127.0.0.1:19386/mcp", "token": "synthetic-existing-invocation-token"})
+    write_private_json(connection, {"slot_id": slot.id, "endpoint": f"http://127.0.0.1:{port}/mcp", "token": "synthetic-existing-invocation-token"})
     original_connection = connection.read_bytes()
-    with bind_listener(19386) as available:
-        assert available.getsockname()[1] == 19386
+    with bind_listener(port) as available:
+        assert available.getsockname()[1] == port
     plan = host.plan_install({"package": str(package.root)})
-    assert plan["public_port"] != 19386
+    assert plan["public_port"] != port
     current = host.registry.get_slot(slot.id)
-    assert current.public_port == 19386 and current.observed_state == state
+    assert current.public_port == port and current.observed_state == state
     assert connection.read_bytes() == original_connection
 
 

@@ -10,8 +10,10 @@ import pytest
 
 from meecp.pi_tools import PiToolError
 from meecp.pi_trust import MAX_ANCHORS, MAX_BUNDLE_BYTES, NativeTrustError
-from test_meecp_download_regressions import tls_certificate
-from test_pi_tools import broker, native
+from test_meecp_download_regressions import tls_certificate as tls_certificate
+from test_pi_tools import broker as broker
+from test_pi_tools import native
+from test_preparation_processes import group_reaper as group_reaper
 
 
 @native
@@ -72,7 +74,11 @@ def packet_line(value):
 
 
 @native
-async def test_native_git_staged_ca_succeeds_and_rejects_untrusted_or_wrong_hostname(broker, monkeypatch, tls_certificate):
+async def test_native_git_staged_ca_succeeds_and_rejects_untrusted_or_wrong_hostname(broker, monkeypatch, tls_certificate, group_reaper):
+    # Production setup selects trusted developer roots during preflight before
+    # invoking tools. Apple's /usr/bin/git shim needs that selected Xcode root.
+    broker.owner.reaper = group_reaper
+    await broker.toolchain_manager.ensure({"required": False})
     certificate, key = tls_certificate
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certificate, key)

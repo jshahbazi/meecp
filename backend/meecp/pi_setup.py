@@ -108,6 +108,7 @@ class PiSetup:
         self.resource_inventory_cache = {}
         self.resource_capture_tasks = set()
         self.resource_capture_requests = {}
+        self.resource_capture_cancellations = {}
         self.resource_changes_root = ensure_private_directory(self.root / "resource-changes")
         # An interrupted model conversation is never replayed automatically.
         for path in self.jobs_root.glob("*.json"):
@@ -380,7 +381,10 @@ class PiSetup:
                 raise PiSetupError("pi_resource_blocked")
             self.probe_reservations[key] = {"gpu": False, "memory_mb": charge, "disk_bytes": estimated_bytes}
         try:
-            return await action(min(available, 64 * 1024**3 + 16 * 1024**2))
+            # The source may change between estimation and the owned scan.
+            # Its actual copy must stay inside this operation's admitted disk
+            # charge rather than consume storage reserved for another owner.
+            return await action(min(estimated_bytes, available, 64 * 1024**3 + 16 * 1024**2))
         finally:
             await _await_ownership(self._release_charge(key))
 
@@ -407,11 +411,19 @@ class PiSetup:
             if task is None:
                 if len(self.resource_capture_tasks) >= 4:
                     raise PiSetupError("pi_resource_blocked")
+                import_id = _uuid(payload["import_id"])
+                canceled = threading.Event()
+                # Cancellation owns the queued request as soon as it exists,
+                # including time spent waiting for another capture or for the
+                # previous setup's processes to settle.
+                self.resource_capture_cancellations[key] = (import_id, canceled)
                 async def perform():
                     published, created = [], []
                     async with self.lock:
                         if self.closed:
                             raise PiSetupError("pi_setup_unavailable")
+                        if canceled.is_set():
+                            raise PiSetupError("pi_canceled")
                         spec = await _joined(self.host.imports.inspect, _uuid(payload["import_id"]))
                         binding = {"import_id": spec["draft_id"], "revision": spec["revision"], "source_revision": spec["source"]["revision"]}
                         if spec["revision"] != payload["revision"]:
@@ -421,8 +433,12 @@ class PiSetup:
                         resume = previous if previous is not None and previous["status"] == "running" else None
                         if resume is not None:
                             await self.cancel(resume["id"], reason="resources_changed")
+                        if canceled.is_set():
+                            raise PiSetupError("pi_canceled")
                         await self.resource_inventory(spec["draft_id"], spec["revision"])
-                        canceled = self.resource_cancel_flags.setdefault(spec["draft_id"], threading.Event())
+                        if canceled.is_set():
+                            raise PiSetupError("pi_canceled")
+                        self.resource_cancel_flags[spec["draft_id"]] = canceled
                         journal = self.resource_changes_root / (spec["draft_id"] + ".json")
                         def commit_revision():
                             result = self.host.imports.revise(spec["draft_id"], spec["revision"], name=spec["name"])
@@ -471,6 +487,7 @@ class PiSetup:
                 self.resource_capture_tasks.add(task)
                 def settled(completed, request_key=key):
                     self.resource_capture_tasks.discard(completed)
+                    self.resource_capture_cancellations.pop(request_key, None)
                     failed = completed.cancelled() or completed.exception() is not None
                     if failed and self.resource_capture_requests.get(request_key) is completed:
                         self.resource_capture_requests.pop(request_key, None)
@@ -484,10 +501,13 @@ class PiSetup:
 
     def cancel_resource_capture(self, import_id):
         _uuid(import_id)
-        flag = self.resource_cancel_flags.get(import_id)
-        if flag is not None:
+        flags = [flag for owner, flag in self.resource_capture_cancellations.values() if owner == import_id]
+        active = self.resource_cancel_flags.get(import_id)
+        if active is not None:
+            flags.append(active)
+        for flag in flags:
             flag.set()
-        return {"cancel_requested": flag is not None}
+        return {"cancel_requested": bool(flags)}
 
     async def _retain_resource(self, record, broker, args):
         from .pi_resources import PiResourceError
@@ -515,9 +535,9 @@ class PiSetup:
             return {"success": False, "output": "invalid_arguments"}
 
     async def _retain_download(self, record, broker, args, result):
+        from .preparation_artifacts import _ARCHIVE_SUFFIXES
         value = json.loads(result["output"])
-        suffix = Path(value["path"]).name.lower()
-        archive = suffix.endswith((".zip", ".tar", ".tar.gz", ".tar.xz", ".tgz", ".gz", ".xz"))
+        archive = Path(value["path"]).suffix.lower() in _ARCHIVE_SUFFIXES
         retained = await self._retain_resource(record, broker, {"path": value["path"], "name": "download-" + value["sha256"][:24],
             "kind": "archive" if archive else "file", "role": "runtime-file", "format": "archive" if archive else "binary",
             "sha256": value["sha256"], "size": value["size"], "origin": {"kind": "https", "url": args["url"]}})
@@ -623,7 +643,7 @@ class PiSetup:
                 if (not current["available"] and current.get("acquisition_ready") is True
                         and (continued or fingerprint not in attempted)):
                     attempted.add(fingerprint)
-                    self._update(record, stage="building", system_action=None)
+                    self._update(record, stage="preparing_metal", system_action=None)
                     current = await broker.toolchain_manager.ensure({"required": True})
                     # Acquisition can leave a new compiler present but unusable.
                     # Treat that resulting identity as attempted until a real
@@ -776,14 +796,16 @@ class PiSetup:
                 self.deadlines[record["id"]] = deadline
                 self._update(record, stage="preparing_resources")
                 workspace_bytes = sum(item["size"] for item in spec["source"]["files"]) + 16 * 1024**2
+                checkpoint_bytes = 0
                 if record.get("resumed_from"):
                     from .pi_recovery import estimate_workspace_bytes, PiRecoveryError
                     try:
-                        workspace_bytes += await _joined(estimate_workspace_bytes, self.work_root / record["resumed_from"])
+                        checkpoint_bytes = await _joined(estimate_workspace_bytes, self.work_root / record["resumed_from"])
+                        workspace_bytes += checkpoint_bytes
                     except PiRecoveryError as error:
                         raise PiSetupError(error.code) from None
                 workspace = await self._resource_work(lambda ceiling: _joined(self._workspace, record, spec,
-                    checkpoint_disk_ceiling=ceiling, _on_cancel=self.cancel_flags[record["id"]].set), workspace_bytes)
+                    checkpoint_disk_ceiling=min(checkpoint_bytes, ceiling), _on_cancel=self.cancel_flags[record["id"]].set), workspace_bytes)
                 inventory = await self.resource_inventory(record["import_id"], record["revision"])
                 mounted = await self._resource_work(lambda ceiling: self.resources.materialize_async(
                     record["import_id"], record["revision"], record["source_revision"], workspace,
@@ -1221,6 +1243,8 @@ class PiSetup:
     async def close(self):
         self.closed = True
         resource_tasks = list(self.resource_capture_tasks)
+        for _, flag in self.resource_capture_cancellations.values():
+            flag.set()
         for flag in self.resource_cancel_flags.values():
             flag.set()
         for task in resource_tasks:

@@ -269,6 +269,40 @@ def record_for(manager, selected):
     return record
 
 
+async def test_checkpoint_growth_cannot_consume_reserved_source_or_schema_space(host, tmp_path, monkeypatch):
+    from meecp import pi_recovery
+
+    manager = host.pi_setup
+    selected, payload = draft(host, tmp_path)
+    previous = record_for(manager, selected)
+    manager._update(previous, status="interrupted", code="pi_interrupted")
+    old_workspace = manager.work_root / previous["id"]
+    old_workspace.mkdir(mode=0o700)
+    saved = old_workspace / "adapter.py"
+    saved.write_bytes(b"public checkpoint fixture")
+    estimate = pi_recovery.estimate_workspace_bytes
+
+    def grow_after_estimate(source):
+        size = estimate(source)
+        saved.write_bytes(saved.read_bytes() + b"x")
+        return size
+
+    async def forbidden_agent(*args):
+        pytest.fail("unadmitted checkpoint growth reached the model session")
+
+    monkeypatch.setattr(pi_recovery, "estimate_workspace_bytes", grow_after_estimate)
+    monkeypatch.setattr(pi_recovery, "copy_regular_file", lambda *args, **kwargs: pytest.fail("unadmitted checkpoint growth reached copying"))
+    enable(manager, monkeypatch, forbidden_agent)
+    resumed = await manager.resume(previous["id"], payload)
+    await manager.tasks[resumed["id"]]
+    result = manager.get(resumed["id"])
+    assert result["status"] == "failed" and result["code"] == "pi_resume_limit"
+    assert result["resumed_from"] == previous["id"]
+    assert not list((manager.work_root / resumed["id"]).iterdir())
+    assert host.imports.inspect(selected["draft_id"])["attachment"] is None
+    assert not manager.probe_reservations
+
+
 async def test_native_admission_is_exclusive_and_held_through_canceled_cleanup(host, tmp_path):
     manager = host.pi_setup
     selected, _ = draft(host, tmp_path)

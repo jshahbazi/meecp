@@ -186,6 +186,15 @@ The host validates the selected Apple control executable and records the actual
 developer directory, compiler, SDK and asset identities. Selected roots and the
 exact Metal asset mount remain read-only to workspace commands.
 
+MeeCP discovers and Apple-verifies the actual compiler, Git, Make and Swift
+executables under the selected developer roots. It uses those paths for known
+commands and child lookup, preserving bundled Python/Node precedence. Apple's
+system launchers can require services unavailable in confinement; preparation
+uses the selected tools directly. Updating or removing Xcode revokes stale
+selection and permits fresh discovery. Settled compiler probe failures report
+unavailability without blocking CPU or prebuilt preparation; ownership loss
+still closes setup admission.
+
 If a full Xcode installation or Apple's account/license/component UI is needed,
 MeeCP presents **Continue Metal Setup**, opens the appropriate Apple page or
 verified Xcode application, and periodically rechecks readiness. No terminal

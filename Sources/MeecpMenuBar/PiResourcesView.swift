@@ -27,7 +27,9 @@ struct PiResourceSelection {
         guard tree || info.st_mode & S_IFMT == S_IFREG && info.st_nlink == 1,
               tree || info.st_size >= 0 && info.st_size <= 16 * 1024 * 1024 * 1024 else { return nil }
         let ext = url.pathExtension.lowercased(), basename = url.lastPathComponent.lowercased()
-        let archive = !tree && ["zip", "tar", "tgz", "gz", "xz", "bz2", "whl"].contains(ext)
+        // Match the host's opaque archive classification; capture retains these
+        // bytes without opening containers or extracting their contents.
+        let archive = !tree && ["zip", "tar", "tgz", "gz", "xz", "bz2", "7z", "rar", "whl", "npz", "zst", "lz4"].contains(ext)
         let model = ["gguf", "onnx", "safetensors"].contains(ext) || tree &&
             ["model", "models", "weights", "checkpoint", "checkpoints"].contains(basename)
         let notice = !tree && (basename == "license" || basename == "notice" || basename == "copying" ||
@@ -315,6 +317,13 @@ final class PiResourcesView: NSStackView {
                   weights.request["role"] as? String == "model-weights", weights.request["format"] as? String == "safetensors",
                   download.request["kind"] as? String == "archive", runtime.request["kind"] as? String == "tree",
                   runtime.request["role"] as? String == "model-weights", runtime.selectedBytes == nil else { return false }
+            for ext in ["zip", "tar", "tgz", "gz", "xz", "bz2", "7z", "rar", "whl", "npz", "zst", "lz4", "NPZ"] {
+                let opaque = root.appendingPathComponent("opaque." + ext)
+                try Data([6, 7]).write(to: opaque)
+                guard let selected = PiResourceSelection(opaque, suffix: "opaque"),
+                      selected.request["kind"] as? String == "archive", selected.request["format"] as? String == "archive",
+                      selected.selectedBytes == 2 else { return false }
+            }
             let id = "11111111-2222-4333-8444-555555555555", source = "sha256:" + String(repeating: "a", count: 64)
             guard let original = PreparationContext(importID: id, revision: 1, sourceRevision: source),
                   let revised = PreparationContext(importID: id, revision: 2, sourceRevision: source) else { return false }

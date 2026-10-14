@@ -9,7 +9,7 @@ import uvicorn
 from meecp.supervisor import Supervisor, management_app
 from meecp_local_transport import bind_private_listener, socket_path
 from test_native_directory_acceptance_guards import context
-from test_recipe_native_management_acceptance import file_identity, native_recipe_driver, private_json
+from test_recipe_native_management_acceptance import file_identity, private_json
 
 
 @pytest.mark.parametrize("public,kind,accepted", [

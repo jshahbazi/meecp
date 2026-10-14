@@ -602,17 +602,42 @@ class PiSetup:
         if deadline:
             deadline.reschedule(None)
         self._update(record, stage="waiting_for_system", system_action=facts["action_required"])
+        waiting_action = facts["action_required"]
+        # An initial required ensure has already attempted this ready toolchain.
+        # Periodic discovery must not repeatedly issue the same failed download.
+        attempted = {facts.get("readiness_fingerprint")} if facts.get("acquisition_ready") is True else set()
         try:
             while True:
+                continued = False
                 try:
                     await asyncio.wait_for(event.wait(), timeout=15)
+                    continued = True
                 except TimeoutError:
                     pass
+                # A Continue arriving as the poll times out still authorizes a
+                # fresh attempt; do not clear that edge without observing it.
+                continued = continued or event.is_set()
                 event.clear()
                 current = await broker.toolchain_manager.ensure({"required": False})
+                fingerprint = current.get("readiness_fingerprint")
+                if (not current["available"] and current.get("acquisition_ready") is True
+                        and (continued or fingerprint not in attempted)):
+                    attempted.add(fingerprint)
+                    self._update(record, stage="building", system_action=None)
+                    current = await broker.toolchain_manager.ensure({"required": True})
+                    # Acquisition can leave a new compiler present but unusable.
+                    # Treat that resulting identity as attempted until a real
+                    # readiness change or an explicit user continuation.
+                    attempted.add(current.get("readiness_fingerprint"))
+                    waiting_action = current.get("action_required") or waiting_action
+                    if not current["available"]:
+                        self._update(record, stage="waiting_for_system", system_action=waiting_action)
                 if current["available"]:
                     self._update(record, stage="building", system_action=None)
                     return await broker.invoke(name, args)
+                elif current.get("action_required") and current["action_required"] != waiting_action:
+                    waiting_action = current["action_required"]
+                    self._update(record, stage="waiting_for_system", system_action=waiting_action)
         finally:
             self.system_events.pop(record["id"], None)
             if deadline and not deadline.expired():

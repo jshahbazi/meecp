@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from test_recipe_native_management_acceptance import native_recipe_driver, private_json, file_identity
+from test_recipe_native_management_acceptance import private_json, file_identity
 
 
 @pytest.fixture

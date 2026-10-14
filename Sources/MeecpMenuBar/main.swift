@@ -3184,7 +3184,9 @@ extension MeecpApp {
             // beginImport is the exact handler invoked by Choose Files and drop.
             // The private fixture supplies the NSOpenPanel selection, not clicks.
             app.beginImport(context.source)
-            guard awaitCondition(30, { !app.setupRequest && app.currentDraft != nil }), let imported = app.currentDraft,
+            // A rejected response also finishes the request. Validate its result
+            // after joining instead of waiting for a draft that cannot appear.
+            guard awaitCondition(30, { !app.setupRequest }), let imported = app.currentDraft,
                   imported.editable,
                   (context.publicPython ? ["local_folder", "application_directory"].contains(imported.sourceKind) : imported.sourceKind == "application_directory"),
                   imported.packagePath == nil,

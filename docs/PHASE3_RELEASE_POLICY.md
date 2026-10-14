@@ -1,11 +1,13 @@
 # Phase 3 release authority
 
-## Current source after onboarding integration
+## Current source after conversational setup integration
 
-The tracked source uses TextGen engine/task 1.0.23 and recipe 1.0.24, plus unlocked
+The tracked source uses TextGen engine/task 1.0.24 and recipe 1.0.25, plus unlocked
 agent component/recipe 1.0.4. TextGen component identity includes the complete host
-Python source closure; the agent binds its explicit source inventory. Onboarding
-changed both closures. Fresh versions preserve earlier immutable bundles and
+Python source closure; the agent binds its explicit source inventory. Conversational
+setup changed `pi_setup.py` and added `pi_conversation.py` to the TextGen closure.
+The previous engine/task 1.0.23 and recipe 1.0.24 pins therefore fail current-source
+compatibility. Fresh versions preserve earlier immutable bundles and
 owner choices. Historical agent versions 1.0.1 through 1.0.3 already exist in Git
 and are not reused. The release policy selects only the exact new references;
 old identities do not inherit current execution authority.
@@ -34,22 +36,26 @@ and owner choices while binding the changed source.
 
 | Current source binding | SHA-256 |
 | --- | --- |
-| Release policy | 3759108296c6fb49e1f4aa15e35603d2eac5e93b81e1ecc4bf9d0015839202b5 |
-| TextGen engine | 1f3b8e6fef0fd51711336e1159443a3050fe82122eca355f9273a41ffa5f9c2e |
-| TextGen task | 42f64262a0607de3c28abee7f5ca4dfa4f5275cb57367186e7c679e35db02063 |
-| TextGen recipe | 7bec0b3c03251165f02d21f277750867cf599a741e82f772a25c160522aa8aed |
+| Release policy | b47dcf654012050750bf1b1483d54a02c0eb16552f38853fe02f78e47fc2a6e4 |
+| TextGen engine | c9e802c018d00b327e7be637a761a5cf55c1665de9f3a54bbb1298366ad20a09 |
+| TextGen task | a9db177f494489689fa70a2d2b55b9a07308bbd2015dc84062556f15373f86b2 |
+| TextGen recipe | 60ca073d9f51731d70ae501d6e4f8905e2f4489a04062c20e6a013eb6189aa53 |
 | Unlocked agent component | 88a46a9e494050d9ab6924653dd1cba226d824abd7630c0d8bd023f270e66cd3 |
 | Unlocked agent recipe | 25abe1d7231f251c6f865223fd050197820e4fdaff66f423d1a9d367a81fc64c |
 
 The recipe was generated with `write_textgen_recipe` using `uv run --locked` and
 contains nine files. Focused policy implementation, build preflight, historical
-policy, lifecycle allowlist, stale producer, and Stark record controls pass.
+policy, lifecycle allowlist, stale producer, recipe seeding, and historical upgrade
+controls passed with 345 checks. The 492 opt-in pinned-scanner integration cases
+were skipped; model inference, native acceptance, and the full suite were not run
+for this refresh. All seven public model/runtime asset files in the new recipe
+match recipe 1.0.24 byte for byte, and earlier recipe directories are unchanged.
 The lifecycle allowlist admits these reviewed candidate bytes for running its
 harness; it is not a signed or native acceptance result. Frozen policies keep
 their original hashes and producer controls.
 
 The signed v10 runtime/live acceptance below retains its original source and
-TextGen 1.0.13. It has not been rerun for TextGen component 1.0.23/recipe 1.0.24
+TextGen 1.0.13. It has not been rerun for TextGen component 1.0.24/recipe 1.0.25
 or unlocked agent component/recipe 1.0.4. Fresh signed cold-copy startup and
 public native/live acceptance remain required for those scopes. Frozen selected13 and selected14
 policy bytes are retained in `tests/fixtures/phase3-selected-textgen-1-0-13-policy.json`

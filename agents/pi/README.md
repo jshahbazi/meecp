@@ -59,9 +59,25 @@ and `arguments`. Supported host tools are:
 
 Reply with `tool_result`, the same `id`, a boolean `success`, and string `output`.
 Broker frames carry task data for execution and are not logs. Do not persist them.
+While a session is accepting ordinary input, the host may send `user_message`
+with a UUID `id` and bounded `text`. The worker calls the real SDK's `steer`
+method with prompt-template expansion disabled and emits `message_accepted`
+only after it queues the message. Exact draft ownership, idempotency and
+pending-question arbitration belong to the host. The host reads worker output
+and sends steering independently of its one sequential tool dispatcher; slow
+owned tools must not block ordinary message acknowledgment.
+
+Completed assistant text is emitted as `assistant_message` for the host's
+bounded RAM conversation transport. Thinking, tool output, provider error
+objects and credentials are excluded. These frames must never be journaled or
+written to diagnostics. Structured `ask_user` answers use their existing exact
+tool-result route; secret values never become conversation events.
+
 The terminal frame is `done` with `success: true` or `failed` with a fixed `code`.
 Closing stdin or sending `cancel` aborts the session and pending tools. The worker
-never forwards assistant text, provider errors, or credentials to stdout/stderr.
+never forwards raw provider errors or credentials to stdout/stderr. The host
+closes input, joins owned tool cleanup and reaps the worker before settling an
+attempt. Unacknowledged messages fail when the worker terminates.
 The host must independently verify the generated package before installation.
 The worker bounds a run to 1,024 broker calls, 512 coding turns, and twelve final
 verification/repair cycles. The host also enforces its deadline and resource

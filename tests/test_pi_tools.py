@@ -237,7 +237,7 @@ def metal_compute_server(tmp_path_factory):
 
 
 @native
-async def test_admitted_metal_probe_computes_and_preserves_filesystem_network_denials(broker, metal_device, metal_compute_server, tmp_path):
+async def test_admitted_metal_probe_computes_and_preserves_filesystem_network_denials(broker, metal_compute, metal_compute_server, tmp_path):
     package = tmp_path / "package"; package.mkdir(mode=0o700)
     executable = package / "compute"
     executable.write_bytes(metal_compute_server.read_bytes()); executable.chmod(0o700)
@@ -252,6 +252,7 @@ async def test_admitted_metal_probe_computes_and_preserves_filesystem_network_de
         assert "network-outbound" not in profile
         result = subprocess.run([str(launch[0]), *launch[1]], cwd=launch[2], env=launch[3],
             capture_output=True, timeout=30)
+        assert result.returncode != 10, "metal_probe_sandbox_device_unavailable"
         assert result.returncode == 0 and result.stdout == b"metal_compute_passed\n" and not result.stderr
         ordinary = instance.launch_spec([str(executable)], str(package))
         denied = subprocess.run([str(ordinary[0]), *ordinary[1]], cwd=ordinary[2], env=ordinary[3],

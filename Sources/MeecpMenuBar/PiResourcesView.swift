@@ -104,16 +104,18 @@ final class PiResourcesView: NSStackView {
     private var submittedContext: PreparationContext?
     private var captureSerial: UInt64 = 0
     private var canceling = false
-    private let chooseButton = NSButton(title: "Add Existing Files or Runtime…", target: nil, action: nil)
-    private let refreshButton = NSButton(title: "Refresh Resources", target: nil, action: nil)
+    private let chooseButton = NSButton(title: "Add files…", target: nil, action: nil)
+    private let refreshButton = NSButton(title: "Refresh", target: nil, action: nil)
     private let cancelButton = NSButton(title: "Cancel Import", target: nil, action: nil)
-    private let explanation = workspaceLabel("MeeCP acquires dependencies automatically. You can optionally reuse model files, runtimes, archives or notices you already have.", size: 12, secondary: true)
-    private let summaryLabel = workspaceLabel("Resources are retained for this app across setup attempts.", size: 12, secondary: true)
+    private let explanation = workspaceLabel("Added files are saved with your app. MeeCP downloads other dependencies automatically.", size: 12, secondary: true)
+    private let summaryLabel = workspaceLabel("", size: 12, secondary: true)
     private let resourceLabel = workspaceLabel("No saved resources.", size: 12)
     private let statusLabel = workspaceLabel("", size: 12)
     private let detailLabel = workspaceLabel("", size: 11, secondary: true)
     private let spinner = NSProgressIndicator()
     var blocksNavigation: Bool { busy }
+    var canChooseResources: Bool { !busy && available?() == true && request != nil }
+    func chooseExistingResources() { chooseResources() }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -128,6 +130,7 @@ final class PiResourcesView: NSStackView {
             label.lineBreakMode = .byWordWrapping; label.maximumNumberOfLines = 0
             addArrangedSubview(label)
         }
+        summaryLabel.isHidden = true
         addArrangedSubview(workspaceStack([chooseButton, refreshButton, cancelButton, spinner], horizontal: true, spacing: 8))
         resourceLabel.setAccessibilityLabel("Saved setup resources")
         statusLabel.setAccessibilityLabel("Setup resource capture status")
@@ -136,6 +139,8 @@ final class PiResourcesView: NSStackView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func bind(_ context: PreparationContext?) {
+        // With no draft there is no inventory to reload after reconnecting.
+        if context == nil, !busy { statusLabel.stringValue = ""; detailLabel.stringValue = "" }
         guard self.context != context else { refreshAvailability(); return }
         self.context = context; generation &+= 1; polling = false; inventory = nil
         if !busy { statusLabel.stringValue = ""; detailLabel.stringValue = "" }
@@ -260,9 +265,10 @@ final class PiResourcesView: NSStackView {
     private func render() {
         guard let inventory else {
             resourceLabel.stringValue = "No saved resources."
-            summaryLabel.stringValue = "Resources are retained for this app across setup attempts."
+            summaryLabel.isHidden = true
             refreshAvailability(); return
         }
+        summaryLabel.isHidden = inventory.resources.isEmpty
         summaryLabel.stringValue = "Retained storage: " + Self.bytes(inventory.bytes) + ". MeeCP checks extra working storage before preparation."
         resourceLabel.stringValue = inventory.resources.isEmpty ? "No saved resources." : inventory.resources.map {
             $0.name + " · " + Self.bytes($0.bytes) + " · " + String($0.fileCount) + ($0.fileCount == 1 ? " file" : " files") +

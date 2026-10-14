@@ -99,6 +99,7 @@ def run(binary, fixture, home, temporary):
 
 @pytest.mark.parametrize("fault", ["unknown_field", "secret_value", "bad_port", "bad_model", "bad_reference", "expired", "wrong_nonce",
     "manager_replaced", "fixture_mode", "marker_hardlink", "replay", "existing_output", "output_link"])
+@pytest.mark.skip(reason="Native manual/external-agent setup workflow retired; historical acceptance only")
 def test_compiled_service_guard_denies_before_claim(native_recipe_driver, tmp_path, fault):
     state, home, temporary, manager, marker, proof, fixture, output, case = context(tmp_path)
     if fault == "unknown_field": case["source_directory"] = str(home)
@@ -124,6 +125,7 @@ def test_compiled_service_guard_denies_before_claim(native_recipe_driver, tmp_pa
     assert (output.read_bytes() if output.exists() else None) == before_output
 
 
+@pytest.mark.skip(reason="Native manual/external-agent setup workflow retired; historical acceptance only")
 def test_valid_service_context_claims_once_before_invalid_manager(native_recipe_driver, tmp_path):
     state, home, temporary, manager, marker, proof, fixture, output, case = context(tmp_path)
     private_json(marker, proof); private_json(fixture, case)
@@ -136,6 +138,7 @@ def test_valid_service_context_claims_once_before_invalid_manager(native_recipe_
     assert file_identity(output) == before
 
 
+@pytest.mark.skip(reason="Native manual/external-agent setup workflow retired; historical acceptance only")
 async def test_actual_parent_service_intake_obeys_closed_host_gate(native_recipe_driver, tmp_path):
     """Full production parent callbacks reach real owner routes, never a probe."""
     import asyncio

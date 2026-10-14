@@ -18,6 +18,7 @@ from test_recipe_native_management_acceptance import file_identity, private_json
     (True, "invalid_draft", False),
     (False, "callable", False), (False, "mixed", True),
 ])
+@pytest.mark.skip(reason="Native manual/external-agent setup workflow retired; historical acceptance only")
 async def test_actual_intake_selection_preserves_closed_directory_kinds(native_recipe_driver, tmp_path, public, kind, accepted):
     root, state, source, home, temporary, manager, marker, fixture, output, nonce, proof, case = context(tmp_path, public)
     (source / "worker.py").write_text("def double(n: int) -> dict[str, int]:\n    return {'value': n * 2}\n")

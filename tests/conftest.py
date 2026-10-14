@@ -8,31 +8,30 @@ import subprocess
 import sys
 
 import pytest
-from native_capabilities import require_metal_device
+from native_capabilities import require_metal_compute
 
 
 @pytest.fixture(scope="session")
-def metal_device(tmp_path_factory):
+def metal_compute(tmp_path_factory):
     if not (sys.platform == "darwin" and platform.machine() == "arm64"
             and platform.mac_ver()[0].startswith("26.")):
         pytest.skip("native Metal requires macOS 26 arm64")
-    root = tmp_path_factory.mktemp("metal-device-control")
-    source, binary = root / "device.m", root / "device"
-    source.write_text("#import <Metal/Metal.h>\nint main(void) { @autoreleasepool {\n"
-                      "return MTLCreateSystemDefaultDevice() ? 0 : 75;\n} }\n")
-    # This unconfined fixed control checks device presence independently of
-    # Pi's sandbox and compute helper. A confined denial must still fail when
-    # the host exposes a device, and compute failures are never skip reasons.
+    root = tmp_path_factory.mktemp("metal-compute-control")
+    source = Path(__file__).with_name("native_metal_control.m")
+    binary = root / "compute"
+    # This independent unconfined control proves residency and exact arithmetic
+    # before either production helper or Pi's sandbox runs. An advertised
+    # device alone does not establish these capabilities on a hosted runner.
     try:
         compiled = subprocess.run(["/usr/bin/clang", "-fobjc-arc", "-O2", "-Wall", "-Wextra", "-Werror",
             "-framework", "Foundation", "-framework", "Metal", str(source), "-o", str(binary)],
             capture_output=True, timeout=30)
         if compiled.returncode != 0:
-            pytest.fail("metal_device_control_compile_failed", pytrace=False)
-        result = subprocess.run([str(binary)], capture_output=True, timeout=10)
+            pytest.fail("metal_compute_control_compile_failed", pytrace=False)
+        result = subprocess.run([str(binary)], capture_output=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired):
-        pytest.fail("metal_device_control_unavailable", pytrace=False)
-    require_metal_device(result)
+        pytest.fail("metal_compute_control_unavailable", pytrace=False)
+    require_metal_compute(result)
 
 
 @pytest.fixture(scope="session")

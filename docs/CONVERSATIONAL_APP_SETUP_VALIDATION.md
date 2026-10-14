@@ -49,10 +49,43 @@ explicit deletion still marks the request dirty; restoration does not mask edits
 
 ## Standalone delivery
 
-Standalone code seal, bundled-worker transport, visual inspection and installed
-source/runtime identity checks are pending the fresh build. This paragraph will
-be replaced with measured results after delivery; source fixtures alone do not
-establish those outcomes.
+The standalone app built from clean implementation commit
+`42d3a4139a1fb87de076600b784aed8e3ac94185` was installed at
+`/Applications/meecp.app` and relaunched through the existing verified native
+installer. The delivered and installed copies pass deep strict code-signature
+verification, the host's complete artifact inventory, the Pi runtime inventory,
+native Metal helper receipt checks and current implementation source hashes.
+The native input hash matches the builder's compiled binary. The installed
+runtime's Pi inventory is identical to the candidate on which all twelve real
+SDK worker fixtures passed; subsequent changes affect native UI only.
+
+The delivered app passes the combined conversational and existing management
+native self-tests. Earlier standalone candidates also passed the existing Pi
+setup/resource self-tests. Native visual inspection checked Manage Apps,
+full-width Add App, the pinned composer and the initial inline provider/model
+form using an isolated local state directory. Entering a public synthetic app
+request saved it before showing initial agent settings; canceling settings kept
+the draft. No provider key or paid model request was used in that UI check.
+
+The same isolated state exposed the lazy-window restoration bug: the backend
+and authenticated owner API retained the complete draft while the newly opened
+conversation remained empty. The final native fixture reproduces loading the
+record before creating the window and verifies all new controls hydrate from
+that record. Final interactive reinspection was unavailable after the Mac
+locked; the restoration and subsequent UI refinements are qualified by native
+fixtures and the shipped code/source identity checks.
+
+Before updating, the owner API confirmed no active setup, installation operation
+or tool request. The prior running-app identities, ports and startup policies
+were captured as task-local metadata. After relaunch the owner API returned 200,
+and the previously running ColGrep app was restored to Ready with its original
+manual startup policy and public port 19389. The isolated UI-check host stopped
+and its manager connection was removed during the update. User drafts and
+retained resources were preserved.
+
+This acceptance record is a documentation follow-up to the installed source
+commit; it does not change the delivered implementation or rebuild historical
+artifacts.
 
 ## Limits
 

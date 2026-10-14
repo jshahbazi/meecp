@@ -238,6 +238,10 @@ Python admission checks passed locally together with both previously failing
 native target checks: 34 passed. This establishes local classification and
 compute behavior; the hosted runner must verify its own outcome.
 
+CI and the signed installer now run these focused checks before the full suite,
+with skip reasons enabled. A fatal control or target error stops the job early.
+The full suite and the installer credential ordering are preserved.
+
 ## Limits
 
 These fixtures qualify UI, transport and lifecycle behavior. They do not measure

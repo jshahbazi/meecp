@@ -243,6 +243,11 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
         # subprocess selection and failure handling have dedicated controls.
         policy = json.loads((host / "templates/release-policies/phase3-v1.json").read_bytes())
         validate_policy_implementations(ReleasePolicy.model_validate(policy))
+        if release:
+            assert policy == active_policy
+        else:
+            assert policy["policy_id"] == "phase3-development-closed-v1"
+            assert ReleasePolicy.model_validate(policy).admissions() == (None, None, None)
         preflights.append(host)
 
     def sign_runtime(staged, identity, signed_release, keychain):

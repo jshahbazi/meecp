@@ -1175,6 +1175,7 @@ class Supervisor(UpgradeHost):
         runtime = ensure_private_directory(self.slot_directory(slot.id) / "runtime")
         data = self.data_directory(slot)
         dependencies = self.residents.setdefault(slot.id, {})
+        config_flag = "--meecp-config-fd"
         for attempt in range(3):
             listener = bind_listener()
             port = listener.getsockname()[1]
@@ -1221,7 +1222,7 @@ class Supervisor(UpgradeHost):
                         raise TimeoutError()
                     acknowledgment_timeout = min(acknowledgment_timeout, remaining)
                 process = await self.launch_package(slot, package, executable=package.root / entry.executable,
-                    args=[*entry.args, "--meecp-config-fd", str(config_read)], cwd=package.root / entry.cwd,
+                    args=[*entry.args, config_flag, str(config_read)], cwd=package.root / entry.cwd,
                     env={"PATH": "/usr/bin:/bin", "HOME": str(data), "TMPDIR": str(runtime), "LANG": "en_US.UTF-8",
                          "PYTHONDONTWRITEBYTECODE": "1"}, inherited_fds=(config_read,), io_mode="fds",
                     startup_timeout=acknowledgment_timeout,
@@ -1259,6 +1260,12 @@ class Supervisor(UpgradeHost):
                 if (not isinstance(error, HostError) or error.code != "runtime_start_failed"
                         or attempt == 2 or process is None or process.returncode in (None, 0)):
                     raise
+                # Installed API-v1 packages can predate the product rename.
+                # Argument parsers reject the renamed flag with exit 2. Retry
+                # the original spelling only after reaping that owned process;
+                # retain the existing attempt and whole-graph deadline bounds.
+                if process.returncode == 2 and config_flag == "--meecp-config-fd":
+                    config_flag = "--mcpme-config-fd"
             finally:
                 os.close(config_read)
                 if not writer.done():

@@ -36,7 +36,7 @@ class PublicTextgenHarness(textgen.Harness):
 
     async def public_defaults(self):
         from meecp.preparation_textgen import ENGINE_ID, RECIPE_VERSION, TASK_ID, VERSION, references
-        common.require(VERSION == "1.0.24", "public_textgen_producer_version_changed")
+        common.require(VERSION == "1.0.25", "public_textgen_producer_version_changed")
         keys = {item.id: item.key for item in references()}
         base, state, home, environment = self.new_case("public-textgen-capabilities")
         child = await self.start(state, environment, home, enabled=False)

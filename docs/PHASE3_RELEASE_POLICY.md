@@ -1,16 +1,15 @@
 # Phase 3 release authority
 
-## Current source after conversational setup integration
+## Current source after legacy resident startup compatibility
 
-The tracked source uses TextGen engine/task 1.0.24 and recipe 1.0.25, plus unlocked
+The tracked source uses TextGen engine/task 1.0.25 and recipe 1.0.26, plus unlocked
 agent component/recipe 1.0.4. TextGen component identity includes the complete host
-Python source closure; the agent binds its explicit source inventory. Conversational
-setup changed `pi_setup.py` and added `pi_conversation.py` to the TextGen closure.
-The previous engine/task 1.0.23 and recipe 1.0.24 pins therefore fail current-source
-compatibility. Fresh versions preserve earlier immutable bundles and
-owner choices. Historical agent versions 1.0.1 through 1.0.3 already exist in Git
-and are not reused. The release policy selects only the exact new references;
-old identities do not inherit current execution authority.
+Python source closure. The legacy configuration-descriptor fallback in
+`supervisor.py` changed that closure after conversational setup integration had
+selected engine/task 1.0.24 and recipe 1.0.25. The fresh versions bind the current
+source and preserve all earlier immutable bundles and owner lifecycle choices.
+The release policy selects only the exact new references; old identities do not
+inherit current execution authority.
 
 A signed
 1.1.0 installation inspected on 2026-10-13 had different packaged engine/task
@@ -36,26 +35,24 @@ and owner choices while binding the changed source.
 
 | Current source binding | SHA-256 |
 | --- | --- |
-| Release policy | b47dcf654012050750bf1b1483d54a02c0eb16552f38853fe02f78e47fc2a6e4 |
-| TextGen engine | c9e802c018d00b327e7be637a761a5cf55c1665de9f3a54bbb1298366ad20a09 |
-| TextGen task | a9db177f494489689fa70a2d2b55b9a07308bbd2015dc84062556f15373f86b2 |
-| TextGen recipe | 60ca073d9f51731d70ae501d6e4f8905e2f4489a04062c20e6a013eb6189aa53 |
+| Release policy | 1d4ef765af585213cb9a1b39f4466d1cb50aa07c960efbea6aefcf3081d8770a |
+| TextGen engine | a8d0ee0af4f88d6fb604041f7500397b9cce5e24158f7c7324e77f0dd1f70291 |
+| TextGen task | 2df369110fde2b7ddb95c2d93fa9110fd54e7582f855b3f18c21a8b962c333f4 |
+| TextGen recipe | fea14263ab91b7cbdb90e6758598af334dff51bf1c983e921ba4ad3a84148c79 |
 | Unlocked agent component | 88a46a9e494050d9ab6924653dd1cba226d824abd7630c0d8bd023f270e66cd3 |
 | Unlocked agent recipe | 25abe1d7231f251c6f865223fd050197820e4fdaff66f423d1a9d367a81fc64c |
 
 The recipe was generated with `write_textgen_recipe` using `uv run --locked` and
-contains nine files. Focused policy implementation, build preflight, historical
-policy, lifecycle allowlist, stale producer, recipe seeding, and historical upgrade
-controls passed with 345 checks. The 492 opt-in pinned-scanner integration cases
-were skipped; model inference, native acceptance, and the full suite were not run
-for this refresh. All seven public model/runtime asset files in the new recipe
-match recipe 1.0.24 byte for byte, and earlier recipe directories are unchanged.
-The lifecycle allowlist admits these reviewed candidate bytes for running its
-harness; it is not a signed or native acceptance result. Frozen policies keep
-their original hashes and producer controls.
+contains nine files. All seven public model/runtime asset files match recipe
+1.0.25 byte for byte, and earlier recipe directories are unchanged. The lifecycle
+allowlist admits the reviewed candidate policy bytes for running its harness; it
+is not a signed or native acceptance result. Frozen policies retain their original
+hashes and producer controls. The CI repair also updates the explicit Stark
+source-deviation record; historical installed acceptance remains retired and
+native reacceptance remains required.
 
 The signed v10 runtime/live acceptance below retains its original source and
-TextGen 1.0.13. It has not been rerun for TextGen component 1.0.24/recipe 1.0.25
+TextGen 1.0.13. It has not been rerun for TextGen component 1.0.25/recipe 1.0.26
 or unlocked agent component/recipe 1.0.4. Fresh signed cold-copy startup and
 public native/live acceptance remain required for those scopes. Frozen selected13 and selected14
 policy bytes are retained in `tests/fixtures/phase3-selected-textgen-1-0-13-policy.json`

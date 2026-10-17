@@ -50,6 +50,7 @@ LIFECYCLE_POLICY_SHA256 = frozenset({
     # does not transfer historical signed/native acceptance to a new producer.
     "3759108296c6fb49e1f4aa15e35603d2eac5e93b81e1ecc4bf9d0015839202b5",
     "b47dcf654012050750bf1b1483d54a02c0eb16552f38853fe02f78e47fc2a6e4",
+    "1d4ef765af585213cb9a1b39f4466d1cb50aa07c960efbea6aefcf3081d8770a",
 })
 BARRIERS = {"disabled_queued": "scheduler_before_snapshot", "stale_source": "scheduler_before_snapshot",
     "revoked_verification": "actual_verifier_return_before_publication",

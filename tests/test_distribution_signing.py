@@ -183,7 +183,11 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
     binary_directory.mkdir()
     (binary_directory / "MeecpMenuBar").write_bytes(b"synthetic native app")
     before = (source / "pyproject.toml").read_bytes()
+    host_policy = {"schema_version": 1, "policy_id": "test-packaged-release-v1",
+        "preparation": {"families": [], "recipe_component_sets": [], "resolution_candidate_kinds": []},
+        "agent": {"components": [], "providers": [], "unlocked_resolution": False}, "command": None}
     host_versions = []
+    policy_preflights = []
     signed_starter = None
     validated_digest = None
 
@@ -213,7 +217,7 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
         (destination / "bin").mkdir(parents=True)
         policy = destination / "templates/release-policies/phase3-v1.json"
         policy.parent.mkdir(parents=True)
-        policy.write_text(json.dumps({"synthetic_active_release_policy": True}))
+        policy.write_text(json.dumps(host_policy))
         resource = host_builder._resource_inventory_contract()
         helper = destination / resource["helper"]
         helper.write_bytes(b"synthetic resource helper")
@@ -228,9 +232,22 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
         }))
         return destination
 
+    def validate_policy(host):
+        # This build orchestration fixture has no Python runtime. The real
+        # packaged-policy subprocess is covered in test_build_release_policy_preflight.
+        from meecp.preparation_release_policy import ReleasePolicy
+        policy = json.loads((host / "templates/release-policies/phase3-v1.json").read_bytes())
+        assert ReleasePolicy.model_validate(policy).admissions() == (None, None, None)
+        if release:
+            assert policy == host_policy
+        else:
+            assert policy["policy_id"] == "phase3-development-closed-v1"
+        policy_preflights.append(host)
+
     def sign_runtime(staged, identity, signed_release, keychain):
         nonlocal signed_starter
         assert signed_release is release
+        assert policy_preflights == [staged / "Contents/Resources/host"]
         starter = staged / "Contents/Resources" / app_builder.STARTER_PACKAGE_PATH
         signed_starter = starter / "bin/service"
         signed_starter.write_bytes(signed_starter.read_bytes() + b" changed by codesign")
@@ -245,6 +262,7 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
     monkeypatch.setattr(app_builder, "ROOT", source)
     monkeypatch.setattr(app_builder, "run", run)
     monkeypatch.setattr(app_builder, "build_host", build_host)
+    monkeypatch.setattr(app_builder, "validate_packaged_release_policy", validate_policy)
     monkeypatch.setattr(app_builder, "prepare_json_package", synthetic_starter)
     monkeypatch.setattr(app_builder, "developer_identity", lambda *args: CERTIFICATE)
     monkeypatch.setattr(app_builder, "sign_runtime", sign_runtime)
@@ -261,7 +279,7 @@ def test_app_build_records_selected_version_and_validates_signed_starter(monkeyp
     assert receipt["signing"] == host_receipt["signing"] == ("developer_id" if release else "ad_hoc")
     policy = json.loads((resources / "host/templates/release-policies/phase3-v1.json").read_bytes())
     if release:
-        assert policy == {"synthetic_active_release_policy": True}
+        assert policy == host_policy
     else:
         from meecp.preparation_release_policy import ReleasePolicy
         closed = ReleasePolicy.model_validate(policy)

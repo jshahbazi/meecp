@@ -144,6 +144,19 @@ class PiQuestions:
         _identity(job_id)
         return dict(self._credentials.get(job_id, {}))
 
+    def restore_credentials(self, job_id: str, references: Any) -> None:
+        """Restore exact opaque bindings for a fresh authorized setup attempt."""
+        _identity(job_id)
+        if (not isinstance(references, dict) or len(references) > 64
+                or any(not isinstance(name, str) or re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", name) is None
+                       or not isinstance(reference, str) for name, reference in references.items())):
+            raise PiQuestionError("pi_credentials_unavailable")
+        try:
+            self.secrets.resolve(references)
+        except SettingsError:
+            raise PiQuestionError("pi_credentials_unavailable") from None
+        self._credentials[job_id] = dict(references)
+
     def cancel(self, job_id: str) -> None:
         _identity(job_id)
         self._canceled.add(job_id)

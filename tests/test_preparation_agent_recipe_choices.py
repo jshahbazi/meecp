@@ -11,12 +11,15 @@ import pytest
 from meecp.preparation_agent_contracts import AnalysisGuideV1
 from meecp.preparation_agent_guides import AnalysisGuideRegistry, builtin_analysis_guides
 from meecp.preparation_agent_recipe_choices import AgentRecipeChoiceRegistry, builtin_recipe_choice_rules
+from meecp.preparation_agent_unlocked import COMPONENT_ID, VERSION
 from meecp.preparation_contracts import PreparationError, canonical_bytes
+from meecp.recipes import validate_bundle
 from meecp.supervisor import Supervisor
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCKED = "mcpme.agent-python-adapter"
 UNLOCKED = "mcpme.agent-unlocked-python-adapter"
+UNLOCKED_RECIPE_VERSION = "1.0.4"
 WORKER = b"raise RuntimeError('source was executed')\ndef double(n: int) -> int: return n*2\n"
 PROJECT = b"[project]\nname='synthetic'\nversion='1.0.0'\n"
 LOCK = b"version=1\nrevision=3\n"
@@ -42,8 +45,8 @@ def recommended(value):
     return [item["recipe"]["id"] for item in value["recipe_choices"] if item["recommended"]]
 
 
-def add_alias(host, root, recipe_id, version="1.0.2"):
-    shutil.copytree(ROOT / "templates/builtin-recipes/agent-unlocked-python-adapter-v1-0-2", root)
+def add_alias(host, root, recipe_id, version=UNLOCKED_RECIPE_VERSION):
+    shutil.copytree(ROOT / "templates/builtin-recipes/agent-unlocked-python-adapter-v1-0-4", root)
     manifest = json.loads((root / "meecp.recipe.json").read_bytes())
     manifest.update(id=recipe_id, version=version)
     raw = canonical_bytes(manifest)
@@ -117,11 +120,11 @@ async def test_unavailable_recipe_is_never_selected_or_reenabled(tmp_path, actio
     host = Supervisor(tmp_path / "state", tmp_path / "unused-reaper")
     try:
         draft = capture(host, tmp_path / "source", {"worker.py": WORKER})
-        getattr(host.recipes, action)(UNLOCKED, "1.0.2")
+        getattr(host.recipes, action)(UNLOCKED, UNLOCKED_RECIPE_VERSION)
         value = options(host, draft)
         assert recommended(value) == []
         assert UNLOCKED not in {item["id"] for item in value["recipes"]}
-        assert host.recipes.inspect(UNLOCKED, "1.0.2")["state"] != "enabled"
+        assert host.recipes.inspect(UNLOCKED, UNLOCKED_RECIPE_VERSION)["state"] != "enabled"
     finally:
         await host.close()
 
@@ -135,12 +138,22 @@ async def test_component_or_guide_change_cannot_inherit_a_recommendation(tmp_pat
         host.agent_preparations.guides = AnalysisGuideRegistry(tuple(AnalysisGuideV1.model_validate(item) for item in guides))
         assert recommended(options(host, draft)) == []
         host.agent_preparations.guides = AnalysisGuideRegistry(builtin_analysis_guides())
-        host.recipes.component_catalog["agent-unlocked-python-adapter-v1@1.0.0"]["digest"] = "0" * 64
+        host.recipes.component_catalog[COMPONENT_ID + "@" + VERSION]["digest"] = "0" * 64
         value = options(host, draft)
         assert recommended(value) == []
         assert next(item for item in value["recipe_choices"] if item["recipe"]["id"] == UNLOCKED)["compatibility"] == "unresolved"
     finally:
         await host.close()
+
+
+def test_current_guide_does_not_admit_historical_unlocked_component():
+    registry = AnalysisGuideRegistry(builtin_analysis_guides())
+    historical = validate_bundle(ROOT / "templates/builtin-recipes/agent-unlocked-python-adapter-v1-0-2")
+    current = validate_bundle(ROOT / "templates/builtin-recipes/agent-unlocked-python-adapter-v1-0-4")
+    assert registry.resolve(historical) is None
+    guide = registry.resolve(current)
+    assert guide is not None and guide["component"]["version"] == VERSION
+    assert guide["component"]["digest"] == current["manifest"]["steps"][0]["digest"]
 
 
 async def test_independent_exact_recipe_alias_can_be_chosen_without_dispatcher_changes(tmp_path):
@@ -149,7 +162,7 @@ async def test_independent_exact_recipe_alias_can_be_chosen_without_dispatcher_c
         draft = capture(host, tmp_path / "source", {"worker.py": WORKER})
         add_alias(host, tmp_path / "alias-a", "test.independent-adapter")
         assert recommended(options(host, draft)) == [UNLOCKED]
-        host.recipes.disable(UNLOCKED, "1.0.2")
+        host.recipes.disable(UNLOCKED, UNLOCKED_RECIPE_VERSION)
         assert recommended(options(host, draft)) == ["test.independent-adapter"]
         add_alias(host, tmp_path / "alias-b", "test.second-adapter")
         assert recommended(options(host, draft)) == []
@@ -161,7 +174,7 @@ async def test_multiple_builtin_versions_require_explicit_selection(tmp_path):
     host = Supervisor(tmp_path / "state", tmp_path / "unused-reaper")
     try:
         draft = capture(host, tmp_path / "source", {"worker.py": WORKER})
-        add_alias(host, tmp_path / "alias", UNLOCKED, "1.0.3")
+        add_alias(host, tmp_path / "alias", UNLOCKED, "1.0.5")
         assert recommended(options(host, draft)) == []
     finally:
         await host.close()

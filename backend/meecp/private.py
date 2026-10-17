@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import json
+import ctypes
+import errno
 import os
+import platform
 import secrets
 import shutil
 import stat
 from pathlib import Path
 from typing import Any
 
-from .contracts import (LOCK_NAME, MANIFEST_NAME, MAX_METADATA_BYTES, MAX_LOCK_METADATA_BYTES, PackageError,
+from .contracts import (MAX_METADATA_BYTES, MAX_LOCK_METADATA_BYTES, PackageError,
                         ValidatedPackage, validate_package)
 
 
@@ -110,6 +113,74 @@ def write_private_json(path: Path, data: dict[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _clone_file(source_fd: int, target: Path, *, target_dir_fd: int | None = None) -> bool:
+    """Attempt an independent APFS clone through held file descriptors."""
+    if platform.system() != "Darwin":
+        return False
+    library = ctypes.CDLL(None, use_errno=True)
+    clone = getattr(library, "fclonefileat", None)
+    if clone is None:
+        return False
+    clone.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]
+    clone.restype = ctypes.c_int
+    parent = (os.dup(target_dir_fd) if target_dir_fd is not None else
+              os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW))
+    try:
+        # CLONE_NOOWNERCOPY | CLONE_NOFOLLOW_ANY. No hard links or ACL copying.
+        if clone(source_fd, parent, os.fsencode(target.name), 0x0002 | 0x0008) == 0:
+            return True
+        code = ctypes.get_errno()
+        if code in {errno.ENOTSUP, errno.EOPNOTSUPP, errno.EXDEV, errno.EINVAL, errno.ENOSYS}:
+            return False
+        raise OSError(code, "clone_failed")
+    finally:
+        os.close(parent)
+
+
+def copy_regular_file(source_fd: int, target: Path, *, size: int, executable: bool = False,
+                      check=lambda: None, target_dir_fd: int | None = None) -> None:
+    """Copy a held regular source into a new owned file, cloning when available.
+
+    The caller owns the destination tree and validates content hashes. A clone
+    preserves independent inodes; writes to either file do not alter the other.
+    """
+    before = os.fstat(source_fd)
+    if (type(size) is not int or size < 0 or not stat.S_ISREG(before.st_mode)
+            or before.st_nlink != 1 or before.st_size != size):
+        raise PackageError("package_changed")
+    check()
+    cloned = (_clone_file(source_fd, target) if target_dir_fd is None else
+              _clone_file(source_fd, target, target_dir_fd=target_dir_fd))
+    flags = (os.O_RDONLY if cloned else os.O_WRONLY) | os.O_NOFOLLOW
+    if not cloned:
+        flags |= os.O_CREAT | os.O_EXCL
+    output_fd = os.open(target if target_dir_fd is None else target.name, flags, 0o600, dir_fd=target_dir_fd)
+    with os.fdopen(output_fd, "rb" if cloned else "wb") as output:
+        if not cloned:
+            os.lseek(source_fd, 0, os.SEEK_SET)
+            copied = 0
+            while chunk := os.read(source_fd, min(1024 * 1024, size - copied + 1)):
+                check()
+                copied += len(chunk)
+                if copied > size:
+                    raise PackageError("package_changed")
+                output.write(chunk)
+            if copied != size:
+                raise PackageError("package_changed")
+        check()
+        output.flush()
+        details = os.fstat(output.fileno())
+        if (not stat.S_ISREG(details.st_mode) or details.st_nlink != 1
+                or details.st_uid != os.getuid() or details.st_size != size):
+            raise PackageError("package_changed")
+        os.fchmod(output.fileno(), 0o700 if executable else 0o600)
+        os.fsync(output.fileno())
+    after = os.fstat(source_fd)
+    if ((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+            != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)):
+        raise PackageError("package_changed")
+
+
 def snapshot_package(package: ValidatedPackage | Path, destination: Path,
                      *, expected_digest: str | None = None) -> ValidatedPackage:
     """Copy into a private staged tree, revalidate, then publish without overwrite."""
@@ -151,18 +222,8 @@ def snapshot_package(package: ValidatedPackage | Path, destination: Path,
                     if limit is None or details.st_size > limit:
                         raise PackageError("package_changed")
                     target = staged / relative / name
-                    output_fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                    with os.fdopen(output_fd, "wb") as output:
-                        copied = 0
-                        while chunk := input_file.read(min(1024 * 1024, limit - copied + 1)):
-                            copied += len(chunk)
-                            if copied > limit:
-                                raise PackageError("package_changed")
-                            output.write(chunk)
-                        output.flush()
-                        os.fsync(output.fileno())
-                        # Host-managed executable artifacts remain owner-only.
-                        os.fchmod(output.fileno(), 0o700 if details.st_mode & 0o111 else 0o600)
+                    copy_regular_file(input_file.fileno(), target, size=details.st_size,
+                                      executable=bool(details.st_mode & 0o111))
         verified = validate_package(staged)
         if verified.digest != expected or validate_package(source.root).digest != expected:
             raise PackageError("package_digest_mismatch")

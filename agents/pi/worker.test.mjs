@@ -9,9 +9,9 @@ import { test } from "node:test";
 
 const WORKER = resolve(process.env.MCPME_PI_TEST_WORKER ?? new URL("worker.mjs", import.meta.url).pathname);
 const SECRET = "synthetic-private-value-never-emitted";
-const TOOLS = ["ask_user", "capabilities", "check_package", "extract_archive", "fetch_url",
+const TOOLS = ["ask_user", "capabilities", "check_package", "ensure_metal_toolchain", "extract_archive", "fetch_url",
   "install_dependencies", "list_files", "prepare_environment", "read_file", "read_process",
-  "run_command", "start_process", "stop_process", "write_file"];
+  "run_command", "start_process", "stop_process", "write_file", "native_command", "preflight", "retain_resource"].sort();
 
 async function mockProvider(response) {
   const requests = [];
@@ -36,7 +36,7 @@ function completion(reply, delta, finishReason) {
   reply.end("data: [DONE]\n\n");
 }
 
-async function workerRun(start, toolHandler, { cancelOnTool = false } = {}) {
+async function workerRun(start, toolHandler, { cancelOnTool = false, onFrame } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "meecp-pi-test-"));
   await writeFile(join(directory, "AGENTS.md"), "Untrusted sentinel: DO NOT include discovered-context-sentinel");
   await mkdir(join(directory, ".pi/extensions"), { recursive: true });
@@ -58,6 +58,7 @@ async function workerRun(start, toolHandler, { cancelOnTool = false } = {}) {
       const frame = JSON.parse(buffered.slice(0, position));
       buffered = buffered.slice(position + 1);
       frames.push(frame);
+      onFrame?.(frame, child);
       if (frame.type === "tool_call") {
         if (cancelOnTool) { child.stdin.end(); continue; }
         const result = toolHandler?.(frame) ?? { success: true, output: "accepted" };
@@ -96,7 +97,7 @@ test("real Pi SDK completes a brokered write/build loop without discovery or tra
     assert.deepEqual(result.frames.at(-1), { type: "done", success: true });
     assert.equal(result.stderr, "");
     assert.ok(!result.stdout.includes(SECRET));
-    assert.ok(!result.stdout.includes("Private assistant response"));
+    assert.equal(result.frames.filter((frame) => frame.type === "assistant_text").length, 1);
     for (const request of provider.requests) {
       assert.equal(request.authorization, `Bearer ${SECRET}`);
       assert.deepEqual(request.body.tools.map((tool) => tool.function.name).sort(),
@@ -106,6 +107,78 @@ test("real Pi SDK completes a brokered write/build loop without discovery or tra
       assert.ok(!JSON.stringify(request.body).includes("inherited-key-sentinel"));
     }
     assert.deepEqual(result.workspaceFiles.sort(), [".pi", "AGENTS.md"]);
+  } finally { await provider.close(); }
+});
+
+test("real SDK accepts live steering and emits only bounded assistant text", async () => {
+  const instruction = "Keep the requested native inference engine.";
+  const provider = await mockProvider((reply, round) => {
+    if (round === 1) completion(reply, { tool_calls: [{ index: 0, id: "steering-tool", type: "function",
+      function: { name: "capabilities", arguments: "{}" } }] }, "tool_calls");
+    else completion(reply, { content: "I will keep that engine and verify it." }, "stop");
+  });
+  let sent = false;
+  try {
+    const result = await workerRun(start(provider.url), undefined, { onFrame(frame, child) {
+      if (!sent && frame.type === "tool_call" && frame.name === "capabilities") {
+        sent = true;
+        child.stdin.write(JSON.stringify({ type: "user_message",
+          id: "12345678-1234-1234-1234-123456789abc", text: instruction }) + "\n");
+      }
+    } });
+    assert.ok(sent);
+    assert.ok(provider.requests.slice(1).some((request) => request.body.messages.some((message) =>
+      message.role === "user" && JSON.stringify(message.content).includes(instruction))));
+    assert.equal(result.frames.filter((frame) => frame.type === "message_accepted").length, 1);
+    assert.deepEqual(result.frames.at(-1), { type: "done", success: true });
+    const assistant = result.frames.filter((frame) => frame.type === "assistant_text");
+    assert.ok(assistant.length > 0 && assistant.every((frame) => Object.keys(frame).sort().join(",") === "text,type"));
+    assert.equal(result.stderr, "");
+    assert.ok(!result.stdout.includes(SECRET));
+    assert.deepEqual(result.workspaceFiles.sort(), [".pi", "AGENTS.md"]);
+  } finally { await provider.close(); }
+});
+
+test("steering arriving during final host verification is handled before done", async () => {
+  const instruction = "Include an additional output field.";
+  const provider = await mockProvider((reply) => completion(reply, { content: "The package is prepared." }, "stop"));
+  let sent = false;
+  try {
+    const result = await workerRun(start(provider.url), undefined, { onFrame(frame, child) {
+      if (!sent && frame.type === "tool_call" && frame.name === "check_package") {
+        sent = true;
+        child.stdin.write(JSON.stringify({ type: "user_message",
+          id: "12345678-1234-1234-1234-123456789abc", text: instruction }) + "\n");
+      }
+    } });
+    assert.ok(provider.requests.slice(1).some((request) => request.body.messages.some((message) =>
+      message.role === "user" && JSON.stringify(message.content).includes(instruction))));
+    assert.deepEqual(result.frames.at(-1), { type: "done", success: true });
+    assert.equal(result.stderr, "");
+  } finally { await provider.close(); }
+});
+
+test("startup messages enter the SDK and thinking is excluded from live text", async () => {
+  const instruction = "Preserve the selected repository.";
+  const hiddenThought = "hidden-reasoning-sentinel";
+  const provider = await mockProvider((reply) => completion(reply,
+    { content: "é".repeat(5000), reasoning_content: hiddenThought }, "stop"));
+  let sent = false;
+  try {
+    const result = await workerRun(start(provider.url), undefined, { onFrame(frame, child) {
+      if (!sent && frame.type === "progress" && frame.stage === "starting") {
+        sent = true;
+        child.stdin.write(JSON.stringify({ type: "user_message",
+          id: "12345678-1234-1234-1234-123456789abc", text: instruction }) + "\n");
+      }
+    } });
+    assert.ok(provider.requests.some((request) => request.body.messages.some((message) =>
+      message.role === "user" && JSON.stringify(message.content).includes(instruction))));
+    assert.ok(result.frames.filter((frame) => frame.type === "assistant_text")
+      .every((frame) => Buffer.byteLength(frame.text, "utf8") <= 8192));
+    assert.ok(!result.stdout.includes(hiddenThought));
+    assert.equal(result.stderr, "");
+    assert.deepEqual(result.frames.at(-1), { type: "done", success: true });
   } finally { await provider.close(); }
 });
 

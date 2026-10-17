@@ -20,8 +20,8 @@
       },
       {
         "id": "text-generate-v1",
-        "version": "1.0.22",
-        "digest": "d4a13aa232cafbe09d9637c3ecf982c7950567f495b25b583de2366a4c98192c"
+        "version": "1.0.24",
+        "digest": "5a875aed959dc2309adab1668aaee4c53db18b035daf0ed147c61b7abf1422b7"
       },
       {
         "id": "service-text-generate-v1",
@@ -30,8 +30,8 @@
       },
       {
         "id": "agent-unlocked-python-adapter-v1",
-        "version": "1.0.0",
-        "digest": "3850d78dc24ab286cd4bb40825e0d52a83869c91c4278c525cfd6462ee822b49"
+        "version": "1.0.4",
+        "digest": "88a46a9e494050d9ab6924653dd1cba226d824abd7630c0d8bd023f270e66cd3"
       }
     ],
     "recipe_component_sets": [
@@ -71,13 +71,13 @@
       [
         {
           "id": "llamacpp-cpu-v1",
-          "version": "1.0.22",
-          "digest": "4d729b0f6408e666a705307710723fabebf7fe72d717814e8fa4a92bd1dd6cac"
+          "version": "1.0.24",
+          "digest": "2ded2f444ca9adb5236ba533a83be23fe51cf64f0caf3af5ecc85d2171a35cdb"
         },
         {
           "id": "text-generate-v1",
-          "version": "1.0.22",
-          "digest": "d4a13aa232cafbe09d9637c3ecf982c7950567f495b25b583de2366a4c98192c"
+          "version": "1.0.24",
+          "digest": "5a875aed959dc2309adab1668aaee4c53db18b035daf0ed147c61b7abf1422b7"
         }
       ],
       [
@@ -100,8 +100,8 @@
       [
         {
           "id": "agent-unlocked-python-adapter-v1",
-          "version": "1.0.0",
-          "digest": "3850d78dc24ab286cd4bb40825e0d52a83869c91c4278c525cfd6462ee822b49"
+          "version": "1.0.4",
+          "digest": "88a46a9e494050d9ab6924653dd1cba226d824abd7630c0d8bd023f270e66cd3"
         }
       ]
     ],
@@ -114,8 +114,8 @@
     "components": [
       {
         "id": "agent-unlocked-python-adapter-v1",
-        "version": "1.0.0",
-        "digest": "3850d78dc24ab286cd4bb40825e0d52a83869c91c4278c525cfd6462ee822b49"
+        "version": "1.0.4",
+        "digest": "88a46a9e494050d9ab6924653dd1cba226d824abd7630c0d8bd023f270e66cd3"
       }
     ],
     "providers": [

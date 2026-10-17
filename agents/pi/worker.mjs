@@ -1,10 +1,12 @@
-/** Private Pi SDK worker. Stdout is a broker protocol, never a transcript. */
+/** Private Pi SDK worker. Stdout carries bounded broker/live UI frames only. */
 import { pathToFileURL } from "node:url";
 
 const MAX_FRAME_BYTES = 1024 * 1024;
 const MAX_TOOL_CALLS = 1024;
 const MAX_TURNS = 512;
 const MAX_COMPLETION_CHECKS = 12;
+const MAX_USER_MESSAGES = 64;
+const MAX_TEXT_BYTES = 8192;
 const SYSTEM_PROMPT = `You are the internal coding and integration agent for meecp.
 Investigate the user's goal and build a working MCP integration in the private
 staging workspace. An unfamiliar app does not need a recipe or app template.
@@ -59,6 +61,23 @@ const commandCredentialsSchema = { type: "object", maxProperties: 16,
   propertyNames: { pattern: "^[A-Za-z_][A-Za-z0-9_]{0,63}$" }, additionalProperties: textSchema(128) };
 const TOOL_SCHEMAS = {
   capabilities: objectSchema({}, []),
+  preflight: objectSchema({}, []),
+  ensure_metal_toolchain: objectSchema({ required: { type: "boolean" } }, []),
+  native_command: objectSchema({
+    argv: { type: "array", minItems: 1, maxItems: 128, items: { type: "string", maxLength: 8192 } },
+    cwd: textSchema(1024), network: { type: "boolean" },
+    timeout_seconds: { type: "integer", minimum: 1, maximum: 1800 },
+    memory_mb: { type: "integer", minimum: 1, maximum: 65536 },
+    require_metal_compiler: { type: "boolean" }, env: commandEnvironmentSchema, credentials: commandCredentialsSchema,
+  }, ["argv", "memory_mb"]),
+  retain_resource: objectSchema({ path: textSchema(1024), name: { type: "string", pattern: "^[a-z][a-z0-9_-]{0,63}$" },
+    kind: { type: "string", enum: ["file", "tree", "archive"] },
+    role: { type: "string", enum: ["model-weights", "runtime-file", "validation", "license"] },
+    format: { type: "string", enum: ["onnx", "gguf", "safetensors", "binary", "text", "json", "png", "jpeg", "npy", "archive"] },
+    licenses: { type: "array", maxItems: 64, items: textSchema(1024) },
+    sha256: { type: "string", pattern: "^[a-f0-9]{64}$" }, size: { type: "integer", minimum: 1, maximum: 17179869184 },
+    origin: objectSchema({ kind: { type: "string", enum: ["https", "download", "prepared", "local-selection"] }, url: textSchema(2048) }, ["kind"]),
+  }, ["path", "name"]),
   list_files: objectSchema({ path: textSchema(1024), recursive: { type: "boolean" },
     offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 500 } }, []),
   read_file: objectSchema({ path: textSchema(1024), offset: { type: "integer", minimum: 0 },
@@ -79,7 +98,7 @@ const TOOL_SCHEMAS = {
   read_process: objectSchema({ process_id: textSchema(128) }, ["process_id"]),
   stop_process: objectSchema({ process_id: textSchema(128) }, ["process_id"]),
   fetch_url: objectSchema({ url: textSchema(2048), path: textSchema(1024),
-    sha256: { type: "string", pattern: "^[a-f0-9]{64}$" } }, ["url", "path"]),
+    sha256: { type: "string", pattern: "^[a-f0-9]{64}$" }, size: { type: "integer", minimum: 1, maximum: 17179869184 } }, ["url", "path"]),
   extract_archive: objectSchema({ archive_path: textSchema(1024), target_path: textSchema(1024),
     strip_components: { type: "integer", minimum: 0, maximum: 16 } }, ["archive_path", "target_path"]),
   prepare_environment: objectSchema({ runtime: textSchema(128), target_path: textSchema(1024) }, ["runtime"]),
@@ -92,6 +111,10 @@ const TOOL_SCHEMAS = {
 };
 const TOOL_DESCRIPTIONS = {
   capabilities: "Discover current tools, runtime resources, environment helpers, and generic package requirements. Use this before choosing build and integration steps for an unfamiliar project.",
+  preflight: "Check actual compiler/SDK selection separately from host-admitted Metal device, residency and compute readiness. Read preflight.json and resources.json first. A missing compiler does not prevent a prebuilt worker with compiled Metal assets from running.",
+  ensure_metal_toolchain: "Let MeeCP discover and prepare the Metal build toolchain automatically. Set required=true only for source compilation; it selects usable installed tools and acquires Apple's Metal component when supported. Unavoidable Apple account or license steps appear natively and resume automatically. Do not ask the user to configure tool paths or copy a compiler.",
+  native_command: "Run a bounded Metal/GPU preparation or engine test through MeeCP's owned native worker. Declare memory_mb and set require_metal_compiler only when building Metal source. GPU/memory admission, workspace confinement, loopback listeners and cancellation cleanup are managed by the host. Generic run_command/start_process cannot access GPU. Never substitute another engine to work around a host capability failure.",
+  retain_resource: "Preserve a verified acquired/built model, runtime file, archive or tree for later attempts. Use a stable lowercase name, retain applicable licenses and record public source provenance. MeeCP mounts retained resources under resources/ in a fresh resumed workspace. Downloads are retained automatically when possible; read their retained flag.",
   list_files: "List workspace or host-supplied read-only files. Defaults to the workspace root. Set recursive for nested discovery and offset/limit to page through large projects.",
   read_file: "Read one UTF-8 file in the private app staging workspace or host-supplied read-only resources. Supply byte offset and limit to page through large files; paged reads return content, next_offset and eof.",
   write_file: "Create or replace one UTF-8 file in the private app staging workspace. Parent folders are created by the host.",
@@ -227,6 +250,10 @@ export async function main() {
   let toolCount = 0;
   let turnCount = 0;
   let failureCode = "cancelled";
+  let providerKey = "";
+  let steering = Promise.resolve();
+  const userMessages = [];
+  const userIds = new Set();
   const firstFrame = new Promise((resolve) => { startResolve = resolve; });
   const finish = (type, fields) => {
     if (terminal) return;
@@ -249,6 +276,20 @@ export async function main() {
       if (!validStart(value)) { cancel("protocol_invalid"); return; }
       started = true;
       startResolve(value);
+      return;
+    }
+    if (value?.type === "user_message") {
+      if (Object.keys(value).sort().join(",") !== "id,text,type"
+          || typeof value.id !== "string" || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(value.id)
+          || userIds.has(value.id) || userIds.size >= MAX_USER_MESSAGES
+          || typeof value.text !== "string" || !value.text.trim()
+          || Buffer.byteLength(value.text, "utf8") > MAX_TEXT_BYTES
+          || /[\x00-\x08\x0b-\x1f]/.test(value.text)) {
+        cancel("protocol_invalid"); return;
+      }
+      userIds.add(value.id);
+      userMessages.push(value);
+      if (session) queueSteering();
       return;
     }
     if (value?.type !== "tool_result" || typeof value.id !== "string"
@@ -290,15 +331,42 @@ export async function main() {
     });
     const stage = { capabilities: "reading", list_files: "reading", read_file: "reading", write_file: "writing",
       run_command: "building", start_process: "building", read_process: "testing", stop_process: "building",
+      preflight: "preflight", ensure_metal_toolchain: "preparing_metal", native_command: "native_testing", retain_resource: "preparing_resources",
       fetch_url: "downloading", extract_archive: "building", prepare_environment: "building",
       install_dependencies: "building", ask_user: "waiting_for_user", check_package: "testing" }[name];
     emit({ type: "progress", stage });
     emit({ type: "tool_call", id, name, arguments: args });
   });
+  const queueSteering = () => {
+    steering = steering.then(async () => {
+      while (userMessages.length && !terminal && !controller.signal.aborted) {
+        const message = userMessages.shift();
+        // The pinned SDK queues this actual user input before its next turn.
+        // The resource loader contains no commands, skills or prompt templates.
+        await session.steer(message.text);
+        emit({ type: "message_accepted", id: message.id });
+      }
+    }).catch(() => cancel("protocol_invalid"));
+    return steering;
+  };
+  const assistantText = (message) => {
+    if (message?.role !== "assistant" || ["error", "aborted"].includes(message.stopReason)) return;
+    let text = Array.isArray(message.content)
+      ? message.content.filter((block) => block.type === "text" && typeof block.text === "string")
+        .map((block) => block.text).join("\n") : "";
+    // Authentication belongs to private startup, never the live conversation.
+    if (providerKey) text = text.replaceAll(providerKey, "[credential omitted]");
+    text = text.replace(/[\x00-\x08\x0b-\x1f]/g, "");
+    if (Buffer.byteLength(text, "utf8") > MAX_TEXT_BYTES) {
+      text = Buffer.from(text).subarray(0, MAX_TEXT_BYTES - 3).toString("utf8").replace(/\uFFFD$/, "") + "…";
+    }
+    if (text.trim()) emit({ type: "assistant_text", text });
+  };
   try {
     const start = await firstFrame;
     if (!start || controller.signal.aborted) throw new Error("cancelled");
     emit({ type: "progress", stage: "starting" });
+    providerKey = start.api_key;
     session = await configureSession(start, broker, controller.signal);
     controller.signal.throwIfAborted();
     session.subscribe((event) => {
@@ -307,9 +375,11 @@ export async function main() {
         emit({ type: "progress", stage: "thinking" });
       }
       if (event.type === "compaction_start") emit({ type: "progress", stage: "thinking" });
+      if (event.type === "message_end") assistantText(event.message);
     });
+    await queueSteering();
     let prompt = start.prompt;
-    for (let attempt = 0; attempt < MAX_COMPLETION_CHECKS; attempt++) {
+    for (let attempt = 0; attempt < MAX_COMPLETION_CHECKS;) {
       await session.prompt(prompt, { expandPromptTemplates: false });
       if (controller.signal.aborted) throw new Error("cancelled");
       const assistant = [...session.messages].reverse().find((message) => message.role === "assistant");
@@ -326,6 +396,13 @@ export async function main() {
       // The host checks even when the model forgets to request verification.
       // Keep the same in-memory session so it can repair rejected output.
       const checked = await broker("check_package", {}, controller.signal);
+      await steering;
+      // Input can arrive while the host performs its independent check after
+      // an SDK run settles. Run it through the same session before completion.
+      if (session.pendingMessageCount > 0) {
+        prompt = "Continue the setup with the additional user instructions queued in this session, then verify the complete package again.";
+        continue;
+      }
       if (checked.success) {
         finish("done", { success: true });
         break;
@@ -334,6 +411,7 @@ export async function main() {
         finish("failed", { code: "package_invalid" });
         break;
       }
+      attempt++;
       prompt = "The independent host package check failed with code: " + checked.output.slice(0, 256)
         + ". Repair package/ and recheck it. Read the generic package schemas and check feedback when needed. "
         + "Do not finish until the complete package passes check_package.";
@@ -344,6 +422,9 @@ export async function main() {
       : known.has(error?.message) ? error.message : "worker_failed" });
   } finally {
     session?.dispose();
+    providerKey = "";
+    userMessages.length = 0;
+    userIds.clear();
     pending.clear();
     process.stdin.removeListener("data", onData);
     process.stdin.removeListener("end", onClosed);

@@ -41,7 +41,7 @@ def choose(monkeypatch, entry):
 
 
 @pytest.mark.parametrize("action", ["disable", "revoke", "remove", "deprecate"])
-@pytest.mark.parametrize("old_version", ["1.0.5", "1.0.6", "1.0.7", "1.0.8", "1.0.9", "1.0.10", "1.0.11", "1.0.12", "1.0.13", "1.0.14", "1.0.21", "1.0.22"])
+@pytest.mark.parametrize("old_version", ["1.0.5", "1.0.6", "1.0.7", "1.0.8", "1.0.9", "1.0.10", "1.0.11", "1.0.12", "1.0.13", "1.0.14", "1.0.21", "1.0.22", "1.0.23", "1.0.24"])
 def test_exact_textgen_upgrade_preserves_owner_opt_out_across_restart(tmp_path, monkeypatch, action, old_version):
     components, (old, new) = versions(monkeypatch, old_version)
     state = tmp_path.resolve() / "state"
@@ -64,7 +64,7 @@ def test_exact_textgen_upgrade_preserves_owner_opt_out_across_restart(tmp_path, 
         assert not any(item["version"] == new.version for item in restarted.list())
 
 
-@pytest.mark.parametrize("old_version", ["1.0.5", "1.0.6", "1.0.7", "1.0.8", "1.0.9", "1.0.10", "1.0.11", "1.0.12", "1.0.13", "1.0.14", "1.0.21", "1.0.22"])
+@pytest.mark.parametrize("old_version", ["1.0.5", "1.0.6", "1.0.7", "1.0.8", "1.0.9", "1.0.10", "1.0.11", "1.0.12", "1.0.13", "1.0.14", "1.0.21", "1.0.22", "1.0.23", "1.0.24"])
 def test_enabled_historical_recipe_and_exact_snapshot_survive_upgrade(tmp_path, monkeypatch, old_version):
     components, (old, new) = versions(monkeypatch, old_version)
     with ImportStore(tmp_path.resolve() / "state") as imports:
@@ -80,7 +80,7 @@ def test_enabled_historical_recipe_and_exact_snapshot_survive_upgrade(tmp_path, 
         assert validate_bundle(Path(before["path"]))["digest"] == old_digest
 
 
-@pytest.mark.parametrize("old_version", ["1.0.5", "1.0.6", "1.0.7", "1.0.8", "1.0.9", "1.0.10", "1.0.11", "1.0.12", "1.0.13", "1.0.14", "1.0.21", "1.0.22"])
+@pytest.mark.parametrize("old_version", ["1.0.5", "1.0.6", "1.0.7", "1.0.8", "1.0.9", "1.0.10", "1.0.11", "1.0.12", "1.0.13", "1.0.14", "1.0.21", "1.0.22", "1.0.23", "1.0.24"])
 def test_collected_old_tombstone_prevents_new_default(tmp_path, monkeypatch, old_version):
     components, (old, new) = versions(monkeypatch, old_version)
     with ImportStore(tmp_path.resolve() / "state") as imports:

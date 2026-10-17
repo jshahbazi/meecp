@@ -32,8 +32,8 @@ app_inventory = public_native.app_inventory
 signature = public_command.signature
 
 ROOT = Path(__file__).resolve().parents[1]
-UNLOCKED = {"id": "agent-unlocked-python-adapter-v1", "version": "1.0.0",
-            "digest": "3850d78dc24ab286cd4bb40825e0d52a83869c91c4278c525cfd6462ee822b49"}
+UNLOCKED = {"id": "agent-unlocked-python-adapter-v1", "version": "1.0.4",
+            "digest": "88a46a9e494050d9ab6924653dd1cba226d824abd7630c0d8bd023f270e66cd3"}
 LIMITS = {"max_calls": 4, "max_parallel": 3, "max_transfer_bytes": 524288,
     "max_output_tokens": 4096, "wall_seconds": 180, "max_artifact_bytes": 131072}
 RECIPE = "mcpme.agent-unlocked-python-adapter"

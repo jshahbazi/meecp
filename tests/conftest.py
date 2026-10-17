@@ -1,12 +1,37 @@
-"""Shared native build fixture for the acceptance suite."""
+"""Shared native build and hardware fixtures for the acceptance suite."""
 import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import subprocess
 import sys
 
 import pytest
+from native_capabilities import require_metal_compute
+
+
+@pytest.fixture(scope="session")
+def metal_compute(tmp_path_factory):
+    if not (sys.platform == "darwin" and platform.machine() == "arm64"
+            and platform.mac_ver()[0].startswith("26.")):
+        pytest.skip("native Metal requires macOS 26 arm64")
+    root = tmp_path_factory.mktemp("metal-compute-control")
+    source = Path(__file__).with_name("native_metal_control.m")
+    binary = root / "compute"
+    # This independent unconfined control proves residency and exact arithmetic
+    # before either production helper or Pi's sandbox runs. An advertised
+    # device alone does not establish these capabilities on a hosted runner.
+    try:
+        compiled = subprocess.run(["/usr/bin/clang", "-fobjc-arc", "-O2", "-Wall", "-Wextra", "-Werror",
+            "-framework", "Foundation", "-framework", "Metal", str(source), "-o", str(binary)],
+            capture_output=True, timeout=30)
+        if compiled.returncode != 0:
+            pytest.fail("metal_compute_control_compile_failed", pytrace=False)
+        result = subprocess.run([str(binary)], capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        pytest.fail("metal_compute_control_unavailable", pytrace=False)
+    require_metal_compute(result)
 
 
 @pytest.fixture(scope="session")

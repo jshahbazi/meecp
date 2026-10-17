@@ -139,6 +139,17 @@ Run the repository tests with:
 
 The script runs the locked Python suites for the host and hotdog demo, Swift tests, and the four native app self-tests below. It works from any working directory and stops at the first failure. Swift compiles the test targets and debug executable as needed; the script does not package an app or DMG.
 
+Two Python acceptance tests require usable Metal residency sets and actual GPU
+compute. They carry the `metal_hardware` marker and remain active in `./test.sh`
+and the default local pytest suite. Run them separately on a capable Apple
+silicon Mac with `uv run --locked python -m pytest -q -m metal_hardware`.
+The standard GitHub-hosted `macos-26` VM advertises a Metal device but returns
+neither a residency set nor an error in the independent control. Hosted CI and
+installer builds therefore use `-m "not metal_hardware"`; their success does not
+qualify GPU execution. Metal admission classification, native sandbox checks,
+and all other standard tests still run in the hosted profile. Unknown hardware
+control failures remain fatal when the hardware acceptance tests run.
+
 Individual checks can also be run directly:
 
 ```sh

@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 import platform
 import signal
+import socket
+import subprocess
 import sys
 
 import pytest
@@ -73,6 +75,8 @@ async def test_read_output_fits_worker_and_host_frame_budgets(broker):
     ("write_file", {"path": "file", "content": "x", "extra": True}),
     ("run_command", {"command": ["/bin/true"]}),
     ("run_command", {"argv": ["/bin/true"], "environment": {"OPENAI_API_KEY": "private"}}),
+    ("run_command", {"argv": ["/bin/true"], "gpu": True}),
+    ("start_process", {"argv": ["/bin/true"], "gpu": True}),
     ("fetch_url", {"url": "https://example.com/file", "path": "file", "headers": {}}),
     ("install_dependencies", {"ecosystem": "python", "project_path": ".", "command": "x"}),
 ])
@@ -160,7 +164,120 @@ async def test_launch_spec_readonly_package_cwd_and_clean_environment(broker, tm
         assert '(deny default (with no-log))' in args[1]
         assert '(subpath "/System")' not in args[1]
         assert '(syscall-number 82 147)' in args[1]
+        assert "iokit-open" not in args[1] and "MTLCompilerService" not in args[1]
         assert (await instance.invoke("write_file", {"path": str(package / "x"), "content": "x"}))["output"] == "path_outside_workspace"
+    finally:
+        await instance.close()
+
+
+@native
+@pytest.mark.parametrize("value", [None, 0, 1, "true", [], {}])
+async def test_host_gpu_selector_requires_boolean(broker, value):
+    with pytest.raises(PiToolError, match="^invalid_arguments$"):
+        broker.launch_spec(["/bin/true"], gpu=value)
+
+
+_METAL_COMPUTE = r'''
+#import <Foundation/Foundation.h>
+#import <Metal/Metal.h>
+#include <stdio.h>
+int main(void) {
+    @autoreleasepool {
+        id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+        if (!device) return 10;
+        NSError *error = nil;
+        MTLResidencySetDescriptor *descriptor = [MTLResidencySetDescriptor new];
+        descriptor.initialCapacity = 1;
+        id<MTLResidencySet> residency = [device newResidencySetWithDescriptor:descriptor error:&error];
+        if (!residency) return 11;
+        id<MTLBuffer> buffer = [device newBufferWithLength:sizeof(float) * 4 options:MTLResourceStorageModeShared];
+        if (!buffer) return 12;
+        [residency addAllocation:buffer];
+        [residency commit];
+        id<MTLLibrary> library = [device newLibraryWithSource:
+            @"#include <metal_stdlib>\nusing namespace metal;\nkernel void twice(device float* values [[buffer(0)]], uint i [[thread_position_in_grid]]) { values[i] *= 2.0f; }"
+            options:nil error:&error];
+        if (!library) return 13;
+        id<MTLComputePipelineState> pipeline = [device newComputePipelineStateWithFunction:
+            [library newFunctionWithName:@"twice"] error:&error];
+        if (!pipeline) return 14;
+        id<MTLCommandQueue> queue = [device newCommandQueue];
+        if (!queue) return 15;
+        [queue addResidencySet:residency];
+        float *values = buffer.contents;
+        for (int i = 0; i < 4; i++) values[i] = (float)(i + 1);
+        id<MTLCommandBuffer> command = [queue commandBuffer];
+        id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
+        [encoder setComputePipelineState:pipeline];
+        [encoder setBuffer:buffer offset:0 atIndex:0];
+        [encoder dispatchThreads:MTLSizeMake(4, 1, 1) threadsPerThreadgroup:MTLSizeMake(4, 1, 1)];
+        [encoder endEncoding];
+        [command commit];
+        [command waitUntilCompleted];
+        if (command.status != MTLCommandBufferStatusCompleted) return 16;
+        for (int i = 0; i < 4; i++) if (values[i] != (float)(2 * (i + 1))) return 17;
+        puts("metal_compute_passed");
+        return 0;
+    }
+}
+'''
+
+
+@pytest.fixture(scope="session")
+def metal_compute_server(tmp_path_factory):
+    if not MACOS:
+        pytest.skip("native Metal probe requires macOS 26 arm64")
+    root = tmp_path_factory.mktemp("pi-metal-compute")
+    source, executable = root / "compute.m", root / "compute"
+    source.write_text(_METAL_COMPUTE)
+    subprocess.run(["/usr/bin/clang", "-fobjc-arc", "-O2", "-Wall", "-Wextra", "-Werror",
+        "-framework", "Foundation", "-framework", "Metal", str(source), "-o", str(executable)],
+        check=True, capture_output=True, timeout=30)
+    return executable
+
+
+@native
+@pytest.mark.metal_hardware
+async def test_admitted_metal_probe_computes_and_preserves_filesystem_network_denials(broker, metal_compute, metal_compute_server, tmp_path):
+    package = tmp_path / "package"; package.mkdir(mode=0o700)
+    executable = package / "compute"
+    executable.write_bytes(metal_compute_server.read_bytes()); executable.chmod(0o700)
+    instance = PiToolBroker(broker.workspace, Path("/unused"), read_roots=(package,))
+    try:
+        launch = instance.launch_spec([str(executable)], str(package), gpu=True)
+        profile = launch[1][1]
+        assert '(iokit-user-client-class "AGXDeviceUserClient")' in profile
+        assert '(iokit-user-client-class "IOSurfaceRootUserClient")' in profile
+        assert '(global-name "com.apple.MTLCompilerService")' in profile
+        assert '(deny default (with no-log))' in profile and '(syscall-number 82 147)' in profile
+        assert "network-outbound" not in profile
+        result = subprocess.run([str(launch[0]), *launch[1]], cwd=launch[2], env=launch[3],
+            capture_output=True, timeout=30)
+        assert result.returncode != 10, "metal_probe_sandbox_device_unavailable"
+        assert result.returncode == 0 and result.stdout == b"metal_compute_passed\n" and not result.stderr
+        ordinary = instance.launch_spec([str(executable)], str(package))
+        denied = subprocess.run([str(ordinary[0]), *ordinary[1]], cwd=ordinary[2], env=ordinary[3],
+            capture_output=True, timeout=15)
+        assert denied.returncode == 10 and denied.stdout == b""
+        outside = tmp_path / "outside"
+        outside.write_text("synthetic-protected-file")
+        commands = [["/bin/cat", str(outside)], ["/usr/bin/touch", str(package / "forbidden")]]
+        for command in commands:
+            confined = instance.launch_spec(command, str(package), gpu=True)
+            result = subprocess.run([str(confined[0]), *confined[1]], cwd=confined[2], env=confined[3],
+                capture_output=True, timeout=5)
+            assert result.returncode != 0 and b"synthetic-protected-file" not in result.stdout
+        assert not (package / "forbidden").exists()
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0)); listener.listen(); listener.settimeout(.1)
+            port = listener.getsockname()[1]
+            confined = instance.launch_spec(["/usr/bin/curl", "--connect-timeout", "1", "--max-time", "2",
+                f"http://127.0.0.1:{port}/"], str(package), gpu=True)
+            result = subprocess.run([str(confined[0]), *confined[1]], cwd=confined[2], env=confined[3],
+                capture_output=True, timeout=5)
+            assert result.returncode != 0
+            with pytest.raises(TimeoutError):
+                listener.accept()
     finally:
         await instance.close()
 
@@ -194,7 +311,7 @@ async def test_fetch_streams_into_private_file_and_verifies_hash(broker):
     assert result["success"] is True
     assert json.loads(result["output"]) == {"path": "downloads/test.whl", "size": len(data), "sha256": digest}
     assert (broker.workspace / "downloads/test.whl").read_bytes() == data
-    assert broker.network.calls[0][1] == {"accept": "application/octet-stream"}
+    assert broker.network.calls[0][1] == {"accept": "application/octet-stream", "follow_redirects": True}
     assert not list((broker.workspace / "downloads").glob(".pi-tool-*"))
 
 

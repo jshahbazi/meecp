@@ -320,6 +320,11 @@ async def test_background_credential_output_is_never_retained(native_broker, cap
 
 async def test_actual_system_compiler_builds_and_runs_custom_native_program(native_broker):
     broker, _ = native_broker
+    # Apple system shims need the host-selected developer directory and SDK.
+    # C compilation does not require acquiring the optional Metal component.
+    facts = await broker.toolchain_manager.ensure({"required": False})
+    assert not facts["acquired"] and facts["first_launch_ready"]
+    assert "clang" in facts["command_tools"] and facts["sdk_path"]
     source = "#include <stdio.h>\nint main(int argc,char **argv) { if(argc != 2) return 2; printf(\"native:%s\\n\",argv[1]); return 0; }\n"
     assert (await broker.invoke("write_file", {"path": "custom.c", "content": source}))["success"] is True
     build = await broker.invoke("run_command", {"argv": ["/usr/bin/clang", "custom.c", "-O2", "-o", "custom"],

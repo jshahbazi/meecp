@@ -29,6 +29,7 @@ def file_identity(path):
 @pytest.mark.parametrize("fault", ["unknown_field", "unsupported_action", "extra_recipe_field",
     "wrong_nonce", "expired", "manager_replaced", "marker_hardlink", "fixture_mode",
     "symlink_folder", "claimed_nonce", "existing_output"])
+@pytest.mark.skip(reason="Native manual/external-agent setup workflow retired; historical acceptance only")
 def test_compiled_driver_rejects_unowned_or_stale_fixture(native_recipe_driver, tmp_path, fault):
     workspace = tmp_path.resolve() / ("meecp-native-onboarding-" + str(uuid.uuid4()))
     root = workspace / "native_management"
@@ -113,6 +114,7 @@ def test_compiled_context_checks_replay_and_same_byte_inode_substitution(native_
     assert not list(temporary.iterdir())
 
 
+@pytest.mark.skip(reason="Native manual/external-agent setup workflow retired; historical acceptance only")
 def test_python_canonical_fixture_reaches_exact_once_claim(native_recipe_driver, tmp_path):
     workspace = tmp_path.resolve() / ("meecp-native-onboarding-" + str(uuid.uuid4()))
     root = workspace / "native_management"

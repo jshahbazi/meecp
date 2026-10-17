@@ -219,6 +219,30 @@ def refresh_command_inventory(destination: Path) -> None:
     path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n")
 
 
+def bundle_native_metal_probe(destination: Path) -> None:
+    source = ROOT / "scripts/meecp-metal-probe.m"
+    helper = destination / "bin/meecp-metal-probe"
+    shutil.copyfile(source, destination / "native-metal-probe.m")
+    run("/usr/bin/cc", "-fobjc-arc", "-O2", "-Wall", "-Wextra", "-Werror",
+        "-framework", "Foundation", "-framework", "Metal", str(source), "-o", str(helper))
+    run("/usr/bin/codesign", "--force", "--sign", "-", str(helper))
+    (destination / "native-metal-probe.json").write_text(json.dumps({
+        "schema_version": 1, "helper": "bin/meecp-metal-probe",
+        "helper_sha256": hashlib.sha256(helper.read_bytes()).hexdigest(),
+        "helper_source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+    }, sort_keys=True, indent=2) + "\n")
+
+
+def refresh_native_metal_inventory(destination: Path) -> None:
+    path = destination / "native-metal-probe.json"
+    value = json.loads(path.read_bytes())
+    if (value.get("schema_version") != 1 or value.get("helper") != "bin/meecp-metal-probe"
+            or not re.fullmatch(r"[0-9a-f]{64}", value.get("helper_source_sha256", ""))):
+        raise ValueError("native_metal_inventory_invalid")
+    value["helper_sha256"] = hashlib.sha256((destination / value["helper"]).read_bytes()).hexdigest()
+    path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n")
+
+
 def _resource_inventory_contract() -> dict:
     return {
         "schema_version": 1, "component": "macos26-arm64-command-resource-v1", "receipt_format": 4,
@@ -353,6 +377,7 @@ def build(destination: Path, version: str | None = None, *, textgen_engine: Path
         str(ROOT / "scripts/meecp-reap.c"), "-o", str(destination / "bin/meecp-reap"))
     bundle_command_helper(destination)
     bundle_command_resource_helper(destination)
+    bundle_native_metal_probe(destination)
     requirements = destination / "requirements.txt"
     run("uv", "export", "--frozen", "--no-dev", "--no-emit-project", "--format", "requirements-txt",
         "--output-file", str(requirements))

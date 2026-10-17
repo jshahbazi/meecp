@@ -1,6 +1,6 @@
 # App setup with Pi
 
-Status: implemented in the current source, 2026-10-06. This document describes
+Status: implemented in the current source, 2026-10-14. This document describes
 the native Add App flow and its host contracts. General installation reliability
 across unfamiliar projects has not been established.
 
@@ -8,22 +8,31 @@ across unfamiliar projects has not been established.
 
 1. Open **Add App** and describe what your assistant should be able to do,
    including useful inputs and outputs.
-2. If you have existing source, expand **Add files or a project link (optional)**.
-   Choose or drop a source folder or Markdown/text document, or paste a public
-   HTTPS project link. For a single Python or JavaScript source file, choose its
-   containing folder. Choose **Use these instructions** for a setup document.
-3. Select **Configure Model** once to select the provider and model used by Pi.
-   Save an API key for a remote provider, or configure an existing compatible
-   local model endpoint. **Model Settings…** lets you change it later.
-4. Select **Set Up App**. Pi inspects the staged source, writes the adapter and
-   package, acquires dependencies and runtimes, runs checks, and repairs failures.
+2. Use the attachment menu for a source folder, Markdown/text instructions,
+   public HTTPS project link, runtime/model resources, or a prepared package.
+   For a single Python or JavaScript source file, choose its containing folder.
+   Choose **Use these instructions** for a setup document. For a GGUF or other
+   model file, describe the app first and choose **Model or runtime files…**;
+   the source picker does not accept model files.
+3. Select **Create app**. If no provider is configured, the conversation shows
+   **Agent settings** inline. Select the provider and exact model, and save its
+   API key or compatible local endpoint. Saving continues the requested setup
+   only while the same draft and source remain selected. Agent settings are
+   also available later through the conversation's details.
+4. The MeeCP agent inspects the staged source, writes the adapter and package,
+   acquires dependencies and runtimes, runs checks, and repairs failures. Its
+   completed messages and current host progress appear in the conversation.
 5. Review the verified app's tools and declared access. Choose its name,
    configuration, and startup behavior here, then select **Add App** or
    **Add & Start App** to install it.
 
-The description and setup action share one composer. Saved setups appear when
-there are drafts to resume. Active runs show progress, questions, and cancellation;
+The description, replies and setup action share one composer that stays visible
+while the conversation and review scroll. Once saved, the app request remains
+distinct from replies; **Edit request** explicitly changes the draft. Saved
+setups appear when there are drafts to resume. Active runs show progress, questions, and cancellation;
 failed or canceled runs offer **Try Again** with a readable failure explanation.
+Interrupted runs offer **Resume Setup**. The host resolves the current attempt
+by draft and source identity, including after a window or host restart.
 
 Pi can investigate unfamiliar source or implement an idea from scratch without
 a registered recipe or app template. It chooses the integration architecture,
@@ -32,34 +41,63 @@ manifest, lockfile, launcher, provenance, licenses, and verification fixtures ar
 generated setup outputs. Recipe selection and authoring are absent from the
 normal Pi flow.
 
-When setup needs a decision or credential, Add App shows Pi's question inline.
-Answer and select **Continue** to resume the same coding session. Credential
+When setup needs a decision or credential, Add App shows the question inline.
+Suggested choices populate the composer; answer and select **Continue** to
+resume the same coding session. Credential
 answers use a secure field and remain in the host's secret store; Pi receives
 an opaque binding identity rather than the credential value. Ordinary
-implementation choices remain the agent's responsibility.
+implementation choices remain the agent's responsibility. While the agent is
+working and has no pending question, the composer can send a follow-up message
+through the pinned SDK's steering API. Acceptance means that the active worker
+queued the message. It does not guarantee that a model follows the instruction.
 
-Add App has three setup tabs. **Pi agent** is selected by default. Switching
-tabs keeps the current description, source, and saved draft and shows only the
-selected method's controls:
+The MeeCP agent is the only native preparation workflow. The former **Manual
+setup** and **Have your agent do it** choices and their native integration are
+retired. Their implementation types remain compiled for isolated compatibility
+fixtures, without app instantiation, wiring, polling or restoration.
+The conversation retains source/link attachments, model/runtime resources,
+prepared-package import, configuration, review, installation and recovery.
+Importing an existing prepared package works without first creating a draft or
+configuring a setup provider and can proceed directly to review. The Pi verifier
+currently accepts `mcp-stdio` packages; reference-document service onboarding
+remains planned.
 
-- **Manual setup** includes JSON Utilities, existing service connections, model
-  capture, publisher package downloads, and recipe-based preparation with
-  optional assistance from a configured preparation agent.
-- **Have your agent do it** lets you copy agent instructions or export a setup
-  specification directly after entering a description; either action saves the
-  draft automatically. Importing an existing prepared package also works without
-  first creating a draft. This method needs no setup model or provider
-  configuration in meecp.
+Legacy incomplete drafts with a source kind unsupported by Pi show instructions
+to create a new agent draft using source/instructions or import a prepared
+package. They cannot restart a retired workflow and are not resumed
+automatically. Their saved files and intent remain retained. Compatible Pi
+drafts keep the normal explicit resume controls, and prepared-package review
+and installation recovery remain available.
 
-Existing prepared packages can still proceed directly to review.
-Reference-document services and model-engine packages have their own supported
-paths; the Pi verifier currently accepts `mcp-stdio` packages.
+The host's preparation/import APIs and CLI remain compatibility interfaces.
+External-management consent and its authority checks remain separate from the
+retired native setup handoff. Commented reference code and the retirement scope
+are documented in [the owning conversation contract](CONVERSATIONAL_APP_SETUP.md#native-workflow-retirement).
 
 Closing the window leaves an active setup running in the host. **Cancel Setup**
 stops owned setup work. Source files and the saved draft are retained. A host
-shutdown cancels active runs; interrupted conversations are not replayed on the
-next launch. Successful preparation attaches a package to the exact draft
+shutdown marks active runs interrupted. Resuming creates a fresh session with
+retained files, verified resources and saved opaque credential references;
+interrupted conversations are not replayed. Successful preparation attaches a package to the exact draft
 revision and opens review. Preparation does not install or start the app.
+
+**Add Existing Files or Runtime…** accepts model files, runtime trees and archives separately
+from text source intake. MeeCP captures independent private copies, hashes and
+origin/license metadata, then places them under `resources/` in each attempt.
+The picker supports cancellation while capture settles. Imported resources and
+completed public downloads survive setup failures. A fresh attempt rechecks
+their bytes before use and avoids downloading an already retained artifact.
+The source-text limit remains unchanged. Resource bounds are 16 GiB per file,
+32 GiB per collection and 64 GiB for the retained resource store; actual capture
+also requires host disk and memory admission. Captured archives are retained
+as files and must be explicitly extracted in the workspace. Selected runtime
+trees retain bundled model containers and provenance archives without opening them.
+
+A failed or canceled installation offers **Retry Installation**. This action
+uses the same verified package and effective configuration/startup choices,
+creates and applies a fresh exact installation plan, and does not call Pi.
+Repeated requests return the same retry draft. Operations requiring recovery
+continue through the existing recovery controls.
 
 ## Model configuration and data
 
@@ -78,12 +116,23 @@ outside model messages, generated packages, and subprocess environments. The
 worker uses the API key supplied for that job and does not load the user's Pi
 credential files or environment credentials.
 
-Saving settings sends no source files. **Set Up App** authorizes the coding run
+Saving settings sends no source files. **Create app** authorizes the coding run
 against the selected source and intent. The configured model can receive staged
 source, generated files, host-supplied package/schema guidance, and tool results.
 For a remote provider, these requests go to that provider. The UI and durable
-job records contain progress metadata and fixed error codes; there is no model
-conversation, prompt, provider-response, or command-output log.
+job records contain progress metadata and fixed error codes. Live conversation
+text uses a separate bounded RAM transport for the native UI. It contains user
+messages and completed assistant text, with no thinking, tool output, raw
+provider objects or secret answers. There is no durable model conversation,
+prompt, provider-response, or command-output log.
+
+Conversation limits are 8,192 UTF-8 bytes per message, 64 follow-up message
+identities per attempt, eight queued messages, and a ring of 128 events or
+256 KiB. The host retains at most eight sessions. Ready/failed history expires
+after five minutes; canceled/interrupted history is cleared immediately. A host
+restart clears all conversation text. Authoritative job state and retained files
+remain available for fresh-session resumption. The native UI also bounds and
+validates its in-memory transcript and discards it when the host reports expiry.
 
 ## Execution and dependency boundaries
 
@@ -99,12 +148,16 @@ worker only advertises these host tools:
 | Tool | Host behavior |
 | --- | --- |
 | `capabilities` | Discovers host facilities, runtime paths, and generic package requirements. |
+| `preflight` | Reports selected Metal compiler/SDK, actual device/compute readiness and managed native capabilities separately. |
+| `ensure_metal_toolchain` | Selects verified installed Apple tools and automatically acquires a missing Metal component when required. |
+| `native_command` | Runs bounded native work through host memory/exclusive GPU admission and owned Metal confinement. A compiler is required only for source builds that request it. |
+| `retain_resource` | Captures a completed workspace dependency with hashes and license/origin metadata for future attempts. |
 | `list_files` | Lists and pages through workspace or selected host-resource trees. |
 | `read_file` | Reads a bounded UTF-8 file, with byte offsets for large files. |
 | `write_file` | Writes a bounded UTF-8 file inside the private workspace. |
 | `run_command` | Runs an explicit argument array with workspace writes, selected read access, and owned process lifetime. Network access is an explicit option. |
 | `start_process` / `read_process` / `stop_process` | Starts, inspects, and reaps temporary services or background work owned by this setup. |
-| `fetch_url` | Downloads a bounded public HTTPS file through the host's address, redirect, and transfer policy; an expected SHA-256 can be supplied. |
+| `fetch_url` | Downloads a public HTTPS file up to 16 GiB, following up to five validated HTTPS redirects; expected SHA-256 and exact byte size can be supplied. Completed downloads are retained for reuse. |
 | `extract_archive` | Unpacks downloaded runtime, toolchain, or source archives into the workspace. |
 | `prepare_environment` | Uses an available private-runtime convenience helper. |
 | `install_dependencies` | Uses an available dependency-manager convenience helper and retains locked dependency metadata. |
@@ -124,6 +177,73 @@ the requested wildcard bind address from an explicit loopback bind. Generated
 local services must bind to loopback and authenticate their routes. Tool results return
 to the in-memory coding session so the agent can fix compilation or test
 failures. Runtime identity and hashes are checked before launching Pi.
+
+Setup downloads support ordinary release and model-host redirects. Each hop
+resolves and checks every destination address, connects to a vetted public IP,
+and verifies TLS against that hop's hostname. Downgrades, credentials in URLs,
+private destinations, loops, malformed responses, and excess hops are rejected.
+Server-issued signed query strings remain transient transport data; the host
+does not return or persist them. Download limits and supplied hashes still
+apply. The separate pinned prepared-package ZIP intake retains its direct-URL
+contract described in [Pinned package downloads](PINNED_DOWNLOADS.md).
+
+Network-enabled setup commands receive a private, certificate-only CA bundle.
+An explicitly configured host CA file takes precedence; otherwise the host
+exports the Mac's default trusted public anchors. Git receives `GIT_SSL_CAINFO`,
+and compatible clients receive `SSL_CERT_FILE` and `NODE_EXTRA_CA_CERTS`. Trust
+is staged once per workspace. Certificate and hostname verification stay
+enabled. Setup commands receive no added Keychain or private-key access.
+
+The [download and command-trust validation record](PI_NETWORK_VALIDATION.md)
+identifies the checked public release and native Git paths.
+
+## Automated Metal preparation
+
+MeeCP checks runtime GPU access independently of compiler availability before
+coding begins. Its shipped, hash-bound helper creates a Metal device, residency
+set and compute pipeline in the same confined native execution profile. A
+prebuilt engine with compiled assets can run without the `metal` compiler.
+
+Source builds use a selected verified developer directory and SDK without
+changing global `xcode-select`. MeeCP selects an installed full Xcode when the
+Command Line Tools do not provide Metal. If required, it runs the fixed Apple
+command `xcodebuild -downloadComponent MetalToolchain` and rechecks a real
+shader compilation. Apple documents this component mechanism in
+[Downloading and installing additional Xcode components](https://developer.apple.com/documentation/xcode/downloading-and-installing-additional-xcode-components).
+The host validates the selected Apple control executable and records the actual
+developer directory, compiler, SDK and asset identities. Selected roots and the
+exact Metal asset mount remain read-only to workspace commands.
+
+MeeCP discovers and Apple-verifies the actual compiler, Git, Make and Swift
+executables under the selected developer roots. It uses those paths for known
+commands and child lookup, preserving bundled Python/Node precedence. Apple's
+system launchers can require services unavailable in confinement; preparation
+uses the selected tools directly. Updating or removing Xcode revokes stale
+selection and permits fresh discovery. Settled compiler probe failures report
+unavailability without blocking CPU or prebuilt preparation; ownership loss
+still closes setup admission.
+
+If a full Xcode installation or Apple's account/license/component UI is needed,
+MeeCP presents **Continue Metal Setup**, opens the appropriate Apple page or
+verified Xcode application, and periodically rechecks readiness. No terminal
+diagnosis or resource-path handoff is requested. Once Xcode becomes ready,
+MeeCP automatically acquires a missing Metal component and resumes the original
+tool. A failed acquisition waits for a readiness change or explicit Continue.
+Before opening Xcode, the native client independently verifies the complete
+bundle's signed Xcode identifier, Apple certificate chain and authenticated
+Apple team identity. It rejects MeeCP state paths and untrusted ancestor permissions,
+resolves aliases, and rechecks the active waiting job after verification.
+Renamed, personal and custom selected Xcode installations remain supported.
+It does not silently accept an OS license or
+replace the requested inference engine.
+
+Managed native commands have explicit argv, workspace-only writes, declared
+memory, bounded duration, exclusive GPU admission, loopback listener checks and
+owned descendant cleanup. Declared memory is an admission estimate, not an OS
+RSS/GPU-memory limit. Temporary contention shows **Waiting for available GPU
+and memory** and is rechecked automatically within the active-work deadline.
+Ownership uncertainty retains the reservation and closes admission. Generic
+commands continue to use their existing confinement.
 
 Commands can receive explicit nonsecret environment values. `credentials` maps
 environment names to opaque secret IDs requested during that job. The host
@@ -210,6 +330,25 @@ executes the fixtures, and compares the expected results and assertions. Package
 checked again after the probe. A model's statement that setup succeeded is
 insufficient to reach package review.
 
+A validated `mcp-stdio` package declaring `resources.gpu: true` can use native
+Metal during this independent probe on macOS 26 Apple silicon. It must declare
+one session and fit the host's memory budget and exclusive GPU admission before
+launch. The host selects narrow AGX device, IOSurface residency and Metal compiler
+permissions; package and system reads, private probe writes, network declarations
+and owned process cleanup retain their existing restrictions. GPU reservations
+remain held until the probe's owned processes are stopped and reaped, including
+on cancellation or failure. Generic Pi `run_command` and `start_process` tools
+retain their existing GPU-denied sandbox and cannot request this capability.
+
+Managed `native_command` preparation uses the same narrow Metal policy.
+Compatibility and
+model/tool correctness still require the package's actual fixtures and named
+runtime validation; broader GPU preparation recipes and multiple resident GPU
+scheduling remain open. Automated host preparation and recovery are governed by
+[Automated app onboarding](AUTOMATED_APP_ONBOARDING.md).
+The [native validation receipt](PI_SETUP_METAL_VALIDATION.md) records the checked
+Metal, Stark, and ColGrep artifacts and the remaining package acceptance scope.
+
 Successful verification attaches an immutable package snapshot to the saved
 draft revision. The existing plan/apply installer handles review, authorization,
 candidate readiness, startup choice, and transactional installation. A changed
@@ -232,11 +371,21 @@ cannot configure provider credentials or start Pi jobs.
 | `GET /v1/pi/jobs/{job_id}` | Read progress and the verified attachment identity. |
 | `POST /v1/pi/jobs/{job_id}/cancel` | Cancel an active job with an empty JSON object. |
 | `POST /v1/pi/jobs/{job_id}/answer` | Answer the current transient question for the exact question ID and import revision. |
+| `POST /v1/pi/jobs/{job_id}/messages` | Send a bounded ordinary message using a UUID message identity and exact import/revision/source binding; acceptance requires worker acknowledgment. |
+| `POST /v1/pi/jobs/{job_id}/conversation` | Read bounded RAM events after a sequence cursor using the exact import/revision/source binding. The native transport uses this route. |
+| `GET /v1/pi/jobs/{job_id}/conversation` | Equivalent read for clients supplying the binding and cursor as query parameters. |
+| `POST /v1/pi/current` | Resolve the authoritative active/ready/latest attempt for an exact import/revision/source binding. |
+| `GET /v1/pi/resources/{import_id}` | Read the current retained resource inventory. |
+| `POST /v1/pi/resources` | Capture selected resources, publish a new draft revision and resume an interrupted active attempt. |
+| `POST /v1/pi/resources/{import_id}/cancel-capture` | Request capture cancellation; admission remains held until work settles. |
+| `POST /v1/pi/jobs/{job_id}/resume` | Create or join a fresh exact-bound attempt using retained state. |
+| `POST /v1/pi/jobs/{job_id}/continue-system` | Recheck the current Apple setup prerequisite. |
+| `POST /v1/imports/{draft_id}/retry-install` | Create or retrieve a fresh verified-package draft for a terminal installation failure. |
 
 One setup job runs at a time. Jobs have bounded messages, tool calls, events,
 downloads, subprocess output, and a two-hour active-work deadline. Waiting for
-a user answer pauses that deadline. Saved job states are `running`,
-`ready`, `failed`, and `canceled`. Changing provider settings affects subsequent
+a user answer or required Apple UI action pauses that deadline. Saved job states
+are `running`, `ready`, `failed`, `canceled`, and `interrupted`. Changing provider settings affects subsequent
 jobs; an existing job keeps its captured configuration.
 
 A job waiting for input remains `running` with stage `waiting_for_user`. Its
@@ -247,6 +396,11 @@ and `value`. Questions and answers are never journaled. The worker allows up to
 context compaction can preserve progress without persisting a conversation.
 
 ## Regression checks
+
+The [conversational setup acceptance](CONVERSATIONAL_APP_SETUP_VALIDATION.md)
+records the native workspace/composer checks and real SDK steering checks for
+the 2026-10-14 UI integration. These qualify transport and lifecycle behavior,
+not general model quality or unfamiliar-app installation success.
 
 The final general Pi suite passed 272 tests, with two optional live dependency
 checks skipped. Separate real npm checks passed installation, CLI execution,

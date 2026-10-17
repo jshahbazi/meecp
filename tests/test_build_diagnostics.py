@@ -161,6 +161,7 @@ def test_host_build_preserves_nested_document_links_and_binds_all_document_hashe
              "scripts/meecp-command-reap.c": "synthetic helper source",
              "scripts/meecp-command-resource-reap.c": "synthetic monitor source",
              "scripts/meecp-command-resource-v1.h": "synthetic monitor header",
+             "scripts/meecp-metal-probe.m": "synthetic fixed Metal probe source",
              "assets/brand/source.svg": "synthetic branding", "templates/catalog.json": "{}",
              "templates/task/.venv/private-input.txt": "excluded local environment",
              "docs/AUTOMATIC_PREPARATION.md": "[Review](reviews/DIRECTORY_ONBOARDING_REVIEW.md)\n",
@@ -229,7 +230,13 @@ def test_host_build_preserves_nested_document_links_and_binds_all_document_hashe
         assert receipt["artifact_sha256"]["preparation-toolchain/engine"] == hashlib.sha256(b"synthetic exact engine").hexdigest()
     assert receipt["signing"] == "ad_hoc_native_helpers"
     assert receipt["artifact_sha256"]["bin/meecp-reap"] == hashlib.sha256((host / "bin/meecp-reap").read_bytes()).hexdigest()
-    assert len([call for call in calls if call[0] == "/usr/bin/codesign" and "--sign" in call]) == 3
+    assert len([call for call in calls if call[0] == "/usr/bin/codesign" and "--sign" in call]) == 4
+    metal = json.loads((host / "native-metal-probe.json").read_bytes())
+    assert metal["helper"] == "bin/meecp-metal-probe"
+    assert metal["helper_source_sha256"] == hashlib.sha256((source / "scripts/meecp-metal-probe.m").read_bytes()).hexdigest()
+    assert (host / "native-metal-probe.m").read_bytes() == (source / "scripts/meecp-metal-probe.m").read_bytes()
+    assert metal["helper_sha256"] == receipt["artifact_sha256"][metal["helper"]]
+    assert receipt["artifact_sha256"]["native-metal-probe.json"] == hashlib.sha256((host / "native-metal-probe.json").read_bytes()).hexdigest()
     resource = json.loads((host / "command-resource-execution.json").read_bytes())
     assert resource["receipt_format"] == 4
     assert resource["production_admission"] == "disabled"

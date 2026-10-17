@@ -168,6 +168,34 @@ async def test_model_shared_lifetime_restart_and_resource_admission(tmp_path, pr
     assert all(not value for value in host.ledgers.values())
 
 
+async def test_legacy_config_flag_package_starts_and_restarts(tmp_path, prepared):
+    import shutil
+    source, reaper = prepared
+    package = tmp_path.resolve() / "legacy-package"
+    shutil.copytree(source, package)
+    service = package / "bin/service"
+    service.write_text(service.read_text().replace("--meecp-config-fd", "--mcpme-config-fd")
+                       .replace("a.meecp_config_fd", "a.mcpme_config_fd"))
+    relock(package)
+    host = Supervisor(tmp_path.resolve() / "host", reaper)
+    try:
+        slot = await install(host, package)
+        first = await call(host, slot.id)
+        # Failed renamed-flag launches have been reaped; only the gateway and
+        # the authenticated engine/adapter graph remain owned.
+        assert len(host.owner(slot.id).instances) == 3
+        await host.control(slot.id, "stop")
+        await host.control(slot.id, "start")
+        second = await call(host, slot.id)
+        assert second["generation"] > first["generation"]
+        assert second["instance_id"] != first["instance_id"]
+        assert len(host.owner(slot.id).instances) == 3
+    finally:
+        await host.close()
+    assert not host.reservations
+    assert all(not value for value in host.ledgers.values())
+
+
 async def test_model_reaper_loss_retains_gpu_and_reaps_adapter(tmp_path, prepared):
     package, reaper = prepared
     host = Supervisor(tmp_path.resolve() / "host", reaper)

@@ -8,7 +8,7 @@
   "current_source_deviations": {
     "backend/meecp/supervisor.py": {
       "accepted_sha256": "239ad2e749dba459de6f72061104d738800a12c8d45f43a9ac5df36779270811",
-      "current_sha256": "efb2275d48486dcb3278465873a3fa5bc5dfa2459879b7a5a1f679d1dea49deb"
+      "current_sha256": "26964fa018c6e3e5da1997edff331f44ef853ba8e0b61c4c87abb1a741386669"
     }
   }
 }

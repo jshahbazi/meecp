@@ -197,10 +197,12 @@ to their recorded commits; they do not qualify the merged PR tree.
 The first PR CI run, `38623955883`, reported 89 failures. The conversation
 changes modify the complete Python source closure used by TextGen components;
 87 recipe/policy/lifecycle checks rejected the preceding immutable identities.
-TextGen component 1.0.24 and recipe 1.0.25 bind the changed source, with exact
+TextGen component 1.0.24 and recipe 1.0.25 bound that source snapshot, with exact
 catalog and release-policy references. Earlier recipe directories and their
 model/runtime provenance remain unchanged. Current hashes and native/signed
 acceptance limits are recorded in [release authority](PHASE3_RELEASE_POLICY.md).
+The later JevK5 startup compatibility change requires component 1.0.25 and
+recipe 1.0.26; it does not inherit this snapshot's acceptance.
 
 The remaining two failures also occur on main at `bdfa708`. Their old hardware
 control established only that an unconfined Metal device existed. A separate

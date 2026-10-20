@@ -177,6 +177,72 @@ def test_snapshot_is_independent_private_and_digest_checked(tmp_path):
         snapshot_package(source, tmp_path / "state" / "different")
 
 
+@pytest.mark.parametrize("clone", [True, False])
+def test_snapshot_preserves_source_timestamps(tmp_path, monkeypatch, clone):
+    if not clone:
+        monkeypatch.setattr("meecp.private._clone_file", lambda *args, **kwargs: False)
+    source = make_package(tmp_path / "source")
+    stamp = 1_600_000_000_123456789
+    os.utime(source / "LICENSE", ns=(stamp, stamp))
+    copied = snapshot_package(source, tmp_path / "copy")
+    assert (copied.root / "LICENSE").stat().st_mtime_ns == stamp
+
+
+def test_installed_snapshot_blocks_writes_and_allows_reuse(tmp_path):
+    source = make_package(tmp_path / "source")
+    copied = snapshot_package(source, tmp_path / "installed", readonly=True)
+    assert copied.digest == validate_package(source).digest
+    assert snapshot_package(source, copied.root, readonly=True).digest == copied.digest
+    for path in [copied.root, *copied.root.rglob("*")]:
+        assert path.stat().st_mode & 0o222 == 0
+    with pytest.raises(PermissionError):
+        (copied.root / "bin/service").write_bytes(b"changed")
+    with pytest.raises(PermissionError):
+        (copied.root / "__pycache__").mkdir()
+    assert (source / "bin/service").stat().st_mode & 0o200
+
+
+@pytest.mark.parametrize("mutation", ["new_file", "empty_directory", "symlink", "removed", "changed"])
+def test_package_cache_revalidates_entire_tree(tmp_path, mutation):
+    from types import SimpleNamespace
+    from meecp.supervisor import Supervisor
+    source = make_package(tmp_path / "source")
+    package = validate_package(source)
+    stamp = Supervisor.package_stamp(package)
+    host = object.__new__(Supervisor)
+    host.root = tmp_path / "state"
+    host.package_cache = {str(source): (package, stamp)}
+    slot = SimpleNamespace(package_path=str(source), package_digest=package.digest)
+    assert host.package(slot).digest == package.digest
+    if mutation == "new_file":
+        (source / "bin/unlisted.pyc").write_bytes(b"cache")
+    elif mutation == "empty_directory":
+        (source / "bin/__pycache__").mkdir()
+    elif mutation == "symlink":
+        (source / "bin/link").symlink_to(tmp_path)
+    elif mutation == "removed":
+        (source / "LICENSE").unlink()
+    else:
+        (source / "LICENSE").write_bytes(b"bad")
+    assert Supervisor.package_stamp(package) != stamp
+    with pytest.raises(PackageError):
+        host.package(slot)
+
+
+def test_existing_install_is_sealed_before_first_use(tmp_path):
+    from types import SimpleNamespace
+    from meecp.supervisor import Supervisor
+    host = object.__new__(Supervisor)
+    host.root = tmp_path / "state"
+    host.package_cache = {}
+    source = make_package(tmp_path / "source")
+    package = snapshot_package(source, host.root / "packages" / "local.fixture" / "digest")
+    slot = SimpleNamespace(package_path=str(package.root), package_digest=package.digest)
+    assert host.package(slot).digest == package.digest
+    assert package.root.stat().st_mode & 0o222 == 0
+    assert host.package(slot).digest == package.digest
+
+
 def test_private_json_rejects_unsafe_existing_files(tmp_path):
     root = tmp_path / "state"
     root.mkdir(mode=0o700)

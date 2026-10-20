@@ -103,7 +103,7 @@ copy closure, private runtime provenance, launcher routing and metadata/lock
 validation. The [historical installed acceptance record](../engines/STARK_JEVK5_VALIDATION.json)
 binds the completed run to the exact package, recorded consumer sources, native
 worker and model hashes at source commit
-`893ca7289fcaf0634a0fa9f49390c37deb033821`. The current host supervisor has changed
+`893ca7289fcaf0634a0fa9f49390c37deb033821`. The host supervisor and package launcher have changed
 since that run. [Current scope](../engines/STARK_JEVK5_CURRENT_SCOPE.json) explicitly
 retires installed integration acceptance and requires a fresh native replay.
 It pins every current deviation without changing the accepted record. CI rejects

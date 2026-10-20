@@ -19,7 +19,7 @@ from meecp.supervisor import Supervisor
 ROOT = Path(__file__).resolve().parents[1]
 LOCKED = "mcpme.agent-python-adapter"
 UNLOCKED = "mcpme.agent-unlocked-python-adapter"
-UNLOCKED_RECIPE_VERSION = "1.0.4"
+UNLOCKED_RECIPE_VERSION = "1.0.5"
 WORKER = b"raise RuntimeError('source was executed')\ndef double(n: int) -> int: return n*2\n"
 PROJECT = b"[project]\nname='synthetic'\nversion='1.0.0'\n"
 LOCK = b"version=1\nrevision=3\n"
@@ -46,7 +46,7 @@ def recommended(value):
 
 
 def add_alias(host, root, recipe_id, version=UNLOCKED_RECIPE_VERSION):
-    shutil.copytree(ROOT / "templates/builtin-recipes/agent-unlocked-python-adapter-v1-0-4", root)
+    shutil.copytree(ROOT / "templates/builtin-recipes/agent-unlocked-python-adapter-v1-0-5", root)
     manifest = json.loads((root / "meecp.recipe.json").read_bytes())
     manifest.update(id=recipe_id, version=version)
     raw = canonical_bytes(manifest)
@@ -149,7 +149,7 @@ async def test_component_or_guide_change_cannot_inherit_a_recommendation(tmp_pat
 def test_current_guide_does_not_admit_historical_unlocked_component():
     registry = AnalysisGuideRegistry(builtin_analysis_guides())
     historical = validate_bundle(ROOT / "templates/builtin-recipes/agent-unlocked-python-adapter-v1-0-2")
-    current = validate_bundle(ROOT / "templates/builtin-recipes/agent-unlocked-python-adapter-v1-0-4")
+    current = validate_bundle(ROOT / "templates/builtin-recipes/agent-unlocked-python-adapter-v1-0-5")
     assert registry.resolve(historical) is None
     guide = registry.resolve(current)
     assert guide is not None and guide["component"]["version"] == VERSION
@@ -174,7 +174,8 @@ async def test_multiple_builtin_versions_require_explicit_selection(tmp_path):
     host = Supervisor(tmp_path / "state", tmp_path / "unused-reaper")
     try:
         draft = capture(host, tmp_path / "source", {"worker.py": WORKER})
-        add_alias(host, tmp_path / "alias", UNLOCKED, "1.0.5")
+        prefix, patch = UNLOCKED_RECIPE_VERSION.rsplit(".", 1)
+        add_alias(host, tmp_path / "alias", UNLOCKED, prefix + "." + str(int(patch) + 1))
         assert recommended(options(host, draft)) == []
     finally:
         await host.close()

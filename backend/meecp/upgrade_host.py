@@ -76,7 +76,7 @@ class UpgradeHost:
                                       payload["settings"] if "settings" in payload else self.package_settings(slot))
         self.secrets.resolve(settings["secret_references"])
         snapshot = await self.static_work(snapshot_package, package,
-            self.root / "packages" / package.manifest.package_id / package.digest)
+            self.root / "packages" / package.manifest.package_id / package.digest, readonly=True)
         # Static work yields. Recheck the reviewed generation after it settles.
         current = self.registry.get_slot(slot.id)
         self.check_mutation(current)

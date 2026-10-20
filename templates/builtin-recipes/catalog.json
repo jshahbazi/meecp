@@ -19,10 +19,10 @@
       "version": "1.0.1"
     },
     {
-      "digest": "fea14263ab91b7cbdb90e6758598af334dff51bf1c983e921ba4ad3a84148c79",
-      "directory": "text-generation-v1-0-26",
+      "digest": "08c5ab66292a5c39c761453a0b667b33bed30fa538d2fc64e08139dc9502c218",
+      "directory": "text-generation-v1-0-28",
       "recipe_id": "mcpme.text-generation",
-      "version": "1.0.26"
+      "version": "1.0.28"
     },
     {
       "digest": "2f157722a120dcd5415c3a918daf916612a4d8ad7f8ab12d8c8eee336e5edef1",
@@ -37,10 +37,10 @@
       "version": "1.0.1"
     },
     {
-      "digest": "25abe1d7231f251c6f865223fd050197820e4fdaff66f423d1a9d367a81fc64c",
-      "directory": "agent-unlocked-python-adapter-v1-0-4",
+      "digest": "d335739f6757f03762c6eaea24d26e77b76bb7e484af5aaa8e2b95e1b016319f",
+      "directory": "agent-unlocked-python-adapter-v1-0-5",
       "recipe_id": "mcpme.agent-unlocked-python-adapter",
-      "version": "1.0.4"
+      "version": "1.0.5"
     },
     {
       "digest": "44d2bcd08a26a5d15fb84959c9c88a2c4b3deef5a17dbe98b69346cd487392ff",

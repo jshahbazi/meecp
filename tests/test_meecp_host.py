@@ -333,6 +333,11 @@ async def test_two_slots_independent_controls_credentials_and_stdio(tmp_path, pr
                 await client.initialize()
                 result = await client.call_tool("validate_json", {"document": "null"})
                 assert result.structuredContent == {"valid": True, "kind": "null"}
+        # Client transport closure can precede server-side session retirement.
+        # Require eventual cleanup while still failing persistent child leaks.
+        async with asyncio.timeout(5):
+            while any(len(host.owner(slot_id).instances) != 1 for slot_id in (first.id, second.id)):
+                await asyncio.sleep(.05)
         for slot_id in (first.id, second.id):
             assert len(host.owner(slot_id).instances) == 1  # resident gateway only
     finally:

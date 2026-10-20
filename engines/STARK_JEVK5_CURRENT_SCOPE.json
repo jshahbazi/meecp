@@ -8,7 +8,11 @@
   "current_source_deviations": {
     "backend/meecp/supervisor.py": {
       "accepted_sha256": "239ad2e749dba459de6f72061104d738800a12c8d45f43a9ac5df36779270811",
-      "current_sha256": "26964fa018c6e3e5da1997edff331f44ef853ba8e0b61c4c87abb1a741386669"
+      "current_sha256": "3e1aef94452788224d02ebda253a0d2d910ad074f23ce782101be14497eba043"
+    },
+    "templates/jevk5-stark-v1/launcher.c": {
+      "accepted_sha256": "4a6904d7b6b9a1cc4d1b409c80aaf00739388eeab9c7a465021580ded88b7843",
+      "current_sha256": "06e225ae4dfaad665553ae33507eb5498db7244494d7c4314f896e47451881ee"
     }
   }
 }

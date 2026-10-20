@@ -14,9 +14,9 @@ from .settings import settings_digest
 from .upgrades import UpgradeError
 
 
-async def settled_work(host, function, *args):
+async def settled_work(host, function, *args, **kwargs):
     """Retain the install candidate until the underlying file worker has settled."""
-    task = asyncio.create_task(host.static_work(function, *args))
+    task = asyncio.create_task(host.static_work(function, *args, **kwargs))
     interrupted = False
     while True:
         try:
@@ -100,7 +100,7 @@ async def install_generation(host, operation_id: str, plan: dict):
         settings = host.check_plan_settings(plan, package)
         host.secrets.resolve(settings["secret_references"])
         package = await settled_work(host, snapshot_package, package,
-            host.root / "packages" / package.manifest.package_id / package.digest)
+            host.root / "packages" / package.manifest.package_id / package.digest, readonly=True)
         host.package_cache[str(package.root)] = (package, host.package_stamp(package))
         await checkpoint(host, operation_id, "files_ready")
         directory = host.slot_directory(slot_id)

@@ -282,10 +282,15 @@ async def test_relocated_locked_python_cache_survives_install_and_gateway_sessio
     cached_bytes = bytearray(cached.read_bytes())
     cached_bytes[8:12] = (0).to_bytes(4, "little")
     cached.write_bytes(cached_bytes)
-    (library / "server.py").write_text("from cache_input import MESSAGE\nassert MESSAGE == 'unchanged locked input'\n" + CHILD)
+    (library / "fresh_input.py").write_text("VALUE = 42\n")
+    (library / "server.py").write_text(
+        "import sys\nfrom pathlib import Path\nsys.path.insert(0, str(Path(__file__).parent))\n"
+        "from fresh_input import VALUE\nassert VALUE == 42\n"
+        "from cache_input import MESSAGE\nassert MESSAGE == 'unchanged locked input'\n" + CHILD)
     executable = source / "bin/service"
     executable.write_text("#!/bin/sh\nset -eu\nPACKAGE_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")/..\" && pwd)\n"
-                          "exec " + shlex.quote(sys.executable) + " \"$PACKAGE_DIR/lib/server.py\"\n")
+                          "exec " + shlex.quote(sys.executable) + (" -I" if legacy_environment else "")
+                          + " \"$PACKAGE_DIR/lib/server.py\"\n")
     manifest_path = source / "meecp.package.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["tools"] = [{"name": TOOL["name"], "description": TOOL["description"],
@@ -328,12 +333,6 @@ async def test_relocated_locked_python_cache_survives_install_and_gateway_sessio
         slot = host.registry.get_slot(plan["slot_id"])
         installed = Path(slot.package_path)
         assert installed != source and original.digest == plan["package_digest"]
-        if legacy_environment:
-            assert operation.status == "recovery_required" and operation.error_code == "installation_recovery_required"
-            assert (installed / cache_relative).read_bytes() != cache_bytes
-            with pytest.raises(PackageError, match="^artifact_(size|hash)_mismatch$"):
-                validate_package(installed)
-            return
         assert operation.status == "completed" and slot.observed_state == "ready"
         assert validate_package(installed).digest == original.digest
         connection = host.connection(slot.id)

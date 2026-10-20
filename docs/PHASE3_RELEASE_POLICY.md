@@ -1,15 +1,21 @@
 # Phase 3 release authority
 
-## Current source after legacy resident startup compatibility
+## Current source after installed-package integrity safeguards
 
-The tracked source uses TextGen engine/task 1.0.25 and recipe 1.0.26, plus unlocked
-agent component/recipe 1.0.4. TextGen component identity includes the complete host
-Python source closure. The legacy configuration-descriptor fallback in
-`supervisor.py` changed that closure after conversational setup integration had
-selected engine/task 1.0.24 and recipe 1.0.25. The fresh versions bind the current
+The tracked source uses TextGen engine/task 1.0.27 and recipe 1.0.28, plus unlocked
+agent component/recipe 1.0.5. TextGen component identity includes the complete host
+Python source closure. Installed-tree write protection, timestamp-preserving
+copies, complete-tree cache stamps, and explicit bytecode suppression changed
+that closure after the legacy startup compatibility release selected
+engine/task 1.0.25 and recipe 1.0.26. The fresh versions bind the current
 source and preserve all earlier immutable bundles and owner lifecycle choices.
 The release policy selects only the exact new references; old identities do not
 inherit current execution authority.
+
+The shared copy helper also participates in the unlocked adapter's source
+identity. Its new component/recipe 1.0.5 retains the original 1.0.4 bundle.
+The full shipped-catalog regression check now validates every producer pin and
+seeds every active recipe, including recipes outside the selected TextGen path.
 
 A signed
 1.1.0 installation inspected on 2026-10-13 had different packaged engine/task
@@ -35,16 +41,16 @@ and owner choices while binding the changed source.
 
 | Current source binding | SHA-256 |
 | --- | --- |
-| Release policy | 1d4ef765af585213cb9a1b39f4466d1cb50aa07c960efbea6aefcf3081d8770a |
-| TextGen engine | a8d0ee0af4f88d6fb604041f7500397b9cce5e24158f7c7324e77f0dd1f70291 |
-| TextGen task | 2df369110fde2b7ddb95c2d93fa9110fd54e7582f855b3f18c21a8b962c333f4 |
-| TextGen recipe | fea14263ab91b7cbdb90e6758598af334dff51bf1c983e921ba4ad3a84148c79 |
-| Unlocked agent component | 88a46a9e494050d9ab6924653dd1cba226d824abd7630c0d8bd023f270e66cd3 |
-| Unlocked agent recipe | 25abe1d7231f251c6f865223fd050197820e4fdaff66f423d1a9d367a81fc64c |
+| Release policy | 4b717b4fd67860bd739f114f4d4920408be626e12973462c9307cb1f302641c8 |
+| TextGen engine | b65e72f6b67b78c17704ad96579264a5d668c787fbef134c7ed697914c4b1abe |
+| TextGen task | 6755c76c60ccfdc12b1cc325a423208fda22730c9ed8faaff881dd498d5ffdff |
+| TextGen recipe | 08c5ab66292a5c39c761453a0b667b33bed30fa538d2fc64e08139dc9502c218 |
+| Unlocked agent component | 40a1e0f295f144f2d15983a2c759f283f18ebf9ade0f7b4c9e43207b7670e866 |
+| Unlocked agent recipe | d335739f6757f03762c6eaea24d26e77b76bb7e484af5aaa8e2b95e1b016319f |
 
 The recipe was generated with `write_textgen_recipe` using `uv run --locked` and
 contains nine files. All seven public model/runtime asset files match recipe
-1.0.25 byte for byte, and earlier recipe directories are unchanged. The lifecycle
+1.0.27 byte for byte, and earlier recipe directories are unchanged. The lifecycle
 allowlist admits the reviewed candidate policy bytes for running its harness; it
 is not a signed or native acceptance result. Frozen policies retain their original
 hashes and producer controls. The CI repair also updates the explicit Stark
@@ -52,8 +58,8 @@ source-deviation record; historical installed acceptance remains retired and
 native reacceptance remains required.
 
 The signed v10 runtime/live acceptance below retains its original source and
-TextGen 1.0.13. It has not been rerun for TextGen component 1.0.25/recipe 1.0.26
-or unlocked agent component/recipe 1.0.4. Fresh signed cold-copy startup and
+TextGen 1.0.13. It has not been rerun for TextGen component 1.0.27/recipe 1.0.28
+or unlocked agent component/recipe 1.0.5. Fresh signed cold-copy startup and
 public native/live acceptance remain required for those scopes. Frozen selected13 and selected14
 policy bytes are retained in `tests/fixtures/phase3-selected-textgen-1-0-13-policy.json`
 and `tests/fixtures/phase3-selected-textgen-1-0-14-policy.json`, respectively.

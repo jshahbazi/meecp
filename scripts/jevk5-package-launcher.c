@@ -22,10 +22,10 @@ int main(int argc, char **argv) {
     unsetenv("PYTHONHOME"); unsetenv("PYTHONUSERBASE"); unsetenv("PYTHONSTARTUP"); unsetenv("PYTHONINSPECT");
     setenv("PYTHONPATH", search, 1); setenv("PYTHONNOUSERSITE", "1", 1);
     setenv("PYTHONDONTWRITEBYTECODE", "1", 1);
-    char **args = calloc((size_t)argc + 5, sizeof(char *));
+    char **args = calloc((size_t)argc + 6, sizeof(char *));
     if (!args) return 2;
-    args[0] = python; args[1] = "-P"; args[2] = "-m"; args[3] = "meecp_jevk5"; args[4] = (char *)role;
-    for (int i = 1; i < argc; i++) args[i + 4] = argv[i];
+    args[0] = python; args[1] = "-B"; args[2] = "-P"; args[3] = "-m"; args[4] = "meecp_jevk5"; args[5] = (char *)role;
+    for (int i = 1; i < argc; i++) args[i + 5] = argv[i];
     execv(python, args);
     return 2;
 }

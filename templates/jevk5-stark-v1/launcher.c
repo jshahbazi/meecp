@@ -33,7 +33,7 @@ int main(int argc, char **argv) {
     if (snprintf(search, sizeof(search), "%s/backend:%s/vendor:%s/python/site-packages", root, root, root) >= (int)sizeof(search)) return 2;
     unsetenv("PYTHONHOME"); unsetenv("PYTHONUSERBASE"); unsetenv("PYTHONSTARTUP"); unsetenv("PYTHONINSPECT");
     if (setenv("PYTHONPATH", search, 1) || setenv("PYTHONNOUSERSITE", "1", 1) || setenv("PYTHONDONTWRITEBYTECODE", "1", 1)) return 2;
-    char *args[] = {python, "-P", "-m", (char *)module, (char *)role,
+    char *args[] = {python, "-B", "-P", "-m", (char *)module, (char *)role,
                     "--meecp-config-fd", argv[2], NULL};
     execv(python, args);
     return 2;

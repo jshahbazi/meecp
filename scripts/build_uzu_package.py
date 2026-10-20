@@ -72,6 +72,8 @@ def build(args):
              "--no-emit-project", "--format", "requirements-txt", "--output-file", str(requirements)], cwd=ROOT)
     command(["uv", "pip", "install", "--python", str(destination / "python/bin/python3.12"),
              "--target", str(target), "--require-hashes", "--no-deps", "-r", str(requirements)], cwd=ROOT)
+    from python_bytecode import remove_source_bytecode
+    remove_source_bytecode(destination / "python")
     notices = ["# Adapter dependencies", "", "Installed from the included hashed requirements and uv.lock.",
                "Full available license texts are retained in each distribution's metadata directory.", ""]
     for distribution in sorted(importlib.metadata.distributions(path=[str(target)]),

@@ -174,6 +174,9 @@ def copy_regular_file(source_fd: int, target: Path, *, size: int, executable: bo
                 or details.st_uid != os.getuid() or details.st_size != size):
             raise PackageError("package_changed")
         os.fchmod(output.fileno(), 0o700 if executable else 0o600)
+        # Timestamp-based Python caches bind the source mtime as well as size.
+        # Keep clone and byte-copy behavior identical when relocating a tree.
+        os.utime(output.fileno(), ns=(before.st_atime_ns, before.st_mtime_ns))
         os.fsync(output.fileno())
     after = os.fstat(source_fd)
     if ((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
@@ -182,7 +185,7 @@ def copy_regular_file(source_fd: int, target: Path, *, size: int, executable: bo
 
 
 def snapshot_package(package: ValidatedPackage | Path, destination: Path,
-                     *, expected_digest: str | None = None) -> ValidatedPackage:
+                     *, expected_digest: str | None = None, readonly: bool = False) -> ValidatedPackage:
     """Copy into a private staged tree, revalidate, then publish without overwrite."""
     source = validate_package(package.root if isinstance(package, ValidatedPackage) else package)
     expected = expected_digest or (package.digest if isinstance(package, ValidatedPackage) else source.digest)
@@ -197,6 +200,8 @@ def snapshot_package(package: ValidatedPackage | Path, destination: Path,
         if existing.digest != expected:
             raise PackageError("package_digest_mismatch")
         _check_snapshot_permissions(destination)
+        if readonly:
+            seal_package(existing)
         return existing
     staged = destination.with_name(destination.name + "." + secrets.token_hex(12) + ".tmp")
     limits = {artifact.path: artifact.size for artifact in source.lock.artifacts}
@@ -227,6 +232,8 @@ def snapshot_package(package: ValidatedPackage | Path, destination: Path,
         verified = validate_package(staged)
         if verified.digest != expected or validate_package(source.root).digest != expected:
             raise PackageError("package_digest_mismatch")
+        if readonly:
+            seal_package(verified)
         os.rename(staged, destination)
         directory = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
@@ -238,18 +245,52 @@ def snapshot_package(package: ValidatedPackage | Path, destination: Path,
         raise PackageError("package_snapshot_failed") from None
     finally:
         if staged.exists():
+            # A failure after sealing must still allow removal of this private
+            # unpublished tree. Published installed trees stay read-only.
+            for directory, _, _ in os.walk(staged):
+                Path(directory).chmod(0o700)
             shutil.rmtree(staged)
 
 
 def _check_snapshot_permissions(root: Path) -> None:
-    ensure_private_directory(root)
+    _check_ancestors(root)
     for directory, _, names in os.walk(root):
-        ensure_private_directory(Path(directory))
+        details = Path(directory).lstat()
+        if (not stat.S_ISDIR(details.st_mode) or details.st_uid != os.getuid()
+                or stat.S_IMODE(details.st_mode) not in {0o500, 0o700}):
+            raise PrivateStateError()
         for name in names:
             details = (Path(directory) / name).lstat()
-            expected_mode = 0o700 if details.st_mode & 0o111 else 0o600
-            if details.st_uid != os.getuid() or stat.S_IMODE(details.st_mode) != expected_mode:
+            modes = {0o500, 0o700} if details.st_mode & 0o111 else {0o400, 0o600}
+            if (not stat.S_ISREG(details.st_mode) or details.st_nlink != 1
+                    or details.st_uid != os.getuid() or stat.S_IMODE(details.st_mode) not in modes):
                 raise PrivateStateError()
+
+
+def seal_package(package: ValidatedPackage) -> None:
+    """Prevent accidental writes to a verified installed tree, including caches.
+
+    The owner can change these permissions; this is not a same-user sandbox.
+    Only call after validation and digest binding, never on a user's source.
+    """
+    _check_snapshot_permissions(package.root)
+    for directory, _, names in os.walk(package.root, topdown=False):
+        for name in names:
+            path = Path(directory) / name
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                details = os.fstat(descriptor)
+                if (not stat.S_ISREG(details.st_mode) or details.st_nlink != 1
+                        or details.st_uid != os.getuid()):
+                    raise PrivateStateError()
+                mode = 0o500 if details.st_mode & 0o111 else 0o400
+                if stat.S_IMODE(details.st_mode) != mode:
+                    os.fchmod(descriptor, mode)
+            finally:
+                os.close(descriptor)
+        path = Path(directory)
+        if stat.S_IMODE(path.lstat().st_mode) != 0o500:
+            path.chmod(0o500)
 
 
 # Compatibility spelling for callers migrating the existing private-state helper.

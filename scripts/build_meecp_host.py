@@ -383,6 +383,8 @@ def build(destination: Path, version: str | None = None, *, textgen_engine: Path
         "--output-file", str(requirements))
     run("uv", "pip", "install", "--python", str(runtime / "bin/python3.12"),
         "--target", str(destination / "python/site-packages"), "--require-hashes", "--requirement", str(requirements))
+    from python_bytecode import remove_source_bytecode
+    remove_source_bytecode(destination / "python")
     # uv's writable installation lock is transient producer state. Remove it
     # before inventorying or signing the immutable host payload.
     (destination / "python/site-packages/.lock").unlink(missing_ok=True)

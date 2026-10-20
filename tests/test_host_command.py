@@ -438,6 +438,8 @@ async def test_installed_closure_tamper_never_launches(tmp_path, native):
         slot = await install(host, root, "Closure")
         session = await host.commands.session(slot)
         target = Path(slot.package_path) / "target"
+        # Deliberate owner tampering can bypass the accidental-write guard.
+        target.chmod(0o700)
         target.write_bytes(target.read_bytes() + b"tampered")
         with pytest.raises(CommandExecutionError, match="command_admission_failed"):
             await host.commands.invoke(session, "probe", {"ok": True}, 1)

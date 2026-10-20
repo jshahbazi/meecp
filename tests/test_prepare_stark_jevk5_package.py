@@ -253,7 +253,7 @@ def test_native_launcher_routes_after_relocation_and_bounds_descriptor(tmp_path)
         executable = relocated / "bin" / name
         result = subprocess.run([str(executable), "--meecp-config-fd", "3"], capture_output=True, check=True)
         value = json.loads(result.stdout)
-        assert value["args"] == ["-P", "-m", module, role, "--meecp-config-fd", "3"]
+        assert value["args"] == ["-B", "-P", "-m", module, role, "--meecp-config-fd", "3"]
         assert value["search"] == ":".join(str(relocated / part) for part in ("backend", "vendor", "python/site-packages"))
         assert value["usersite"] == "1"
         for arguments in ([], ["--meecp-config-fd", "2"], ["--meecp-config-fd", "3;bad"],

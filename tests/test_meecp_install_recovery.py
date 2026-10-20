@@ -265,11 +265,11 @@ async def test_repeated_install_cancel_waits_for_static_writer_before_cleanup(tm
     mock_install_runtime(host)
     entered, released, settled = threading.Event(), threading.Event(), threading.Event()
     original = install_recovery.snapshot_package
-    def blocking(*args):
+    def blocking(*args, **kwargs):
         entered.set()
         try:
             assert released.wait(3)
-            return original(*args)
+            return original(*args, **kwargs)
         finally:
             settled.set()
     monkeypatch.setattr(install_recovery, "snapshot_package", blocking)

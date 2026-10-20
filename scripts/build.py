@@ -174,12 +174,15 @@ def main() -> int:
         copy_file(ROOT / filename, resources / filename)
     copy_file(model, resources / "models" / model.name)
     python_base = Path(run("uv", "python", "find", "--managed-python", "3.12", capture=True).strip()).resolve().parent.parent
-    shutil.copytree(python_base, resources / "python", symlinks=True)
+    shutil.copytree(python_base, resources / "python", symlinks=True,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "site-packages"))
     runtime_dir = ROOT / "runtime"
     runtime_dir.mkdir(exist_ok=True)
     requirements = runtime_dir / "requirements.txt"
     run("uv", "export", "--frozen", "--no-dev", "--no-emit-project", "--format", "requirements-txt", "--output-file", str(requirements), capture=True)
     run("uv", "pip", "install", "--python", str(python_base / "bin/python3.12"), "--target", str(resources / "python/site-packages"), "--requirement", str(requirements))
+    from python_bytecode import remove_source_bytecode
+    remove_source_bytecode(resources / "python")
     copy_file(ROOT / "scripts" / "jevk5-mcp", macos / "jevk5-mcp")
     (macos / "jevk5-mcp").chmod(0o755)
     receipts = bundle_llama(args.llama_server, resources)

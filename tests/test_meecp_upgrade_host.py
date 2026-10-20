@@ -325,6 +325,9 @@ async def test_upgrade_plan_cannot_apply_after_sealed_candidate_changed(tmp_path
     host = fixture.host
     try:
         plan = await fixture.plan()
+        # Simulate deliberate owner tampering past the accidental-write guard.
+        for name in ("meecp.package.json", "meecp.lock.json"):
+            (Path(plan["package_path"]) / name).chmod(0o600)
         edit_manifest(Path(plan["package_path"]), version="3.0.0")
         submitted = await host.apply_upgrade(plan["plan_id"])
         await settle(host, submitted["operation_id"])

@@ -16,6 +16,7 @@ import secrets
 import shutil
 import signal
 import socket
+import stat
 import sys
 import uuid
 
@@ -27,14 +28,14 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from .contracts import PackageError, validate_package
+from .contracts import MAX_ARTIFACTS, PackageError, validate_package
 from .downloads import DownloadError, DownloadManager
 from .connections import connection_names
 from .limits import DEFAULT_REQUEST_BYTES, MAX_REQUEST_BYTES
 from .activity import ACTIVITY_EVENTS, ACTIVITY_FRAME, Activity, timestamp
 from .boot_session import current_boot_session, valid_boot_identity
 from .imports import ImportError as ImportDraftError, ImportStore
-from .private import PrivateStateError, check_private_file, ensure_private_directory, read_private_json, snapshot_package, write_private_json
+from .private import PrivateStateError, check_private_file, ensure_private_directory, read_private_json, seal_package, snapshot_package, write_private_json
 from .ownership_receipts import prepare_receipt, verify_receipt, verify_previous_boot_receipt, recover_receipt
 from .processes import OwnedProcess, OwnershipLost, ProcessOwner, _await_ownership
 from .pi_listeners import ListenerError, assert_loopback, monitor_listeners
@@ -1005,6 +1006,11 @@ class Supervisor(UpgradeHost):
             package = cached[0]
         else:
             package = validate_package(Path(slot.package_path))
+            if package.digest != slot.package_digest:
+                raise HostError("package_digest_mismatch")
+            # Upgrade existing installed trees before launching any child.
+            if package.root.is_relative_to(self.root / "packages"):
+                seal_package(package)
             self.package_cache[slot.package_path] = (package, self.package_stamp(package))
         if package.digest != slot.package_digest:
             raise HostError("package_digest_mismatch")
@@ -1012,18 +1018,19 @@ class Supervisor(UpgradeHost):
 
     @staticmethod
     def package_stamp(package) -> tuple:
-        paths = {package.root, *package.metadata_paths}
-        for artifact in package.lock.artifacts:
-            path = package.root / artifact.path
-            paths.add(path)
-            paths.update(parent for parent in path.parents if parent == package.root or package.root in parent.parents)
         try:
             result = []
-            for path in sorted(paths):
+            pending = [package.root]
+            while pending:
+                path = pending.pop()
                 details = path.lstat()
                 result.append((str(path), *[getattr(details, attr) for attr in
                               ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_mode", "st_nlink", "st_uid")]))
-            return tuple(result)
+                if stat.S_ISDIR(details.st_mode):
+                    pending.extend(path.iterdir())
+                if len(result) + len(pending) > MAX_ARTIFACTS * 2:
+                    raise HostError("package_changed")
+            return tuple(sorted(result))
         except OSError:
             raise HostError("package_changed") from None
 

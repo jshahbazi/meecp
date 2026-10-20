@@ -117,6 +117,12 @@ def test_invalid_archive_rejected_before_build_or_credentials(tmp_path, monkeypa
     assert not any((tmp_path / name).exists() for name in ("host", "test.app", "test.dmg"))
 
 
+def test_frozen_signed_launcher_matches_recorded_source():
+    root = runtime.asset_root()
+    provenance = json.loads((root / "signed-runtime-provenance.json").read_bytes())
+    assert hashlib.sha256((root / "launcher.c").read_bytes()).hexdigest() == provenance["launcher_source_sha256"]
+
+
 def test_manifest_pins_closed_signed_identity_and_full_provenance():
     value = runtime.manifest()
     assert value["profile"] == runtime.PROFILE

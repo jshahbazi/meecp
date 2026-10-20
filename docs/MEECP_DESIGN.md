@@ -366,6 +366,8 @@ Slot HTTP policy applies to every route and SSE connection: loopback-only bindin
 
 Installed programs execute with the user's macOS account permissions in this first release. Per-slot directories, processes, and credentials prevent accidental coupling and reduce credential propagation; they do not prevent a malicious same-user program from reading another slot's files or making outbound requests. Filesystem/network declarations are shown as declarations unless an enforceable isolation mechanism is added. The host gives children a minimal environment and only their selected secrets. It does not promise to enforce arbitrary filesystem or network allowlists without an OS isolation layer.
 
+Installed package files and directories have owner read/execute permissions with write bits removed before execution. Existing valid installations receive the same protection when first loaded by the host. This prevents accidental package writes, including Python cache generation; the owner can change these permissions. Mutable files belong in the supplied slot data/runtime directories. Package validation continues to reject added files and changed locked bytes. See [installed-package integrity](INSTALLED_PACKAGE_INTEGRITY.md) for safeguards and recovery boundaries.
+
 A package is executable code. Origin/hash/license verification, publisher identity where available, a visible plan, and bounded installation authority are part of installation. They do not certify a package as safe. Public package distribution, Developer ID signing/notarization, and stronger plugin isolation need separate implementation work; the current ad hoc signed app does not already provide them.
 
 ## Migration from JevK5

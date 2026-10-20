@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 import uuid
 
@@ -50,10 +51,12 @@ def policy():
 async def test_scaffold_and_check_are_offline_with_closed_license_and_fixture_closure(tmp_path, monkeypatch, component):
     async def forbidden(*args, **kwargs):
         pytest.fail("offline recipe authoring must not access management or execution")
-    def no_process(*args, **kwargs):
-        pytest.fail("offline recipe authoring must not spawn a process")
+    class NoProcess(subprocess.Popen):
+        # Keep Popen's typing interface for dependencies imported lazily here.
+        def __init__(self, *args, **kwargs):
+            pytest.fail("offline recipe authoring must not spawn a process")
     monkeypatch.setattr(cli, "call", forbidden)
-    monkeypatch.setattr("subprocess.Popen", no_process)
+    monkeypatch.setattr("subprocess.Popen", NoProcess)
     root = tmp_path / "new-recipe"
     created = await execute(tmp_path, "recipes", "scaffold", "--output", root, "--id", "local.offline",
                             "--component", component, "--json")

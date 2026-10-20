@@ -205,7 +205,8 @@ The later JevK5 startup compatibility change requires component 1.0.25 and
 recipe 1.0.26; it does not inherit this snapshot's acceptance.
 
 The installed-package integrity safeguards subsequently require component
-1.0.26 and recipe 1.0.27. Their regression checks do not extend this snapshot's
+1.0.27 and recipe 1.0.28, plus unlocked adapter component/recipe 1.0.5.
+Their regression checks do not extend this snapshot's
 signed/native acceptance to the changed source.
 
 The remaining two failures also occur on main at `bdfa708`. Their old hardware

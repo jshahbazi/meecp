@@ -67,6 +67,7 @@ PUBLIC_GGUF_METADATA_PATHS = (
     "templates/builtin-recipes/text-generation-v1-0-25/model-provenance.json",
     "templates/builtin-recipes/text-generation-v1-0-26/model-provenance.json",
     "templates/builtin-recipes/text-generation-v1-0-27/model-provenance.json",
+    "templates/builtin-recipes/text-generation-v1-0-28/model-provenance.json",
 )
 # Public SHA-256 file identities, independently recomputed from the accepted
 # BF16 model's tokenizer.json and tokenizer_config.json. The native acceptance

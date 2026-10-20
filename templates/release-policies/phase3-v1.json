@@ -20,8 +20,8 @@
       },
       {
         "id": "text-generate-v1",
-        "version": "1.0.26",
-        "digest": "fcfd7272d07e42c4f4de0792f6f6a66e2efb1b7afe45fd14fa077250a560afb3"
+        "version": "1.0.27",
+        "digest": "6755c76c60ccfdc12b1cc325a423208fda22730c9ed8faaff881dd498d5ffdff"
       },
       {
         "id": "service-text-generate-v1",
@@ -30,8 +30,8 @@
       },
       {
         "id": "agent-unlocked-python-adapter-v1",
-        "version": "1.0.4",
-        "digest": "88a46a9e494050d9ab6924653dd1cba226d824abd7630c0d8bd023f270e66cd3"
+        "version": "1.0.5",
+        "digest": "40a1e0f295f144f2d15983a2c759f283f18ebf9ade0f7b4c9e43207b7670e866"
       }
     ],
     "recipe_component_sets": [
@@ -71,13 +71,13 @@
       [
         {
           "id": "llamacpp-cpu-v1",
-          "version": "1.0.26",
-          "digest": "79241adf961414dd181a8712197608ab1ad61ce8c7385c43cbde8b8327fd13a6"
+          "version": "1.0.27",
+          "digest": "b65e72f6b67b78c17704ad96579264a5d668c787fbef134c7ed697914c4b1abe"
         },
         {
           "id": "text-generate-v1",
-          "version": "1.0.26",
-          "digest": "fcfd7272d07e42c4f4de0792f6f6a66e2efb1b7afe45fd14fa077250a560afb3"
+          "version": "1.0.27",
+          "digest": "6755c76c60ccfdc12b1cc325a423208fda22730c9ed8faaff881dd498d5ffdff"
         }
       ],
       [
@@ -100,8 +100,8 @@
       [
         {
           "id": "agent-unlocked-python-adapter-v1",
-          "version": "1.0.4",
-          "digest": "88a46a9e494050d9ab6924653dd1cba226d824abd7630c0d8bd023f270e66cd3"
+          "version": "1.0.5",
+          "digest": "40a1e0f295f144f2d15983a2c759f283f18ebf9ade0f7b4c9e43207b7670e866"
         }
       ]
     ],
@@ -114,8 +114,8 @@
     "components": [
       {
         "id": "agent-unlocked-python-adapter-v1",
-        "version": "1.0.4",
-        "digest": "88a46a9e494050d9ab6924653dd1cba226d824abd7630c0d8bd023f270e66cd3"
+        "version": "1.0.5",
+        "digest": "40a1e0f295f144f2d15983a2c759f283f18ebf9ade0f7b4c9e43207b7670e866"
       }
     ],
     "providers": [

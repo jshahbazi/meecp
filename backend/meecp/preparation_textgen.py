@@ -27,8 +27,8 @@ from meecp_textgen.fixture import (MODEL_BYTES, MODEL_SHA256, LICENSE_SHA256, MO
 
 ENGINE_ID = "llamacpp-cpu-v1"
 TASK_ID = "text-generate-v1"
-VERSION = "1.0.26"
-RECIPE_VERSION = "1.0.27"
+VERSION = "1.0.27"
+RECIPE_VERSION = "1.0.28"
 MIN_MEMORY_MB = 1024
 ASSETS = ("LICENSE", "LICENSE-MODEL", "engine-closure.json", "fixtures.json", "model.json", "model-provenance.json", "launcher.c",
           "tools.json", "pyproject.toml", "uv.lock", "signed-runtime.json", "signed-runtime-provenance.json")

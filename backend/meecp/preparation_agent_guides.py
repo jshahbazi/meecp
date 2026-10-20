@@ -55,8 +55,8 @@ def builtin_analysis_guides():
     return (
         python_adapter_guide({"id": "agent-python-adapter-v1", "version": "1.0.0",
             "digest": "5d98dc6258cdbbb15f2854b03b5b9eb1cf8dc8adc93f97bdc8a1193b69bee022"}),
-        python_adapter_guide({"id": "agent-unlocked-python-adapter-v1", "version": "1.0.4",
-            "digest": "88a46a9e494050d9ab6924653dd1cba226d824abd7630c0d8bd023f270e66cd3"}, unlocked=True),
+        python_adapter_guide({"id": "agent-unlocked-python-adapter-v1", "version": "1.0.5",
+            "digest": "40a1e0f295f144f2d15983a2c759f283f18ebf9ade0f7b4c9e43207b7670e866"}, unlocked=True),
     )
 
 

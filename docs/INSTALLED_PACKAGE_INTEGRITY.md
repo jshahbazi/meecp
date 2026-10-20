@@ -42,3 +42,9 @@ and new directories, migration of existing trees, complete-tree cache
 invalidation, copy timestamps, compiled launcher flags/argument forwarding,
 and build-time source-backed cache cleanup. Signed application and physical
 model acceptance retain their separately recorded source scope.
+
+The complete shipped-catalog regression also validates release-policy producer
+pins and seeds every active recipe. Changes to shared host helpers can alter
+more than one component identity; each affected component receives a fresh
+version and immutable recipe while historical bundles and owner opt-outs stay
+intact.

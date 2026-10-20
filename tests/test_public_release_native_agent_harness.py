@@ -194,7 +194,7 @@ def test_textgen_keys_bind_actual_current_producer_to_literal_policy(driver, mon
     from meecp import preparation_textgen
     assert ENGINE[0] == preparation_textgen.ENGINE_ID == "llamacpp-cpu-v1"
     assert TASK[0] == preparation_textgen.TASK_ID == "text-generate-v1"
-    assert preparation_textgen.VERSION == "1.0.26"
+    assert preparation_textgen.VERSION == "1.0.27"
     if previous_version is None:
         with pytest.raises(driver.common.AcceptanceError, match="combined_textgen_version_changed"):
             driver.textgen_keys()
@@ -234,45 +234,45 @@ def test_historical13_policy_changes_only_textgen_references():
     assert json.loads(historical13_fixture_bytes()) == expected
 
 
-def test_current26_policy_binds_textgen_and_agent_implementations():
+def test_current27_policy_binds_textgen_and_agent_implementations():
     from meecp.preparation_release_policy import POLICY_PATH
     expected = json.loads(historical13_fixture_bytes())
-    expected["preparation"]["families"][3] = {"id": "text-generate-v1", "version": "1.0.26",
-        "digest": "fcfd7272d07e42c4f4de0792f6f6a66e2efb1b7afe45fd14fa077250a560afb3"}
+    expected["preparation"]["families"][3] = {"id": "text-generate-v1", "version": "1.0.27",
+        "digest": "6755c76c60ccfdc12b1cc325a423208fda22730c9ed8faaff881dd498d5ffdff"}
     expected["preparation"]["recipe_component_sets"][4] = [
-        {"id": "llamacpp-cpu-v1", "version": "1.0.26",
-         "digest": "79241adf961414dd181a8712197608ab1ad61ce8c7385c43cbde8b8327fd13a6"},
-        {"id": "text-generate-v1", "version": "1.0.26",
-         "digest": "fcfd7272d07e42c4f4de0792f6f6a66e2efb1b7afe45fd14fa077250a560afb3"}]
+        {"id": "llamacpp-cpu-v1", "version": "1.0.27",
+         "digest": "b65e72f6b67b78c17704ad96579264a5d668c787fbef134c7ed697914c4b1abe"},
+        {"id": "text-generate-v1", "version": "1.0.27",
+         "digest": "6755c76c60ccfdc12b1cc325a423208fda22730c9ed8faaff881dd498d5ffdff"}]
     current_digests = {
         "python-function-v1": "a633c70b645b143d89d25584f4b61a69d490eda01fc986b7e46b54f0bce71561",
         "resolved-python-v1": "e5b174b7626e3bb89cd4a8727099662d111608e1465b01218342bb68f10a6b90",
         "onnxruntime-cpu-v1": "08f524978bf50f0ff1c9aa1f2db57393868076282c3aa879686a22cdff2afd30",
         "yolo11-coco-detect-v1": "869a91491f8772054988d4df367ba53706dbb88a6e3c8dbfcc7f8d0bc39b5888",
         "host-command-json-v1": "339cbe6ebad51b2a0e4e73228e3f7d119d81ac784908fffd93363340bc91684b",
-        "llamacpp-cpu-v1": "79241adf961414dd181a8712197608ab1ad61ce8c7385c43cbde8b8327fd13a6",
-        "text-generate-v1": "fcfd7272d07e42c4f4de0792f6f6a66e2efb1b7afe45fd14fa077250a560afb3",
+        "llamacpp-cpu-v1": "b65e72f6b67b78c17704ad96579264a5d668c787fbef134c7ed697914c4b1abe",
+        "text-generate-v1": "6755c76c60ccfdc12b1cc325a423208fda22730c9ed8faaff881dd498d5ffdff",
         "openai-chat-completions-v1": "532b386405bc2f780cab626ea10d355d3f5602a7ac9be1622cd7f2f85990f46e",
         "loopback-http-bearer-v1": "7c7cd180ec08f8401c23c338464ae60e65f7428ef5a3f3f9e026f2cca246f62b",
         "service-text-generate-v1": "7894f9c2e54b1d40bb62a6e2e7cee4aeff3b02d5920fb966284d655739638fb5",
-        "agent-unlocked-python-adapter-v1": "88a46a9e494050d9ab6924653dd1cba226d824abd7630c0d8bd023f270e66cd3",
+        "agent-unlocked-python-adapter-v1": "40a1e0f295f144f2d15983a2c759f283f18ebf9ade0f7b4c9e43207b7670e866",
     }
     for component in [*expected["preparation"]["families"],
                       *[item for group in expected["preparation"]["recipe_component_sets"] for item in group],
                       *expected["agent"]["components"]]:
         component["digest"] = current_digests[component["id"]]
         if component["id"] == "agent-unlocked-python-adapter-v1":
-            component["version"] = "1.0.4"
+            component["version"] = "1.0.5"
     expected["command"]["component"][2] = current_digests["host-command-json-v1"]
     expected["agent"]["providers"][0]["adapter_digest"] = "ac66e8bb563139d93577da365b9d3a9b29166244babc9aa215ec90024eda88f1"
     policy_path = Path(__file__).resolve().parents[1] / POLICY_PATH
     assert json.loads(policy_path.read_bytes()) == expected
     assert hashlib.sha256(policy_path.read_bytes()).hexdigest() == (
-        "3eabfe495da077edb7577074d8a5c443049fb8977b58d134e7c74e3a175fff7b")
+        "4b717b4fd67860bd739f114f4d4920408be626e12973462c9307cb1f302641c8")
     from meecp import preparation_textgen
     assert {item.key for item in preparation_textgen.references()} == {
-        ("llamacpp-cpu-v1", "1.0.26", "79241adf961414dd181a8712197608ab1ad61ce8c7385c43cbde8b8327fd13a6"),
-        ("text-generate-v1", "1.0.26", "fcfd7272d07e42c4f4de0792f6f6a66e2efb1b7afe45fd14fa077250a560afb3")}
+        ("llamacpp-cpu-v1", "1.0.27", "b65e72f6b67b78c17704ad96579264a5d668c787fbef134c7ed697914c4b1abe"),
+        ("text-generate-v1", "1.0.27", "6755c76c60ccfdc12b1cc325a423208fda22730c9ed8faaff881dd498d5ffdff")}
 
 
 def historical14_fixture_bytes():
@@ -312,11 +312,11 @@ def test_lifecycle_policy_guard_accepts_historical_and_current_bytes(tmp_path, m
                           (selected12_fixture_bytes(), "selected_model_accepted", "4c5569f10a50a360e5c8e1cffc26cf637f5795d3a2562fc635ca2d9d419e4375"),
                           (historical13_fixture_bytes(), "selected_model_accepted", "8a9a8fd69217352b49e0e338d4d652df8cebcac86609edae1190a88cd2d9a592"),
                           (historical14_fixture_bytes(), "selected_model_accepted", "5bb20b7a8cde39368a5cc3d03a92a4ed3f69d92ac56c317b6f696432863925ea"),
-                          ((Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes(), "selected_model_accepted", "3eabfe495da077edb7577074d8a5c443049fb8977b58d134e7c74e3a175fff7b")):
+                          ((Path(__file__).resolve().parents[1] / management.POLICY_PATH).read_bytes(), "selected_model_accepted", "4b717b4fd67860bd739f114f4d4920408be626e12973462c9307cb1f302641c8")):
         policy_path.write_bytes(raw)
         # Frozen policies are checked with their original agent producer.
         with monkeypatch.context() as producer:
-            if expected != "3eabfe495da077edb7577074d8a5c443049fb8977b58d134e7c74e3a175fff7b":
+            if expected != "4b717b4fd67860bd739f114f4d4920408be626e12973462c9307cb1f302641c8":
                 historical = json.loads(raw)
                 keys = {item["id"]: (item["id"], item["version"], item["digest"])
                         for group in historical["preparation"]["recipe_component_sets"] for item in group}
